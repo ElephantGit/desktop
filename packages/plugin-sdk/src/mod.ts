@@ -35,3 +35,15 @@ export {
   type WorkbenchPluginDefinition,
   type WorkbenchSurface,
 } from "./workbench.ts";
+export {
+  createTraceClient,
+  DEFAULT_TRACE_CHUNK_BYTES,
+  type NamedSession,
+  TRACE_ERROR_KINDS,
+  type TraceAgent,
+  type TraceCapability,
+  type TraceChunk,
+  type TraceEntry,
+  type TraceStat,
+  type TraceSurface,
+} from "./trace.ts";
