@@ -146,11 +146,10 @@ impl Backend {
         let clock = SystemClock;
         let app_events = Arc::new(AppEventHub::new());
         let user_config = Arc::new(UserConfigApi::new(pool.clone()));
-        // The trace pipeline: a registry seeded below from built-in defaults plus installed
-        // plugin declarations, a read service resolving through it, and the surface binding
-        // table. The registry is filled after the plugin snapshot exists, so the launch
-        // factory only needs the (empty-but-shared) Arc.
-        let trace_registry = Arc::new(TraceRegistry::new(Vec::new()));
+        // The trace pipeline: a registry filled by installed agent plugins' [agent.trace]
+        // declarations at launch, a read service resolving through it, and the surface
+        // binding table. The launch factory only needs the (empty-but-shared) Arc.
+        let trace_registry = Arc::new(TraceRegistry::new());
         let user_data_directory = std::env::var("XDG_DATA_HOME")
             .ok()
             .filter(|value| value.starts_with('/'))
@@ -177,11 +176,6 @@ impl Backend {
             )
             .map_err(BackendBootstrapError::Plugin)?,
         );
-        // Built-in CLIs resolve from the default table until they are plugin-ized; plugin agents
-        // register their [agent.trace] declarations at launch time (in the extension factory).
-        for (agent_ref, declaration) in crate::trace_registry::builtin_defaults() {
-            trace_registry.register_plugin(agent_ref, declaration);
-        }
         plugin
             .sync_installed_skills()
             .map_err(BackendBootstrapError::PluginSkillCatalog)?;

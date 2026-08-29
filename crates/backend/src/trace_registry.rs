@@ -1,10 +1,9 @@
 //! Registers each agent's trace declaration and resolves it for one session.
 //!
-//! A trace declaration arrives either from a plugin manifest (`[agent.trace]`) at
-//! install/upgrade time or from the built-in default table that serves the bundled agents until
-//! they are plugin-ized. The registry itself is data plumbing only: substitution happens in
-//! `ora_plugin_manifest` and the resolved locator is consumed by the read service — nothing here
-//! touches the filesystem.
+//! A trace declaration arrives from a plugin manifest (`[agent.trace]`), registered when the
+//! agent plugin launches; the host holds no agent-specific knowledge of its own. The registry
+//! itself is data plumbing only: substitution happens in `ora_plugin_manifest` and the resolved
+//! locator is consumed by the read service — nothing here touches the filesystem.
 
 use ora_domain::AgentRef;
 use ora_plugin_manifest::{PluginAgentTrace, TraceLocator, TraceResolveContext};
@@ -19,42 +18,6 @@ pub struct ResolvedTrace {
     pub locator: TraceLocator,
 }
 
-/// The built-in default table: one entry per bundled CLI, mirroring the legacy dashboard
-/// resolver until the CLIs are plugin-ized (their plugin manifests will then carry the same
-/// declarations and these entries become dead data).
-///
-/// `data_dir`/`home` placeholders are left for `TraceService` to substitute per session.
-pub fn builtin_defaults() -> Vec<(AgentRef, PluginAgentTrace)> {
-    let mut defaults = Vec::new();
-    // Claude-Code-compatible forks all emit transcript JSONL under a projects root that is
-    // fork-specific; the search form matches the session file by id across project directories.
-    for (agent_ref, root) in [
-        ("ora-space.claude", "{home}/.claude/projects"),
-        ("ora-space.codex", "{home}/.claude/projects"),
-        ("ora-space.codeagentcli", "{home}/.cac/projects"),
-    ] {
-        if let (Ok(agent_ref), Ok(declaration)) = (
-            AgentRef::parse(agent_ref),
-            PluginAgentTrace::search("claude_code", root, "**/{agent_session_id}.jsonl"),
-        ) {
-            defaults.push((agent_ref, declaration));
-        }
-    }
-    // opencode and its Nga variant write one NDJSON per session through the deployed collector.
-    for agent_ref in ["ora-space.opencode", "ora-space.nga"] {
-        if let (Ok(agent_ref), Ok(declaration)) = (
-            AgentRef::parse(agent_ref),
-            PluginAgentTrace::file(
-                "opencode",
-                "{data_dir}/opencode/trace/{agent_session_id}.ndjson",
-            ),
-        ) {
-            defaults.push((agent_ref, declaration));
-        }
-    }
-    defaults
-}
-
 /// Maps one agent to its installed trace declaration.
 ///
 /// Reads are cheap (`RwLock` + clone of an immutable declaration) so the per-read resolve path
@@ -63,11 +26,18 @@ pub struct TraceRegistry {
     entries: RwLock<HashMap<AgentRef, PluginAgentTrace>>,
 }
 
+impl Default for TraceRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TraceRegistry {
-    /// Builds a registry pre-populated with the host's built-in default table.
-    pub fn new(defaults: impl IntoIterator<Item = (AgentRef, PluginAgentTrace)>) -> Self {
+    /// Builds an empty registry; agent plugins fill it with their `[agent.trace]`
+    /// declarations when they launch.
+    pub fn new() -> Self {
         Self {
-            entries: RwLock::new(defaults.into_iter().collect()),
+            entries: RwLock::new(HashMap::new()),
         }
     }
 
@@ -199,7 +169,7 @@ mod tests {
     /// A registered declaration resolves; an unknown agent and an unsafe session id do not.
     #[test]
     fn resolves_registered_declarations_only() {
-        let registry = TraceRegistry::new(Vec::new());
+        let registry = TraceRegistry::new();
         let claude = must(AgentRef::parse("ora-space.claude"), "agent ref");
         registry.register_plugin(claude.clone(), claude_declaration());
 
@@ -226,7 +196,7 @@ mod tests {
     /// Registration replaces, unregistration removes, and `agents` stays sorted.
     #[test]
     fn register_replace_and_unregister() {
-        let registry = TraceRegistry::new(Vec::new());
+        let registry = TraceRegistry::new();
         let claude = must(AgentRef::parse("ora-space.claude"), "agent ref");
         registry.register_plugin(claude.clone(), claude_declaration());
         // An upgrade replaces the declaration for the same agent.
@@ -241,19 +211,5 @@ mod tests {
         registry.unregister_plugin(&claude);
         assert!(registry.resolve(&claude, &context("ses_1")).is_none());
         assert!(registry.agents().is_empty());
-    }
-
-    /// The default table is plain data: entries resolve before any plugin registers.
-    #[test]
-    fn builtin_defaults_are_plain_data() {
-        let claude = must(AgentRef::parse("ora-space.claude"), "agent ref");
-        let registry = TraceRegistry::new([(claude.clone(), claude_declaration())]);
-
-        let resolved = must_some(
-            registry.resolve(&claude, &context("abc-123")),
-            "built-in entry",
-        );
-        assert_eq!(resolved.format, "claude_code");
-        assert_eq!(registry.agents(), vec![claude]);
     }
 }

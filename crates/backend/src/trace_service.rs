@@ -666,7 +666,7 @@ mod tests {
     /// Builds a service whose home/data_dir live inside one temp dir.
     fn service_with(declaration: PluginAgentTrace) -> (TraceService, tempfile::TempDir, AgentRef) {
         let temp = tempdir().expect("tempdir");
-        let registry = Arc::new(TraceRegistry::new(Vec::new()));
+        let registry = Arc::new(TraceRegistry::new());
         let agent = must(AgentRef::parse("ora-space.test"), "agent ref");
         registry.register_plugin(agent.clone(), declaration);
         let service =

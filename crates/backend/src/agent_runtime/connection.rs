@@ -1169,9 +1169,9 @@ mod tests {
                 SystemClock,
                 AppEventHub::new().publisher(),
                 Arc::new(UserConfigApi::new(pool.clone())),
-                Arc::new(TraceRegistry::new(Vec::new())),
+                Arc::new(TraceRegistry::new()),
                 Arc::new(TraceService::new(
-                    Arc::new(TraceRegistry::new(Vec::new())),
+                    Arc::new(TraceRegistry::new()),
                     temporary.path().to_path_buf().join("home"),
                     temporary.path().to_path_buf().join("data"),
                 )),

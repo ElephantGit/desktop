@@ -322,7 +322,7 @@ mod tests {
 
     /// Builds a tempdir-backed service with one written trace file.
     fn build_service(temp: &tempfile::TempDir) -> (Arc<TraceService>, AgentRef) {
-        let registry = Arc::new(TraceRegistry::new(Vec::new()));
+        let registry = Arc::new(TraceRegistry::new());
         let agent = must(AgentRef::parse("ora-space.test"), "agent ref");
         registry.register_plugin(
             agent.clone(),
