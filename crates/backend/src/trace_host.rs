@@ -25,6 +25,7 @@ pub const TRACE_UNAVAILABLE_CODE: i64 = -32005;
 pub const TRACE_STAT_METHOD: &str = "ora/session/trace_stat";
 pub const TRACE_READ_METHOD: &str = "ora/session/trace_read";
 pub const TRACE_LIST_METHOD: &str = "ora/session/trace_list";
+pub const TRACE_AGENTS_METHOD: &str = "ora/session/trace_agents";
 
 /// Resolves one workbench surface instance to the session it was opened for.
 ///
@@ -73,7 +74,7 @@ impl TraceHost {
 }
 
 impl HostRequestHandler for TraceHost {
-    /// Dispatches one of the three trace methods; anything else is `method_not_found`.
+    /// Dispatches one of the four trace methods; anything else is `method_not_found`.
     fn handle(
         &self,
         method: &str,
@@ -88,7 +89,7 @@ impl HostRequestHandler for TraceHost {
         Box::pin(async move {
             let trace_method = matches!(
                 method.as_str(),
-                TRACE_STAT_METHOD | TRACE_READ_METHOD | TRACE_LIST_METHOD
+                TRACE_STAT_METHOD | TRACE_READ_METHOD | TRACE_LIST_METHOD | TRACE_AGENTS_METHOD
             );
             if !trace_method {
                 return Err(HostRequestError::method_not_found(&method));
@@ -128,6 +129,21 @@ impl HostRequestHandler for TraceHost {
                             "name": entry.name,
                             "mtimeMs": entry.mtime_ms,
                             "sizeBytes": entry.size_bytes,
+                        }))
+                        .collect::<Vec<_>>(),
+                }));
+            }
+
+            // The declaration enumeration serves without a session binding: the page uses it to
+            // map agents to formats without hardcoding the installed set.
+            if method == TRACE_AGENTS_METHOD {
+                let agents = service.agents();
+                return Ok(json!({
+                    "agents": agents
+                        .iter()
+                        .map(|(agent, format)| json!({
+                            "agent": agent.as_str(),
+                            "format": format,
                         }))
                         .collect::<Vec<_>>(),
                 }));
@@ -445,6 +461,21 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0]["sessionId"], json!("ses_1"));
         assert_eq!(entries[0]["name"], json!("t"));
+    }
+
+    /// The agents method enumerates declarations with their formats, without a session binding.
+    #[tokio::test]
+    async fn agents_enumerates_declarations_with_formats() {
+        let (host, _temp) = host_with_bound_session();
+
+        let response = host
+            .handle(TRACE_AGENTS_METHOD, surface_params(7, 1))
+            .await
+            .expect("agents succeeds");
+        let agents = response["agents"].as_array().expect("agents array");
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0]["agent"], json!("ora-space.test"));
+        assert_eq!(agents[0]["format"], json!("opencode"));
     }
 
     /// The production composition: storage and trace methods served side by side, unknown

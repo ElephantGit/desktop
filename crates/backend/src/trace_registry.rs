@@ -128,6 +128,20 @@ impl TraceRegistry {
         agents.sort();
         agents
     }
+
+    /// Returns every declared agent with its format identifier, for the `trace_agents`
+    /// enumeration; the host passes formats through without interpreting them.
+    pub fn agents_with_format(&self) -> Vec<(AgentRef, String)> {
+        let mut agents: Vec<(AgentRef, String)> = self
+            .entries
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .map(|(agent, declaration)| (agent.clone(), declaration.format().to_owned()))
+            .collect();
+        agents.sort_by(|left, right| left.0.cmp(&right.0));
+        agents
+    }
 }
 
 #[cfg(test)]

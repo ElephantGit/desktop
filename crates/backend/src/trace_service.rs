@@ -193,6 +193,11 @@ impl TraceService {
         entries
     }
 
+    /// Every agent with a registered trace declaration, with its format identifier.
+    pub fn agents(&self) -> Vec<(AgentRef, String)> {
+        self.registry.agents_with_format()
+    }
+
     /// Resolves the declaration for one session through the registry.
     fn resolve(&self, agent: &AgentRef, session_id: &str) -> Option<ResolvedTrace> {
         self.registry.resolve(
