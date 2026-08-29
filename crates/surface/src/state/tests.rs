@@ -103,7 +103,10 @@ fn closing_fresh(from: MountTarget) -> Transition {
             operation: FRESH,
             from: Some(from),
         }),
-        effects: vec![SurfaceEffect::DestroyWebview { operation: FRESH }],
+        effects: vec![
+            SurfaceEffect::SetNativeVisibility(false),
+            SurfaceEffect::DestroyWebview { operation: FRESH },
+        ],
     }
 }
 
@@ -546,6 +549,7 @@ fn completion_table() {
                 }),
                 effects: vec![
                     migrate_failed,
+                    SurfaceEffect::SetNativeVisibility(false),
                     SurfaceEffect::DestroyWebview { operation: FRESH },
                 ],
             }),

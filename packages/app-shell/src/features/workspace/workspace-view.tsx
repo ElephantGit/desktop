@@ -59,6 +59,7 @@ import { useWorkflowDetection } from "../workflow/use-workflow-detection";
 import type { ChatTurn } from "@ora/chat";
 import { LocationActionsButton } from "./location-actions-button";
 import { SurfaceLauncher } from "../surface/surface-launcher";
+import { useOpenTraceDashboard } from "../trace-dashboard/use-open-trace-dashboard";
 import { WorkflowRunWorkspace } from "../workflow-run/workflow-run-workspace";
 import { WorkflowEditor } from "../workflow-editor/workflow-editor";
 import {
@@ -167,6 +168,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   // read would warm a different agent than what is on screen.
   const targetAgentCli = useTargetAgentCli(selection);
   const openDashboardPanel = useUiStore((s) => s.openDashboardPanel);
+  const openTraceDashboard = useOpenTraceDashboard();
 
   const chatStore = useChatStore();
   useWorkspaceDiffLiveSync(chatStore, sessions);
@@ -670,7 +672,12 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => openDashboardPanel("trace")}
+            onClick={() => {
+              // The plugin surface opens bound to the current session; the
+              // legacy sheet only mounts when the plugin is not installed.
+              if (openTraceDashboard === null) openDashboardPanel("trace");
+              else openTraceDashboard(conversationSessionId);
+            }}
             aria-label={t("dashboard.open")}
             title={t("dashboard.open")}
           >

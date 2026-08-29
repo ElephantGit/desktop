@@ -421,10 +421,17 @@ fn mounted(target: MountTarget, view: ViewGeneration) -> SurfaceState {
 }
 
 /// Builds the Closing state together with the destroy request that drives it.
+///
+/// The webview is hidden before destruction: a native child view that survives
+/// its teardown must never keep painting over (or swallowing input across) the
+/// bounds it last occupied.
 fn close_from(from: Option<MountTarget>, operation: OperationId) -> Transition {
     Transition {
         next: Some(SurfaceState::Closing { operation, from }),
-        effects: vec![SurfaceEffect::DestroyWebview { operation }],
+        effects: vec![
+            SurfaceEffect::SetNativeVisibility(false),
+            SurfaceEffect::DestroyWebview { operation },
+        ],
     }
 }
 

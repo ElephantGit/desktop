@@ -426,9 +426,12 @@ mod tests {
                 Some(SurfaceState::Windowed {
                     view: ViewGeneration::INITIAL,
                 }),
-                Ok(vec![SurfaceEffect::DestroyWebview {
-                    operation: OperationId::new(2),
-                }]),
+                Ok(vec![
+                    SurfaceEffect::SetNativeVisibility(false),
+                    SurfaceEffect::DestroyWebview {
+                        operation: OperationId::new(2),
+                    },
+                ]),
                 Ok(vec![SurfaceEffect::Emit(SurfaceEvent::Closed {
                     instance: 0
                 })]),

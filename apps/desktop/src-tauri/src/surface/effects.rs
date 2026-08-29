@@ -177,6 +177,10 @@ impl<G: SurfacePluginGateway, R: Runtime> SurfaceService<G, R> {
             // the registry with a second `Close`.
             window.destroy()
         } else if let Some(webview) = self.find_webview(label) {
+            // A child webview must be hidden before teardown: if the native close leaves
+            // any remnant behind, a hidden view can no longer paint over (or swallow input
+            // across) the bounds it last occupied.
+            let _ = webview.hide();
             webview.close()
         } else {
             Ok(())
