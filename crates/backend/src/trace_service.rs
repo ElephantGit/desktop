@@ -9,7 +9,7 @@ use ora_domain::AgentRef;
 use ora_plugin_manifest::TraceLocator;
 use std::collections::HashMap;
 use std::fs;
-use std::io::{BufRead, Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::UNIX_EPOCH;
@@ -18,13 +18,6 @@ use std::time::UNIX_EPOCH;
 pub const TRACE_CHUNK_MAX_BYTES: usize = 1024 * 1024;
 /// Session lists cap at a generous bound; the page paginates.
 const LIST_MAX_ENTRIES: usize = 5000;
-/// Only the most recent entries get the head scan that extracts a readable session name.
-const LIST_NAME_SCAN_ENTRIES: usize = 300;
-/// Head-scan byte cap for name extraction; large files are never read in full for a label.
-const NAME_HEAD_SCAN_BYTES: usize = 256 * 1024;
-/// Readable names truncate at this many characters plus an ellipsis.
-const NAME_MAX_CHARS: usize = 40;
-/// A child session is readable only when its id appears inside the parent trace; this caps how
 /// much of the parent is scanned for that check.
 const CHILD_MATCH_SCAN_BYTES: usize = 8 * 1024 * 1024;
 /// Directory walks stop after this many entries; a trace root with more files is pathological.
@@ -54,7 +47,8 @@ pub struct TraceChunk {
     pub done: bool,
 }
 
-/// One entry of the session list, with the readable name extracted by the host.
+/// One entry of the session list. The host never interprets trace formats, so `name` is
+/// always `None` here; the plugin derives a readable name from the content it reads.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TraceEntryMeta {
     pub agent: String,
@@ -187,9 +181,6 @@ impl TraceService {
                 .then_with(|| left.session_id.cmp(&right.session_id))
         });
         entries.truncate(LIST_MAX_ENTRIES);
-        for entry in entries.iter_mut().take(LIST_NAME_SCAN_ENTRIES) {
-            entry.name = self.extract_name(&entry.agent, &entry.session_id);
-        }
         entries
     }
 
@@ -242,15 +233,6 @@ impl TraceService {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(key, path.clone());
         Some(path)
-    }
-
-    /// Extracts the readable name for a listed session, resolving through the same path used by
-    /// reads so the cache is shared.
-    fn extract_name(&self, agent: &str, session_id: &str) -> Option<String> {
-        let agent_ref = AgentRef::parse(agent).ok()?;
-        let resolved = self.resolve(&agent_ref, session_id)?;
-        let path = self.resolve_file(&agent_ref, session_id, &resolved)?;
-        extract_name_from_path(&path, &resolved.format)
     }
 }
 
@@ -546,101 +528,6 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> bool {
 /// - `claude_code`: the first real user text (fallback: the cwd directory name).
 /// - `opencode`: the `session.start` title (fallback: the file stem).
 /// - Anything else: the file stem.
-fn extract_name_from_path(path: &Path, format: &str) -> Option<String> {
-    let Ok(file) = fs::File::open(path) else {
-        return None;
-    };
-    let mut reader = std::io::BufReader::new(file);
-    let mut line = String::new();
-    let mut scanned = 0usize;
-    let mut cwd: Option<String> = None;
-    let mut title: Option<String> = None;
-    while let Ok(count) = reader.read_line(&mut line) {
-        if count == 0 {
-            break;
-        }
-        scanned += line.len();
-        if scanned > NAME_HEAD_SCAN_BYTES {
-            break;
-        }
-        if line.trim().is_empty() {
-            line.clear();
-            continue;
-        }
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
-            line.clear();
-            continue;
-        };
-        line.clear();
-        if cwd.is_none()
-            && let Some(found) = value.get("cwd").and_then(|found| found.as_str())
-            && !found.trim().is_empty()
-        {
-            cwd = Some(found.trim().to_owned());
-        }
-        match value.get("type").and_then(|found| found.as_str()) {
-            Some("session.start") if format == "opencode" => {
-                title = value
-                    .get("title")
-                    .and_then(|found| found.as_str())
-                    .map(str::trim)
-                    .filter(|found| !found.is_empty())
-                    .map(str::to_owned);
-                break;
-            }
-            Some("user") if format == "claude_code" => {
-                let message = value.get("message").unwrap_or(&value);
-                let content = message.get("content").unwrap_or(&serde_json::Value::Null);
-                if let Some(found) = content.as_str() {
-                    let found = found.trim();
-                    if !found.is_empty() {
-                        return Some(truncate_name(found));
-                    }
-                    continue;
-                }
-                if let Some(blocks) = content.as_array() {
-                    for block in blocks {
-                        if block.get("type").and_then(|found| found.as_str()) != Some("text") {
-                            continue;
-                        }
-                        if let Some(found) = block.get("text").and_then(|found| found.as_str()) {
-                            let found = found.trim();
-                            if !found.is_empty() {
-                                return Some(truncate_name(found));
-                            }
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    if format == "opencode" {
-        return title.or_else(|| {
-            path.file_stem()
-                .and_then(|stem| stem.to_str())
-                .map(truncate_name)
-        });
-    }
-    cwd.and_then(|found| {
-        Path::new(&found)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .filter(|name| !name.is_empty())
-            .map(truncate_name)
-    })
-}
-
-fn truncate_name(value: &str) -> String {
-    let mut characters = value.chars();
-    let mut output: String = characters.by_ref().take(NAME_MAX_CHARS).collect();
-    if characters.next().is_some() {
-        output.push('…');
-    }
-    output
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -819,7 +706,7 @@ mod tests {
     }
 
     #[test]
-    fn list_scans_declared_roots_and_extracts_names() {
+    fn list_scans_declared_roots_without_names() {
         let (service, temp, agent) = service_with(file_declaration());
         let trace_dir = temp.path().join("data/opencode/trace");
         fs::create_dir_all(&trace_dir).expect("trace dir");
@@ -843,35 +730,11 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["ses_a", "ses_b"]
         );
-        assert_eq!(entries[0].name.as_deref(), Some("标题A"));
+        assert_eq!(entries[0].name, None);
 
         // Filtering by another agent returns nothing.
         let other = must(AgentRef::parse("ora-space.other"), "other agent ref");
         assert!(service.list(Some(&other)).is_empty());
-    }
-
-    #[test]
-    fn list_claude_names_fall_back_to_the_cwd_basename() {
-        let declaration = must(
-            PluginAgentTrace::search(
-                "claude_code",
-                "{home}/.claude/projects",
-                "**/{agent_session_id}.jsonl",
-            ),
-            "search declaration",
-        );
-        let (service, temp, agent) = service_with(declaration);
-        let root = temp.path().join("home/.claude/projects/my-dashboard");
-        fs::create_dir_all(&root).expect("project dir");
-        fs::write(
-            root.join("abc-123.jsonl"),
-            "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"x\"}]},\"cwd\":\"/home/u/projects/my-dashboard\",\"uuid\":\"a\"}\n",
-        )
-        .expect("transcript without user text");
-
-        let entries = service.list(Some(&agent));
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].name.as_deref(), Some("my-dashboard"));
     }
 
     #[test]

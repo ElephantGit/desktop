@@ -460,7 +460,7 @@ mod tests {
         let entries = list["entries"].as_array().expect("entries array");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0]["sessionId"], json!("ses_1"));
-        assert_eq!(entries[0]["name"], json!("t"));
+        assert_eq!(entries[0]["name"], json!(null));
     }
 
     /// The agents method enumerates declarations with their formats, without a session binding.
