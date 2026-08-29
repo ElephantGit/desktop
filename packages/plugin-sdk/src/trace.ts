@@ -28,34 +28,34 @@ export type NamedSession = {
 };
 
 /** Metadata of one bound or named session's trace. */
-export interface TraceStat {
+export type TraceStat = {
   format: string;
   exists: boolean;
   sizeBytes: number;
   mtimeMs: number;
-}
+};
 
 /** One byte-offset chunk of a trace; `done` ends the read. */
-export interface TraceChunk {
+export type TraceChunk = {
   text: string;
   nextOffset: number;
   done: boolean;
-}
+};
 
 /** One entry of the host-scanned session listing. */
-export interface TraceEntry {
+export type TraceEntry = {
   sessionId: string;
   agent: string;
   name?: string | null;
   mtimeMs: number;
   sizeBytes: number;
-}
+};
 
 /** One agent the host holds a trace declaration for, with its format identifier. */
-export interface TraceAgent {
+export type TraceAgent = {
   agent: string;
   format: string;
-}
+};
 
 /** The default per-request read size, aligned with the host's 1 MiB chunking. */
 export const DEFAULT_TRACE_CHUNK_BYTES = 1024 * 1024;
