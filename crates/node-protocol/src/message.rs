@@ -13,7 +13,7 @@ pub use session::{
     NodeCapability,
 };
 pub use validation::MessageValidationError;
-pub(crate) use validation::ValidateMessage;
+pub use validation::ValidateMessage;
 pub use worktree::{
     EnsureWorktree, EnsureWorktreeMessage, RemoveWorktree, RemoveWorktreeMessage,
     WorktreeFailedMessage, WorktreeReadyMessage, WorktreeRemovalFailedMessage,

@@ -3366,6 +3366,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "ora-node"
+version = "0.0.0"
+dependencies = [
+ "ora-node-db",
+ "ora-node-protocol",
+ "pretty_assertions",
+ "tempfile",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
+name = "ora-node-db"
+version = "0.0.0"
+dependencies = [
+ "ora-node-protocol",
+ "pretty_assertions",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
 name = "ora-node-protocol"
 version = "0.0.0"
 dependencies = [

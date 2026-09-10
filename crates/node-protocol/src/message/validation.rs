@@ -25,7 +25,7 @@ pub enum MessageValidationError {
 }
 
 /// Centralizes wire invariants used identically for outbound and decoded messages.
-pub(crate) trait ValidateMessage {
+pub trait ValidateMessage {
     /// Rejects values that are structurally typed but invalid for this protocol version.
     fn validate(&self) -> Result<(), MessageValidationError>;
 }

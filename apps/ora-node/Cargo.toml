@@ -1,0 +1,17 @@
+[package]
+name = "ora-node"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ora-node-db = { workspace = true }
+ora-node-protocol = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions.workspace = true
+tempfile.workspace = true

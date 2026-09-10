@@ -28,6 +28,7 @@ pub use message::{
     ExecutionState, ExecutionStatus, ExecutionStatusMessage, GetExecutionStatus,
     GetExecutionStatusMessage, Heartbeat, HeartbeatMessage, Hello, HelloAccepted,
     HelloAcceptedMessage, HelloMessage, MessageValidationError, NodeCapability,
-    NodeToControllerMessage, RemoveWorktree, RemoveWorktreeMessage, WorktreeFailedMessage,
-    WorktreeReadyMessage, WorktreeRemovalFailedMessage, WorktreeRemovedMessage,
+    NodeToControllerMessage, RemoveWorktree, RemoveWorktreeMessage, ValidateMessage,
+    WorktreeFailedMessage, WorktreeReadyMessage, WorktreeRemovalFailedMessage,
+    WorktreeRemovedMessage,
 };
