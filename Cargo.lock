@@ -3369,11 +3369,16 @@ dependencies = [
 name = "ora-node"
 version = "0.0.0"
 dependencies = [
+ "gitlancer",
+ "ora-logging",
  "ora-node-db",
  "ora-node-protocol",
+ "ora-utils",
  "pretty_assertions",
  "tempfile",
  "thiserror 2.0.20",
+ "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 

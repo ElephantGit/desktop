@@ -27,3 +27,8 @@ it removes only the delivery record. Results and execution deduplication survive
 `WriteGuard` exposes transaction failure points for real SQLite fault tests. Tests in `ora-node-db`
 cover exclusive ownership, file preservation, deduplication, reservations, rollback, reopening and
 acknowledgement. Run `cargo test -p ora-node-db -p ora-node`.
+
+Opening also checks table/index definitions and foreign-key integrity; the schema identifier alone
+cannot authorize an unknown structure. A definitive no-effect creation failure retires reservations
+and releases active uniqueness while retaining execution deduplication and the failed result.
+Inconclusive executions continue to hold their reservations.

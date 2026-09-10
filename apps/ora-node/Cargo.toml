@@ -7,11 +7,16 @@ edition.workspace = true
 workspace = true
 
 [dependencies]
+gitlancer.workspace = true
+ora-utils.workspace = true
+ora-logging.workspace = true
 ora-node-db = { workspace = true }
 ora-node-protocol = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+tracing.workspace = true
+tracing-subscriber.workspace = true
 pretty_assertions.workspace = true
 tempfile.workspace = true

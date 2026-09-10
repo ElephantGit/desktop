@@ -7,6 +7,11 @@ use pretty_assertions::assert_eq;
 fn identity_and_exclusive_owner_survive_reopen() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("ora-node.sqlite3");
+    assert!(matches!(
+        NodeDatabase::open(&path, NodeIdentity::Require(NodeId::new(" "))),
+        Err(Error::NodeMismatch)
+    ));
+    assert!(!path.exists());
     let db = NodeDatabase::open(&path, NodeIdentity::Discover).unwrap();
     let id = db.node_id().clone();
     assert!(matches!(
@@ -39,7 +44,11 @@ fn preserves_foreign_corrupt_empty_and_future_files() {
                 drop(NodeDatabase::open(&path, NodeIdentity::Discover).unwrap());
                 Connection::open(&path)
                     .unwrap()
-                    .pragma_update(None, "user_version", 999)
+                    .pragma_update(
+                        /*schema_name*/ None,
+                        "user_version",
+                        /*pragma_value*/ 999,
+                    )
                     .unwrap();
             }
             "corrupt" => std::fs::write(&path, b"not sqlite").unwrap(),
@@ -166,14 +175,14 @@ fn completion_and_outbox_rollback_together_and_ack_retains_result() {
     use ora_node_protocol::*;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("db");
-    let fault = std::rc::Rc::new(std::cell::Cell::new(None));
+    let fault = std::rc::Rc::new(std::cell::Cell::new(/*value*/ None));
     let mut db =
         NodeDatabase::open_with_guard(&path, NodeIdentity::Discover, Fault(fault.clone())).unwrap();
     let (command, target) = fixture(db.node_id());
     fault.set(Some(WritePoint::Accept));
     assert!(db.accept(&command, &target).is_err());
     assert_eq!(db.existing(&command).unwrap(), None);
-    fault.set(None);
+    fault.set(/*val*/ None);
     let accepted = db.accept(&command, &target).unwrap();
     let running = Progress::Running {
         stage: Stage::Create,
@@ -186,7 +195,7 @@ fn completion_and_outbox_rollback_together_and_ack_retains_result() {
     fault.set(Some(WritePoint::Progress));
     assert!(db.advance(&accepted, running.clone()).is_err());
     assert_eq!(db.existing(&command).unwrap(), Some(accepted.clone()));
-    fault.set(None);
+    fault.set(/*val*/ None);
     let record = db.advance(&accepted, running).unwrap();
     let result = ready(&command, &target);
     let resource = db.resource(&command.spec().worktree_id).unwrap();
@@ -222,6 +231,105 @@ fn completion_and_outbox_rollback_together_and_ack_retains_result() {
     drop(db);
     let db = NodeDatabase::open(&path, NodeIdentity::Discover).unwrap();
     assert_eq!(db.pending_events().unwrap(), vec![]);
+    assert_eq!(
+        db.existing(&command).unwrap().unwrap().progress,
+        Progress::Completed { result }
+    );
+}
+
+/// Even a recognizable application/version header cannot authorize missing tables or relaxed constraints.
+#[test]
+fn rejects_modified_schema_without_migrating_or_rebuilding() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    drop(NodeDatabase::open(&path, NodeIdentity::Discover).unwrap());
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch("DROP INDEX resource_path;")
+        .unwrap();
+    let before = std::fs::read(&path).unwrap();
+    assert!(matches!(
+        NodeDatabase::open(&path, NodeIdentity::Discover),
+        Err(Error::InvalidSchema)
+    ));
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+}
+
+/// Invalid terminal and observer transitions cannot corrupt input ownership or seal an unknown result.
+#[test]
+fn rejects_unattributable_progress_and_unresolved_terminal_results() {
+    use ora_node_protocol::*;
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = NodeDatabase::open(&dir.path().join("db"), NodeIdentity::Discover).unwrap();
+    let (command, target) = fixture(db.node_id());
+    assert!(matches!(
+        db.reject(&command, ready(&command, &target)),
+        Err(Error::InvalidTransition)
+    ));
+    let record = db.accept(&command, &target).unwrap();
+    let observer = NodeRuntimeIdentity {
+        node_id: NodeId::new("wrong"),
+        incarnation_id: NodeIncarnationId::new("run"),
+    };
+    assert!(matches!(
+        db.advance(
+            &record,
+            Progress::Running {
+                stage: Stage::Create,
+                observer,
+                observed_at: "local".into()
+            }
+        ),
+        Err(Error::InvalidTransition)
+    ));
+    let result = WorktreeExecutionResult::Failed(WorktreeFailed {
+        node: NodeRuntimeIdentity {
+            node_id: db.node_id().clone(),
+            incarnation_id: NodeIncarnationId::new("run"),
+        },
+        workspace_id: command.spec().workspace_id.clone(),
+        worktree_id: command.spec().worktree_id.clone(),
+        failure: WorktreeFailure {
+            code: WorktreeFailureCode::ResultUnknown,
+            message: "not proven".into(),
+        },
+    });
+    assert!(matches!(
+        db.complete(&record, result),
+        Err(Error::InvalidTransition)
+    ));
+    assert_eq!(db.existing(&command).unwrap(), Some(record));
+    assert_eq!(db.pending_events().unwrap(), vec![]);
+}
+
+/// A definitive no-effect failure frees capacity for a new resource while retaining old deduplication.
+#[test]
+fn definitive_create_failure_retires_its_reservation() {
+    use ora_node_protocol::*;
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = NodeDatabase::open(&dir.path().join("db"), NodeIdentity::Discover).unwrap();
+    let (command, target) = fixture(db.node_id());
+    let record = db.accept(&command, &target).unwrap();
+    let result = WorktreeExecutionResult::Failed(WorktreeFailed {
+        node: NodeRuntimeIdentity {
+            node_id: db.node_id().clone(),
+            incarnation_id: NodeIncarnationId::new("run"),
+        },
+        workspace_id: command.spec().workspace_id.clone(),
+        worktree_id: command.spec().worktree_id.clone(),
+        failure: WorktreeFailure {
+            code: WorktreeFailureCode::OperationFailed,
+            message: "no effects remain".into(),
+        },
+    });
+    db.complete(&record, result.clone()).unwrap();
+    let Command::Ensure(mut fresh) = command.clone() else {
+        unreachable!()
+    };
+    fresh.operation_id = OperationId::new("new-operation");
+    fresh.execution_id = ExecutionId::new("new-execution");
+    fresh.payload.spec.worktree_id = WorktreeId::new("new-tree");
+    assert!(db.accept(&Command::Ensure(fresh), &target).is_ok());
     assert_eq!(
         db.existing(&command).unwrap().unwrap().progress,
         Progress::Completed { result }

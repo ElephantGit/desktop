@@ -56,7 +56,7 @@ impl<G: WriteGuard> NodeDatabase<G> {
             .query_row(
                 "SELECT data FROM resources WHERE worktree=?1",
                 [spec.worktree_id.as_str()],
-                |row| row.get(0),
+                |row| row.get(/*idx*/ 0),
             )
             .optional()?;
         match command {
@@ -64,7 +64,7 @@ impl<G: WriteGuard> NodeDatabase<G> {
                 if resource.is_some() {
                     return Err(Error::ResourceConflict);
                 }
-                let conflict: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM resources WHERE active=1 AND (workspace=?1 OR path=?2 OR (repository=?3 AND branch=?4)))", params![spec.workspace_id.as_str(), target.path.to_str(), target.main_path.to_str(), target.branch.as_str()], |r| r.get(0))?;
+                let conflict: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM resources WHERE active=1 AND (workspace=?1 OR path=?2 OR (repository=?3 AND branch=?4)))", params![spec.workspace_id.as_str(), target.path.to_str(), target.main_path.to_str(), target.branch.as_str()], |r| r.get(/*idx*/ 0))?;
                 if conflict {
                     return Err(Error::ResourceConflict);
                 }
@@ -75,7 +75,7 @@ impl<G: WriteGuard> NodeDatabase<G> {
                 if !owns(&resource, spec, target) || resource.state == ResourceState::Reserved {
                     return Err(Error::ResourceConflict);
                 }
-                let pending: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM executions WHERE state != 'completed' AND json_extract(input, '$.message.payload.spec.worktree_id')=?1)", [spec.worktree_id.as_str()], |row| row.get(0))?;
+                let pending: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM executions WHERE state != 'completed' AND json_extract(input, '$.message.payload.spec.worktree_id')=?1)", [spec.worktree_id.as_str()], |row| row.get(/*idx*/ 0))?;
                 if pending {
                     return Err(Error::ResourceConflict);
                 }
@@ -132,6 +132,12 @@ impl<G: WriteGuard> NodeDatabase<G> {
             return Err(Error::InvalidTransition);
         }
         validate_result(command, &result)?;
+        if !matches!(
+            result,
+            WorktreeExecutionResult::Failed(_) | WorktreeExecutionResult::RemovalFailed(_)
+        ) {
+            return Err(Error::InvalidTransition);
+        }
         self.guard.before_write(WritePoint::Accept)?;
         let tx = self.connection.transaction()?;
         tx.execute(
@@ -167,6 +173,18 @@ impl<G: WriteGuard> NodeDatabase<G> {
         {
             return Err(Error::InvalidTransition);
         }
+        if let Progress::Running {
+            stage, observer, ..
+        }
+        | Progress::Unknown {
+            stage, observer, ..
+        } = &progress
+            && (observer.node_id != self.node_id
+                || observer.incarnation_id.as_str().trim().is_empty()
+                || matches!(record.command, Command::Ensure(_)) != (*stage == Stage::Create))
+        {
+            return Err(Error::InvalidTransition);
+        }
         self.guard.before_write(WritePoint::Progress)?;
         let changed = self.connection.execute(
             "UPDATE executions SET state=?1,progress=?2 WHERE execution=?3 AND progress=?4",
@@ -196,6 +214,15 @@ impl<G: WriteGuard> NodeDatabase<G> {
             return Err(Error::InvalidTransition);
         }
         validate_result(&record.command, &result)?;
+        if let WorktreeExecutionResult::Ready(ready) = &result {
+            let target = record.target.as_ref().ok_or(Error::InvalidTransition)?;
+            if ready.facts.branch != target.branch
+                || ready.facts.base_commit != target.base_commit
+                || Some(ready.facts.path.as_str()) != target.path.to_str()
+            {
+                return Err(Error::IdentityConflict);
+            }
+        }
         self.guard.before_write(WritePoint::Complete)?;
         let tx = self.connection.transaction()?;
         let changed = tx.execute("UPDATE executions SET state='completed',progress=?1 WHERE execution=?2 AND progress=?3", params![serde_json::to_string(&Progress::Completed {result: result.clone()})?, record.command.execution_id().as_str(), serde_json::to_string(&record.progress)?])?;
@@ -205,13 +232,15 @@ impl<G: WriteGuard> NodeDatabase<G> {
         let state = match &result {
             WorktreeExecutionResult::Ready(_) => Some(ResourceState::Present),
             WorktreeExecutionResult::Removed(_) => Some(ResourceState::Removed),
-            WorktreeExecutionResult::Failed(_) | WorktreeExecutionResult::RemovalFailed(_) => None,
+            // Definitive create failure has no unexplained effects; retire its reservation.
+            WorktreeExecutionResult::Failed(_) => Some(ResourceState::Removed),
+            WorktreeExecutionResult::RemovalFailed(_) => None,
         };
         if let Some(state) = state {
             let data: String = tx.query_row(
                 "SELECT data FROM resources WHERE worktree=?1",
                 [record.command.spec().worktree_id.as_str()],
-                |row| row.get(0),
+                |row| row.get(/*idx*/ 0),
             )?;
             let mut resource: Resource = serde_json::from_str(&data)?;
             resource.state = state;
@@ -243,7 +272,7 @@ impl<G: WriteGuard> NodeDatabase<G> {
             .query_row(
                 "SELECT data FROM resources WHERE worktree=?1",
                 [id.as_str()],
-                |row| row.get(0),
+                |row| row.get(/*idx*/ 0),
             )
             .optional()?;
         data.map(|data| serde_json::from_str(&data).map_err(Error::from))
@@ -268,7 +297,7 @@ impl<G: WriteGuard> NodeDatabase<G> {
         let mut statement = self
             .connection
             .prepare("SELECT event FROM outbox ORDER BY rowid")?;
-        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(/*idx*/ 0))?;
         rows.map(|data| Ok(serde_json::from_str(&data?)?)).collect()
     }
 
@@ -304,9 +333,9 @@ pub fn owns(resource: &Resource, spec: &WorktreeExecutionSpec, target: &Target) 
 
 /// Decodes complete records at the persistence seam without exposing raw SQL rows to callers.
 fn decode(row: &rusqlite::Row<'_>) -> Result<Execution, Error> {
-    let input: String = row.get(0)?;
-    let target: Option<String> = row.get(1)?;
-    let progress: String = row.get(2)?;
+    let input: String = row.get(/*idx*/ 0)?;
+    let target: Option<String> = row.get(/*idx*/ 1)?;
+    let progress: String = row.get(/*idx*/ 2)?;
     Ok(Execution {
         command: serde_json::from_str(&input)?,
         target: target
@@ -326,6 +355,24 @@ fn validate_result(command: &Command, result: &WorktreeExecutionResult) -> Resul
             (&r.node, &r.workspace_id, &r.worktree_id, false)
         }
     };
+    if matches!(
+        result,
+        WorktreeExecutionResult::Failed(WorktreeFailed {
+            failure: WorktreeFailure {
+                code: WorktreeFailureCode::ResultUnknown,
+                ..
+            },
+            ..
+        }) | WorktreeExecutionResult::RemovalFailed(WorktreeRemovalFailed {
+            failure: WorktreeFailure {
+                code: WorktreeFailureCode::ResultUnknown,
+                ..
+            },
+            ..
+        })
+    ) {
+        return Err(Error::InvalidTransition);
+    }
     let spec = command.spec();
     if node.node_id != spec.node_id
         || workspace != &spec.workspace_id

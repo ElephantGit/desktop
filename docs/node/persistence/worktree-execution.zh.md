@@ -1,8 +1,10 @@
 # Node Worktree 执行与持久化实施计划
 
-本 PR 将在 `apps/ora-node` 实现 Worktree 执行与恢复，在 `crates/node-db` 实现 Node 本地持久化，
-通过进程内接口完成创建、删除、查询、结果重放与确认的闭环。本文作为本次 PR 的 plan 和后续实现的检视基线；
-下文任务与验收项均表示待完成的工作，不表示已有实现。
+[English](worktree-execution.md) | 中文
+
+本 PR 已在 `apps/ora-node` 实现 Worktree 执行与恢复，在 `crates/node-db` 实现 Node 本地持久化，
+通过进程内接口完成创建、删除、查询、结果重放与确认的闭环。本文保留实施顺序和检视基线；
+已完成事项打勾，最终接口、测试证据及实现取舍见第 7 节。
 
 本 PR 对应本机 Worktree 最小闭环的第 2 步：`feat(node): execute worktree operations with durable recovery`。
 前一步已提供 `ora-node-protocol` 消息和 Frame Codec；下一步接入本机 IPC 和 Node 进程生命周期。
@@ -60,30 +62,31 @@ Git、存储故障和时间通过可注入接口控制，优先使用 trait 与�
 
 ### P1：建立两个包与初始化入口
 
-- [ ] 将 `apps/ora-node` 和 `crates/node-db` 加入 Cargo workspace、默认成员及必要依赖声明。
-- [ ] 定义进程内初始化输入：Node 数据库位置、本地仓库／Main Workspace 绑定、授权根和 Node 管理的 worktree 根。
-      本 PR 由调用方显式提供配置；默认安装路径和进程启动参数留给 IPC 步骤。
-- [ ] 持久保存 `NodeId`，每次运行生成新的 `NodeIncarnationId`。重开同一数据库沿用 NodeId；
+- [x] 将 `apps/ora-node` 和 `crates/node-db` 加入 Cargo workspace、默认成员及必要依赖声明。
+- [x] 定义进程内初始化输入：`home_directory`、本地仓库／Main Workspace 绑定、授权根和 Node 管理的 worktree 根。
+      本 PR 由调用方显式提供配置；部署时 `home_directory` 赋值为 `~/.ora/node`，数据库固定放在其下的 `ora-node.sqlite3`。
+      测试注入临时目录，不依赖进程环境；进程启动参数留给 IPC 步骤。
+- [x] 持久保存 `NodeId`，每次运行生成新的 `NodeIncarnationId`。重开同一数据库沿用 NodeId；
       请求或配置中的 NodeId 不匹配时拒绝执行，不改写旧记录的归属。
-- [ ] 定义单个 Node 数据库的执行所有者，阻止两个运行实例同时驱动其中的执行。
+- [x] 定义单个 Node 数据库的执行所有者，阻止两个运行实例同时驱动其中的执行。
       首版允许串行执行 Git 变更；无需实现通用多仓库并行调度，但同一仓库的创建、删除与恢复不能交错执行。
-- [ ] 明确初始化失败、恢复待处理和可接收新工作的状态；恢复入口可重复调用，失败时不绕过恢复直接执行。
+- [x] 明确初始化失败、恢复待处理和可接收新工作的状态；恢复入口可重复调用，失败时不绕过恢复直接执行。
 
 完成条件：测试可在临时目录初始化、关闭并重开同一 Node；身份与配置冲突可被观察；不需要启动 IPC。
 
 ### P2：实现独立 SQLite 存储与事务
 
-- [ ] 定义 Node 专属 schema 标识、版本及迁移入口；只升级可识别的 Node 数据库。
+- [x] 定义 Node 专属 schema 标识、版本及迁移入口；只升级可识别的 Node 数据库。
       若配置位置已有目录、其他数据库、损坏或不支持的 schema，返回明确错误并保留原内容，不覆盖或自动重建。
       新文件布局不能占用旧版 Ora 已使用的文件／目录路径。
-- [ ] 将下表数据持久化，并通过类型和数据库约束共同保护身份、归属及状态完整性。
-- [ ] 实现原子“接受或读取既有执行”，避免先查询后插入造成重复接受；首个闭环为一个 `operation_id`
+- [x] 将下表数据持久化，并通过类型和数据库约束共同保护身份、归属及状态完整性。
+- [x] 实现原子“接受或读取既有执行”，避免先查询后插入造成重复接受；首个闭环为一个 `operation_id`
       绑定一个 `execution_id`，不能换 execution 绕过去重。
       在接受事务中记录资源预留／归属及执行关联，防止不同身份并发占用同一 worktree、路径或分支；不能等 Git 成功后才记录归属。
       创建只预留未占用目标；删除引用既有归属记录，不能通过接受删除请求取得现有资源的所有权。
-- [ ] 实现带前置状态检查的更新；原子提交资源事实、终态结果和待确认事件。
+- [x] 实现带前置状态检查的更新；原子提交资源事实、终态结果和待确认事件。
       Git 命令不在 SQLite 事务中运行，持久化提交成功后才允许进入下一次外部变更或输出结果。
-- [ ] 实现按原身份查询、扫描待恢复执行、读取待确认事件和精确确认；确认清理投递记录后仍保留执行去重记录和结果。
+- [x] 实现按原身份查询、扫描待恢复执行、读取待确认事件和精确确认；确认清理投递记录后仍保留执行去重记录和结果。
 
 | 持久数据       | 必须保存的信息                                                                               |
 | -------------- | -------------------------------------------------------------------------------------------- |
@@ -102,37 +105,37 @@ Git、存储故障和时间通过可注入接口控制，优先使用 trait 与�
 
 ### P3：实现本地资源解析与所有权校验
 
-- [ ] 将 `RepositoryRef` 解析到初始化时提供的本地注册项；请求中的 Main Workspace 身份和 Node-scoped path
+- [x] 将 `RepositoryRef` 解析到初始化时提供的本地注册项；请求中的 Main Workspace 身份和 Node-scoped path
       必须匹配该注册项，并用 Git 证明它是相应仓库的有效 main worktree。
-- [ ] 复用 `ora-utils::path` 校验 `NodeManaged.directory_name`，本 PR 将它作为授权 worktree 根下的一个目录名；
+- [x] 复用 `ora-utils::path` 校验 `NodeManaged.directory_name`，本 PR 将它作为授权 worktree 根下的一个目录名；
       拒绝父目录穿越、绝对路径、平台保留形式及多级子路径。通过 `Path`／`PathBuf` 构造目标，校验已有前缀及静态符号链接逃逸。
-- [ ] 校验 main worktree 和目标路径的授权关系，拒绝目标与 main checkout 重叠、占用授权根本身、
+- [x] 校验 main worktree 和目标路径的授权关系，拒绝目标与 main checkout 重叠、占用授权根本身、
       或与另一资源的路径／分支冲突。路径通过校验不等于资源属于 Ora。
-- [ ] 创建前解析 base ref 到 commit 并保存；恢复时使用保存值。删除使用记录中的资源归属，
+- [x] 创建前解析 base ref 到 commit 并保存；恢复时使用保存值。删除使用记录中的资源归属，
       不要求任务分支仍停留在创建时的 commit，也不因原 base ref 后来移动或消失而删除其他资源。
-- [ ] 在每次变更及恢复前重新检查实际仓库、worktree 注册和资源归属；非空且无归属证据的目录保持原状。
+- [x] 在每次变更及恢复前重新检查实际仓库、worktree 注册和资源归属；非空且无归属证据的目录保持原状。
 
 完成条件：非法路径、错误 Node／仓库／Main Workspace、同名分支及资源冲突均在 Git 变更前被拒绝。
 共享路径工具不保证防御校验与使用之间的恶意符号链接替换；本 PR 不把静态包含校验宣称为操作系统级隔离。
 
 ### P4：接通创建、删除与持久结果
 
-- [ ] 进程内入口执行消息语义校验，不能依赖 Frame Codec 已检查输入。先检查既有执行身份及输入，
+- [x] 进程内入口执行消息语义校验，不能依赖 Frame Codec 已检查输入。先检查既有执行身份及输入，
       已完成重试直接读取原结果，不依赖当前仓库、base ref 或路径仍可访问。
-- [ ] 新请求按“校验并解析 → 持久接受 → 持久标记可能开始变更 → Git 执行 → 事实检查 → 原子完成”的顺序处理。
+- [x] 新请求按“校验并解析 → 持久接受 → 持久标记可能开始变更 → Git 执行 → 事实检查 → 原子完成”的顺序处理。
       写入失败时停止；副作用之后写入失败时保留可恢复记录，不提前返回成功。
       对身份合法但执行前置条件不满足的请求，原子保存输入、结构化失败及事件后返回；此类记录不要求有已解析目标。
       消息格式错误和身份冲突作为入口拒绝处理，不覆盖已有执行或伪造其终态事件。
-- [ ] `EnsureWorktree` 使用持久保存的路径、分支和 base commit 创建 linked worktree。
+- [x] `EnsureWorktree` 使用持久保存的路径、分支和 base commit 创建 linked worktree。
       成功结果的路径、分支来自 Git 观察，base commit 来自创建前已验证并持久保存的 Git 解析结果。
       核对 `gitlancer::create_worktree` 的失败补偿路径，确保其中的 worktree／分支清理也受同一执行身份和所有权约束。
-- [ ] `RemoveWorktree` 组合现有 `gitlancer::Git::delete_worktree` 和 `delete_branch`，依次移除 linked worktree
+- [x] `RemoveWorktree` 组合现有 `gitlancer::Git::delete_worktree` 和 `delete_branch`，依次移除 linked worktree
       与 Ora 为该任务创建的本地分支；每个阶段都可检查和恢复。沿用现有任务清理的 force 语义，显式使用类型化删除模式，
       仅清理已证明归属的 linked checkout 和本地任务分支，不以 force 绕过 main worktree、其他 worktree 占用或归属检查。
-- [ ] 删除完成前验证 worktree 注册、目标目录及该任务所属的本地分支均已不存在。
+- [x] 删除完成前验证 worktree 注册、目标目录及该任务所属的本地分支均已不存在。
       有 Node 归属记录的空目录可清理；非空残留、分支被其他 worktree 使用、或归属冲突时，报告结构化失败或保留未知状态。
       main worktree 删除必须显式拒绝。
-- [ ] 原子保存终态及原事件；通过进程内接口读取待确认事件，按精确身份确认，重放保持原 sequence 和结果。
+- [x] 原子保存终态及原事件；通过进程内接口读取待确认事件，按精确身份确认，重放保持原 sequence 和结果。
 
 `AlreadyAbsent` 仅用于已经证实完整清理目标都不存在的情况。仅 linked checkout 不存在、任务分支仍存在时，
 必须继续有归属证据的分支清理；无法完成时不得产生 `WorktreeRemoved`。
@@ -141,21 +144,21 @@ Git、存储故障和时间通过可注入接口控制，优先使用 trait 与�
 
 ### P5：实现状态查询、重放与崩溃恢复
 
-- [ ] 按第 4 节状态规则扫描并对账所有未完成记录，覆盖 Git 未开始、部分完成、完成未落盘和结果已落盘的窗口。
-- [ ] 恢复保留 operation／execution 身份和已解析目标；不能创建新的执行或重新挑选路径、分支、base commit。
-- [ ] 恢复检查完成前阻止相关新变更；未知记录继续阻止其资源上的冲突操作。
+- [x] 按第 4 节状态规则扫描并对账所有未完成记录，覆盖 Git 未开始、部分完成、完成未落盘和结果已落盘的窗口。
+- [x] 恢复保留 operation／execution 身份和已解析目标；不能创建新的执行或重新挑选路径、分支、base commit。
+- [x] 恢复检查完成前阻止相关新变更；未知记录继续阻止其资源上的冲突操作。
       查询、待确认事件读取和再次恢复应仍可用，不因一条未知记录丢失其他已完成结果。
-- [ ] 状态查询只返回执行证据，不确认事件、不清理投递记录，也不启动 Git。
+- [x] 状态查询只返回执行证据，不确认事件、不清理投递记录，也不启动 Git。
       待确认事件由独立接口枚举；下一步 Transport 据此主动重放，无需先查状态。
-- [ ] 校验确认中的 Node、operation、execution 和 sequence；重复精确确认幂等，错误或未来序号不能清理其他事件。
+- [x] 校验确认中的 Node、operation、execution 和 sequence；重复精确确认幂等，错误或未来序号不能清理其他事件。
       已确认执行仍可查询原结果，不重新生成待确认事件。
 
 完成条件：关闭并重开数据库后，原输入、结果与未确认事件可恢复；事实不充分时返回 `Unknown` 并保持可再次对账。
 
 ### P6：补齐检视证据与交接
 
-- [ ] 为第 5 节每项验收条件提供直接测试证据，记录实际测试入口；未完成项保留未勾选状态。
-- [ ] 同步中英文 plan，补充最终接口、schema／布局和必要的实现取舍；若语义改变，同步检查相关 ADR。
+- [x] 为第 5 节每项验收条件提供直接测试证据，记录实际测试入口；未完成项保留未勾选状态。
+- [x] 同步中英文 plan，补充最终接口、schema／布局和必要的实现取舍；若语义改变，同步检查相关 ADR。
 - [ ] 运行相关 crate 测试和 lint，再运行完整 `task test`；将结果与剩余限制写入 PR。
       本 PR 的执行与持久化恢复必须完整，不把这些验证延期到最后的旧代码清理步骤。
 
@@ -222,12 +225,79 @@ cargo clippy -p ora-node-db -p ora-node --all-targets -- -D warnings
 ```
 
 若修改 `gitlancer`、`ora-utils` 或 `ora-node-protocol`，追加相应 crate 的测试与 lint。
-最后运行 `task test`。这些命令针对后续实现，本次 plan 文档修改本身只需检查格式、链接与中英文一致性。
+最后运行 `task test`。这些命令对应本次实现；实际验证结果见第 7 节。
 
 ## 6. PR 完成条件
 
 - [ ] P1–P6 完成，V1–V12 各有直接证据，相关验证通过。
-- [ ] Reviewer 能从请求沿着持久接受、Git 变更、结果事务、重放／确认和重启恢复检查完整链路。
-- [ ] 数据库或 Git 任一阶段失败时，都能说明保留了什么事实、后续允许做什么；没有以新身份绕过不确定状态的路径。
-- [ ] main worktree 与任务资源的归属和清理范围明确，旧文件布局不会被覆盖，新旧写入入口尚未同时接管同一资源。
-- [ ] 下一步 IPC 可直接使用本 PR 的初始化、命令、查询、待确认事件与确认接口；无需再补持久去重、分支清理或崩溃恢复才能接入。
+- [x] Reviewer 能从请求沿着持久接受、Git 变更、结果事务、重放／确认和重启恢复检查完整链路。
+- [x] 数据库或 Git 任一阶段失败时，都能说明保留了什么事实、后续允许做什么；没有以新身份绕过不确定状态的路径。
+- [x] main worktree 与任务资源的归属和清理范围明确，旧文件布局不会被覆盖，新旧写入入口尚未同时接管同一资源。
+- [x] 下一步 IPC 可直接使用本 PR 的初始化、命令、查询、待确认事件与确认接口；无需再补持久去重、分支清理或崩溃恢复才能接入。
+
+## 7. 最终接口、实现取舍与验证证据
+
+### 调用入口与布局
+
+`Node::open(NodeConfig)` 使用真实 Git 和 Ora 本地时钟；进程入口应先初始化 Ora logging 的时区。
+测试使用 `Node::open_with_dependencies(config, git, writes, clock)`，分别注入 `WorktreeGit`、
+`WriteGuard` 和 `Clock`。Node 持有 `home_directory`，不读取 `HOME`。
+[存储布局与 schema](storage.zh.md)说明 `home_directory/ora-node.sqlite3`、文件保护和表约束。
+
+- `submit(Command::Ensure(message) | Command::Remove(message))` 返回 `ExecutionStatus`。
+- `status(&GetExecutionStatusMessage)` 返回当前报告实例及持久状态；不启动 Git、不确认事件。
+- `pending_events()` 返回原始协议事件；`acknowledge(&EventAckMessage)` 精确确认。
+- `state()` 区分 `Ready` 与 `RecoveryPending`；`recover()` 可重复对账全部未完成执行。
+- `identity()`、`node_id()`、`home_directory()` 和 `repositories()` 提供只读运行信息。
+
+所有变更入口要求 `&mut Node`；共享调用方可使用 Mutex，并发重传等待同一执行结果。
+数据库文件上的独占 OS 锁阻止不同运行实例同时执行，关闭时显式解锁，避免并行 spawn 的子进程临时
+继承描述符导致重开误报冲突。首版采用整个 Node 的恢复门禁：任何未完成记录阻止新命令，但原执行
+重传、状态查询、事件读取、确认和再次恢复仍可用。门禁比按仓库／资源加锁更保守，避免引入调度器。
+
+`Target` 单独持久保存 main 路径、实际 Git metadata directory、授权根、worktree 根、任务路径、
+分支和不可变 base commit。运行时重复校验这些事实，配置变化不能重定向原执行。
+Git 报告的 main registration 必须与绑定路径一致；不能只因某目录能运行 Git 就把它当作 main checkout。
+linked checkout 还要通过 metadata directory 的 `commondir` 与 `gitdir` 回指验证。
+
+`gitlancer::create_worktree_for_recovery` 只执行 add，由 Node 负责后续事实检查；不会在观察失败时
+隐式清理现场。删除沿用 typed Force 模式，按 checkout、空残留目录、任务分支分阶段落盘与复查。
+精确本地分支名不受同名 tag 影响。删除归属检查忽略可变 `base_ref`，保留其他身份与目标匹配要求。
+
+前置条件失败原子持久保存失败结果和事件；消息格式错误、Node 或执行身份冲突只拒绝入口。
+副作用后的存储错误不返回成功，剩余记录阻止新变更并允许恢复。未解释的残留和检查失败保留 Unknown，
+不存为 `Completed(Failed(ResultUnknown))`。结果与原实例、原 sequence 1 一起保留，确认只删除 outbox。
+已确定无副作用的创建失败会退役其资源预留，释放路径、分支和 Workspace 的 active 唯一约束；
+旧执行输入及失败结果仍保留。已退役资源的 tombstone 不授权删除后来出现的同路径资源。
+
+### 直接测试证据
+
+下面均为 crate 内单元测试；Node 的 Git 场景使用真实临时仓库，故障通过适配器及 SQLite 写入边界注入。
+线程同步使用 Barrier、Mutex 与 channel，不使用 sleep 或修改进程环境。
+
+| 验收 | 测试（省略公共模块前缀）                                                                                                                                                                                                                                                               |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| V1   | `identity_and_exclusive_owner_survive_reopen`、`preserves_foreign_corrupt_empty_and_future_files`、`rejects_modified_schema_without_migrating_or_rebuilding`、`injected_home_persists_node_but_not_incarnation`                                                                        |
+| V2   | `completion_and_outbox_rollback_together_and_ack_retains_result`、`sqlite_failures_gate_mutations_and_recover_on_reopen`                                                                                                                                                               |
+| V3   | `atomic_acceptance_deduplicates_and_reserves_resources`、`duplicate_inputs_and_resource_conflicts_preserve_original_result`、`concurrent_retransmissions_mutate_once`                                                                                                                  |
+| V4   | `invalid_paths_bindings_and_unowned_resources_never_mutate_git`、`existing_targets_and_main_workspace_are_protected`、`static_symlink_escape_is_rejected`（Unix）、`inconsistent_main_registration_is_rejected`, `main_checkout_overlap_is_rejected_even_for_a_distinct_task_identity` |
+| V5   | `real_create_remove_replay_and_acknowledgement`、`completed_retry_ignores_moved_base_and_missing_configuration`                                                                                                                                                                        |
+| V6   | `sqlite_failures_gate_mutations_and_recover_on_reopen`、`process_stops_before_and_after_create_keep_frozen_identity_and_base`、`branch_only_creation_remains_unknown_and_preserves_other_results`、`changed_checkout_and_unavailable_git_keep_unknown_evidence`                        |
+| V7   | `real_create_remove_replay_and_acknowledgement`、`missing_checkout_still_cleans_branch_and_empty_owned_directory`                                                                                                                                                                      |
+| V8   | `partial_removal_continues_only_the_owned_branch`                                                                                                                                                                                                                                      |
+| V9   | `existing_targets_and_main_workspace_are_protected`、`real_create_remove_replay_and_acknowledgement`、`missing_checkout_still_cleans_branch_and_empty_owned_directory`、`branch_cleanup_uses_exact_local_names_even_with_ambiguous_tags`                                               |
+| V10  | `real_create_remove_replay_and_acknowledgement`                                                                                                                                                                                                                                        |
+| V11  | `completion_and_outbox_rollback_together_and_ack_retains_result`、`real_create_remove_replay_and_acknowledgement`                                                                                                                                                                      |
+| V12  | `recovery_and_new_submission_share_one_mutation_owner`、`branch_only_creation_remains_unknown_and_preserves_other_results`、`configuration_change_keeps_recovery_pending_without_redirecting_mutations`                                                                                |
+
+测试实现位于 `crates/node-db/src/tests.rs` 和 `apps/ora-node/src/tests/`；Git 适配接口还在
+`crates/gitlancer/src/git/inspection.rs` 有单元测试。
+
+验证结果：`task format`、相关 crate 测试、`--all-targets` Clippy 和完整 `task test:crates` 通过。
+`task test` 已运行，但在未改动的前端用例
+`packages/app-shell/src/features/chat/chat-view.test.tsx` 的
+`copies a selected transcript through the conversation context menu` 失败：clipboard `writeText` mock
+未被调用。单独复跑该测试文件仍出现同一失败（其余 80 个用例通过）。因此 P6 的全套验证和 PR
+整体通过条件保留未勾选；这项失败不是 Node 验收测试的替代或延期。
+本次不实现 IPC、进程启动、Controller 接管或旧 Backend 入口切换。静态路径验证不防御恶意 TOCTOU 替换；
+外部 Git 不承诺严格恰好执行一次，恢复以持久意图和可验证资源事实为依据。

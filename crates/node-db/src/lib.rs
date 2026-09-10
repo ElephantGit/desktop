@@ -2,6 +2,7 @@
 mod execution;
 mod model;
 mod schema;
+pub use execution::owns;
 pub use model::*;
 
 use ora_node_protocol::NodeId;
@@ -54,7 +55,7 @@ pub struct NodeDatabase<G = DurableWrites> {
     connection: Connection,
     node_id: NodeId,
     // Lock the database inode itself so alternate spellings cannot acquire another lease.
-    _lease: File,
+    _lease: Lease,
 }
 
 impl NodeDatabase<DurableWrites> {
@@ -67,23 +68,33 @@ impl NodeDatabase<DurableWrites> {
 impl<G: WriteGuard> NodeDatabase<G> {
     /// Uses real SQLite with an injectable transaction failure boundary.
     pub fn open_with_guard(path: &Path, identity: NodeIdentity, guard: G) -> Result<Self, Error> {
+        if matches!(&identity, NodeIdentity::Require(id) if id.as_str().trim().is_empty()) {
+            return Err(Error::NodeMismatch);
+        }
         let (lease, created) = match OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
+            .read(/*read*/ true)
+            .write(/*write*/ true)
+            .create_new(/*create_new*/ true)
             .open(path)
         {
             Ok(file) => (file, true),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                (OpenOptions::new().read(true).write(true).open(path)?, false)
+                (
+                    OpenOptions::new()
+                        .read(/*read*/ true)
+                        .write(/*write*/ true)
+                        .open(path)?,
+                    false,
+                )
             }
             Err(error) => return Err(error.into()),
         };
         lease.try_lock().map_err(|_| Error::AlreadyRunning)?;
+        let lease = Lease(lease);
         let mut connection = Connection::open(path)?;
         let node_id = schema::initialize(&mut connection, created, &identity)?;
-        connection.pragma_update(None, "foreign_keys", "ON")?;
-        connection.pragma_update(None, "synchronous", "FULL")?;
+        connection.pragma_update(/*schema_name*/ None, "foreign_keys", "ON")?;
+        connection.pragma_update(/*schema_name*/ None, "synchronous", "FULL")?;
         Ok(Self {
             guard,
             connection,
@@ -100,3 +111,12 @@ impl<G: WriteGuard> NodeDatabase<G> {
 
 #[cfg(test)]
 mod tests;
+
+/// Explicit unlock prevents transient inherited descriptors in concurrent child spawns retaining the lease.
+struct Lease(File);
+impl Drop for Lease {
+    /// Releases ownership after SQLite has closed, even if a forked child still holds a descriptor.
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}

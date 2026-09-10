@@ -24,6 +24,17 @@ impl<R: GitRunner> Git<R> {
         Ok(crate::parse::commit::parse_commit_id(&output.stdout)?)
     }
 
+    /// Returns the live checkout root, rejecting bare repositories and metadata-only directories.
+    pub fn checkout_root(&self, checkout: &Path) -> Result<PathBuf, GitlancerError> {
+        let output = self.runner().run(&GitCommand::new(
+            checkout.to_path_buf(),
+            vec!["rev-parse".into(), "--show-toplevel".into()],
+            GitEnv::default(),
+            GitIntent::ReadOnly,
+        ))?;
+        Ok(PathBuf::from(output.stdout.trim_end()).canonicalize()?)
+    }
+
     /// Reads Git's actual checkout metadata directory, allowing callers to compare registration facts.
     pub fn checkout_git_directory(&self, checkout: &Path) -> Result<PathBuf, GitlancerError> {
         let output = self.runner().run(&GitCommand::new(
@@ -33,6 +44,25 @@ impl<R: GitRunner> Git<R> {
             GitIntent::ReadOnly,
         ))?;
         Ok(PathBuf::from(output.stdout.trim_end()))
+    }
+
+    /// Proves the linked metadata directory points back to this checkout and belongs to this main Git directory.
+    pub fn verify_linked_checkout(
+        &self,
+        checkout: &Path,
+        main_git_directory: &Path,
+    ) -> Result<(), GitlancerError> {
+        let directory = self.checkout_git_directory(checkout)?.canonicalize()?;
+        let common = std::fs::read_to_string(directory.join("commondir"))?;
+        let backlink = std::fs::read_to_string(directory.join("gitdir"))?;
+        if directory.join(common.trim_end()).canonicalize()? != main_git_directory
+            || Path::new(backlink.trim_end()).canonicalize()?
+                != checkout.join(".git").canonicalize()?
+            || !directory.starts_with(main_git_directory.join("worktrees"))
+        {
+            return Err(crate::DomainError::NotAWorktree(checkout.to_path_buf()).into());
+        }
+        Ok(())
     }
 
     /// Checks literal branch syntax; callers must not accept Git's previous-checkout expansion.
@@ -127,7 +157,7 @@ mod tests {
     /// Option-like references stay behind end-of-options and resolve to immutable full commit IDs.
     #[test]
     fn commit_resolution_is_option_safe() {
-        let commit = "a".repeat(40);
+        let commit = "a".repeat(/*n*/ 40);
         let git = Git::new(Runner {
             commands: RefCell::default(),
             output: Ok(GitOutput::new(

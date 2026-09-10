@@ -188,6 +188,7 @@ pub enum WritePoint {
 /// Injects storage failure without substituting an in-memory database for durable tests.
 /// Implementations must return an error before the named transaction can commit.
 pub trait WriteGuard {
+    /// Refuses the named boundary before its transaction commits.
     fn before_write(&self, point: WritePoint) -> Result<(), crate::Error>;
 }
 /// Production writes rely on SQLite's actual error reporting.

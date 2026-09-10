@@ -21,3 +21,6 @@ operation／execution 唯一约束阻止身份改绑。Git 开始前预留 activ
 
 `WriteGuard` 提供真实 SQLite 事务的故障注入点。`ora-node-db` 单元测试覆盖独占归属、文件保护、去重、
 资源预留、事务回滚、重开和确认。测试入口：`cargo test -p ora-node-db -p ora-node`。
+
+启动时还会校验表、索引定义及外键完整性，schema 标识本身不能授权未知结构。已确定无副作用的创建失败
+退役预留并释放 active 唯一约束，保留执行去重和失败结果。未确定的执行继续持有预留。
