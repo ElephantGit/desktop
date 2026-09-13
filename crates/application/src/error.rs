@@ -168,6 +168,8 @@ pub enum ApplicationError {
     },
     #[error("workflow version is invalid")]
     WorkflowVersionInvalid,
+    #[error("workflow graph is invalid and cannot be published")]
+    WorkflowGraphInvalid,
     #[error("workflow version 'draft' is reserved")]
     WorkflowVersionReserved,
     #[error("cannot delete the draft snapshot")]
@@ -422,6 +424,7 @@ impl PartialEq for ApplicationError {
             | (TaskWorktreeRootUnavailable, TaskWorktreeRootUnavailable)
             | (WorkflowNameBlank, WorkflowNameBlank)
             | (WorkflowVersionInvalid, WorkflowVersionInvalid)
+            | (WorkflowGraphInvalid, WorkflowGraphInvalid)
             | (WorkflowVersionReserved, WorkflowVersionReserved)
             | (WorkflowCannotDeleteDraft, WorkflowCannotDeleteDraft)
             | (WorkflowCannotDeleteActiveVersion, WorkflowCannotDeleteActiveVersion)

@@ -7,6 +7,7 @@ export const workflowEditorTranslations = {
     "errors.workflow_snapshot_not_found": "未找到该工作流快照。",
     "errors.workflow_version_already_exists": "该工作流版本已存在。",
     "errors.workflow_version_invalid": "工作流版本无效。",
+    "errors.workflow_graph_invalid": "工作流图结构无效，请修复后再发布。",
     "errors.workflow_version_reserved": "该工作流版本名称已保留。",
     "errors.workflow_cannot_delete_draft": "不能删除工作流草稿。",
     "errors.workflow_cannot_delete_active_version":
@@ -39,6 +40,8 @@ export const workflowEditorTranslations = {
     "settings.workflow.importError": "无法导入：请选择有效的工作流 JSON 文件。",
     "settings.workflow.importPublishSuccess":
       "已导入“{{name}}”并发布版本 {{version}}",
+    "settings.workflow.importDraftNeedsMcpRepair":
+      "已将“{{name}}”导入为草稿；请修复旧版 MCP 标识后再发布",
     "settings.workflow.exportError": "无法导出工作流文件。",
     "settings.workflow.noWorkflows": "没有匹配的工作流",
     "settings.workflow.deleteWorkflowTitle": "删除“{{name}}”？",
@@ -240,6 +243,10 @@ export const workflowEditorTranslations = {
     "settings.workflow.publishTitle": "发布工作流",
     "settings.workflow.publishDescription":
       "发布后，当前草稿将固化为可运行的工作流版本。",
+    "settings.workflow.publishInvalidMcpTitle": "当前草稿不能发布",
+    "settings.workflow.publishInvalidMcpDescription":
+      "以下 MCP 标识不是“命名空间/名称”格式。请在对应节点中移除或替换这些绑定。",
+    "settings.workflow.publishInvalidMcpItem": "节点“{{node}}”：{{id}}",
     "settings.workflow.publishVersionPlaceholder":
       "版本名（可选，留空自动生成）",
     "settings.workflow.publishError": "发布工作流失败。",
@@ -265,15 +272,17 @@ export const workflowEditorTranslations = {
     "settings.workflow.searchAvailableRoles": "搜索可用角色",
     "settings.workflow.noAvailableRoles": "没有可用角色",
     "settings.workflow.noRole": "无角色",
-    "settings.workflow.field.skills": "Skills",
+    "settings.workflow.field.skills": "必需 Skill",
     "settings.workflow.addSkill": "添加 Skill",
     "settings.workflow.searchAvailableSkills": "搜索可添加的 Skill",
     "settings.workflow.noAvailableSkills": "没有可添加的 Skill",
-    "settings.workflow.noConfiguredSkills": "暂未配置 Skill",
-    "settings.workflow.enabledSkillCount": "{{enabled}}/{{total}} 已启用",
+    "settings.workflow.noConfiguredSkills": "本节点没有强制调用项",
+    "settings.workflow.enabledSkillCount": "{{enabled}}/{{total}} 个必需项",
     "settings.workflow.toggleSkill": "启用或禁用 {{name}}",
     "settings.workflow.removeSkill": "移除 {{name}}",
-    "settings.workflow.field.mcps": "MCP",
+    "settings.workflow.skillRequirementHint":
+      "Skill 会安装到工作区；在此启用表示本节点必须调用，不代表安全隔离。",
+    "settings.workflow.field.mcps": "允许的 MCP",
     "settings.workflow.addMcp": "添加 MCP",
     "settings.workflow.mcp.loading": "正在加载已安装的 MCP…",
     "settings.workflow.mcp.loadError": "无法加载已安装的 MCP，已有配置已保留。",
@@ -285,10 +294,12 @@ export const workflowEditorTranslations = {
     "settings.workflow.mcp.invalidDeclaration": "插件声明无效",
     "settings.workflow.searchAvailableMcps": "搜索可添加的 MCP",
     "settings.workflow.noAvailableMcps": "没有可添加的 MCP",
-    "settings.workflow.noConfiguredMcps": "暂未配置 MCP（可选）",
-    "settings.workflow.enabledMcpCount": "{{enabled}}/{{total}} 已启用",
+    "settings.workflow.noConfiguredMcps": "本节点未获授权使用任何 MCP",
+    "settings.workflow.enabledMcpCount": "{{enabled}}/{{total}} 个已授权",
     "settings.workflow.toggleMcp": "启用或禁用 {{name}}",
     "settings.workflow.removeMcp": "移除 {{name}}",
+    "settings.workflow.mcpAuthorizationHint":
+      "安装只会加入全局可选目录；只有在此启用的 MCP 才会授权给本节点会话。",
     "settings.workflow.field.prompt": "自定义 Prompt",
     "settings.workflow.field.insertVariable": "插入变量",
     "settings.workflow.field.promptCharacterCount": "{{count}} 个字符",
@@ -356,6 +367,8 @@ export const workflowEditorTranslations = {
     "errors.workflow_version_already_exists":
       "That workflow version already exists.",
     "errors.workflow_version_invalid": "Workflow version is invalid.",
+    "errors.workflow_graph_invalid":
+      "The workflow graph is invalid. Repair it before publishing.",
     "errors.workflow_version_reserved": "That workflow version is reserved.",
     "errors.workflow_cannot_delete_draft": "Cannot delete the workflow draft.",
     "errors.workflow_cannot_delete_active_version":
@@ -394,6 +407,8 @@ export const workflowEditorTranslations = {
       "Import failed. Select a valid workflow JSON file.",
     "settings.workflow.importPublishSuccess":
       "Imported “{{name}}” and published version {{version}}",
+    "settings.workflow.importDraftNeedsMcpRepair":
+      "Imported “{{name}}” as a draft. Repair its legacy MCP IDs before publishing.",
     "settings.workflow.exportError": "The workflow file could not be exported.",
     "settings.workflow.noWorkflows": "No matching workflows",
     "settings.workflow.deleteWorkflowTitle": "Delete “{{name}}”?",
@@ -610,6 +625,11 @@ export const workflowEditorTranslations = {
     "settings.workflow.publishTitle": "Publish workflow",
     "settings.workflow.publishDescription":
       "Publishing freezes the current draft into a runnable workflow version.",
+    "settings.workflow.publishInvalidMcpTitle":
+      "The current draft cannot be published",
+    "settings.workflow.publishInvalidMcpDescription":
+      "These MCP IDs do not use the namespace/name format. Remove or replace the bindings in their nodes.",
+    "settings.workflow.publishInvalidMcpItem": "Node “{{node}}”: {{id}}",
     "settings.workflow.publishVersionPlaceholder":
       "Version name (optional; auto-generated when empty)",
     "settings.workflow.publishError": "Failed to publish the workflow.",
@@ -636,15 +656,18 @@ export const workflowEditorTranslations = {
     "settings.workflow.searchAvailableRoles": "Search available Roles",
     "settings.workflow.noAvailableRoles": "No available Roles",
     "settings.workflow.noRole": "No role",
-    "settings.workflow.field.skills": "Skills",
+    "settings.workflow.field.skills": "Required Skills",
     "settings.workflow.addSkill": "Add Skill",
     "settings.workflow.searchAvailableSkills": "Search available Skills",
     "settings.workflow.noAvailableSkills": "No available Skills",
-    "settings.workflow.noConfiguredSkills": "No Skills configured",
-    "settings.workflow.enabledSkillCount": "{{enabled}}/{{total}} enabled",
+    "settings.workflow.noConfiguredSkills":
+      "This node has no mandatory Skill invocations",
+    "settings.workflow.enabledSkillCount": "{{enabled}}/{{total}} required",
     "settings.workflow.toggleSkill": "Enable or disable {{name}}",
     "settings.workflow.removeSkill": "Remove {{name}}",
-    "settings.workflow.field.mcps": "MCP",
+    "settings.workflow.skillRequirementHint":
+      "Skills are installed in the workspace. Enabling one here requires this node to invoke it; it is not a security boundary.",
+    "settings.workflow.field.mcps": "Allowed MCPs",
     "settings.workflow.addMcp": "Add MCP",
     "settings.workflow.mcp.loading": "Loading installed MCPs…",
     "settings.workflow.mcp.loadError":
@@ -660,10 +683,13 @@ export const workflowEditorTranslations = {
     "settings.workflow.mcp.invalidDeclaration": "Plugin declaration is invalid",
     "settings.workflow.searchAvailableMcps": "Search available MCPs",
     "settings.workflow.noAvailableMcps": "No available MCPs",
-    "settings.workflow.noConfiguredMcps": "No MCPs configured (optional)",
-    "settings.workflow.enabledMcpCount": "{{enabled}}/{{total}} enabled",
+    "settings.workflow.noConfiguredMcps":
+      "This node is not authorized to use any MCP",
+    "settings.workflow.enabledMcpCount": "{{enabled}}/{{total}} authorized",
     "settings.workflow.toggleMcp": "Enable or disable {{name}}",
     "settings.workflow.removeMcp": "Remove {{name}}",
+    "settings.workflow.mcpAuthorizationHint":
+      "Installation only adds an MCP to the global catalog. This node session is authorized to receive enabled MCPs only.",
     "settings.workflow.field.prompt": "Custom prompt",
     "settings.workflow.field.insertVariable": "Insert variable",
     "settings.workflow.field.promptCharacterCount": "{{count}} characters",

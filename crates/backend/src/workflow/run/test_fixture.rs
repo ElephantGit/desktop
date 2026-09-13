@@ -151,6 +151,7 @@ pub(crate) fn started_run(
             AgentRef::parse("ora-space.opencode").unwrap(),
             "provider-session-1",
             SessionStatus::Stopped,
+            ora_domain::SessionMcpSelection::Automatic,
             AuditFields::new(25, 25, false),
         ))
         .unwrap();

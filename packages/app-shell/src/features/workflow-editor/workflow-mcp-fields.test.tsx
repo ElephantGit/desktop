@@ -7,14 +7,50 @@ import {
   createMockWorkflowCapabilities,
   type WorkflowAgentConfig,
   type WorkflowMcpChoice,
+  type WorkflowNodeData,
 } from "@ora/workflow-mock";
+import type { Node } from "@xyflow/react";
 import { appI18n } from "../../i18n/i18n-instance";
 import { AppI18nProvider } from "../../i18n/i18n";
 import {
+  invalidWorkflowMcpBindings,
+  isCanonicalPluginId,
   workflowMcpChoices,
   type WorkflowMcpCatalogStatus,
 } from "./mcp-catalog";
 import { WorkflowMcpFields } from "./workflow-mcp-fields";
+
+describe("workflow MCP identity validation", () => {
+  it("reports legacy bare IDs with their owning node", () => {
+    const node = {
+      id: "agent-1",
+      position: { x: 0, y: 0 },
+      data: {
+        kind: "agent",
+        title: "Review",
+        description: "",
+        agentConfig: {
+          schemaVersion: 3,
+          executor: { agentCli: "ora-space.opencode", modelId: "model" },
+          roleId: "",
+          skills: [],
+          mcps: [
+            { mcpId: "github", enabled: true },
+            { mcpId: "official/github", enabled: false },
+          ],
+          prompt: "Review",
+        },
+      },
+      type: "workflow",
+    } satisfies Node<WorkflowNodeData, "workflow">;
+
+    expect(isCanonicalPluginId("official/github")).toBe(true);
+    expect(isCanonicalPluginId("github")).toBe(false);
+    expect(invalidWorkflowMcpBindings([node])).toEqual([
+      { nodeId: "agent-1", nodeTitle: "Review", mcpId: "github" },
+    ]);
+  });
+});
 
 /** Creates installed metadata without starting a plugin process. */
 function plugin(

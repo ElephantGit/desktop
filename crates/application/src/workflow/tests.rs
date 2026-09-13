@@ -36,7 +36,7 @@ fn publish_uses_the_injected_clock_for_automatic_versions() {
             id: "snapshot-1".to_string(),
             workflow_id: "workflow-1".to_string(),
             version: "v42".to_string(),
-            graph: "{\"nodes\":[]}".to_string(),
+            graph: "{\"nodes\":[],\"edges\":[]}".to_string(),
             created_at: 42,
             updated_at: None,
         }
@@ -68,7 +68,7 @@ fn publish_retries_automatic_versions_that_collide_at_the_same_clock_value() {
             id: "snapshot-1".to_string(),
             workflow_id: "workflow-1".to_string(),
             version: "v42-1".to_string(),
-            graph: "{\"nodes\":[]}".to_string(),
+            graph: "{\"nodes\":[],\"edges\":[]}".to_string(),
             created_at: 42,
             updated_at: None,
         }
@@ -95,6 +95,38 @@ fn publish_rejects_an_invalid_version_before_writing() {
             ApplicationError::WorkflowVersionInvalid
         );
     }
+}
+
+/// Publishing rejects malformed legacy MCP IDs while leaving the draft available for repair.
+#[test]
+fn publish_rejects_an_invalid_workflow_graph_before_writing() {
+    let mut draft = draft_snapshot();
+    draft.graph = serde_json::json!({
+        "nodes": [{
+            "id": "agent",
+            "data": {
+                "kind": "agent",
+                "agentConfig": {"mcps": [{"mcpId": "github", "enabled": true}]}
+            }
+        }],
+        "edges": []
+    })
+    .to_string();
+    let handler = PublishWorkflowHandler::new(
+        Arc::new(PublishRepository::new(draft, Vec::new())),
+        FixedWorkflowIdGenerator,
+        FixedClock(42),
+    );
+
+    assert_eq!(
+        handler
+            .handle(ora_contracts::PublishWorkflowRequest {
+                workflow_id: "workflow-1".to_string(),
+                version: None,
+            })
+            .unwrap_err(),
+        ApplicationError::WorkflowGraphInvalid
+    );
 }
 
 /// Supplies the fixed draft needed by publish-handler tests.
@@ -264,7 +296,7 @@ fn draft_snapshot() -> WorkflowSnapshot {
         WorkflowSnapshotId::new("draft-1"),
         WorkflowId::new("workflow-1"),
         "draft",
-        "{\"nodes\":[]}",
+        "{\"nodes\":[],\"edges\":[]}",
         1,
         Some(1),
         /*is_deleted*/ false,

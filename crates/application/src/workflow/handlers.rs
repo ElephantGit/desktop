@@ -416,7 +416,6 @@ where
         request: PublishWorkflowRequest,
     ) -> Result<PublishWorkflowResponse, ApplicationError> {
         let workflow_id = WorkflowId::new(request.workflow_id);
-
         let now = self.clock.now_timestamp_millis();
         let snapshot_id = self.id_generator.generate_snapshot_id();
 
@@ -438,6 +437,16 @@ where
             }
             None => (format!("v{now}"), true),
         };
+        let draft = self
+            .repository
+            .find_snapshot_by_version(&workflow_id, DRAFT_VERSION)
+            .map_err(ApplicationError::from_workflow_repository_error)?
+            .ok_or_else(|| ApplicationError::WorkflowSnapshotNotFound {
+                workflow_id: workflow_id.to_string(),
+                version: DRAFT_VERSION.to_string(),
+            })?;
+        crate::WorkflowGraph::parse(&draft.graph)
+            .map_err(|_source| ApplicationError::WorkflowGraphInvalid)?;
 
         for collision_retry in 0..=MAX_AUTOMATIC_VERSION_COLLISION_RETRIES {
             let created = self
@@ -461,6 +470,9 @@ where
                         workflow_id: workflow_id.to_string(),
                         version: DRAFT_VERSION.to_string(),
                     });
+                }
+                PublishSnapshotResult::GraphInvalid => {
+                    return Err(ApplicationError::WorkflowGraphInvalid);
                 }
                 PublishSnapshotResult::VersionAlreadyExists
                     if is_automatic_version

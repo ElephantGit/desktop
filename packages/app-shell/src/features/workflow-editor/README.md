@@ -9,6 +9,8 @@ category.
 - Persist and edit the workflow library (create, rename, delete, import, export).
 - Render the React Flow canvas and the node inspector for the selected draft.
 - Autosave the open draft and publish / preview / activate versions.
+- Explain malformed legacy MCP IDs in the publish dialog and keep imported legacy graphs as
+  editable drafts until those bindings are repaired.
 - Keep a session-only semantic history for undo, redo, and direct history jumps.
 - Show unpublished vs the active published version as muted canvas caption
   beside the history control.
@@ -27,7 +29,9 @@ category.
 - Agent-node MCP choices derive from `useInstalledPlugins` (`kind: "mcp"`) and share plugin-query
   invalidation with Settings. Canonical IDs and enabled flags persist in the graph; availability
   is display metadata. Missing or unavailable bindings stay editable, and discovery failure
-  offers retry without claiming that installed plugins disappeared.
+  offers retry without claiming that installed plugins disappeared. Installation only populates
+  the global catalog; enabled bindings are the node Session's allowlist. Agent-node Skill switches
+  instead express mandatory invocation and do not provide node-level Skill isolation.
 
 ## Key invariants
 

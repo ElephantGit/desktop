@@ -503,6 +503,11 @@ impl From<ApplicationError> for BackendError {
                 PublicError::WorkflowVersionInvalid(EmptyErrorParams {}),
                 "workflow version is invalid",
             ),
+            ApplicationError::WorkflowGraphInvalid => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowGraphInvalid(EmptyErrorParams {}),
+                "workflow graph is invalid and cannot be published",
+            ),
             ApplicationError::WorkflowVersionReserved => (
                 ErrorClassification::InvalidRequest,
                 PublicError::WorkflowVersionReserved(EmptyErrorParams {}),
@@ -773,6 +778,11 @@ mod tests {
                 ApplicationError::WorkflowVersionInvalid,
                 ErrorClassification::InvalidRequest,
                 PublicError::WorkflowVersionInvalid(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowGraphInvalid,
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowGraphInvalid(EmptyErrorParams {}),
             ),
             (
                 ApplicationError::WorkflowVersionReserved,

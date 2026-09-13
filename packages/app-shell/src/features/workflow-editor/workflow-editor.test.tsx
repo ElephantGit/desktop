@@ -465,6 +465,75 @@ describe("WorkflowEditor", () => {
     ).toBeInTheDocument();
   });
 
+  it("blocks publishing a draft that still contains a legacy MCP id", async () => {
+    const user = userEvent.setup();
+    const state = createFixtureState();
+    seedDemoWorkflows(state);
+    const draft = state.workflows[0]!.draft;
+    const graph = JSON.parse(draft.graph) as {
+      nodes: Array<{
+        data: {
+          kind: string;
+          title: string;
+          agentConfig?: { mcps: Array<{ mcpId: string; enabled: boolean }> };
+        };
+      }>;
+    };
+    const agentNode = graph.nodes.find((node) => node.data.kind === "agent")!;
+    agentNode.data.agentConfig!.mcps = [{ mcpId: "github", enabled: true }];
+    draft.graph = JSON.stringify(graph);
+    renderEditor(undefined, state, undefined, false);
+
+    await screen.findByLabelText("工作流画布");
+    await user.click(screen.getByLabelText("版本历史"));
+    await user.click(screen.getByRole("button", { name: "发布当前草稿" }));
+
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "发布工作流",
+    });
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(
+      `节点“${agentNode.data.title}”：github`,
+    );
+    expect(within(dialog).getByRole("button", { name: "发布" })).toBeDisabled();
+  });
+
+  it("imports a workflow with a legacy MCP id as an unpublished draft", async () => {
+    const state = createFixtureState();
+    const imported = structuredClone(createMockWorkflows("zh-CN")[0]!);
+    imported.id = "legacy-mcp-import";
+    imported.name = "旧 MCP 工作流";
+    const agentNode = imported.nodes.find(
+      (node) => node.data.kind === "agent",
+    )!;
+    agentNode.data.agentConfig!.mcps = [{ mcpId: "github", enabled: true }];
+    let publishCalls = 0;
+    renderEditor(undefined, state, (handlers) => {
+      const publish = handlers.publishWorkflow!;
+      handlers.publishWorkflow = async (request) => {
+        publishCalls += 1;
+        return publish(request);
+      };
+    });
+    await screen.findByLabelText("工作流画布");
+    const importInput =
+      document.querySelector<HTMLInputElement>('input[type="file"]')!;
+    const file = {
+      name: "legacy-workflow.json",
+      text: async () => JSON.stringify(imported),
+    } as File;
+
+    fireEvent.change(importInput, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(
+        state.workflows.find(
+          (record) => record.workflow.name === "旧 MCP 工作流",
+        )?.published,
+      ).toEqual([]);
+    });
+    expect(publishCalls).toBe(0);
+  });
+
   it("zooms around the pointer with the mouse wheel", async () => {
     renderEditor();
     await screen.findByLabelText("工作流画布");
@@ -964,7 +1033,7 @@ describe("WorkflowEditor", () => {
 
     expect(screen.getByLabelText("Agent 模型")).toBeInTheDocument();
     expect(screen.getByLabelText("角色")).toHaveTextContent("Reviewer");
-    expect(screen.getAllByText("Skills")).toHaveLength(2);
+    expect(screen.getAllByText("必需 Skill")).toHaveLength(2);
     expect(screen.getByLabelText("自定义 Prompt")).toHaveTextContent(
       "按严重程度整理问题，并给出定位与修复建议。",
     );
@@ -984,7 +1053,9 @@ describe("WorkflowEditor", () => {
     expect(configuredParameters).toHaveTextContent(
       `${AGENT_REF.codeagentcli} · opencode/big-pickle`,
     );
-    expect(configuredParameters).toHaveTextContent("Skillscode-defect-scan");
+    expect(configuredParameters).toHaveTextContent(
+      "必需 Skillcode-defect-scan",
+    );
     expect(configuredParameters).not.toHaveTextContent(
       "按严重程度整理问题，并给出定位与修复建议。",
     );
