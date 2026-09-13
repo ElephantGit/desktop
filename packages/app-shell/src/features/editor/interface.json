@@ -17,9 +17,6 @@
     "./text-edit-context-menu": {
       "exports": [
         "TextEditContextMenu",
-        "copyImageElement",
-        "readClipboardFiles",
-        "readClipboardText",
         "selectElementContents",
         "writeClipboardText"
       ],
