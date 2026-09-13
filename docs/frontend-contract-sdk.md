@@ -31,6 +31,8 @@ Generated files carry ownership headers. `client.ts` re-exports the factory and 
 
 `task export-contracts` wraps the Rust export and then runs `ts-to-zod` to derive `error.schema.ts` from `dto/error.ts`. Run it explicitly after contract changes. `task check:contracts` renders both layers in temporary directories and compares contents and generated-file inventory without consulting Git or changing the checkout. Comparisons normalize Windows CRLF line endings to LF, so Git checkout policy cannot create false drift reports; every other character and the generated-file inventory remain exact. Missing, changed, and stale outputs fail verification, including untracked files. `task test:frontend` runs this check before linting and testing; it does not repair stale output.
 
+`cargo xtask check-contracts` prefixes failures with `failed to check contracts`; `cargo xtask export-contracts` uses `failed to export contracts`. Both retain the underlying error details.
+
 The contracts, chat, and editor package tests first run `tsc --noEmit`, then execute their TypeScript test files directly with `deno test --no-check`. The shared `run-with-clean-stderr.ts` wrapper rejects unexpected stderr. Relative imports use explicit source extensions and directory entry files, so tests need neither sloppy import resolution nor intermediate JavaScript output. Contract generation preserves `.ts` import extensions.
 
 ## Typed client

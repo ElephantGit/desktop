@@ -29,6 +29,8 @@
 
 `task export-contracts` 先执行 Rust 导出，再通过 `ts-to-zod` 从 `dto/error.ts` 派生 `error.schema.ts`。修改契约后需显式运行。`task check:contracts` 在临时目录中生成两层产物，对比内容和文件清单，不依赖 Git，也不修改工作区。对比时将 Windows CRLF 统一为 LF，避免 Git 换行策略造成误报；其他字符和文件清单必须完全一致。缺失、变化、过期的产物（包括未跟踪文件）都会使验证失败。`task test:frontend` 在 lint 和测试前运行该检查，不自动修复过期产物。
 
+`cargo xtask check-contracts` 失败时使用 `failed to check contracts` 前缀；`cargo xtask export-contracts` 使用 `failed to export contracts`。两者都保留底层错误详情。
+
 contracts、chat 和 editor 包测试先运行 `tsc --noEmit`，再通过 `deno test --no-check` 直接执行 TypeScript 测试。共享的 `run-with-clean-stderr.ts` 包装器拒绝意外 stderr。相对引用显式写出源文件扩展名和目录入口文件，无需宽松的 import 解析或中间 JavaScript 产物。契约生成保留 `.ts` 扩展名。
 
 ## 强类型客户端
