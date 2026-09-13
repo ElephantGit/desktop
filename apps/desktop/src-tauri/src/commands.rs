@@ -121,3 +121,6 @@ pub(crate) mod task;
 pub(crate) mod workflow;
 pub(crate) mod workflow_run;
 pub(crate) mod workspace;
+
+#[cfg(test)]
+mod execution_tests;
