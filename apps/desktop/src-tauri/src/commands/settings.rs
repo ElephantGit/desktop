@@ -232,7 +232,6 @@ fn runtime_log_level_response(state: RuntimeLogLevelState) -> RuntimeLogLevelSta
     RuntimeLogLevelStateResponse {
         configured_level: contract_log_level(state.configured_level),
         effective_level: contract_log_level(state.effective_level),
-        startup_override: state.startup_override.map(contract_log_level),
     }
 }
 

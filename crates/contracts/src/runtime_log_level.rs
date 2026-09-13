@@ -27,14 +27,13 @@ pub struct SetRuntimeLogLevelRequest {
     pub level: RuntimeLogLevel,
 }
 
-/// Returns the runtime-authoritative preference, live filter, and startup explanation.
+/// Returns the runtime-authoritative preference and live filter.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "runtime-log-level.ts")]
 pub struct RuntimeLogLevelStateResponse {
     pub configured_level: RuntimeLogLevel,
     pub effective_level: RuntimeLogLevel,
-    pub startup_override: Option<RuntimeLogLevel>,
 }
 
 /// Exports the complete runtime log-level DTO family into one TypeScript module.
@@ -74,13 +73,11 @@ mod tests {
             serde_json::to_value(RuntimeLogLevelStateResponse {
                 configured_level: RuntimeLogLevel::Warn,
                 effective_level: RuntimeLogLevel::Trace,
-                startup_override: Some(RuntimeLogLevel::Trace),
             })
             .unwrap(),
             json!({
                 "configuredLevel": "warn",
                 "effectiveLevel": "trace",
-                "startupOverride": "trace",
             })
         );
     }

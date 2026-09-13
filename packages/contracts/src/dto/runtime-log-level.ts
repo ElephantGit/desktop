@@ -11,12 +11,11 @@ export type GetRuntimeLogLevelRequest = Record<symbol, never>;
 export type RuntimeLogLevel = "trace" | "debug" | "info" | "warn" | "error";
 
 /**
- * Returns the runtime-authoritative preference, live filter, and startup explanation.
+ * Returns the runtime-authoritative preference and live filter.
  */
 export type RuntimeLogLevelStateResponse = {
   configuredLevel: RuntimeLogLevel;
   effectiveLevel: RuntimeLogLevel;
-  startupOverride: RuntimeLogLevel | null;
 };
 
 /**

@@ -62,7 +62,6 @@ fn rollback_failure_shares_the_public_error_request_id_and_one_completion() {
                     RollbackFailingControl,
                     FailingStore,
                     LogLevel::Info,
-                    /*startup_override*/ None,
                 );
                 update_runtime_log_level(
                     manager,

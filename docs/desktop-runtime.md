@@ -1,5 +1,7 @@
 # Desktop Runtime
 
+English | [中文](desktop-runtime.zh.md)
+
 Desktop command implementations live in `apps/desktop/src-tauri/src/commands/` by owning domain.
 `commands.rs` contains only explicit module composition, command macros, and the shared synchronous
 and asynchronous request execution mechanisms. Filesystem reads inject their Backend/file-reader
@@ -203,7 +205,7 @@ The configured root is only a creation target. Existing worktree locations are r
 
 ## Logging
 
-Desktop initializes `ora-logging` before opening the backend and registers the Gitlancer logger bridge. It accepts `ORA_LOG_LEVEL` as a process-only startup override; otherwise it restores the SQLite `log_level` preference, defaulting to `info`. The reload control and persistence adapter are composed through `ora-runtime-settings`, which serializes updates and compensates the live filter when persistence fails. Logs rotate daily and retain three files. Debug builds write to stdout and the file; release builds write to the file only. The logging guard remains managed for the application lifetime.
+Desktop initializes `ora-logging` before opening the backend and registers the Gitlancer logger bridge. Provisional logging uses explicit `info`, then startup restores the SQLite `log_level` preference, defaulting to `info` only when unset. Storage failures abort startup. Legacy `ORA_LOG_LEVEL` values are ignored; there is no startup override. The reload control and persistence adapter are composed through `ora-runtime-settings`, which serializes updates and compensates the live filter when persistence fails. Logs rotate daily and retain three files. Debug builds write to stdout and the file; release builds write to the file only. The logging guard remains managed for the application lifetime.
 
 Each unary command or stream emits at most one request-completion event using the same request id as
 its public failure payload or error frame. Cancellation is completed at `DEBUG` and is not projected
