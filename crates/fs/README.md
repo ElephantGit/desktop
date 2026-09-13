@@ -24,6 +24,6 @@ logging policy.
 - Delete unlinks a contained file, directory tree, or symlink without following
   links, and refuses the workspace root.
 - Search runs through the injected `ora-process` runner, making ripgrep execution replaceable in tests.
-- Native watcher events are normalized into workspace-relative changes and can be debounced by the caller.
+- Native watcher events are normalized into workspace-relative changes and can be debounced by the caller. `WorkspaceWatcher::close().await` confirms native handle and callback release; dropping the public watcher alone only requests shutdown. See [stream cancellation](../../docs/stream-cancellation.md) for the pinned notify retirement boundary and wait semantics.
 
 The adapters are documented in [Task Workspace Files](../../docs/task-workspace-files.md). Tests can inject a `ProcessSpawner` rather than starting ripgrep.

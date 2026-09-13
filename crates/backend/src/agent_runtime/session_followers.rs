@@ -17,9 +17,16 @@ pub(super) struct SessionFollowers {
     followers: HashMap<u64, SessionFollower>,
 }
 
+/// Keeps delivery and cleanup confirmation owned by the same relay task.
+pub(super) struct FollowerOutput {
+    pub(super) events: mpsc::Sender<Result<LoadSessionEvent, BackendError>>,
+    pub(super) completion: tokio::sync::oneshot::Sender<Result<(), BackendError>>,
+}
+
 struct SessionFollower {
     events: mpsc::Sender<Result<LoadSessionEvent, BackendError>>,
     overflow: mpsc::UnboundedSender<()>,
+    worker: tokio::task::JoinHandle<()>,
 }
 
 /// Separates live fan-out from the contract queue that may still contain the recorded history.
@@ -42,62 +49,105 @@ impl SessionFollowers {
     pub(super) fn insert(
         &mut self,
         operation_id: u64,
-        contract_sender: mpsc::Sender<Result<LoadSessionEvent, BackendError>>,
+        output: FollowerOutput,
         sessions_root: PathBuf,
         session_id: String,
         cutoff: u64,
         pending: Vec<AssembledRecord>,
     ) {
+        let FollowerOutput {
+            events: contract_sender,
+            completion,
+        } = output;
         let (events, mut event_receiver) = mpsc::channel(FOLLOWER_QUEUE_CAPACITY);
         // Overflow travels independently from the bounded event queue so a slow view receives an
         // explicit failure instead of an ambiguous end-of-stream after it falls behind.
         let (overflow, mut overflow_receiver) = mpsc::unbounded_channel();
-        tokio::spawn(async move {
-            if !send_replay_prefix(
-                &contract_sender,
-                &sessions_root,
-                &session_id,
-                cutoff,
-                pending,
-            )
-            .await
-            {
-                return;
-            }
-            let mut overflow_open = true;
-            loop {
-                tokio::select! {
-                    signal = overflow_receiver.recv(), if overflow_open => {
-                        match signal {
-                            Some(()) => {
-                                let _ = contract_sender
-                                    .send(Err(session_event_overflow(
-                                        "session load follower fell behind the active prompt",
-                                    )))
-                                    .await;
+        let worker = tokio::spawn(async move {
+            async {
+                if !send_replay_prefix(
+                    &contract_sender,
+                    &sessions_root,
+                    &session_id,
+                    cutoff,
+                    pending,
+                )
+                .await
+                {
+                    return;
+                }
+                let mut overflow_open = true;
+                loop {
+                    tokio::select! {
+                        signal = overflow_receiver.recv(), if overflow_open => {
+                            match signal {
+                                Some(()) => {
+                                    let _ = contract_sender
+                                        .send(Err(session_event_overflow(
+                                            "session load follower fell behind the active prompt",
+                                        )))
+                                        .await;
+                                    break;
+                                }
+                                None => overflow_open = false,
+                            }
+                        }
+                        event = event_receiver.recv() => {
+                            let Some(event) = event else {
+                                break;
+                            };
+                            if contract_sender.send(event).await.is_err() {
                                 break;
                             }
-                            None => overflow_open = false,
-                        }
-                    }
-                    event = event_receiver.recv() => {
-                        let Some(event) = event else {
-                            break;
-                        };
-                        if contract_sender.send(event).await.is_err() {
-                            break;
                         }
                     }
                 }
             }
+            .await;
+            let _ = completion.send(Ok(()));
         });
-        self.followers
-            .insert(operation_id, SessionFollower { events, overflow });
+        self.followers.insert(
+            operation_id,
+            SessionFollower {
+                events,
+                overflow,
+                worker,
+            },
+        );
     }
 
     /// Detaches a closed view without affecting the prompt that owns the turn.
+    #[cfg(test)]
     pub(super) fn remove(&mut self, operation_id: u64) -> bool {
         self.followers.remove(&operation_id).is_some()
+    }
+
+    /// Identifies a follower before transferring its worker into asynchronous cleanup.
+    pub(super) fn contains(&self, operation_id: u64) -> bool {
+        self.followers.contains_key(&operation_id)
+    }
+
+    /// Confirms relay termination after removing this view from the prompt's fan-out.
+    pub(super) fn remove_and_wait(
+        &mut self,
+        operation_id: u64,
+    ) -> impl std::future::Future<Output = Result<(), BackendError>> + Send + 'static {
+        let follower = self.followers.remove(&operation_id);
+        async move {
+            if let Some(SessionFollower {
+                events,
+                overflow,
+                worker,
+            }) = follower
+            {
+                drop(events);
+                drop(overflow);
+                worker.await.map_err(|error| {
+                    BackendError::internal("load follower cleanup failed", error)
+                })?;
+            }
+            Ok(())
+        }
     }
 
     /// Mirrors one provider update to every view that still has the session open.
@@ -188,7 +238,10 @@ mod tests {
     ) {
         followers.insert(
             operation_id,
-            sender,
+            super::FollowerOutput {
+                events: sender,
+                completion: tokio::sync::oneshot::channel().0,
+            },
             PathBuf::new(),
             "session-1".to_string(),
             /*cutoff*/ 0,

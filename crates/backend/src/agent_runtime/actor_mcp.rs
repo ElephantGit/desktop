@@ -338,8 +338,15 @@ impl RuntimeActor {
                     self.adopt_user_title(title);
                     let _ = response.send(());
                 }
-                ActiveInput::Command(RuntimeCommand::Cancel { .. })
-                | ActiveInput::Command(RuntimeCommand::CancelActivePrompt)
+                ActiveInput::Command(RuntimeCommand::Cancel {
+                    operation_id,
+                    completion,
+                }) => {
+                    if let Some(completion) = completion {
+                        let _ = completion.send(self.cleanup_outcome(operation_id));
+                    }
+                }
+                ActiveInput::Command(RuntimeCommand::CancelActivePrompt)
                 | ActiveInput::Command(RuntimeCommand::TitlePoll { .. }) => {}
                 ActiveInput::Command(RuntimeCommand::TitleUpdate { update }) => {
                     self.observe_session_update(&update);

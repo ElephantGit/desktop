@@ -35,7 +35,6 @@ use attach::RebuiltBinding;
 use handoff::HandoffDebt;
 use history::{LocalHistoryClock, RecordOutcome, SessionRecorder};
 use limits::*;
-use load::UnreadableHistory;
 pub use operations::AgentRuntime;
 pub use stream::SessionEventStream;
 use support::*;
@@ -192,6 +191,7 @@ pub(super) enum RuntimeCommand {
     },
     McpDesiredMaybeChanged,
     Load {
+        cleanup: oneshot::Sender<Result<(), BackendError>>,
         operation_id: u64,
         events: mpsc::Sender<Result<LoadSessionEvent, BackendError>>,
         accepted: oneshot::Sender<Result<(), BackendError>>,
@@ -215,6 +215,7 @@ pub(super) enum RuntimeCommand {
     CancelActivePrompt,
     Cancel {
         operation_id: u64,
+        completion: Option<oneshot::Sender<Result<(), BackendError>>>,
     },
     /// A caller outside the actor is about to address this session's provider directly.
     ///
@@ -239,6 +240,7 @@ pub(super) enum RuntimeCommand {
 }
 
 struct RuntimeActor {
+    cleanup_outcomes: HashMap<u64, Result<(), BackendError>>,
     session: Session,
     cwd: PathBuf,
     repository: SqliteSessionRepository,
@@ -667,52 +669,6 @@ impl AgentRuntimeManager {
         )
     }
 
-    /// Serves one session conversation from Ora's own record, following a live turn when there is one.
-    ///
-    /// Opening a conversation never touches ACP. The transcript belongs to Ora rather than to the
-    /// agent that produced it, so a session whose plugin was uninstalled — or whose CLI cannot
-    /// start — still reads, and no provider session is created for a reader who may never send
-    /// anything. The agent is reached by the first prompt instead.
-    ///
-    /// A live actor answers its own loads: only it knows the durable cutoff and the records of a
-    /// turn still streaming, which is what lets a load hand off from disk to live without a gap.
-    pub(crate) async fn load_session(
-        &self,
-        request: LoadSessionRequest,
-    ) -> Result<SessionEventStream<LoadSessionEvent>, BackendError> {
-        let _lifecycle = self.inner.lifecycle.lock().await;
-        let session = self.find_session(&request.session_id)?;
-        let Some(handle) = self.lookup_actor(&session.id)? else {
-            return load::detached_replay(&self.inner.sessions_root, session.id.as_ref()).map_err(
-                |UnreadableHistory { reason }| {
-                    // A record no reader can see must not be appended to either, and a load is
-                    // usually the first thing to touch it. Degrading here rather than waiting for
-                    // a prompt to open its recorder is what stops the composer at the same moment
-                    // the transcript stops being readable.
-                    self.settle_record(session, RecordOutcome::JustFailed { reason });
-                    session_history_unreadable()
-                },
-            );
-        };
-        let operation_id = self.inner.next_operation_id.fetch_add(1, Ordering::Relaxed);
-        let (events_sender, events) = mpsc::channel(CONTRACT_QUEUE_CAPACITY);
-        let (accepted_sender, accepted) = oneshot::channel();
-        handle
-            .commands
-            .send(RuntimeCommand::Load {
-                operation_id,
-                events: events_sender,
-                accepted: accepted_sender,
-            })
-            .map_err(runtime_unavailable_with)?;
-        accepted.await.map_err(runtime_unavailable_with)??;
-        Ok(SessionEventStream::new(
-            events,
-            handle.commands,
-            operation_id,
-        ))
-    }
-
     /// Starts one structured ACP prompt stream after validating the public payload limit.
     pub(crate) async fn prompt_session(
         &self,
@@ -940,6 +896,7 @@ impl AgentRuntimeManager {
         actors.insert(session.id.clone(), handle.clone());
         tokio::spawn(
             RuntimeActor {
+                cleanup_outcomes: HashMap::new(),
                 session,
                 cwd: setup.cwd,
                 repository: SqliteSessionRepository::new(self.inner.pool.clone()),
