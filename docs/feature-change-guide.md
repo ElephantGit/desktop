@@ -1,9 +1,9 @@
 # Adding or removing a feature
 
+English | [中文](feature-change-guide.zh.md)
+
 Start with the owning use case, not the number of files. DTOs, generated outputs, tests and docs
 are separate categories; multiple changed files do not by themselves indicate duplicated facts.
-Use [architecture checks](architecture-checks.md) and the [refactor evidence](refactor-progress.md)
-to distinguish necessary composition from repeated registration.
 
 ## Add an operation in an existing domain
 
@@ -67,7 +67,7 @@ counted separately. Adding an entirely new domain may also change explicit compo
 1. Identify its public consumers and durable data first. Product deletion does not authorize
    deleting user files. The filesystem layout is a hard compatibility constraint: if an old path
    can collide with the new layout or prevent safe startup, design detection/migration/isolation
-   explicitly before changing it. This refactor itself changes no user-data layout.
+   explicitly before changing it.
 2. Remove its owning implementation, DTOs and local DTO export entries, logical catalog entries,
    Desktop bindings and genuinely obsolete composition entries. Remove its local public-interface
    declaration and translations with the feature. Do not retain unused root forwarding or a
