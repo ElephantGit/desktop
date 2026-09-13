@@ -4,6 +4,8 @@ English | [中文](settings.zh.md)
 
 Ora Desktop presents Settings through the App Shell and the Tauri-backed contracts client.
 
+The Backend `Settings` interface schedules developer-mode, log-level, and network-proxy persistence on the blocking executor. Async callers await the result without managing SQLite scheduling; database failures retain their existing error projection. The synchronous marketplace Git/cache rebuild uses the underlying synchronous settings service on its host blocking executor.
+
 ## Developer mode
 
 Settings always includes a Developer options category, whose page contains the developer-mode switch. Its authoritative value is `user_config.developer_mode`, interpreted by the application layer over the generic SQLite key/value adapter; the frontend does not persist a second copy. A failed initial read leaves the switch disabled, keeps developer-only controls hidden on that page, and offers retry. A failed update retains the last backend response.

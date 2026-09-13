@@ -123,6 +123,7 @@ pub async fn get_proxy_settings(
     run_async_backend("get_proxy_settings", async move {
         settings_handle
             .network_proxy_settings()
+            .await
             .map(proxy_settings_response)
     })
     .await
@@ -138,6 +139,7 @@ pub async fn set_proxy_settings(
         let settings = internal_network_proxy_settings(request.settings);
         settings_handle
             .set_network_proxy_settings(settings)
+            .await
             .map(set_proxy_settings_response)
     })
     .await
@@ -152,7 +154,7 @@ pub async fn clear_proxy_settings(
     let _ = request;
     let settings_handle = state.backend.settings().clone();
     run_async_backend("clear_proxy_settings", async move {
-        settings_handle.clear_network_proxy_settings()?;
+        settings_handle.clear_network_proxy_settings().await?;
         Ok(ClearProxySettingsResponse { settings: None })
     })
     .await
