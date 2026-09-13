@@ -20,7 +20,7 @@ import { useAgents } from "../../state/hooks/use-agents";
 import { useWorkspaces } from "../../state/hooks/use-workspaces";
 import { useWorkspaceCwd } from "../../state/hooks/use-workspace-cwd";
 import { sessionKeys } from "../../state/data/sessions";
-import { invalidateWorkspaceDiffs } from "../../state/data/diff";
+import { refreshWorkspaceReview } from "../../state/data/workspace-review";
 import { useContractsClient } from "../../contracts-client-context";
 import { useUiStore } from "../../state/stores/ui-store";
 import {
@@ -354,7 +354,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
         // lifecycle snapshot after every finite prompt without polling idle sessions.
         await Promise.all([
           sessionsQuery.refetch(),
-          invalidateWorkspaceDiffs(queryClient, session.workspaceId),
+          refreshWorkspaceReview(queryClient, session.workspaceId),
         ]);
       }
       return;
@@ -534,7 +534,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       endDraftSend();
       await Promise.all([
         sessionsQuery.refetch(),
-        invalidateWorkspaceDiffs(queryClient, workspaceId),
+        refreshWorkspaceReview(queryClient, workspaceId),
       ]);
     }
   };
