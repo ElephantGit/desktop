@@ -17,6 +17,8 @@ The manifest contains no transport-specific route, query, or serialization metad
 
 Frontend types never come from domain entities or adapter-local structs. They are generated from `ora-contracts` DTOs.
 
+Automatic marketplace refreshes retain their native subscription. The plugin contract owner (`crates/contracts/src/plugin/marketplace_sync.rs`) declares `MarketplaceAutoSyncEvent`; app-shell re-exports the generated DTO instead of copying its payload. Desktop owns the native route in `apps/desktop/src-tauri/bindings/marketplace_sync.rs`, shared by the Rust emitter and exporter. Export derives the Desktop listener and serde wire samples; `check:contracts` covers both. The adapter tests consume those serialized samples, while host tests exercise Tauri emission and shell tests cover refresh state, listing invalidation, and subscription cleanup. Routing and authorization remain with Desktop; this adds no generic event framework or SDK stream.
+
 ## Generation workflow
 
 `cargo xtask export-contracts` is the canonical path. It writes into `packages/contracts/src`:

@@ -15,6 +15,8 @@
 
 清单不包含特定 transport 的路由、查询或序列化元数据。前端类型由 `ora-contracts` DTO 生成，不来自领域实体或 adapter 内部结构。
 
+自动市场刷新保留原生订阅。插件契约所有者（`crates/contracts/src/plugin/marketplace_sync.rs`）声明 `MarketplaceAutoSyncEvent`；app-shell 重新导出生成的 DTO，不再复制 payload。Desktop 在 `apps/desktop/src-tauri/bindings/marketplace_sync.rs` 中拥有原生路由，由 Rust 发送端与导出器共享。导出流程派生 Desktop 监听函数和 serde 序列化样本，`check:contracts` 覆盖两者。适配器测试消费这些序列化样本，宿主测试验证 Tauri 发送，shell 测试覆盖刷新状态、列表失效与订阅释放。路由与授权继续归 Desktop；此次不新增通用事件框架或 SDK stream。
+
 ## 生成流程
 
 `cargo xtask export-contracts` 是规范生成入口，在 `packages/contracts/src` 中写入：
