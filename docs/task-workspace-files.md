@@ -1,5 +1,7 @@
 # Task Workspace Files
 
+English | [中文](task-workspace-files.zh.md)
+
 Desktop's task workspace file feature provides directory browsing, bounded
 text viewing, filename/content search, line quoting into chat via gutter `+`
 (click or drag, or Ctrl/Cmd+Enter on a focused line number), native
@@ -145,7 +147,7 @@ one native table and cannot window per-file — a big file there would stall,
 while the focus body's bounded-DOM rendering keeps it fast.
 
 Rust contracts live in `crates/contracts/src/file_system.rs` and export to
-`packages/contracts/src/file-system.ts`. The endpoint catalog in
+`packages/contracts/src/dto/file-system.ts`. The endpoint catalog in
 `xtask/src/frontend/namespaces/file_system.rs` marks the watcher as a stream
 operation. Regenerate the TypeScript contract package with
 `task export-contracts` after changing these Rust types.
