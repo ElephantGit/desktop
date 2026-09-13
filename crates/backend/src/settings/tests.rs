@@ -174,6 +174,99 @@ fn failed_preference_write_preserves_the_stored_value() {
     });
 }
 
+/// A rejected proxy replacement preserves every persisted field, including after reopening.
+#[test]
+fn failed_proxy_write_preserves_the_stored_value_after_reopening() {
+    run_test(async {
+        let temporary = TempDir::new().expect("settings fixture");
+        let path = temporary.path().join("ora.sqlite3");
+        let (pool, settings) = open_settings(&path);
+        let original = NetworkProxySettings {
+            host: "proxy.example.test".to_string(),
+            port: 8080,
+            username: Some("fixture".to_string()),
+            password: Some("fixture-secret".to_string()),
+        };
+        settings
+            .set_network_proxy_settings(original.clone())
+            .expect("seed proxy");
+        rusqlite::Connection::open(&path)
+            .expect("fixture fault-injection connection")
+            .execute_batch(
+                "CREATE TRIGGER reject_proxy_write BEFORE INSERT ON user_config
+                 WHEN NEW.key = 'network_proxy_settings'
+                 BEGIN SELECT RAISE(FAIL, 'fixture storage failure'); END;",
+            )
+            .expect("inject proxy write failure in fixture database");
+        assert_storage_failure(
+            settings
+                .set_network_proxy_settings(NetworkProxySettings {
+                    host: "replacement.example.test".to_string(),
+                    port: 9090,
+                    username: None,
+                    password: None,
+                })
+                .expect_err("proxy write must fail"),
+        );
+        assert_eq!(
+            settings.network_proxy_settings().expect("unchanged proxy"),
+            Some(original.clone())
+        );
+        drop(settings);
+        drop(pool);
+
+        let (_pool, reopened) = open_settings(&path);
+        assert_eq!(
+            reopened.network_proxy_settings().expect("reopened proxy"),
+            Some(original)
+        );
+    });
+}
+
+/// A rejected proxy deletion cannot erase the durable settings or hide the storage error.
+#[test]
+fn failed_proxy_clear_preserves_the_stored_value_after_reopening() {
+    run_test(async {
+        let temporary = TempDir::new().expect("settings fixture");
+        let path = temporary.path().join("ora.sqlite3");
+        let (pool, settings) = open_settings(&path);
+        let original = NetworkProxySettings {
+            host: "proxy.example.test".to_string(),
+            port: 8080,
+            username: Some("fixture".to_string()),
+            password: Some("fixture-secret".to_string()),
+        };
+        settings
+            .set_network_proxy_settings(original.clone())
+            .expect("seed proxy");
+        rusqlite::Connection::open(&path)
+            .expect("fixture fault-injection connection")
+            .execute_batch(
+                "CREATE TRIGGER reject_proxy_clear BEFORE DELETE ON user_config
+                 WHEN OLD.key = 'network_proxy_settings'
+                 BEGIN SELECT RAISE(FAIL, 'fixture storage failure'); END;",
+            )
+            .expect("inject proxy clear failure in fixture database");
+        assert_storage_failure(
+            settings
+                .clear_network_proxy_settings()
+                .expect_err("proxy clear must fail"),
+        );
+        assert_eq!(
+            settings.network_proxy_settings().expect("unchanged proxy"),
+            Some(original.clone())
+        );
+        drop(settings);
+        drop(pool);
+
+        let (_pool, reopened) = open_settings(&path);
+        assert_eq!(
+            reopened.network_proxy_settings().expect("reopened proxy"),
+            Some(original)
+        );
+    });
+}
+
 /// Storage faults do not silently turn into defaults or empty proxy settings.
 #[test]
 fn failed_reads_are_not_reported_as_default_preferences() {
