@@ -6,6 +6,8 @@
 
 ## 在现有领域中添加操作
 
+DTO 模块在 `#[ts(export_to = "...")]` 中声明的文件名统一使用 kebab-case（例如 `app-event.ts`、`workflow-run.ts`）。生成的 DTO barrel 沿用这些声明。
+
 1. 在负责该领域的 `crates/contracts/src/<domain>.rs` 中定义请求／响应 DTO，并在同一模块的 `export` 函数中注册其 TypeScript 导出。不要把 transport 路由和 Webview 授权放入公共 DTO／manifest。真正新增的 DTO 家族还需要新增一个明确的 Rust 模块／导出组合入口。
 2. 在 `xtask/src/frontend/namespaces/<namespace>.rs` 中添加逻辑操作：操作名称、客户端命名空间／成员、DTO 名称，以及明确的 `FrontendResponseMode::Unary` 或 `Stream`。没有需要更新的集中式 stream 名称回退机制。
 3. 在 `apps/desktop/src-tauri/bindings/` 中添加 Desktop 所有的绑定。Unary 绑定必须显式声明 Rust handler 和 `Permission`。Stream 绑定必须声明领域启动 handler，并复用现有的、已授权的 `stream_contract`／`cancel_contract_stream` 对。即使没有 SDK 操作，新的 native command 也属于 Desktop catalog。

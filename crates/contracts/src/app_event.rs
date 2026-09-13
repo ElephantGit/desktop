@@ -4,7 +4,7 @@ use ts_rs::TS;
 /// Describes an application-level invalidation or stream lifecycle event.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[ts(export_to = "app_event.ts")]
+#[ts(export_to = "app-event.ts")]
 pub enum AppEvent {
     /// Confirms that the application stream is subscribed and may be consumed.
     Ready,
@@ -19,7 +19,7 @@ pub enum AppEvent {
 /// Opens the application event stream without filtering or ownership metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "app_event.ts")]
+#[ts(export_to = "app-event.ts")]
 pub struct WatchAppEventsRequest {}
 
 /// Exports the application event contract family for the generated frontend package.

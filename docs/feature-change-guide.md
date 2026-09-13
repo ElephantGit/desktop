@@ -7,6 +7,9 @@ are separate categories; multiple changed files do not by themselves indicate du
 
 ## Add an operation in an existing domain
 
+Use kebab-case for DTO module filenames in `#[ts(export_to = "...")]` (for example,
+`app-event.ts` and `workflow-run.ts`). The generated DTO barrel follows these declarations.
+
 1. Define its request/response DTOs in the owning `crates/contracts/src/<domain>.rs` and register
    their TypeScript exports in that same module's `export` function. Keep transport routing and
    Webview authorization out of public DTOs/manifests. A genuinely new DTO family also needs its

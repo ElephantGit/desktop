@@ -287,7 +287,7 @@ mod tests {
                     "skill.ts",
                     "task.ts",
                     "workflow.ts",
-                    "workspace_diff.ts",
+                    "workspace-diff.ts",
                 ]
                 .map(|file| dto_directory.join(file)),
             );
