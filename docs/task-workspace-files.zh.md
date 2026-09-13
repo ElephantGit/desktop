@@ -12,11 +12,13 @@ Desktop 的任务工作区文件功能提供目录浏览、有大小限制的文
 
 - `apps/desktop/src-tauri/src/workspace_files.rs` 将文件系统结果映射为契约值，并在 IPC 中保留有类型的生命周期错误。
 - `apps/desktop/src-tauri/src/commands/files.rs` 负责 Tauri 参数提取、任务根目录解析以及 command/channel 边界。
-- `packages/app-shell/src/features/files` 负责文件树、查看器、搜索 UI、缓存失效，以及通过行号栏 `+` 将代码行引用到输入框。引用在发送前后都保持为紧凑标签：prompt 携带反引号包裹的 `path:range` 引用（由 agent 自行读取正文），聊天历史将其还原为相同标签，不重复展示源码。Diff 行号栏引用是例外：它展开为小型 `diff --git` 补丁，因为变更尚未写入磁盘。
+- `packages/app-shell/src/features/files` 负责文件树、查看器、搜索 UI，以及通过行号栏 `+` 将代码行引用到输入框。引用在发送前后都保持为紧凑标签：prompt 携带反引号包裹的 `path:range` 引用（由 agent 自行读取正文），聊天历史将其还原为相同标签，不重复展示源码。Diff 行号栏引用是例外：它展开为小型 `diff --git` 补丁，因为变更尚未写入磁盘。
 
 聊天内的产物链接通过 `openWorkspaceFile` 和 `WorkspaceFileRequest` 打开此面板。请求包含 `path`、`requestId`，以及可选的 `FileNavigationLocation` 字段（line/column/endLine），因此重复点击同一文件仍然生效。视图从 ACP 绝对路径中去除任务 cwd 前缀，展开祖先目录以显示文件，并选中可选的行或包含起止行的范围，让查看器高亮并滚动到对应位置。引用范围使用与固定引用相同的 `--quote-tint` 底色（包括行号栏）；搜索结果保留琥珀色和 `<mark>`。随后点击引用范围外的位置会清除底色和标题中的 `:start-end` 标签，直到下一次跳转；搜索高亮保留到下一次结果。行号栏 `+` 和其他按钮不会清除引用高亮。
 
 任务 cwd 之外的路径不会作为 worktree 相对路径打开，聊天中也不会将这些提及转为链接。文件缺失时（包括 agent 读取后被用户删除的文件），显示本地化的路径不存在提示，不直接展示 transport 错误。新的聊天 `requestId` 会使该路径的 Files 查询失效，使再次打开时重新读取磁盘而非沿用缓存。后端仍拒绝带根的路径。Desktop File Manager 在系统文件管理器中定位操作系统绝对路径，不启动 Cursor。
+
+Files 数据所有者 `packages/app-shell/src/state/data/files.ts` 负责查询身份和失效规则。创建、复制、移动和删除成功后，等待其 scope 刷新入口处理目录、文件和搜索查询，无需等待 watcher 事件。非活跃查询标记为过期以便下次读取，活跃查询重新获取；其他 task 和 project checkout 保持隔离。UI 协调草稿、选中和展开。
 
 ## Project checkout 文件（草稿／尚无任务）
 

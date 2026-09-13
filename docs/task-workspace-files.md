@@ -24,7 +24,7 @@ The layers remain narrow:
 - `apps/desktop/src-tauri/src/commands/files.rs` owns Tauri extraction, task-root
   resolution, and the command/channel boundary.
 - `packages/app-shell/src/features/files` owns the file tree, viewer, search UI,
-  cache invalidation, and gutter `+` line quotes into the composer. A quote
+  and gutter `+` line quotes into the composer. A quote
   stays a compact chip on both sides of send: the prompt carries a backtick
   `path:range` reference (the agent reads the body itself), and chat history
   reads that back into the same chip instead of replaying source. Diff-gutter
@@ -49,6 +49,13 @@ The layers remain narrow:
   open re-reads disk instead of keeping cached content. The backend still
   rejects rooted paths. Desktop File Manager reveals the OS-absolute path
   in the system file manager instead of launching Cursor.
+
+The Files data owner in `packages/app-shell/src/state/data/files.ts` owns
+query identity and invalidation. Successful create, copy, move, and delete
+operations await its scope refresh for directory, file, and search queries,
+even before a watcher event arrives. Inactive queries become stale for their
+next read; active queries refetch. Other tasks and project checkouts stay
+isolated. The UI coordinates drafts, selection, and expansion.
 
 ## Project checkout files (draft / no task)
 
