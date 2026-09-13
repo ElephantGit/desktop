@@ -84,9 +84,8 @@ describe("workspace review refresh", () => {
       const write = vi.fn(async () => {
         changed = true;
       });
-      const handlers: TestHandlers = {
-        getWorkspaceDiff: () => (changed ? diffResponse.promise : DIFF),
-        getWorkspaceStatus: () =>
+      const status = vi.fn<NonNullable<TestHandlers["getWorkspaceStatus"]>>(
+        () =>
           changed
             ? statusResponse.promise
             : {
@@ -94,22 +93,31 @@ describe("workspace review refresh", () => {
                   { path: "a.ts", isStaged: staged, isUntracked: false },
                 ],
               },
-        stageWorkspaceChanges: async (request, options) => {
-          await write();
-          expect([request, options]).toEqual([
-            { workspaceId: "A", paths: [...paths] },
-            undefined,
-          ]);
-          return { stagedPaths: ["a.ts"] };
-        },
-        unstageWorkspaceChanges: async (request, options) => {
-          await write();
-          expect([request, options]).toEqual([
-            { workspaceId: "A", paths: [...paths] },
-            undefined,
-          ]);
-          return { unstagedPaths: ["a.ts"] };
-        },
+      );
+      const handlers: TestHandlers = {
+        getWorkspaceDiff: () => (changed ? diffResponse.promise : DIFF),
+        getWorkspaceStatus: status,
+        ...(!staged
+          ? {
+              stageWorkspaceChanges: async (request, options) => {
+                await write();
+                expect([request, options]).toEqual([
+                  { workspaceId: "A", paths: [...paths] },
+                  undefined,
+                ]);
+                return { stagedPaths: ["a.ts"] };
+              },
+            }
+          : {
+              unstageWorkspaceChanges: async (request, options) => {
+                await write();
+                expect([request, options]).toEqual([
+                  { workspaceId: "A", paths: [...paths] },
+                  undefined,
+                ]);
+                return { unstagedPaths: ["a.ts"] };
+              },
+            }),
       };
       mountReview(handlers);
       await screen.findByRole("button", {
@@ -122,6 +130,10 @@ describe("workspace review refresh", () => {
         );
       await user.click(screen.getByRole("button", { name: label }));
       await waitFor(() => expect(write).toHaveBeenCalledOnce());
+      expect(status.mock.calls).toEqual([
+        [{ workspaceId: "A" }, undefined],
+        [{ workspaceId: "A" }, undefined],
+      ]);
       expect(screen.getByRole("button", { name: label })).toBeDisabled();
       await act(async () => {
         diffResponse.resolve(DIFF);
@@ -160,36 +172,58 @@ describe("workspace review refresh", () => {
     },
   );
 
-  it("shows a failed write and releases pending without refreshing", async () => {
-    const response = deferred<{ stagedPaths: string[] }>();
-    const status = vi.fn(async () => ({ entries: [] }));
-    mountReview({
-      getWorkspaceDiff: async () => DIFF,
-      getWorkspaceStatus: status,
-      stageWorkspaceChanges: () => response.promise,
-    });
-    await userEvent
-      .setup()
-      .click(await screen.findByRole("button", { name: "暂存 a.ts" }));
-    expect(screen.getByRole("button", { name: "暂存 a.ts" })).toBeDisabled();
-    await act(async () => {
-      response.reject(
-        new RemoteContractError(
-          {
-            code: "internal_error",
-            params: {},
-            requestId: "review-write-failed",
-          },
-          null,
-        ),
+  it.each([false, true])(
+    "shows a failed write without refreshing (initially staged: %s)",
+    async (staged) => {
+      const response = deferred<never>();
+      const status = vi.fn<NonNullable<TestHandlers["getWorkspaceStatus"]>>(
+        () => ({
+          entries: [{ path: "a.ts", isStaged: staged, isUntracked: false }],
+        }),
       );
-    });
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "review-write-failed",
-    );
-    expect(screen.getByRole("button", { name: "暂存 a.ts" })).toBeEnabled();
-    expect(status).toHaveBeenCalledOnce();
-  });
+      const diff = vi.fn(() => DIFF);
+      const write = vi.fn<NonNullable<TestHandlers["stageWorkspaceChanges"]>>(
+        () => response.promise,
+      );
+      const unstage = vi.fn<
+        NonNullable<TestHandlers["unstageWorkspaceChanges"]>
+      >(() => response.promise);
+      const mounted = mountReview({
+        getWorkspaceDiff: diff,
+        getWorkspaceStatus: status,
+        ...(staged
+          ? { unstageWorkspaceChanges: unstage }
+          : { stageWorkspaceChanges: write }),
+      });
+      const label = staged ? "取消暂存 a.ts" : "暂存 a.ts";
+      await userEvent
+        .setup()
+        .click(await screen.findByRole("button", { name: label }));
+      expect((staged ? unstage : write).mock.calls).toEqual([
+        [{ workspaceId: "A", paths: ["a.ts"] }, undefined],
+      ]);
+      expect(screen.getByRole("button", { name: label })).toBeDisabled();
+      await act(async () => {
+        response.reject(
+          new RemoteContractError(
+            {
+              code: "internal_error",
+              params: {},
+              requestId: "review-write-failed",
+            },
+            null,
+          ),
+        );
+      });
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "review-write-failed",
+      );
+      await waitFor(() => expect(mounted.queryClient.isMutating()).toBe(0));
+      expect(screen.getByRole("button", { name: label })).toBeEnabled();
+      expect(status.mock.calls).toEqual([[{ workspaceId: "A" }, undefined]]);
+      expect(diff).toHaveBeenCalledOnce();
+    },
+  );
 
   it("waits for status even when diff refresh fails, then allows recovery", async () => {
     const diffResponse = deferred<GetWorkspaceDiffResponse>();
