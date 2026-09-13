@@ -1,6 +1,6 @@
 //! Pins executor wiring independently of domain-specific failure and rollback triggers.
 
-use super::{run_async_backend, run_backend};
+use super::{run_async_backend, run_async_backend_with_request_id, run_backend};
 use ora_backend::BackendError;
 use ora_contracts::{ContractError, EmptyErrorParams, PublicError, RequestId};
 use ora_logging::with_recorded_trace_logging;
@@ -16,6 +16,7 @@ use tracing_subscriber::registry::LookupSpan;
 enum Executor {
     Blocking,
     Async,
+    AsyncWithRequestId,
 }
 
 #[derive(Clone, Copy)]
@@ -28,13 +29,13 @@ enum Outcome {
 
 /// Captures both explicit event fields and the actual enclosing request span.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Event {
-    fields: Fields,
-    scope: Vec<Fields>,
+pub(super) struct Event {
+    pub(super) fields: Fields,
+    pub(super) scope: Vec<Fields>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct Fields(BTreeMap<String, String>);
+pub(super) struct Fields(pub(super) BTreeMap<String, String>);
 
 impl Visit for Fields {
     /// Keeps string values unquoted for comparison with the serialized response.
@@ -49,7 +50,7 @@ impl Visit for Fields {
 }
 
 #[derive(Clone, Default)]
-struct Recorder(Arc<Mutex<Vec<Event>>>);
+pub(super) struct Recorder(pub(super) Arc<Mutex<Vec<Event>>>);
 
 impl<S> Layer<S> for Recorder
 where
@@ -126,6 +127,14 @@ fn verify(executor: Executor, outcome: Outcome) {
                     )
                     .await
                 }
+                Executor::AsyncWithRequestId => {
+                    run_async_backend_with_request_id("executor_test", |request_id| async move {
+                        tokio::task::yield_now().await;
+                        ora_logging::ora_info!(request_id = %request_id, "correlation received");
+                        operation("context", "request", outcome)
+                    })
+                    .await
+                }
                 Executor::Async => {
                     run_async_backend("executor_test", async {
                         // Force a second poll to exercise instrumentation across suspension.
@@ -151,6 +160,16 @@ fn verify(executor: Executor, outcome: Outcome) {
         Some("tauri_command")
     );
     let request_id = request_span.0.get("request_id").unwrap();
+    if let Executor::AsyncWithRequestId = executor {
+        let correlation = events
+            .iter()
+            .find(|event| {
+                event.fields.0.get("message").map(String::as_str) == Some("correlation received")
+            })
+            .unwrap();
+        assert_eq!(correlation.fields.0.get("request_id"), Some(request_id));
+        assert_eq!(correlation.scope, vec![request_span.clone()]);
+    }
     let parsed_id: RequestId = serde_json::from_value(serde_json::json!(request_id)).unwrap();
     let expected_outcome = match outcome {
         Outcome::Success => {
@@ -265,4 +284,22 @@ fn async_failure() {
 #[test]
 fn async_rollback_diagnostic() {
     verify(Executor::Async, Outcome::RollbackFailure);
+}
+
+/// Diagnostic correlation preserves the successful result and the sole completion.
+#[test]
+fn async_with_request_id_success() {
+    verify(Executor::AsyncWithRequestId, Outcome::Success);
+}
+
+/// Diagnostic correlation matches both the failure response and its completion.
+#[test]
+fn async_with_request_id_failure() {
+    verify(Executor::AsyncWithRequestId, Outcome::Failure);
+}
+
+/// A correlated secondary diagnostic never adds another request completion.
+#[test]
+fn async_with_request_id_rollback_diagnostic() {
+    verify(Executor::AsyncWithRequestId, Outcome::RollbackFailure);
 }

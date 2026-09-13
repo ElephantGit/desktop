@@ -1,8 +1,8 @@
 //! Desktop adapters for developer preferences and process-wide runtime logging.
 
-use super::run_async_backend;
+use super::{run_async_backend, run_async_backend_with_request_id};
 
-use ora_backend::{BackendError, RequestLifecycle, UuidRequestIdGenerator};
+use ora_backend::BackendError;
 use ora_contracts::{
     CheckProxySettingsRequest, CheckProxySettingsResponse, ClearProxySettingsRequest,
     ClearProxySettingsResponse, DeveloperModeResponse, GetDeveloperModeRequest,
@@ -10,9 +10,10 @@ use ora_contracts::{
     RuntimeLogLevel, RuntimeLogLevelStateResponse, SetDeveloperModeRequest,
     SetProxySettingsRequest, SetProxySettingsResponse, SetRuntimeLogLevelRequest,
 };
-use ora_runtime_settings::RuntimeLogLevelState;
+use ora_runtime_settings::{
+    PreferredLogLevelStore, RuntimeLogLevelControl, RuntimeLogLevelManager, RuntimeLogLevelState,
+};
 use tauri::State;
-use tracing::Instrument;
 
 use crate::error::CommandError;
 use crate::state::DesktopState;
@@ -74,13 +75,20 @@ pub async fn set_runtime_log_level(
     state: State<'_, DesktopState>,
     request: SetRuntimeLogLevelRequest,
 ) -> Result<RuntimeLogLevelStateResponse, CommandError> {
-    let manager = state.runtime_log_level.clone();
-    let lifecycle = RequestLifecycle::start("set_runtime_log_level", &UuidRequestIdGenerator);
-    let request_span =
-        ora_logging::span_with_request_id("tauri_command", &lifecycle.request_id().to_string());
+    update_runtime_log_level(state.runtime_log_level.clone(), request).await
+}
 
-    async move {
-        let result = manager
+/// Keeps rollback policy in Settings while the executor owns request completion.
+async fn update_runtime_log_level<C, S>(
+    manager: RuntimeLogLevelManager<C, S>,
+    request: SetRuntimeLogLevelRequest,
+) -> Result<RuntimeLogLevelStateResponse, CommandError>
+where
+    C: RuntimeLogLevelControl,
+    S: PreferredLogLevelStore,
+{
+    run_async_backend_with_request_id("set_runtime_log_level", move |request_id| async move {
+        manager
             .set_level(internal_log_level(request.level))
             .await
             .map(runtime_log_level_response)
@@ -89,7 +97,7 @@ pub async fn set_runtime_log_level(
                     let report = ora_logging::ErrorReport::from_error(rollback_error);
                     ora_logging::ora_error!(
                         operation = "set_runtime_log_level.rollback",
-                        request_id = %lifecycle.request_id(),
+                        request_id = %request_id,
                         outcome = "secondary_failure",
                         error.code = "internal_error",
                         error.message = report.message(),
@@ -99,17 +107,8 @@ pub async fn set_runtime_log_level(
                     );
                 }
                 BackendError::internal("failed to update runtime log level", error)
-            });
-
-        match result {
-            Ok(response) => {
-                lifecycle.complete_success();
-                Ok(response)
-            }
-            Err(error) => Err(CommandError::from_backend_with_lifecycle(error, &lifecycle)),
-        }
-    }
-    .instrument(request_span)
+            })
+    })
     .await
 }
 
@@ -258,3 +257,7 @@ fn internal_log_level(level: RuntimeLogLevel) -> ora_logging::LogLevel {
         RuntimeLogLevel::Error => ora_logging::LogLevel::Error,
     }
 }
+
+#[cfg(test)]
+#[path = "settings_tests.rs"]
+mod tests;
