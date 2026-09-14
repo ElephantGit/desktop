@@ -163,6 +163,7 @@ export type ContractError =
     | { "code": "workflow_role_not_found"; "params": EmptyErrorParams }
     | { "code": "workflow_run_start_failed"; "params": EmptyErrorParams }
     | { "code": "workflow_run_not_restartable"; "params": EmptyErrorParams }
+    | { "code": "workflow_run_not_resumable"; "params": EmptyErrorParams }
     | { "code": "workflow_run_not_editable"; "params": EmptyErrorParams }
     | { "code": "workflow_node_not_found"; "params": EmptyErrorParams }
     | { "code": "workflow_node_not_awaiting_input"; "params": EmptyErrorParams }
@@ -349,6 +350,7 @@ export type PublicError =
   | { "code": "workflow_role_not_found"; "params": EmptyErrorParams }
   | { "code": "workflow_run_start_failed"; "params": EmptyErrorParams }
   | { "code": "workflow_run_not_restartable"; "params": EmptyErrorParams }
+  | { "code": "workflow_run_not_resumable"; "params": EmptyErrorParams }
   | { "code": "workflow_run_not_editable"; "params": EmptyErrorParams }
   | { "code": "workflow_node_not_found"; "params": EmptyErrorParams }
   | { "code": "workflow_node_not_awaiting_input"; "params": EmptyErrorParams };

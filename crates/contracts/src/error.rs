@@ -223,6 +223,7 @@ pub enum PublicError {
     WorkflowRoleNotFound(EmptyErrorParams),
     WorkflowRunStartFailed(EmptyErrorParams),
     WorkflowRunNotRestartable(EmptyErrorParams),
+    WorkflowRunNotResumable(EmptyErrorParams),
     WorkflowRunNotEditable(EmptyErrorParams),
     WorkflowNodeNotFound(EmptyErrorParams),
     WorkflowNodeNotAwaitingInput(EmptyErrorParams),
@@ -346,6 +347,7 @@ impl PublicError {
             Self::WorkflowRoleNotFound(_) => "workflow_role_not_found",
             Self::WorkflowRunStartFailed(_) => "workflow_run_start_failed",
             Self::WorkflowRunNotRestartable(_) => "workflow_run_not_restartable",
+            Self::WorkflowRunNotResumable(_) => "workflow_run_not_resumable",
             Self::WorkflowRunNotEditable(_) => "workflow_run_not_editable",
             Self::WorkflowNodeNotFound(_) => "workflow_node_not_found",
             Self::WorkflowNodeNotAwaitingInput(_) => "workflow_node_not_awaiting_input",
@@ -533,6 +535,7 @@ mod tests {
             PublicError::WorkflowRunCannotUseDraftSnapshot(empty),
             PublicError::WorkflowRunNotFound(empty),
             PublicError::WorkflowRunActive(empty),
+            PublicError::WorkflowRunNotResumable(empty),
             PublicError::WorkflowNodeNotFound(empty),
             PublicError::WorkflowNodeNotAwaitingInput(empty),
         ];
@@ -645,6 +648,7 @@ mod tests {
                 | PublicError::WorkflowRoleNotFound(_)
                 | PublicError::WorkflowRunStartFailed(_)
                 | PublicError::WorkflowRunNotRestartable(_)
+                | PublicError::WorkflowRunNotResumable(_)
                 | PublicError::WorkflowRunNotEditable(_)
                 | PublicError::WorkflowNodeNotFound(_)
                 | PublicError::WorkflowNodeNotAwaitingInput(_) => {}
@@ -658,7 +662,7 @@ mod tests {
     #[test]
     fn public_error_codes_match_serde_tags_for_every_variant() {
         let samples = public_error_samples();
-        assert_eq!(samples.len(), 102);
+        assert_eq!(samples.len(), 103);
 
         for error in samples {
             let serialized = serde_json::to_value(&error).unwrap();

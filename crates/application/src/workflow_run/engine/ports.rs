@@ -115,6 +115,14 @@ pub enum RestartWorkflowRunResult {
     NotFound,
 }
 
+/// Outcome of resuming a run from its failed or cancelled nodes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResumeWorkflowRunResult {
+    Resumed,
+    NotResumable,
+    NotFound,
+}
+
 /// Outcome of publishing a prepared workflow node session to observers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BindWorkflowNodeSessionResult {
@@ -265,6 +273,15 @@ pub trait WorkflowRunEngineRepository {
         run_id: &WorkflowRunId,
         now: i64,
     ) -> Result<RestartWorkflowRunResult, RepositoryError>;
+
+    /// Clears the given node runs (soft-delete) and their pool writes so the scheduler can
+    /// re-dispatch them, and moves a `Failed`/`Cancelled` run back to `Running`.
+    fn resume_from_failure(
+        &self,
+        run_id: &WorkflowRunId,
+        node_ids_to_clear: &[String],
+        now: i64,
+    ) -> Result<ResumeWorkflowRunResult, RepositoryError>;
 
     /// Sets the kickoff input of a `Pending` run with empty `current_nodes`, so the start node
     /// receives it when the run starts.

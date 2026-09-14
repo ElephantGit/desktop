@@ -6,13 +6,15 @@ use crate::workflow_run::engine::graph::{GraphError, WorkflowGraph, WorkflowGrap
 use crate::workflow_run::engine::node_type::NodeType;
 use crate::workflow_run::engine::ports::{
     AdvanceWorkflowRunResult, CancelWorkflowRunResult, ExecutionContext, FileChange,
-    NodeRunToStart, RestartWorkflowRunResult, StartWorkflowRunResult, UpdateWorkflowRunInputResult,
-    WorkflowNodeRunIdGenerator, WorkflowRunEngineRepository,
+    NodeRunToStart, RestartWorkflowRunResult, ResumeWorkflowRunResult, StartWorkflowRunResult,
+    UpdateWorkflowRunInputResult, WorkflowNodeRunIdGenerator, WorkflowRunEngineRepository,
 };
 use crate::workflow_run::engine::skill_delivery::WorkflowRunPayload;
 use crate::workflow_run::engine::variable_pool::WorkflowVariablePool;
-use ora_domain::{WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunId};
-use std::collections::HashSet;
+use ora_domain::{
+    WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunId, WorkflowRunStatus,
+};
+use std::collections::{BTreeSet, HashSet};
 use thiserror::Error;
 
 /// Executes one agent node through a real session, calling the engine back when done.
@@ -183,6 +185,52 @@ where
         Ok(self.repository.cancel_run(run_id, now)?)
     }
 
+    /// Resumes a `Failed`/`Cancelled` run from its failed nodes: every `Failed`/`Cancelled` node run
+    /// and all of its transitive successors are cleared, succeeded work is kept, and scheduling
+    /// recomputes the ready set from the surviving state.
+    pub fn resume_from_failure(
+        &self,
+        run_id: &WorkflowRunId,
+    ) -> Result<ResumeWorkflowRunResult, EngineError> {
+        let context = self.execution_context(run_id)?;
+        let graph = WorkflowGraph::parse(&context.graph_json)?;
+        let node_runs = self.repository.list_node_runs(run_id)?;
+        let mut failed = BTreeSet::new();
+        for node_run in &node_runs {
+            if matches!(
+                node_run.status,
+                WorkflowNodeStatus::Failed | WorkflowNodeStatus::Cancelled
+            ) {
+                failed.insert(node_run.node_id.clone());
+            }
+        }
+        if failed.is_empty() {
+            return Ok(ResumeWorkflowRunResult::NotResumable);
+        }
+        let mut to_clear = BTreeSet::new();
+        for node_id in &failed {
+            to_clear.insert(node_id.clone());
+            for successor in graph.transitive_successors(node_id) {
+                to_clear.insert(successor.id.clone());
+            }
+        }
+        let to_clear: Vec<String> = to_clear.into_iter().collect();
+        let now = self.clock.now_timestamp_millis();
+        match self
+            .repository
+            .resume_from_failure(run_id, &to_clear, now)?
+        {
+            ResumeWorkflowRunResult::Resumed => {
+                self.run_schedule(run_id)?;
+                Ok(ResumeWorkflowRunResult::Resumed)
+            }
+            result
+            @ (ResumeWorkflowRunResult::NotResumable | ResumeWorkflowRunResult::NotFound) => {
+                Ok(result)
+            }
+        }
+    }
+
     /// Restarts a non-running run by resetting it and re-running it immediately.
     pub fn restart(&self, run_id: &WorkflowRunId) -> Result<RestartWorkflowRunResult, EngineError> {
         let now = self.clock.now_timestamp_millis();
@@ -263,6 +311,9 @@ where
         let now = self.clock.now_timestamp_millis();
         loop {
             let context = self.execution_context(run_id)?;
+            if context.run.status != WorkflowRunStatus::Running {
+                return Ok(());
+            }
             let graph = WorkflowGraph::parse(&context.graph_json)?;
             let node_runs = self.repository.list_node_runs(run_id)?;
             let (pool, _) = execution_state_from(context.run.payload.as_deref());

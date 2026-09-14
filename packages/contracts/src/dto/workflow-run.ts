@@ -135,6 +135,16 @@ export type RestartWorkflowRunRequest = { runId: string };
 export type RestartWorkflowRunResponse = { run: WorkflowRun };
 
 /**
+ * Identifies the failed or cancelled run to resume from its failed nodes.
+ */
+export type ResumeWorkflowRunRequest = { runId: string };
+
+/**
+ * Returns the resumed and re-running run.
+ */
+export type ResumeWorkflowRunResponse = { run: WorkflowRun };
+
+/**
  * Identifies the run to start executing against its frozen snapshot graph.
  */
 export type StartWorkflowRunRequest = { runId: string };

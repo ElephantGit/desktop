@@ -603,6 +603,11 @@ impl From<ApplicationError> for BackendError {
                 PublicError::WorkflowRunNotRestartable(EmptyErrorParams {}),
                 "workflow run cannot be restarted while running",
             ),
+            ApplicationError::WorkflowRunNotResumable => (
+                ErrorClassification::Conflict,
+                PublicError::WorkflowRunNotResumable(EmptyErrorParams {}),
+                "workflow run cannot be resumed from failure",
+            ),
             ApplicationError::WorkflowRunNotEditable => (
                 ErrorClassification::Conflict,
                 PublicError::WorkflowRunNotEditable(EmptyErrorParams {}),

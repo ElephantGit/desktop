@@ -309,6 +309,22 @@ pub struct RestartWorkflowRunResponse {
     pub run: WorkflowRun,
 }
 
+/// Identifies the failed or cancelled run to resume from its failed nodes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflow-run.ts")]
+pub struct ResumeWorkflowRunRequest {
+    pub run_id: String,
+}
+
+/// Returns the resumed and re-running run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflow-run.ts")]
+pub struct ResumeWorkflowRunResponse {
+    pub run: WorkflowRun,
+}
+
 /// Sets the kickoff input of a pending run, used as the start node's input on start.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -391,6 +407,8 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     CancelWorkflowRunResponse::export(config)?;
     RestartWorkflowRunRequest::export(config)?;
     RestartWorkflowRunResponse::export(config)?;
+    ResumeWorkflowRunRequest::export(config)?;
+    ResumeWorkflowRunResponse::export(config)?;
     UpdateWorkflowRunInputRequest::export(config)?;
     UpdateWorkflowRunInputResponse::export(config)?;
     NodeCompletionRequester::export(config)?;

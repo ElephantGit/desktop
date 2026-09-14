@@ -73,6 +73,13 @@ backend_command!(
     "Restarts one workflow run through the shared Backend."
 );
 backend_command!(
+    resume_workflow_run_from_failure,
+    ResumeWorkflowRunRequest,
+    ResumeWorkflowRunResponse,
+    workflow_runs.resume_from_failure,
+    "Resumes one workflow run from its failed nodes through the shared Backend."
+);
+backend_command!(
     update_workflow_run_input,
     UpdateWorkflowRunInputRequest,
     UpdateWorkflowRunInputResponse,

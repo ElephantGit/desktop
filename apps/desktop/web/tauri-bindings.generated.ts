@@ -101,6 +101,7 @@ export const tauriCommands = {
   respondToSessionPermission: "respond_to_session_permission",
   restartWorkflowRun: "restart_workflow_run",
   resumeSessionHistory: "resume_session_history",
+  resumeWorkflowRunFromFailure: "resume_workflow_run_from_failure",
   rollbackWorkflow: "rollback_workflow",
   savePluginConfiguration: "save_plugin_configuration",
   scanPlugins: "scan_plugins",

@@ -21,7 +21,7 @@ use ora_domain::{
 use ora_domain::{WorkflowNodeRunId, WorkflowNodeStatus};
 use std::cell::Cell;
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
 pub(crate) const AGENT_GRAPH: &str = r#"{"nodes":[
@@ -44,6 +44,25 @@ impl NodeExecutor for NoopExecutor {
         _node: &WorkflowGraphNode,
         _context: &ExecutionContext,
     ) {
+    }
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct RecordingExecutor {
+    pub dispatches: Arc<Mutex<Vec<String>>>,
+}
+
+impl NodeExecutor for RecordingExecutor {
+    fn dispatch(
+        &self,
+        _node_run_id: &WorkflowNodeRunId,
+        node: &WorkflowGraphNode,
+        _context: &ExecutionContext,
+    ) {
+        self.dispatches
+            .lock()
+            .expect("dispatch log")
+            .push(node.id.clone());
     }
 }
 
@@ -88,6 +107,21 @@ pub(crate) fn started_run(
     pool: &RepositoryPool,
     graph: &str,
 ) -> (WorkflowRunId, Vec<WorkflowNodeRun>) {
+    let (run_id, node_runs, _engine) = started_run_with(temp, pool, graph, NoopExecutor);
+    (run_id, node_runs)
+}
+
+/// Starts a run with a caller-supplied executor so tests can observe dispatches.
+pub(crate) fn started_run_with<E: NodeExecutor>(
+    temp: &TempDir,
+    pool: &RepositoryPool,
+    graph: &str,
+    executor: E,
+) -> (
+    WorkflowRunId,
+    Vec<WorkflowNodeRun>,
+    WorkflowRunEngine<SqliteWorkflowRunEngineRepository, E, SeqGen, ClockAt>,
+) {
     let workspace_path = temp.path().join("fixture-project");
     std::fs::create_dir_all(&workspace_path).unwrap();
     let project = SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock);
@@ -177,7 +211,7 @@ pub(crate) fn started_run(
 
     let engine = WorkflowRunEngine::new(
         SqliteWorkflowRunEngineRepository::new(pool.clone()),
-        NoopExecutor,
+        executor,
         SeqGen::default(),
         ClockAt(40),
     );
@@ -186,7 +220,7 @@ pub(crate) fn started_run(
     let node_runs = SqliteWorkflowRunRepository::new(pool.clone())
         .list_node_runs(&run_id)
         .unwrap();
-    (run_id, node_runs)
+    (run_id, node_runs, engine)
 }
 
 /// Creates isolated coordination state for tests of the internal turn-policy interface.

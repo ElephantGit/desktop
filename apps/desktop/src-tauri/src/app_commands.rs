@@ -100,6 +100,7 @@ desktop_command_registry! {
     commands::session::respond_to_session_permission,
     commands::workflow_run::restart_workflow_run,
     commands::session::resume_session_history,
+    commands::workflow_run::resume_workflow_run_from_failure,
     commands::workflow::rollback_workflow,
     commands::plugin::save_plugin_configuration,
     commands::plugin::scan_plugins,

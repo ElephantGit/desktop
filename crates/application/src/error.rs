@@ -202,6 +202,8 @@ pub enum ApplicationError {
     WorkflowRunStartFailed { message: String },
     #[error("workflow run cannot be restarted while running")]
     WorkflowRunNotRestartable,
+    #[error("workflow run cannot be resumed from failure")]
+    WorkflowRunNotResumable,
     #[error("workflow run input can only be changed while the run is pending")]
     WorkflowRunNotEditable,
     #[error("workflow node not found: {node_id}")]
@@ -539,6 +541,7 @@ impl PartialEq for ApplicationError {
             (WorkflowRunGraphParse(_), WorkflowRunGraphParse(_))
             | (WorkflowRunValidation(_), WorkflowRunValidation(_))
             | (WorkflowRunNotRestartable, WorkflowRunNotRestartable)
+            | (WorkflowRunNotResumable, WorkflowRunNotResumable)
             | (WorkflowRunNotEditable, WorkflowRunNotEditable) => true,
             (WorkflowNodeNotFound { node_id: left }, WorkflowNodeNotFound { node_id: right }) => {
                 left == right

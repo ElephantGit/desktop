@@ -830,6 +830,13 @@ export function createContractsClient(
           transport,
           options,
         ),
+      resumeFromFailure: (request, options) =>
+        executeOperation(
+          "resumeWorkflowRunFromFailure",
+          request,
+          transport,
+          options,
+        ),
       start: (request, options) =>
         executeOperation(
           "startWorkflowRun",

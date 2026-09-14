@@ -297,6 +297,17 @@ impl WorkflowRuns {
         self.engine.restart(request).map_err(BackendError::from)
     }
 
+    /// Resumes a failed or cancelled workflow run from its failed nodes.
+    pub fn resume_from_failure(
+        &self,
+        request: ResumeWorkflowRunRequest,
+    ) -> Result<ResumeWorkflowRunResponse, BackendError> {
+        let _gate = self.run_locks.acquire_exclusive(request.run_id.clone());
+        self.engine
+            .resume_from_failure(request)
+            .map_err(BackendError::from)
+    }
+
     /// Sets the kickoff input of a pending workflow run.
     pub fn update_input(
         &self,

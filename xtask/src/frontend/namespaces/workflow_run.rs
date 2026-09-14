@@ -86,6 +86,14 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
+        operation_name: "resumeWorkflowRunFromFailure",
+        namespace: NAMESPACE,
+        member_name: "resumeFromFailure",
+        request_type: "ResumeWorkflowRunRequest",
+        response_type: "ResumeWorkflowRunResponse",
+        response_mode: FrontendResponseMode::Unary,
+    },
+    FrontendEndpoint {
         operation_name: "updateWorkflowRunInput",
         namespace: NAMESPACE,
         member_name: "updateInput",

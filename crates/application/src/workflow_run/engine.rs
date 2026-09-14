@@ -34,8 +34,9 @@ pub use node_type::{NodeType, UnknownNodeType};
 pub use ports::{
     AdvanceWorkflowRunResult, BindWorkflowNodeSessionResult, CancelWorkflowRunResult,
     ExecutionContext, FileChange, NodeRunToStart, RestartWorkflowRunResult,
-    StartPrerequisitesError, StartWorkflowRunResult, UpdateWorkflowRunInputResult,
-    WorkflowNodeRunIdGenerator, WorkflowRunEngineRepository, WorkflowRunWorkspaceInitializer,
+    ResumeWorkflowRunResult, StartPrerequisitesError, StartWorkflowRunResult,
+    UpdateWorkflowRunInputResult, WorkflowNodeRunIdGenerator, WorkflowRunEngineRepository,
+    WorkflowRunWorkspaceInitializer,
 };
 pub use skill_delivery::{
     AgentSkillDelivery, AgentSkillDeliveryError, AgentSkillDeliveryProvider,
@@ -45,5 +46,7 @@ pub use structured_output::{StructuredOutputError, extract_json_object, validate
 pub use variable_pool::WorkflowVariablePool;
 pub use variable_template::{VariableTemplateError, render_variable_template};
 
+#[cfg(test)]
+mod resume_tests;
 #[cfg(test)]
 mod tests;

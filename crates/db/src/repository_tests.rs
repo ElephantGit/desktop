@@ -1,14 +1,14 @@
 use ora_application::{
     BindWorkflowNodeSessionResult, NodeRunToStart, ProjectRepository, RestartWorkflowRunResult,
-    SessionRepository, SkillRepository, StartWorkflowRunResult, WorkflowRepository,
-    WorkflowRunCreateOutcome, WorkflowRunEngineRepository, WorkflowRunPayload,
+    ResumeWorkflowRunResult, SessionRepository, SkillRepository, StartWorkflowRunResult,
+    WorkflowRepository, WorkflowRunCreateOutcome, WorkflowRunEngineRepository, WorkflowRunPayload,
     WorkflowRunRepository, WorkflowVariablePool,
 };
 use ora_contracts::WorkflowRunLocale;
 use ora_domain::{
     AgentRef, AuditFields, Namespace, PluginId, Project, ProjectId, Session, SessionId,
-    SessionStatus, SkillOrigin, Workflow, WorkflowId, WorkflowNodeRunId, WorkflowRun,
-    WorkflowRunId, WorkflowRunStatus, WorkflowSnapshot, WorkflowSnapshotId, Workspace,
+    SessionStatus, SkillOrigin, Workflow, WorkflowId, WorkflowNodeRunId, WorkflowNodeStatus,
+    WorkflowRun, WorkflowRunId, WorkflowRunStatus, WorkflowSnapshot, WorkflowSnapshotId, Workspace,
     WorkspaceKind, WorkspaceLifecycle, WorkspaceLocation,
 };
 use ora_logging::with_trace_logging;
@@ -581,6 +581,263 @@ fn restart_resets_variable_values_and_keeps_the_catalog() {
     assert!(parsed.variable_pool.revision >= 1);
 }
 
+/// Resuming from failure clears only the listed writers' values and branch decisions.
+#[test]
+fn resume_from_failure_clears_listed_writers_and_keeps_other_values() {
+    let (temp_dir, pool) = bootstrapped_pool();
+    let engine_repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+    let run_repository = SqliteWorkflowRunRepository::new(pool.clone());
+    let mut seeded = WorkflowVariablePool::default();
+    seeded.declare("start.count", "integer", "start");
+    seeded.declare("review.text", "string", "review");
+    seeded
+        .set("start.count", "start", serde_json::json!(2))
+        .unwrap();
+    seeded
+        .set("review.text", "review", serde_json::json!("旧输出"))
+        .unwrap();
+    let mut run_payload = WorkflowRunPayload::with_variable_pool(
+        WorkflowRunLocale::EnUs,
+        Default::default(),
+        Some("start".to_string()),
+        seeded,
+    );
+    run_payload
+        .condition_decisions
+        .insert("condition-1".to_string(), "case-1".to_string());
+    run_payload
+        .condition_decisions
+        .insert("other".to_string(), "kept".to_string());
+    let revision_before = run_payload.variable_pool.revision;
+    let run_id = seed_run(
+        &temp_dir,
+        &pool,
+        WorkflowRunStatus::Failed,
+        Some(serde_json::to_string(&run_payload).unwrap()),
+        Some("review failed".to_string()),
+        Some(20),
+        Some(30),
+    );
+    engine_repository
+        .start_ready_nodes(
+            &run_id,
+            &[NodeRunToStart {
+                id: WorkflowNodeRunId::new("nr-review"),
+                node_id: "review".to_string(),
+                node_type: "agent".to_string(),
+                input: None,
+            }],
+            40,
+        )
+        .unwrap();
+    engine_repository
+        .fail_node(
+            &WorkflowNodeRunId::new("nr-review"),
+            "review failed".to_string(),
+            None,
+            50,
+        )
+        .unwrap();
+
+    assert_eq!(
+        engine_repository
+            .resume_from_failure(
+                &run_id,
+                &["review".to_string(), "condition-1".to_string()],
+                70
+            )
+            .unwrap(),
+        ResumeWorkflowRunResult::Resumed
+    );
+
+    let resumed = run_repository.find_run(&run_id).unwrap().unwrap();
+    assert_eq!(resumed.status, WorkflowRunStatus::Running);
+    assert_eq!(resumed.error, None);
+    assert_eq!(resumed.finished_at, None);
+    assert_eq!(resumed.started_at, Some(20));
+    let parsed: WorkflowRunPayload =
+        serde_json::from_str(resumed.payload.as_deref().unwrap()).unwrap();
+    assert_eq!(
+        parsed.variable_pool.values.get("start.count"),
+        Some(&serde_json::json!(2))
+    );
+    assert!(!parsed.variable_pool.values.contains_key("review.text"));
+    assert!(parsed.variable_pool.catalog.contains_key("review.text"));
+    assert_eq!(
+        parsed.variable_pool.revision,
+        revision_before.saturating_add(1)
+    );
+    assert_eq!(
+        parsed.condition_decisions,
+        std::collections::BTreeMap::from([("other".to_string(), "kept".to_string())])
+    );
+    let live = engine_repository.list_node_runs(&run_id).unwrap();
+    assert!(live.iter().all(|node| node.node_id != "review"));
+    let deleted: i64 = pool
+        .with_connection(|connection| {
+            Ok(connection.query_row(
+                "SELECT is_deleted FROM workflow_node_runs WHERE id = ?1",
+                rusqlite::params!["nr-review"],
+                |row| row.get(0),
+            )?)
+        })
+        .unwrap();
+    assert_eq!(deleted, 1);
+}
+
+/// A Failed run still holding a Running node cannot be resumed.
+#[test]
+fn resume_from_failure_rejects_a_run_with_a_running_node() {
+    let (temp_dir, pool) = bootstrapped_pool();
+    let engine_repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+    let run_id = seed_pending_run(&temp_dir, &pool);
+    engine_repository
+        .start_run(
+            &run_id,
+            &NodeRunToStart {
+                id: WorkflowNodeRunId::new("nr-start"),
+                node_id: "start".to_string(),
+                node_type: "start".to_string(),
+                input: None,
+            },
+            40,
+        )
+        .unwrap();
+    engine_repository
+        .start_ready_nodes(
+            &run_id,
+            &[
+                NodeRunToStart {
+                    id: WorkflowNodeRunId::new("nr-a"),
+                    node_id: "a".to_string(),
+                    node_type: "agent".to_string(),
+                    input: None,
+                },
+                NodeRunToStart {
+                    id: WorkflowNodeRunId::new("nr-b"),
+                    node_id: "b".to_string(),
+                    node_type: "agent".to_string(),
+                    input: None,
+                },
+            ],
+            50,
+        )
+        .unwrap();
+    engine_repository
+        .fail_node(
+            &WorkflowNodeRunId::new("nr-a"),
+            "a failed".to_string(),
+            None,
+            60,
+        )
+        .unwrap();
+
+    assert_eq!(
+        engine_repository
+            .resume_from_failure(&run_id, &["a".to_string()], 70)
+            .unwrap(),
+        ResumeWorkflowRunResult::NotResumable
+    );
+}
+
+/// A still-Running run cannot be resumed from failure.
+#[test]
+fn resume_from_failure_rejects_a_running_run() {
+    let (temp_dir, pool) = bootstrapped_pool();
+    let engine_repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+    let run_id = seed_pending_run(&temp_dir, &pool);
+    engine_repository
+        .start_run(
+            &run_id,
+            &NodeRunToStart {
+                id: WorkflowNodeRunId::new("nr-start"),
+                node_id: "start".to_string(),
+                node_type: "start".to_string(),
+                input: None,
+            },
+            40,
+        )
+        .unwrap();
+
+    assert_eq!(
+        engine_repository
+            .resume_from_failure(&run_id, &["start".to_string()], 50)
+            .unwrap(),
+        ResumeWorkflowRunResult::NotResumable
+    );
+}
+
+/// The second failing node keeps the first run-level error and finished_at.
+#[test]
+fn second_fail_node_does_not_overwrite_run_level_error() {
+    let (temp_dir, pool) = bootstrapped_pool();
+    let engine_repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+    let run_repository = SqliteWorkflowRunRepository::new(pool.clone());
+    let run_id = seed_pending_run(&temp_dir, &pool);
+    engine_repository
+        .start_run(
+            &run_id,
+            &NodeRunToStart {
+                id: WorkflowNodeRunId::new("nr-start"),
+                node_id: "start".to_string(),
+                node_type: "start".to_string(),
+                input: None,
+            },
+            40,
+        )
+        .unwrap();
+    engine_repository
+        .start_ready_nodes(
+            &run_id,
+            &[
+                NodeRunToStart {
+                    id: WorkflowNodeRunId::new("nr-a"),
+                    node_id: "a".to_string(),
+                    node_type: "agent".to_string(),
+                    input: None,
+                },
+                NodeRunToStart {
+                    id: WorkflowNodeRunId::new("nr-b"),
+                    node_id: "b".to_string(),
+                    node_type: "agent".to_string(),
+                    input: None,
+                },
+            ],
+            50,
+        )
+        .unwrap();
+
+    engine_repository
+        .fail_node(
+            &WorkflowNodeRunId::new("nr-a"),
+            "error-a".to_string(),
+            None,
+            60,
+        )
+        .unwrap();
+    let after_a = run_repository.find_run(&run_id).unwrap().unwrap();
+    assert_eq!(after_a.status, WorkflowRunStatus::Failed);
+    assert_eq!(after_a.error.as_deref(), Some("error-a"));
+    assert_eq!(after_a.finished_at, Some(60));
+
+    engine_repository
+        .fail_node(
+            &WorkflowNodeRunId::new("nr-b"),
+            "error-b".to_string(),
+            None,
+            80,
+        )
+        .unwrap();
+    let after_b = run_repository.find_run(&run_id).unwrap().unwrap();
+    assert_eq!(after_b.status, WorkflowRunStatus::Failed);
+    assert_eq!(after_b.error.as_deref(), Some("error-a"));
+    assert_eq!(after_b.finished_at, Some(60));
+    let nodes = engine_repository.list_node_runs(&run_id).unwrap();
+    let node_b = nodes.iter().find(|node| node.node_id == "b").unwrap();
+    assert_eq!(node_b.status, WorkflowNodeStatus::Failed);
+    assert_eq!(node_b.error.as_deref(), Some("error-b"));
+}
+
 /// Verifies deleting a run preserves the workspace and its independent session aggregate.
 #[test]
 fn deleting_workflow_run_does_not_delete_workspace_or_session() {
@@ -767,6 +1024,81 @@ fn bootstrapped_pool() -> (TempDir, RepositoryPool) {
             .expect("bootstrap repository pool")
     });
     (temp_dir, pool)
+}
+
+/// Seeds a run with an explicit status and payload for engine-repository fixtures.
+fn seed_run(
+    temp_dir: &TempDir,
+    pool: &RepositoryPool,
+    status: WorkflowRunStatus,
+    payload: Option<String>,
+    error: Option<String>,
+    started_at: Option<i64>,
+    finished_at: Option<i64>,
+) -> WorkflowRunId {
+    let workspace_path = existing_workspace_path(temp_dir);
+    let project_repository =
+        SqliteProjectRepository::with_clock(pool.clone(), crate::test_clock::TestClock::new(1));
+    let workspace_repository = SqliteWorkspaceRepository::new(pool.clone());
+    let workflow_repository = SqliteWorkflowRepository::new(pool.clone());
+    let run_repository = SqliteWorkflowRunRepository::new(pool.clone());
+    project_repository
+        .create_project(
+            Project::new(
+                ProjectId::new("project-1"),
+                "Demo",
+                AuditFields::new(10, 10, false),
+            ),
+            WorkspaceLocation::local_filesystem(workspace_path.to_string_lossy()),
+        )
+        .unwrap();
+    let workspace = workspace_repository
+        .find_main_workspace(&ProjectId::new("project-1"))
+        .unwrap()
+        .unwrap();
+    let workflow_id = WorkflowId::new("workflow-1");
+    let snapshot_id = WorkflowSnapshotId::new("snapshot-1");
+    workflow_repository
+        .create_workflow(
+            Workflow::new(
+                workflow_id.clone(),
+                Namespace::local(),
+                "Review",
+                None,
+                AuditFields::new(10, 10, false),
+            )
+            .unwrap(),
+            WorkflowSnapshot::new(
+                snapshot_id.clone(),
+                workflow_id.clone(),
+                "draft",
+                "{}",
+                10,
+                Some(10),
+                false,
+            ),
+        )
+        .unwrap();
+    let run_id = WorkflowRunId::new("run-1");
+    run_repository
+        .create_run(WorkflowRun::new(
+            run_id.clone(),
+            workspace.id,
+            workflow_id,
+            snapshot_id,
+            "Review run",
+            status,
+            Some(r#"{"current_nodes":[]}"#.to_string()),
+            Some("新任务".to_string()),
+            None,
+            error,
+            payload,
+            started_at,
+            finished_at,
+            AuditFields::new(20, 30, false),
+        ))
+        .unwrap();
+    run_id
 }
 
 /// Seeds a created-but-never-started Pending run for deletion-policy fixtures.

@@ -103,6 +103,7 @@ commands.allow = [
     "respond_to_session_permission",
     "restart_workflow_run",
     "resume_session_history",
+    "resume_workflow_run_from_failure",
     "rollback_workflow",
     "save_plugin_configuration",
     "scan_plugins",
