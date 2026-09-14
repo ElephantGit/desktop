@@ -1,7 +1,7 @@
 use ora_application::{
-    BindWorkflowNodeSessionResult, NodeFailure, NodeFailureKind, NodeRunToStart, ProjectRepository,
-    RestartWorkflowRunResult, ResumeWorkflowRunResult, SessionRepository, SkillRepository,
-    StartWorkflowRunResult, WorkflowRepository, WorkflowRunCreateOutcome,
+    BindWorkflowNodeSessionResult, FileChange, NodeFailure, NodeFailureKind, NodeRunToStart,
+    ProjectRepository, RestartWorkflowRunResult, ResumeWorkflowRunResult, SessionRepository,
+    SkillRepository, StartWorkflowRunResult, WorkflowRepository, WorkflowRunCreateOutcome,
     WorkflowRunEngineRepository, WorkflowRunPayload, WorkflowRunRepository, WorkflowVariablePool,
 };
 use ora_contracts::WorkflowRunLocale;
@@ -953,6 +953,174 @@ fn fail_node_increments_attempt_after_resume_from_failure() {
     let parsed: serde_json::Value = serde_json::from_str(node.payload.as_deref().unwrap()).unwrap();
     assert_eq!(parsed["error_detail"]["attempt"], 2);
     assert_eq!(parsed["error_detail"]["kind"], "session");
+}
+
+/// `record_node_checkpoint` merges `checkpoint` into an existing payload and leaves other keys.
+#[test]
+fn record_node_checkpoint_merges_into_existing_payload() {
+    let (temp_dir, pool) = bootstrapped_pool();
+    let engine_repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+    let run_id = seed_pending_run(&temp_dir, &pool);
+    engine_repository
+        .start_ready_nodes(
+            &run_id,
+            &[NodeRunToStart {
+                id: WorkflowNodeRunId::new("nr-review"),
+                node_id: "review".to_string(),
+                node_type: "agent".to_string(),
+                input: None,
+            }],
+            40,
+        )
+        .unwrap();
+    pool.with_connection(|connection| {
+        connection.execute(
+            "UPDATE workflow_node_runs SET payload = ?2 WHERE id = ?1",
+            rusqlite::params!["nr-review", r#"{"stop_reason":"end_turn"}"#],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    engine_repository
+        .record_node_checkpoint(
+            &WorkflowNodeRunId::new("nr-review"),
+            Some("abc123"),
+            None,
+            50,
+        )
+        .unwrap();
+
+    let nodes = engine_repository.list_node_runs(&run_id).unwrap();
+    let node = nodes.iter().find(|node| node.node_id == "review").unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(node.payload.as_deref().unwrap()).unwrap();
+    assert_eq!(parsed["stop_reason"], "end_turn");
+    assert_eq!(parsed["checkpoint"], "abc123");
+    assert!(parsed.get("checkpoint_error").is_none());
+}
+
+/// A failed snapshot writes `checkpoint: null` and `checkpoint_error` without dropping other keys.
+#[test]
+fn record_node_checkpoint_writes_null_and_error_when_snapshot_fails() {
+    let (temp_dir, pool) = bootstrapped_pool();
+    let engine_repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+    let run_id = seed_pending_run(&temp_dir, &pool);
+    engine_repository
+        .start_ready_nodes(
+            &run_id,
+            &[NodeRunToStart {
+                id: WorkflowNodeRunId::new("nr-review"),
+                node_id: "review".to_string(),
+                node_type: "agent".to_string(),
+                input: None,
+            }],
+            40,
+        )
+        .unwrap();
+    pool.with_connection(|connection| {
+        connection.execute(
+            "UPDATE workflow_node_runs SET payload = ?2 WHERE id = ?1",
+            rusqlite::params!["nr-review", r#"{"stop_reason":"end_turn"}"#],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    engine_repository
+        .record_node_checkpoint(
+            &WorkflowNodeRunId::new("nr-review"),
+            None,
+            Some("not a git repository"),
+            50,
+        )
+        .unwrap();
+
+    let nodes = engine_repository.list_node_runs(&run_id).unwrap();
+    let node = nodes.iter().find(|node| node.node_id == "review").unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(node.payload.as_deref().unwrap()).unwrap();
+    assert_eq!(parsed["stop_reason"], "end_turn");
+    assert_eq!(parsed["checkpoint"], serde_json::Value::Null);
+    assert_eq!(parsed["checkpoint_error"], "not a git repository");
+}
+
+/// `fail_node` writes `payload.file_changes` in the same shape as a succeeded node.
+#[test]
+fn fail_node_writes_file_changes_in_the_same_shape_as_complete_node() {
+    let (temp_dir, pool) = bootstrapped_pool();
+    let engine_repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+    let run_id = seed_pending_run(&temp_dir, &pool);
+    engine_repository
+        .start_ready_nodes(
+            &run_id,
+            &[
+                NodeRunToStart {
+                    id: WorkflowNodeRunId::new("nr-ok"),
+                    node_id: "ok".to_string(),
+                    node_type: "agent".to_string(),
+                    input: None,
+                },
+                NodeRunToStart {
+                    id: WorkflowNodeRunId::new("nr-fail"),
+                    node_id: "fail".to_string(),
+                    node_type: "agent".to_string(),
+                    input: None,
+                },
+            ],
+            40,
+        )
+        .unwrap();
+    engine_repository
+        .record_node_checkpoint(&WorkflowNodeRunId::new("nr-fail"), Some("def456"), None, 45)
+        .unwrap();
+    let file_changes = vec![
+        FileChange {
+            path: "src/a.ts".to_string(),
+            additions: 3,
+            deletions: 1,
+        },
+        FileChange {
+            path: "src/b.ts".to_string(),
+            additions: 0,
+            deletions: 2,
+        },
+    ];
+    engine_repository
+        .complete_node(
+            &WorkflowNodeRunId::new("nr-ok"),
+            Some("done".to_string()),
+            None,
+            Some("end_turn".to_string()),
+            file_changes.clone(),
+            50,
+        )
+        .unwrap();
+    engine_repository
+        .fail_node(
+            &WorkflowNodeRunId::new("nr-fail"),
+            NodeFailure::new(NodeFailureKind::Session, "review failed")
+                .with_file_changes(file_changes),
+            60,
+        )
+        .unwrap();
+
+    let nodes = engine_repository.list_node_runs(&run_id).unwrap();
+    let succeeded = nodes.iter().find(|node| node.node_id == "ok").unwrap();
+    let failed = nodes.iter().find(|node| node.node_id == "fail").unwrap();
+    let succeeded_payload: serde_json::Value =
+        serde_json::from_str(succeeded.payload.as_deref().unwrap()).unwrap();
+    let failed_payload: serde_json::Value =
+        serde_json::from_str(failed.payload.as_deref().unwrap()).unwrap();
+    println!("payload={}", failed.payload.as_deref().unwrap());
+    assert_eq!(
+        failed_payload["file_changes"],
+        succeeded_payload["file_changes"]
+    );
+    assert_eq!(
+        failed_payload["file_changes"],
+        serde_json::json!([
+            {"path": "src/a.ts", "additions": 3, "deletions": 1},
+            {"path": "src/b.ts", "additions": 0, "deletions": 2},
+        ])
+    );
+    assert_eq!(failed_payload["checkpoint"], "def456");
 }
 
 /// Crash recovery writes `interrupted_by_restart` error detail on orphaned in-flight nodes.

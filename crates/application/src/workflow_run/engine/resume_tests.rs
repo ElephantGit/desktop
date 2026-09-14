@@ -154,6 +154,16 @@ impl WorkflowRunEngineRepository for RecordingRepository {
         Ok(AdvanceWorkflowRunResult::NotFound)
     }
 
+    fn record_node_checkpoint(
+        &self,
+        _node_run_id: &WorkflowNodeRunId,
+        _checkpoint: Option<&str>,
+        _checkpoint_error: Option<&str>,
+        _now: i64,
+    ) -> Result<(), RepositoryError> {
+        Ok(())
+    }
+
     fn finish_run(
         &self,
         _run_id: &WorkflowRunId,

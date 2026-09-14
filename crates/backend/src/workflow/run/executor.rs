@@ -1,3 +1,4 @@
+use super::checkpoint::{fail_dispatched_node, record_pre_node_checkpoint};
 use super::prompt::{RequiredWorkflowSkill, WorkflowPromptRequest, assemble_workflow_prompt};
 use crate::agent_runtime::AgentRuntimeManager;
 use crate::clock::SystemClock;
@@ -114,16 +115,16 @@ impl NodeExecutor for WorkflowRunNodeExecutor {
                     }
                 }
                 Err(error) => {
-                    let callback = callback.clone();
-                    let run_id = context.run.id.clone();
-                    let node_run_id = node_run_id.clone();
-                    let failure = error.into_failure_report();
-                    let join = tokio::task::spawn_blocking(move || {
-                        callback.fail_node(&run_id, &node_run_id, failure);
-                    });
-                    if let Err(source) = join.await {
-                        ora_warn!("workflow node failure callback panicked: {source}");
-                    }
+                    fail_dispatched_node(
+                        callback.clone(),
+                        pool.clone(),
+                        &agent_runtime,
+                        &context.workspace.id,
+                        context.run.id.clone(),
+                        node_run_id.clone(),
+                        error.into_failure_report(),
+                    )
+                    .await;
                 }
             }
         });
@@ -361,6 +362,14 @@ async fn drive_agent_node(
 
         // Snapshot the worktree before this node runs so its completion diff is the node's own
         // incremental change (previous nodes' changes are already in the baseline).
+        record_pre_node_checkpoint(
+            &repository,
+            &workspace_root,
+            &context.run.id,
+            &node.id,
+            node_run_id,
+            clock.now_timestamp_millis(),
+        )?;
         let baseline = capture_worktree_snapshot(&workspace_root);
 
         let mut stream = agent_runtime

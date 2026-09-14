@@ -1,3 +1,4 @@
+use super::ports::FileChange;
 use serde::{Deserialize, Serialize};
 
 /// Mechanical classification of why a node run failed. Drives the "will resuming the same
@@ -97,16 +98,19 @@ pub struct NodeFailure {
     pub message: String,
     pub source_chain: Vec<String>,
     pub output: Option<String>,
+    /// Worktree files this node touched before failing; empty when none could be recorded.
+    pub file_changes: Vec<FileChange>,
 }
 
 impl NodeFailure {
-    /// Builds a failure with an empty source chain and no retained output.
+    /// Builds a failure with an empty source chain, no retained output, and no file changes.
     pub fn new(kind: NodeFailureKind, message: impl Into<String>) -> Self {
         Self {
             kind,
             message: message.into(),
             source_chain: Vec::new(),
             output: None,
+            file_changes: Vec::new(),
         }
     }
 
@@ -119,6 +123,14 @@ impl NodeFailure {
     pub fn with_source_chain(self, source_chain: Vec<String>) -> Self {
         Self {
             source_chain,
+            ..self
+        }
+    }
+
+    /// Attaches the worktree files this node touched before it failed.
+    pub fn with_file_changes(self, file_changes: Vec<FileChange>) -> Self {
+        Self {
+            file_changes,
             ..self
         }
     }

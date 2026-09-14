@@ -17,10 +17,12 @@ use crate::repository::RepositoryPool;
 
 mod current_nodes;
 mod failure_detail;
+mod payload_json;
 mod resume;
 
 use current_nodes::{current_nodes_from_state, current_nodes_to_state, rewrite_current_nodes};
 use failure_detail::{fail_orphaned_run, persist_failed_node_run};
+use payload_json::complete_payload;
 
 /// Persists workflow-run engine state transitions in SQLite.
 ///
@@ -453,6 +455,22 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
             .map_err(engine_repository_error_from_database)
     }
 
+    fn record_node_checkpoint(
+        &self,
+        node_run_id: &WorkflowNodeRunId,
+        checkpoint: Option<&str>,
+        checkpoint_error: Option<&str>,
+        now: i64,
+    ) -> Result<(), RepositoryError> {
+        payload_json::record_node_checkpoint(
+            &self.pool,
+            node_run_id,
+            checkpoint,
+            checkpoint_error,
+            now,
+        )
+    }
+
     fn finish_run(
         &self,
         run_id: &WorkflowRunId,
@@ -683,35 +701,6 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
             })
             .map_err(engine_repository_error_from_database)
     }
-}
-
-/// Builds the node-run `payload` blob: the ACP stop reason and incremental file changes, when any.
-fn complete_payload(stop_reason: Option<String>, file_changes: Vec<FileChange>) -> Option<String> {
-    let mut payload = serde_json::Map::new();
-    if let Some(reason) = stop_reason {
-        payload.insert("stop_reason".to_string(), serde_json::json!(reason));
-    }
-    if !file_changes.is_empty() {
-        payload.insert(
-            "file_changes".to_string(),
-            serde_json::json!(
-                file_changes
-                    .iter()
-                    .map(|change| {
-                        serde_json::json!({
-                            "path": change.path,
-                            "additions": change.additions,
-                            "deletions": change.deletions,
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            ),
-        );
-    }
-    if payload.is_empty() {
-        return None;
-    }
-    Some(serde_json::Value::Object(payload).to_string())
 }
 
 /// Commits public node values and private routing state with the node status transition.

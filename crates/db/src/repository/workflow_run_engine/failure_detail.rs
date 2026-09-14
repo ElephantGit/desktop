@@ -2,6 +2,8 @@ use ora_application::{NodeFailure, NodeFailureDetail, NodeFailureKind};
 use ora_domain::{SessionStatus, WorkflowNodeStatus, WorkflowRunId, WorkflowRunStatus};
 use rusqlite::{Transaction, params};
 
+use super::payload_json::{file_changes_json, merge_payload_keys};
+
 /// Error written to node runs and runs interrupted by a backend restart.
 const INTERRUPTED_BY_RESTART: &str = r#"{"reason":"interrupted_by_restart"}"#;
 
@@ -23,14 +25,13 @@ fn deleted_attempt_count(
 fn merge_error_detail(
     payload: Option<&str>,
     detail: &NodeFailureDetail,
+    file_changes: &[ora_application::FileChange],
 ) -> Result<String, crate::DatabaseError> {
-    let mut map = match payload.and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-    {
-        Some(serde_json::Value::Object(map)) => map,
-        _ => serde_json::Map::new(),
-    };
-    map.insert("error_detail".to_string(), serde_json::to_value(detail)?);
-    Ok(serde_json::Value::Object(map).to_string())
+    let mut keys = vec![("error_detail", serde_json::to_value(detail)?)];
+    if !file_changes.is_empty() {
+        keys.push(("file_changes", file_changes_json(file_changes)));
+    }
+    merge_payload_keys(payload, keys)
 }
 
 /// Marks one node-run `Failed` and writes `payload.error_detail` in the same UPDATE.
@@ -52,7 +53,7 @@ pub(super) fn persist_failed_node_run(
         resumable: failure.kind.resumable(),
         recorded_at: now,
     };
-    let payload = merge_error_detail(current_payload, &detail)?;
+    let payload = merge_error_detail(current_payload, &detail, &failure.file_changes)?;
     transaction.execute(
         "UPDATE workflow_node_runs SET status = ?2, error = ?3, output = ?4, payload = ?5, finished_at = ?6, updated_at = ?6
          WHERE id = ?1 AND is_deleted = 0",

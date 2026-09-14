@@ -297,6 +297,24 @@ where
         }
     }
 
+    /// Records the git checkpoint taken before a node started, or why none could be taken.
+    ///
+    /// Provenance only: a missing node row is a no-op, matching the repository contract.
+    pub fn record_node_checkpoint(
+        &self,
+        node_run_id: &WorkflowNodeRunId,
+        checkpoint: Option<&str>,
+        checkpoint_error: Option<&str>,
+    ) -> Result<(), EngineError> {
+        let now = self.clock.now_timestamp_millis();
+        Ok(self.repository.record_node_checkpoint(
+            node_run_id,
+            checkpoint,
+            checkpoint_error,
+            now,
+        )?)
+    }
+
     /// Resumes scheduling for a `Running` run left with no active node by a crash between a node
     /// completion and its successor scheduling. Recomputes the ready set from persisted state:
     /// either a ready successor is dispatched or the drained run is finished.

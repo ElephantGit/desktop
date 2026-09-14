@@ -1,6 +1,7 @@
 //! Backend composition and runtime adapters for workflow runs.
 
 mod api;
+mod checkpoint;
 mod engine;
 mod executor;
 pub(crate) mod interactive;

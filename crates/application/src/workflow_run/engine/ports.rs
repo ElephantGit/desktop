@@ -253,6 +253,16 @@ pub trait WorkflowRunEngineRepository {
         now: i64,
     ) -> Result<AdvanceWorkflowRunResult, RepositoryError>;
 
+    /// Records the git checkpoint taken before a node started (or why none could be taken) under
+    /// `payload.checkpoint` / `payload.checkpoint_error`. Provenance only: never fails the node.
+    fn record_node_checkpoint(
+        &self,
+        node_run_id: &WorkflowNodeRunId,
+        checkpoint: Option<&str>,
+        checkpoint_error: Option<&str>,
+        now: i64,
+    ) -> Result<(), RepositoryError>;
+
     /// Finishes a run as succeeded with the given output.
     fn finish_run(
         &self,
