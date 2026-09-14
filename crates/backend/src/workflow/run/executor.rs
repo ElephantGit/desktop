@@ -1,4 +1,5 @@
 use super::checkpoint::{fail_dispatched_node, record_pre_node_checkpoint};
+use super::last_failure::previous_failure_for_injection;
 use super::prompt::{RequiredWorkflowSkill, WorkflowPromptRequest, assemble_workflow_prompt};
 use crate::agent_runtime::AgentRuntimeManager;
 use crate::clock::SystemClock;
@@ -24,9 +25,7 @@ use ora_contracts::{
     StopSessionRequest,
 };
 use ora_db::{RepositoryPool, SqliteAgentDefinitionRepository, SqliteWorkflowRunEngineRepository};
-use ora_domain::{
-    AgentDefinitionId, Namespace, SessionId, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunId,
-};
+use ora_domain::{AgentDefinitionId, Namespace, SessionId, WorkflowNodeRunId, WorkflowNodeStatus};
 use ora_logging::ora_warn;
 
 use super::worktree::{capture_worktree_snapshot, compute_file_changes, persist_worktree_baseline};
@@ -35,6 +34,9 @@ use std::path::{Path, PathBuf};
 
 use std::sync::Arc;
 use thiserror::Error;
+
+mod payload;
+use payload::{parse_workflow_run_payload, report_outcome};
 
 /// Executes one agent node through a real Ora session, reporting completion to the run engine.
 ///
@@ -132,7 +134,7 @@ impl NodeExecutor for WorkflowRunNodeExecutor {
 }
 
 /// The result of one driven agent node turn.
-enum AgentNodeOutcome {
+pub(super) enum AgentNodeOutcome {
     /// The node finished and reports completion or failure through the callback.
     Completed {
         output: Option<String>,
@@ -342,6 +344,9 @@ async fn drive_agent_node(
 
         // Assemble one explicit workflow handoff while preserving leading slash-command parsing.
         let node_runs = repository.list_node_runs(&context.run.id)?;
+        let previous = repository.find_last_failed_attempt(&context.run.id, &node.id)?;
+        let previous_failure =
+            previous_failure_for_injection(run_payload.inject_last_failure, previous.as_ref());
         let workspace_root = agent_runtime.workspace_cwd(&context.workspace.id)?;
         let required_skills = resolve_required_skills(
             &run_payload,
@@ -358,6 +363,7 @@ async fn drive_agent_node(
             node_runs: &node_runs,
             required_skills: &required_skills,
             locale: run_payload.locale,
+            previous_failure: previous_failure.as_ref(),
         });
 
         // Snapshot the worktree before this node runs so its completion diff is the node's own
@@ -490,81 +496,6 @@ async fn drive_agent_node(
         ora_warn!(session_id = %session_id, error = %error, "failed to discard unpublished workflow session after node setup failed");
     }
     outcome
-}
-
-/// Parses the immutable locale and skill placement receipt captured when the run was created.
-fn parse_workflow_run_payload(
-    payload: Option<&str>,
-) -> Result<WorkflowRunPayload, NodeExecutionError> {
-    payload
-        .and_then(|payload| serde_json::from_str(payload).ok())
-        .ok_or(NodeExecutionError::InvalidRunPayload)
-}
-
-/// Reports one finished turn to the engine according to the confirmed stop-reason mapping.
-fn report_outcome(
-    callback: &Arc<dyn WorkflowRunCallback>,
-    run_id: &WorkflowRunId,
-    node_run_id: &WorkflowNodeRunId,
-    outcome: AgentNodeOutcome,
-) {
-    let AgentNodeOutcome::Completed {
-        output,
-        structured_output,
-        stop_reason,
-        file_changes,
-    } = outcome
-    else {
-        // An interactive node parked at `Pending` reports nothing; the human drives completion.
-        return;
-    };
-    match stop_reason {
-        StopReason::EndTurn => callback.complete_node(
-            run_id,
-            node_run_id,
-            output,
-            structured_output,
-            Some("end_turn".to_string()),
-            file_changes,
-        ),
-        StopReason::MaxTokens => callback.complete_node(
-            run_id,
-            node_run_id,
-            output,
-            structured_output,
-            Some("max_tokens".to_string()),
-            file_changes,
-        ),
-        StopReason::MaxTurnRequests => callback.complete_node(
-            run_id,
-            node_run_id,
-            output,
-            structured_output,
-            Some("max_turn_requests".to_string()),
-            file_changes,
-        ),
-        StopReason::Refusal => callback.fail_node(
-            run_id,
-            node_run_id,
-            NodeFailure::new(NodeFailureKind::AgentRefusal, "agent refused the request")
-                .with_output(output),
-        ),
-        StopReason::Cancelled => {
-            // Non-interactive cancellation belongs to the run cancel flow; interactive turns
-            // already returned through the awaiting-input branch above.
-        }
-        // A newer ACP stop reason has semantics this executor cannot safely map to a
-        // successful workflow transition.
-        _ => callback.fail_node(
-            run_id,
-            node_run_id,
-            NodeFailure::new(
-                NodeFailureKind::UnknownStopReason,
-                "agent stopped for a reason this Ora version does not recognize",
-            )
-            .with_output(output),
-        ),
-    }
 }
 
 /// Resolves a completed node's final response into the output variables to commit.

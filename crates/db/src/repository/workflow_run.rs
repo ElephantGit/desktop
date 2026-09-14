@@ -389,6 +389,68 @@ pub(super) fn list_node_runs(
     Ok(node_runs)
 }
 
+/// Returns the most recent soft-deleted failed attempt of one node inside a run.
+pub(super) fn find_last_failed_attempt(
+    connection: &rusqlite::Connection,
+    run_id: &WorkflowRunId,
+    node_id: &str,
+) -> Result<Option<WorkflowNodeRun>, crate::DatabaseError> {
+    let mut statement = connection.prepare(
+        "SELECT id, run_id, node_id, node_type, session_id, status, input, output, error, payload,
+                started_at, finished_at, created_at, updated_at, is_deleted
+         FROM workflow_node_runs
+         WHERE run_id = ?1 AND node_id = ?2 AND is_deleted = 1 AND status = ?3
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1",
+    )?;
+    let mut rows = statement.query(params![
+        run_id.as_ref(),
+        node_id,
+        WorkflowNodeStatus::Failed.database_value()
+    ])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(map_node_run_row(row)?)),
+        None => Ok(None),
+    }
+}
+
+/// Finds the live node run bound to a session, if any.
+pub(super) fn find_node_run_by_session_id(
+    connection: &rusqlite::Connection,
+    session_id: &SessionId,
+) -> Result<Option<WorkflowNodeRun>, crate::DatabaseError> {
+    let mut statement = connection.prepare(
+        "SELECT id, run_id, node_id, node_type, session_id, status, input, output, error, payload,
+                started_at, finished_at, created_at, updated_at, is_deleted
+         FROM workflow_node_runs
+         WHERE session_id = ?1 AND is_deleted = 0
+         LIMIT 1",
+    )?;
+    let mut rows = statement.query(params![session_id.as_ref()])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(map_node_run_row(row)?)),
+        None => Ok(None),
+    }
+}
+
+/// Finds one live node run by id.
+pub(super) fn find_node_run_by_id(
+    connection: &rusqlite::Connection,
+    node_run_id: &WorkflowNodeRunId,
+) -> Result<Option<WorkflowNodeRun>, crate::DatabaseError> {
+    let mut statement = connection.prepare(
+        "SELECT id, run_id, node_id, node_type, session_id, status, input, output, error, payload,
+                started_at, finished_at, created_at, updated_at, is_deleted
+         FROM workflow_node_runs
+         WHERE id = ?1 AND is_deleted = 0",
+    )?;
+    let mut rows = statement.query(params![node_run_id.as_ref()])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(map_node_run_row(row)?)),
+        None => Ok(None),
+    }
+}
+
 /// Converts database failures into application-port errors.
 fn workflow_run_repository_error_from_database(error: crate::DatabaseError) -> RepositoryError {
     RepositoryError::new(error)

@@ -197,6 +197,8 @@ export const workflowRunTranslations = {
       "将在当前工作区中创建“{{name}}”的工作流运行。",
     "workflowRun.createRun": "创建运行",
     "workflowRun.runRequiredName": "请填写运行名称。",
+    "workflowRun.injectLastFailure":
+      "节点重跑时把上次失败原因告诉智能体",
     "workflowRun.kickoffInput": "启动输入（可选）",
     "workflowRun.kickoffPlaceholder": "例如：审查当前分支的未提交改动",
     "workflowRun.startConfirm": "启动",
@@ -479,6 +481,8 @@ export const workflowRunTranslations = {
       "Creates a run of “{{name}}” in the current workspace.",
     "workflowRun.createRun": "Create run",
     "workflowRun.runRequiredName": "Enter a run name.",
+    "workflowRun.injectLastFailure":
+      "Tell the agent why the previous attempt failed when a step runs again",
     "workflowRun.kickoffInput": "Kickoff input (optional)",
     "workflowRun.kickoffPlaceholder":
       "e.g. Review uncommitted changes on this branch",

@@ -5,6 +5,7 @@ mod checkpoint;
 mod engine;
 mod executor;
 pub(crate) mod interactive;
+mod last_failure;
 mod operations;
 mod prerequisites;
 mod prompt;

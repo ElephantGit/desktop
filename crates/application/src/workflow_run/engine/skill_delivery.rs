@@ -113,6 +113,15 @@ pub struct WorkflowRunPayload {
     /// Internal Condition routing decisions kept outside the user-selectable variable pool.
     #[serde(default)]
     pub condition_decisions: BTreeMap<String, String>,
+    /// When true, a re-dispatched node receives a short prompt block describing its last
+    /// agent-behaviour failure. Older payloads without this key deserialize as on.
+    #[serde(default = "default_inject_last_failure")]
+    pub inject_last_failure: bool,
+}
+
+/// Older run payloads omitted this switch; treating them as on preserves the current default.
+fn default_inject_last_failure() -> bool {
+    true
 }
 
 impl WorkflowRunPayload {
@@ -127,6 +136,7 @@ impl WorkflowRunPayload {
             start_node_id: None,
             variable_pool: WorkflowVariablePool::default(),
             condition_decisions: BTreeMap::new(),
+            inject_last_failure: true,
         }
     }
 
@@ -143,7 +153,14 @@ impl WorkflowRunPayload {
             start_node_id,
             variable_pool,
             condition_decisions: BTreeMap::new(),
+            inject_last_failure: true,
         }
+    }
+
+    /// Sets whether a later attempt of a failed node should see the previous failure in its prompt.
+    pub fn with_inject_last_failure(mut self, inject: bool) -> Self {
+        self.inject_last_failure = inject;
+        self
     }
 
     /// Returns Condition routing state while migrating decisions stored by older payloads.
@@ -221,5 +238,25 @@ mod tests {
             payload.resolved_condition_decisions(),
             BTreeMap::from([("condition-1".to_string(), "current-case".to_string())])
         );
+    }
+
+    /// Payloads written before this field existed still inject last-failure context by default.
+    #[test]
+    fn workflow_run_payload_defaults_inject_last_failure_to_true() {
+        let payload = WorkflowRunPayload::new(WorkflowRunLocale::EnUs, Default::default());
+        let mut value = serde_json::to_value(&payload).unwrap();
+        value
+            .as_object_mut()
+            .expect("payload object")
+            .remove("injectLastFailure");
+        let decoded: WorkflowRunPayload = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded.inject_last_failure, true);
+
+        let off = WorkflowRunPayload::new(WorkflowRunLocale::EnUs, Default::default())
+            .with_inject_last_failure(false);
+        let round_tripped: WorkflowRunPayload =
+            serde_json::from_str(&serde_json::to_string(&off).unwrap()).unwrap();
+        assert_eq!(round_tripped, off);
+        assert_eq!(round_tripped.inject_last_failure, false);
     }
 }

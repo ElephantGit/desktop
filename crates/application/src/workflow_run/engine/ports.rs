@@ -164,6 +164,14 @@ pub trait WorkflowRunEngineRepository {
         run_id: &WorkflowRunId,
     ) -> Result<Vec<WorkflowNodeRun>, RepositoryError>;
 
+    /// Returns the most recent soft-deleted `Failed` run of `node_id` inside `run_id` (the attempt
+    /// that `resume_from_failure` cleared), or `None` when the node never failed in this run.
+    fn find_last_failed_attempt(
+        &self,
+        run_id: &WorkflowRunId,
+        node_id: &str,
+    ) -> Result<Option<WorkflowNodeRun>, RepositoryError>;
+
     /// Publishes a node's prepared Ora session only while both the node and run are still running.
     ///
     /// The executor calls this after the initial prompt is accepted. Keeping `session_id` absent

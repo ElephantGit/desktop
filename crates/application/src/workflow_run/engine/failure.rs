@@ -51,6 +51,31 @@ impl NodeFailureKind {
         }
     }
 
+    /// `true` = the failure came from the agent's own output/behaviour, so telling the next
+    /// attempt what went wrong can change the outcome. Environment, definition and engine
+    /// failures are `false`: repeating them to the agent cannot help.
+    pub const fn inject_into_prompt(self) -> bool {
+        match self {
+            Self::StructuredOutput
+            | Self::AgentRefusal
+            | Self::UnknownStopReason
+            | Self::MultipleOutputs => true,
+            Self::MissingAgentRef
+            | Self::WorkflowModelNotFound
+            | Self::MissingAgentConfig
+            | Self::InvalidRunPayload
+            | Self::PromptTemplate
+            | Self::MissingSkillMaterialization
+            | Self::SessionEndedWithoutStopReason
+            | Self::SessionBindingRejected
+            | Self::BaselinePersist
+            | Self::Repository
+            | Self::Session
+            | Self::InterruptedByRestart
+            | Self::ConditionEvaluation => false,
+        }
+    }
+
     /// The serialized snake_case name (same string serde produces); used as a translation key.
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -166,6 +191,54 @@ mod tests {
         assert_eq!(NodeFailureKind::InterruptedByRestart.resumable(), true);
         assert_eq!(NodeFailureKind::MultipleOutputs.resumable(), false);
         assert_eq!(NodeFailureKind::ConditionEvaluation.resumable(), false);
+    }
+
+    #[test]
+    fn inject_into_prompt_marks_only_agent_behaviour_failures() {
+        assert_eq!(NodeFailureKind::StructuredOutput.inject_into_prompt(), true);
+        assert_eq!(NodeFailureKind::AgentRefusal.inject_into_prompt(), true);
+        assert_eq!(
+            NodeFailureKind::UnknownStopReason.inject_into_prompt(),
+            true
+        );
+        assert_eq!(NodeFailureKind::MultipleOutputs.inject_into_prompt(), true);
+        assert_eq!(NodeFailureKind::MissingAgentRef.inject_into_prompt(), false);
+        assert_eq!(
+            NodeFailureKind::WorkflowModelNotFound.inject_into_prompt(),
+            false
+        );
+        assert_eq!(
+            NodeFailureKind::MissingAgentConfig.inject_into_prompt(),
+            false
+        );
+        assert_eq!(
+            NodeFailureKind::InvalidRunPayload.inject_into_prompt(),
+            false
+        );
+        assert_eq!(NodeFailureKind::PromptTemplate.inject_into_prompt(), false);
+        assert_eq!(
+            NodeFailureKind::MissingSkillMaterialization.inject_into_prompt(),
+            false
+        );
+        assert_eq!(
+            NodeFailureKind::SessionEndedWithoutStopReason.inject_into_prompt(),
+            false
+        );
+        assert_eq!(
+            NodeFailureKind::SessionBindingRejected.inject_into_prompt(),
+            false
+        );
+        assert_eq!(NodeFailureKind::BaselinePersist.inject_into_prompt(), false);
+        assert_eq!(NodeFailureKind::Repository.inject_into_prompt(), false);
+        assert_eq!(NodeFailureKind::Session.inject_into_prompt(), false);
+        assert_eq!(
+            NodeFailureKind::InterruptedByRestart.inject_into_prompt(),
+            false
+        );
+        assert_eq!(
+            NodeFailureKind::ConditionEvaluation.inject_into_prompt(),
+            false
+        );
     }
 
     #[test]

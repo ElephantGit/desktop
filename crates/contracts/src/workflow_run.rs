@@ -121,6 +121,10 @@ pub struct CreateWorkflowRunRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub name: Option<String>,
+    /// `None` means inject last-failure context (the same as `Some(true)`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub inject_last_failure: Option<bool>,
 }
 
 /// Returns the created workspace-owned run.
@@ -567,6 +571,7 @@ mod tests {
                 snapshot_id: None,
                 kickoff_input: None,
                 name: None,
+                inject_last_failure: None,
             },
             json!({
                 "workspaceId": "workspace-1",
@@ -813,6 +818,20 @@ mod tests {
             }),
         );
         assert_serialized_json(&WorkflowRunStatus::AwaitingInput, json!("awaitingInput"));
+    }
+
+    /// Omitting the run-level switch deserializes as `None` (handlers treat that as on).
+    #[test]
+    fn create_workflow_run_request_defaults_inject_last_failure_to_none() {
+        let omitted: CreateWorkflowRunRequest =
+            serde_json::from_str(r#"{"workspaceId":"w","workflowId":"f","locale":"zh-CN"}"#)
+                .unwrap();
+        assert_eq!(omitted.inject_last_failure, None);
+        let off: CreateWorkflowRunRequest = serde_json::from_str(
+            r#"{"workspaceId":"w","workflowId":"f","locale":"zh-CN","injectLastFailure":false}"#,
+        )
+        .unwrap();
+        assert_eq!(off.inject_last_failure, Some(false));
     }
 
     /// A resume request without `rollback` stays `Keep`; snake_case values map onto the enum.

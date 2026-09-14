@@ -64,12 +64,16 @@ export function useCreateWorkflowRun() {
       workflowId: string;
       name: string;
       projectId?: string;
+      injectLastFailure?: boolean;
     }) =>
       client.workflowRun.create({
         workspaceId: input.workspaceId,
         workflowId: input.workflowId,
         name: input.name,
         locale: activeLocale(),
+        ...(input.injectLastFailure !== undefined
+          ? { injectLastFailure: input.injectLastFailure }
+          : {}),
       }),
     onSuccess: (_result, variables) => {
       if (variables.projectId !== undefined) {

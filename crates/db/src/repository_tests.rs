@@ -955,6 +955,132 @@ fn fail_node_increments_attempt_after_resume_from_failure() {
     assert_eq!(parsed["error_detail"]["kind"], "session");
 }
 
+/// Soft-deleted failures are queryable; live rows and successes are not.
+#[test]
+fn find_last_failed_attempt_returns_the_latest_soft_deleted_failure() {
+    let (temp_dir, pool) = bootstrapped_pool();
+    let engine_repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+    let run_id = seed_run(
+        &temp_dir,
+        &pool,
+        WorkflowRunStatus::Failed,
+        None,
+        Some("review failed".to_string()),
+        Some(20),
+        Some(30),
+    );
+    engine_repository
+        .start_ready_nodes(
+            &run_id,
+            &[NodeRunToStart {
+                id: WorkflowNodeRunId::new("nr-review"),
+                node_id: "review".to_string(),
+                node_type: "agent".to_string(),
+                input: None,
+            }],
+            40,
+        )
+        .unwrap();
+    engine_repository
+        .fail_node(
+            &WorkflowNodeRunId::new("nr-review"),
+            NodeFailure::new(NodeFailureKind::Session, "review failed"),
+            50,
+        )
+        .unwrap();
+    assert_eq!(
+        engine_repository
+            .resume_from_failure(&run_id, &["review".to_string()], 60)
+            .unwrap(),
+        ResumeWorkflowRunResult::Resumed
+    );
+    engine_repository
+        .start_ready_nodes(
+            &run_id,
+            &[NodeRunToStart {
+                id: WorkflowNodeRunId::new("nr-review-2"),
+                node_id: "review".to_string(),
+                node_type: "agent".to_string(),
+                input: None,
+            }],
+            70,
+        )
+        .unwrap();
+    engine_repository
+        .fail_node(
+            &WorkflowNodeRunId::new("nr-review-2"),
+            NodeFailure::new(NodeFailureKind::Session, "review failed again"),
+            80,
+        )
+        .unwrap();
+    assert_eq!(
+        engine_repository
+            .resume_from_failure(&run_id, &["review".to_string()], 90)
+            .unwrap(),
+        ResumeWorkflowRunResult::Resumed
+    );
+
+    let latest = engine_repository
+        .find_last_failed_attempt(&run_id, "review")
+        .unwrap()
+        .expect("soft-deleted failure");
+    let parsed: serde_json::Value =
+        serde_json::from_str(latest.payload.as_deref().unwrap()).unwrap();
+    assert_eq!(parsed["error_detail"]["attempt"], 2);
+    assert_eq!(latest.audit_fields.is_deleted, true);
+
+    engine_repository
+        .start_ready_nodes(
+            &run_id,
+            &[
+                NodeRunToStart {
+                    id: WorkflowNodeRunId::new("nr-ok"),
+                    node_id: "ok".to_string(),
+                    node_type: "agent".to_string(),
+                    input: None,
+                },
+                NodeRunToStart {
+                    id: WorkflowNodeRunId::new("nr-live"),
+                    node_id: "live".to_string(),
+                    node_type: "agent".to_string(),
+                    input: None,
+                },
+            ],
+            100,
+        )
+        .unwrap();
+    engine_repository
+        .complete_node(
+            &WorkflowNodeRunId::new("nr-ok"),
+            Some("done".to_string()),
+            None,
+            Some("end_turn".to_string()),
+            Vec::new(),
+            110,
+        )
+        .unwrap();
+    assert_eq!(
+        engine_repository
+            .find_last_failed_attempt(&run_id, "ok")
+            .unwrap(),
+        None
+    );
+
+    engine_repository
+        .fail_node(
+            &WorkflowNodeRunId::new("nr-live"),
+            NodeFailure::new(NodeFailureKind::Session, "still live"),
+            120,
+        )
+        .unwrap();
+    assert_eq!(
+        engine_repository
+            .find_last_failed_attempt(&run_id, "live")
+            .unwrap(),
+        None
+    );
+}
+
 /// `record_node_checkpoint` merges `checkpoint` into an existing payload and leaves other keys.
 #[test]
 fn record_node_checkpoint_merges_into_existing_payload() {

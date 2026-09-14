@@ -82,6 +82,14 @@ impl WorkflowRunEngineRepository for RecordingRepository {
         Ok(self.node_runs.clone())
     }
 
+    fn find_last_failed_attempt(
+        &self,
+        _run_id: &WorkflowRunId,
+        _node_id: &str,
+    ) -> Result<Option<WorkflowNodeRun>, RepositoryError> {
+        Ok(None)
+    }
+
     fn bind_node_run_session(
         &self,
         _node_run_id: &WorkflowNodeRunId,

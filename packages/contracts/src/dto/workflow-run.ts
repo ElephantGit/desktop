@@ -34,6 +34,10 @@ export type CreateWorkflowRunRequest = {
   snapshotId?: string;
   kickoffInput?: string;
   name?: string;
+  /**
+   * `None` means inject last-failure context (the same as `Some(true)`).
+   */
+  injectLastFailure?: boolean;
 };
 
 /**

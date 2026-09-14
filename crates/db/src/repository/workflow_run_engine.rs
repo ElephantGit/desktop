@@ -11,7 +11,7 @@ use ora_domain::{
 };
 use rusqlite::{OptionalExtension, Row, Transaction, TransactionBehavior, params};
 
-use super::workflow_run::{map_node_run_row, map_run_row};
+use super::workflow_run::map_run_row;
 use super::workspace::{map_workspace_row, workspace_select_sql};
 use crate::repository::RepositoryPool;
 
@@ -96,6 +96,18 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
             .map_err(engine_repository_error_from_database)
     }
 
+    fn find_last_failed_attempt(
+        &self,
+        run_id: &WorkflowRunId,
+        node_id: &str,
+    ) -> Result<Option<WorkflowNodeRun>, RepositoryError> {
+        self.pool
+            .with_connection(|connection| {
+                super::workflow_run::find_last_failed_attempt(connection, run_id, node_id)
+            })
+            .map_err(engine_repository_error_from_database)
+    }
+
     fn bind_node_run_session(
         &self,
         node_run_id: &WorkflowNodeRunId,
@@ -157,17 +169,7 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
     ) -> Result<Option<WorkflowNodeRun>, RepositoryError> {
         self.pool
             .with_connection(|connection| {
-                let mut statement = connection.prepare(
-                    "SELECT id, run_id, node_id, node_type, session_id, status, input, output, error, payload, started_at, finished_at, created_at, updated_at, is_deleted
-                     FROM workflow_node_runs
-                     WHERE session_id = ?1 AND is_deleted = 0
-                     LIMIT 1",
-                )?;
-                let mut rows = statement.query(params![session_id.as_ref()])?;
-                match rows.next()? {
-                    Some(row) => Ok(Some(map_node_run_row(row)?)),
-                    None => Ok(None),
-                }
+                super::workflow_run::find_node_run_by_session_id(connection, session_id)
             })
             .map_err(engine_repository_error_from_database)
     }
@@ -178,16 +180,7 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
     ) -> Result<Option<WorkflowNodeRun>, RepositoryError> {
         self.pool
             .with_connection(|connection| {
-                let mut statement = connection.prepare(
-                    "SELECT id, run_id, node_id, node_type, session_id, status, input, output, error, payload, started_at, finished_at, created_at, updated_at, is_deleted
-                     FROM workflow_node_runs
-                     WHERE id = ?1 AND is_deleted = 0",
-                )?;
-                let mut rows = statement.query(params![node_run_id.as_ref()])?;
-                match rows.next()? {
-                    Some(row) => Ok(Some(map_node_run_row(row)?)),
-                    None => Ok(None),
-                }
+                super::workflow_run::find_node_run_by_id(connection, node_run_id)
             })
             .map_err(engine_repository_error_from_database)
     }
