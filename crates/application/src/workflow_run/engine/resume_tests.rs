@@ -148,8 +148,7 @@ impl WorkflowRunEngineRepository for RecordingRepository {
     fn fail_node(
         &self,
         _node_run_id: &WorkflowNodeRunId,
-        _error: String,
-        _output: Option<String>,
+        _failure: super::NodeFailure,
         _now: i64,
     ) -> Result<AdvanceWorkflowRunResult, RepositoryError> {
         Ok(AdvanceWorkflowRunResult::NotFound)

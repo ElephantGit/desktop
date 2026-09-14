@@ -142,7 +142,7 @@ fn repository_error(source: RepositoryError) -> BackendError {
 mod tests {
     use super::*;
     use crate::workflow::run::test_fixture::*;
-    use ora_application::{WorkflowRunEngine, WorkflowRunRepository};
+    use ora_application::{NodeFailure, NodeFailureKind, WorkflowRunEngine, WorkflowRunRepository};
     use ora_db::SqliteWorkflowRunRepository;
     use pretty_assertions::assert_eq;
     /// A session not bound to any workflow node is an ordinary session prompt.
@@ -251,7 +251,10 @@ mod tests {
                 ClockAt(40),
             );
             engine
-                .fail_node(&right.id, "boom".to_string(), None)
+                .fail_node(
+                    &right.id,
+                    NodeFailure::new(NodeFailureKind::Session, "boom"),
+                )
                 .unwrap();
 
             let (run_locks, completing) = locks();

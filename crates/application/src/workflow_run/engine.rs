@@ -11,6 +11,7 @@ mod branch_projection;
 mod condition;
 #[allow(clippy::module_inception)]
 mod engine;
+mod failure;
 mod graph;
 mod handlers;
 mod node_type;
@@ -25,6 +26,7 @@ pub use agent_config::AgentMcp;
 pub use engine::{
     EngineError, NodeExecutor, WorkflowRunCallback, WorkflowRunEngine, WorkflowValidationError,
 };
+pub use failure::{NodeFailure, NodeFailureDetail, NodeFailureKind};
 pub use graph::{
     AgentConfig, AgentExecutor, AgentOutputContract, AgentSkill, GraphError,
     StructuredTextExposure, WorkflowGraph, WorkflowGraphNode,

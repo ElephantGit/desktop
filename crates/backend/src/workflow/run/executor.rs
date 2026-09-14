@@ -13,9 +13,10 @@ use agent_client_protocol_schema::v1::{
 };
 use ora_application::{
     AgentDefinitionRepository, AgentOutputContract, AgentSkill, BindWorkflowNodeSessionResult,
-    Clock, ExecutionContext, FileChange, NodeExecutor, RepositoryError, StructuredOutputError,
-    VariableTemplateError, WorkflowGraphNode, WorkflowRunCallback, WorkflowRunEngineRepository,
-    WorkflowRunPayload, extract_json_object, render_variable_template, validate_against_schema,
+    Clock, ExecutionContext, FileChange, NodeExecutor, NodeFailure, NodeFailureKind,
+    RepositoryError, StructuredOutputError, VariableTemplateError, WorkflowGraphNode,
+    WorkflowRunCallback, WorkflowRunEngineRepository, WorkflowRunPayload, extract_json_object,
+    render_variable_template, validate_against_schema,
 };
 use ora_contracts::{
     AgentRef as ContractAgentRef, PromptSessionEvent, PromptSessionRequest, StartSessionRequest,
@@ -116,9 +117,9 @@ impl NodeExecutor for WorkflowRunNodeExecutor {
                     let callback = callback.clone();
                     let run_id = context.run.id.clone();
                     let node_run_id = node_run_id.clone();
-                    let (message, output) = error.into_failure_report();
+                    let failure = error.into_failure_report();
                     let join = tokio::task::spawn_blocking(move || {
-                        callback.fail_node(&run_id, &node_run_id, message, output);
+                        callback.fail_node(&run_id, &node_run_id, failure);
                     });
                     if let Err(source) = join.await {
                         ora_warn!("workflow node failure callback panicked: {source}");
@@ -186,11 +187,32 @@ pub enum NodeExecutionError {
 }
 
 impl NodeExecutionError {
-    /// Splits a terminal failure into its user-facing error and any raw output worth retaining.
-    fn into_failure_report(self) -> (String, Option<String>) {
-        let message = self.to_string();
-        let output = match self {
-            Self::StructuredOutput { output, .. } => output,
+    /// Classifies a terminal failure into the structured report persisted on the node run.
+    fn into_failure_report(self) -> NodeFailure {
+        let mut source_chain = Vec::new();
+        let mut current = std::error::Error::source(&self);
+        while let Some(source) = current {
+            source_chain.push(source.to_string());
+            current = source.source();
+        }
+        let kind = match &self {
+            Self::MissingAgentRef => NodeFailureKind::MissingAgentRef,
+            Self::WorkflowModelNotFound { .. } => NodeFailureKind::WorkflowModelNotFound,
+            Self::MissingAgentConfig { .. } => NodeFailureKind::MissingAgentConfig,
+            Self::InvalidRunPayload => NodeFailureKind::InvalidRunPayload,
+            Self::PromptTemplate { .. } => NodeFailureKind::PromptTemplate,
+            Self::StructuredOutput { .. } => NodeFailureKind::StructuredOutput,
+            Self::MissingSkillMaterialization { .. } => {
+                NodeFailureKind::MissingSkillMaterialization
+            }
+            Self::SessionEndedWithoutStopReason => NodeFailureKind::SessionEndedWithoutStopReason,
+            Self::SessionBindingRejected => NodeFailureKind::SessionBindingRejected,
+            Self::BaselinePersist { .. } => NodeFailureKind::BaselinePersist,
+            Self::Repository(_) => NodeFailureKind::Repository,
+            Self::Session(_) => NodeFailureKind::Session,
+        };
+        let output = match &self {
+            Self::StructuredOutput { output, .. } => output.clone(),
             Self::MissingAgentRef
             | Self::WorkflowModelNotFound { .. }
             | Self::MissingAgentConfig { .. }
@@ -203,7 +225,9 @@ impl NodeExecutionError {
             | Self::Repository(_)
             | Self::Session(_) => None,
         };
-        (message, output)
+        NodeFailure::new(kind, self.to_string())
+            .with_output(output)
+            .with_source_chain(source_chain)
     }
 }
 
@@ -513,8 +537,8 @@ fn report_outcome(
         StopReason::Refusal => callback.fail_node(
             run_id,
             node_run_id,
-            "agent refused the request".to_string(),
-            output,
+            NodeFailure::new(NodeFailureKind::AgentRefusal, "agent refused the request")
+                .with_output(output),
         ),
         StopReason::Cancelled => {
             // Non-interactive cancellation belongs to the run cancel flow; interactive turns
@@ -525,8 +549,11 @@ fn report_outcome(
         _ => callback.fail_node(
             run_id,
             node_run_id,
-            "agent stopped for a reason this Ora version does not recognize".to_string(),
-            output,
+            NodeFailure::new(
+                NodeFailureKind::UnknownStopReason,
+                "agent stopped for a reason this Ora version does not recognize",
+            )
+            .with_output(output),
         ),
     }
 }
@@ -997,9 +1024,11 @@ mod tests {
         let invalid_json =
             apply_output_contract(Some(&contract), Some("no json here".to_string()), "review")
                 .unwrap_err();
-        let (message, output) = invalid_json.into_failure_report();
-        assert!(message.contains("structured output failed"));
-        assert_eq!(output, Some("no json here".to_string()));
+        let report = invalid_json.into_failure_report();
+        assert!(report.message.contains("structured output failed"));
+        assert_eq!(report.output, Some("no json here".to_string()));
+        assert_eq!(report.kind, NodeFailureKind::StructuredOutput);
+        assert!(!report.source_chain.is_empty());
         assert!(matches!(
             apply_output_contract(
                 Some(&contract),
@@ -1008,6 +1037,15 @@ mod tests {
             ),
             Err(NodeExecutionError::StructuredOutput { .. })
         ));
+    }
+
+    /// A session that ends without a stop reason has no underlying source error to chain.
+    #[test]
+    fn into_failure_report_for_session_ended_without_stop_reason_has_empty_chain() {
+        let report = NodeExecutionError::SessionEndedWithoutStopReason.into_failure_report();
+        assert_eq!(report.kind, NodeFailureKind::SessionEndedWithoutStopReason);
+        assert_eq!(report.source_chain, Vec::<String>::new());
+        assert_eq!(report.output, None);
     }
 
     /// A missing structured contract still preserves the node's raw text output.

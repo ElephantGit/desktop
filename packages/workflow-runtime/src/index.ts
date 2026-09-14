@@ -30,6 +30,7 @@ export type {
   WorkflowNodeConversationItemStatus,
   WorkflowNodeConversationMessage,
   WorkflowNodeConversationMessageRole,
+  WorkflowNodeErrorDetail,
   WorkflowNodeFileChange,
   WorkflowRunEvent,
   WorkflowRunEventEnvelope,

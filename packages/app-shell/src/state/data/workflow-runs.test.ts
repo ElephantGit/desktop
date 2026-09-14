@@ -251,6 +251,33 @@ describe("buildDisplayRun", () => {
     ]);
   });
 
+  it("projects camelCase errorDetail from payload.error_detail", () => {
+    const withError = {
+      ...detail,
+      nodes: [
+        {
+          nodeId: "explore",
+          status: "failed",
+          startedAt: 10n,
+          finishedAt: 30n,
+          error: "review failed",
+          output: null,
+          payload:
+            '{"error_detail":{"kind":"structured_output","message":"review failed","source_chain":["not json"],"attempt":2,"resumable":false,"recorded_at":50}}',
+        },
+      ],
+    };
+    const display = buildDisplayRun(withError, GRAPH);
+    expect(display.nodeStates.explore.errorDetail).toEqual({
+      kind: "structured_output",
+      message: "review failed",
+      sourceChain: ["not json"],
+      attempt: 2,
+      resumable: false,
+      recordedAt: 50,
+    });
+  });
+
   it("projects the node conversation from its run output", () => {
     const withConversation = {
       ...detail,

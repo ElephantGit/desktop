@@ -196,6 +196,58 @@ export const workflowRunTranslations = {
     "workflowRun.cancelFailed": "停止运行失败。",
     "workflowRun.rerunFailed": "重新运行失败。",
     "workflowRun.resumeFailed": "从失败处继续失败。",
+    "workflowRun.errorKind.missing_agent_ref": "节点未指定智能体",
+    "workflowRun.errorHint.missing_agent_ref":
+      "在工作流里给该节点选择一个智能体后发布新版本",
+    "workflowRun.errorKind.workflow_model_not_found": "模型不可用",
+    "workflowRun.errorHint.workflow_model_not_found":
+      "智能体当前不提供该模型，检查智能体配置或稍后重试",
+    "workflowRun.errorKind.missing_agent_config": "智能体配置缺失",
+    "workflowRun.errorHint.missing_agent_config":
+      "检查该智能体是否仍然存在并已配置",
+    "workflowRun.errorKind.invalid_run_payload": "运行的冻结数据无效",
+    "workflowRun.errorHint.invalid_run_payload":
+      "该运行的快照已损坏，请从头重新运行",
+    "workflowRun.errorKind.prompt_template": "提示词模板无法渲染",
+    "workflowRun.errorHint.prompt_template":
+      "修正模板中引用的变量后发布新版本",
+    "workflowRun.errorKind.structured_output": "结构化输出不合格",
+    "workflowRun.errorHint.structured_output":
+      "智能体的回复不符合输出结构，调整提示词或输出结构后发布新版本",
+    "workflowRun.errorKind.missing_skill_materialization": "技能未就绪",
+    "workflowRun.errorHint.missing_skill_materialization":
+      "重新发布工作流以重新生成技能文件",
+    "workflowRun.errorKind.session_ended_without_stop_reason": "会话异常结束",
+    "workflowRun.errorHint.session_ended_without_stop_reason":
+      "通常是临时故障，可直接续跑",
+    "workflowRun.errorKind.session_binding_rejected": "会话未能建立",
+    "workflowRun.errorHint.session_binding_rejected":
+      "通常是临时故障，可直接续跑",
+    "workflowRun.errorKind.baseline_persist": "工作区基线保存失败",
+    "workflowRun.errorHint.baseline_persist":
+      "检查磁盘空间与权限后续跑",
+    "workflowRun.errorKind.repository": "数据库操作失败",
+    "workflowRun.errorHint.repository": "通常是临时故障，可直接续跑",
+    "workflowRun.errorKind.session": "智能体会话失败",
+    "workflowRun.errorHint.session": "检查智能体进程与网络后续跑",
+    "workflowRun.errorKind.agent_refusal": "智能体拒绝了请求",
+    "workflowRun.errorHint.agent_refusal":
+      "调整提示词或任务描述后发布新版本",
+    "workflowRun.errorKind.unknown_stop_reason": "未知的停止原因",
+    "workflowRun.errorHint.unknown_stop_reason":
+      "智能体以本版本 Ora 不认识的方式停止，请升级 Ora 或更换智能体",
+    "workflowRun.errorKind.interrupted_by_restart": "被应用重启打断",
+    "workflowRun.errorHint.interrupted_by_restart":
+      "应用重启时该节点仍在运行，可直接续跑",
+    "workflowRun.errorKind.multiple_outputs": "多个输出节点同时完成",
+    "workflowRun.errorHint.multiple_outputs":
+      "工作流结构有误，修正分支后发布新版本",
+    "workflowRun.errorKind.condition_evaluation": "条件无法判断",
+    "workflowRun.errorHint.condition_evaluation":
+      "条件引用的变量缺失或无效，修正后发布新版本",
+    "workflowRun.errorAttempt": "第 {{count}} 次尝试",
+    "workflowRun.errorNotResumableHint":
+      "这类失败通常源于工作流本身，直接续跑很可能再次失败；建议修改工作流后重新运行。",
   },
   "en-US": {
     "errors.workflow_no_published_snapshot":
@@ -410,5 +462,65 @@ export const workflowRunTranslations = {
     "workflowRun.cancelFailed": "Failed to stop the run.",
     "workflowRun.rerunFailed": "Failed to run again.",
     "workflowRun.resumeFailed": "Failed to resume from failure.",
+    "workflowRun.errorKind.missing_agent_ref": "Node names no agent",
+    "workflowRun.errorHint.missing_agent_ref":
+      "Pick an agent for this node and publish a new version",
+    "workflowRun.errorKind.workflow_model_not_found": "Model not available",
+    "workflowRun.errorHint.workflow_model_not_found":
+      "The agent does not advertise this model; check the agent config or retry later",
+    "workflowRun.errorKind.missing_agent_config": "Agent configuration missing",
+    "workflowRun.errorHint.missing_agent_config":
+      "Check that the agent still exists and is configured",
+    "workflowRun.errorKind.invalid_run_payload": "Frozen run data invalid",
+    "workflowRun.errorHint.invalid_run_payload":
+      "The run snapshot is corrupt; run again from start",
+    "workflowRun.errorKind.prompt_template": "Prompt template cannot render",
+    "workflowRun.errorHint.prompt_template":
+      "Fix the variables referenced by the template and publish a new version",
+    "workflowRun.errorKind.structured_output": "Structured output invalid",
+    "workflowRun.errorHint.structured_output":
+      "The agent's reply did not match the output schema; adjust the prompt or schema and publish a new version",
+    "workflowRun.errorKind.missing_skill_materialization":
+      "Skill not materialized",
+    "workflowRun.errorHint.missing_skill_materialization":
+      "Republish the workflow to regenerate the skill files",
+    "workflowRun.errorKind.session_ended_without_stop_reason":
+      "Session ended unexpectedly",
+    "workflowRun.errorHint.session_ended_without_stop_reason":
+      "Usually transient; resume directly",
+    "workflowRun.errorKind.session_binding_rejected":
+      "Session could not start",
+    "workflowRun.errorHint.session_binding_rejected":
+      "Usually transient; resume directly",
+    "workflowRun.errorKind.baseline_persist":
+      "Worktree baseline could not be saved",
+    "workflowRun.errorHint.baseline_persist":
+      "Check disk space and permissions, then resume",
+    "workflowRun.errorKind.repository": "Database operation failed",
+    "workflowRun.errorHint.repository": "Usually transient; resume directly",
+    "workflowRun.errorKind.session": "Agent session failed",
+    "workflowRun.errorHint.session":
+      "Check the agent process and network, then resume",
+    "workflowRun.errorKind.agent_refusal": "Agent refused the request",
+    "workflowRun.errorHint.agent_refusal":
+      "Adjust the prompt or task and publish a new version",
+    "workflowRun.errorKind.unknown_stop_reason": "Unknown stop reason",
+    "workflowRun.errorHint.unknown_stop_reason":
+      "The agent stopped in a way this Ora version cannot interpret; upgrade Ora or change the agent",
+    "workflowRun.errorKind.interrupted_by_restart":
+      "Interrupted by app restart",
+    "workflowRun.errorHint.interrupted_by_restart":
+      "The node was running when the app restarted; resume directly",
+    "workflowRun.errorKind.multiple_outputs":
+      "Multiple output nodes completed",
+    "workflowRun.errorHint.multiple_outputs":
+      "The workflow graph is wrong; fix the branches and publish a new version",
+    "workflowRun.errorKind.condition_evaluation":
+      "Condition could not be evaluated",
+    "workflowRun.errorHint.condition_evaluation":
+      "A variable used by the condition is missing or invalid; fix it and publish a new version",
+    "workflowRun.errorAttempt": "Attempt {{count}}",
+    "workflowRun.errorNotResumableHint":
+      "This kind of failure usually comes from the workflow itself; resuming as-is will likely fail again. Edit the workflow and run it again.",
   },
 } as const;

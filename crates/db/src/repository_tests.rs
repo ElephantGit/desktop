@@ -1,8 +1,8 @@
 use ora_application::{
-    BindWorkflowNodeSessionResult, NodeRunToStart, ProjectRepository, RestartWorkflowRunResult,
-    ResumeWorkflowRunResult, SessionRepository, SkillRepository, StartWorkflowRunResult,
-    WorkflowRepository, WorkflowRunCreateOutcome, WorkflowRunEngineRepository, WorkflowRunPayload,
-    WorkflowRunRepository, WorkflowVariablePool,
+    BindWorkflowNodeSessionResult, NodeFailure, NodeFailureKind, NodeRunToStart, ProjectRepository,
+    RestartWorkflowRunResult, ResumeWorkflowRunResult, SessionRepository, SkillRepository,
+    StartWorkflowRunResult, WorkflowRepository, WorkflowRunCreateOutcome,
+    WorkflowRunEngineRepository, WorkflowRunPayload, WorkflowRunRepository, WorkflowVariablePool,
 };
 use ora_contracts::WorkflowRunLocale;
 use ora_domain::{
@@ -633,8 +633,7 @@ fn resume_from_failure_clears_listed_writers_and_keeps_other_values() {
     engine_repository
         .fail_node(
             &WorkflowNodeRunId::new("nr-review"),
-            "review failed".to_string(),
-            None,
+            NodeFailure::new(NodeFailureKind::Session, "review failed"),
             50,
         )
         .unwrap();
@@ -726,8 +725,7 @@ fn resume_from_failure_rejects_a_run_with_a_running_node() {
     engine_repository
         .fail_node(
             &WorkflowNodeRunId::new("nr-a"),
-            "a failed".to_string(),
-            None,
+            NodeFailure::new(NodeFailureKind::Session, "a failed"),
             60,
         )
         .unwrap();
@@ -810,8 +808,7 @@ fn second_fail_node_does_not_overwrite_run_level_error() {
     engine_repository
         .fail_node(
             &WorkflowNodeRunId::new("nr-a"),
-            "error-a".to_string(),
-            None,
+            NodeFailure::new(NodeFailureKind::Session, "error-a"),
             60,
         )
         .unwrap();
@@ -823,8 +820,7 @@ fn second_fail_node_does_not_overwrite_run_level_error() {
     engine_repository
         .fail_node(
             &WorkflowNodeRunId::new("nr-b"),
-            "error-b".to_string(),
-            None,
+            NodeFailure::new(NodeFailureKind::Session, "error-b"),
             80,
         )
         .unwrap();
@@ -836,6 +832,170 @@ fn second_fail_node_does_not_overwrite_run_level_error() {
     let node_b = nodes.iter().find(|node| node.node_id == "b").unwrap();
     assert_eq!(node_b.status, WorkflowNodeStatus::Failed);
     assert_eq!(node_b.error.as_deref(), Some("error-b"));
+}
+
+/// `fail_node` writes `payload.error_detail` on the first attempt and keeps other payload keys.
+#[test]
+fn fail_node_writes_error_detail_and_preserves_existing_payload_keys() {
+    let (temp_dir, pool) = bootstrapped_pool();
+    let engine_repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+    let run_id = seed_run(
+        &temp_dir,
+        &pool,
+        WorkflowRunStatus::Failed,
+        None,
+        Some("review failed".to_string()),
+        Some(20),
+        Some(30),
+    );
+    engine_repository
+        .start_ready_nodes(
+            &run_id,
+            &[NodeRunToStart {
+                id: WorkflowNodeRunId::new("nr-review"),
+                node_id: "review".to_string(),
+                node_type: "agent".to_string(),
+                input: None,
+            }],
+            40,
+        )
+        .unwrap();
+    pool.with_connection(|connection| {
+        connection.execute(
+            "UPDATE workflow_node_runs SET payload = ?2 WHERE id = ?1",
+            rusqlite::params!["nr-review", r#"{"stop_reason":"end_turn"}"#],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    engine_repository
+        .fail_node(
+            &WorkflowNodeRunId::new("nr-review"),
+            NodeFailure::new(NodeFailureKind::Session, "review failed"),
+            50,
+        )
+        .unwrap();
+
+    let nodes = engine_repository.list_node_runs(&run_id).unwrap();
+    let node = nodes.iter().find(|node| node.node_id == "review").unwrap();
+    let payload = node.payload.as_deref().unwrap();
+    println!("payload={payload}");
+    let parsed: serde_json::Value = serde_json::from_str(payload).unwrap();
+    assert_eq!(parsed["stop_reason"], "end_turn");
+    assert_eq!(parsed["error_detail"]["kind"], "session");
+    assert_eq!(parsed["error_detail"]["attempt"], 1);
+    assert_eq!(parsed["error_detail"]["resumable"], true);
+    assert_eq!(parsed["error_detail"]["recorded_at"], 50);
+    assert_eq!(parsed["error_detail"]["message"], "review failed");
+}
+
+/// A second failure of the same node after resume increments `error_detail.attempt`.
+#[test]
+fn fail_node_increments_attempt_after_resume_from_failure() {
+    let (temp_dir, pool) = bootstrapped_pool();
+    let engine_repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+    let run_id = seed_run(
+        &temp_dir,
+        &pool,
+        WorkflowRunStatus::Failed,
+        None,
+        Some("review failed".to_string()),
+        Some(20),
+        Some(30),
+    );
+    engine_repository
+        .start_ready_nodes(
+            &run_id,
+            &[NodeRunToStart {
+                id: WorkflowNodeRunId::new("nr-review"),
+                node_id: "review".to_string(),
+                node_type: "agent".to_string(),
+                input: None,
+            }],
+            40,
+        )
+        .unwrap();
+    engine_repository
+        .fail_node(
+            &WorkflowNodeRunId::new("nr-review"),
+            NodeFailure::new(NodeFailureKind::Session, "review failed"),
+            50,
+        )
+        .unwrap();
+    assert_eq!(
+        engine_repository
+            .resume_from_failure(&run_id, &["review".to_string()], 60)
+            .unwrap(),
+        ResumeWorkflowRunResult::Resumed
+    );
+    engine_repository
+        .start_ready_nodes(
+            &run_id,
+            &[NodeRunToStart {
+                id: WorkflowNodeRunId::new("nr-review-2"),
+                node_id: "review".to_string(),
+                node_type: "agent".to_string(),
+                input: None,
+            }],
+            70,
+        )
+        .unwrap();
+    engine_repository
+        .fail_node(
+            &WorkflowNodeRunId::new("nr-review-2"),
+            NodeFailure::new(NodeFailureKind::Session, "review failed again"),
+            80,
+        )
+        .unwrap();
+
+    let nodes = engine_repository.list_node_runs(&run_id).unwrap();
+    let node = nodes.iter().find(|node| node.node_id == "review").unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(node.payload.as_deref().unwrap()).unwrap();
+    assert_eq!(parsed["error_detail"]["attempt"], 2);
+    assert_eq!(parsed["error_detail"]["kind"], "session");
+}
+
+/// Crash recovery writes `interrupted_by_restart` error detail on orphaned in-flight nodes.
+#[test]
+fn fail_orphaned_node_runs_writes_interrupted_by_restart_error_detail() {
+    let (temp_dir, pool) = bootstrapped_pool();
+    let engine_repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+    let run_repository = SqliteWorkflowRunRepository::new(pool.clone());
+    let run_id = seed_pending_run(&temp_dir, &pool);
+    engine_repository
+        .start_run(
+            &run_id,
+            &NodeRunToStart {
+                id: WorkflowNodeRunId::new("nr-start"),
+                node_id: "start".to_string(),
+                node_type: "start".to_string(),
+                input: None,
+            },
+            40,
+        )
+        .unwrap();
+    engine_repository
+        .fail_orphaned_node_runs(&[run_id.clone()], 80)
+        .unwrap();
+
+    let run = run_repository.find_run(&run_id).unwrap().unwrap();
+    assert_eq!(run.status, WorkflowRunStatus::Failed);
+    assert_eq!(
+        run.error.as_deref(),
+        Some(r#"{"reason":"interrupted_by_restart"}"#)
+    );
+    let nodes = engine_repository.list_node_runs(&run_id).unwrap();
+    let node = nodes.iter().find(|node| node.node_id == "start").unwrap();
+    assert_eq!(node.status, WorkflowNodeStatus::Failed);
+    assert_eq!(
+        node.error.as_deref(),
+        Some(r#"{"reason":"interrupted_by_restart"}"#)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(node.payload.as_deref().unwrap()).unwrap();
+    assert_eq!(parsed["error_detail"]["kind"], "interrupted_by_restart");
+    assert_eq!(parsed["error_detail"]["resumable"], true);
+    assert_eq!(parsed["error_detail"]["attempt"], 1);
+    assert_eq!(parsed["error_detail"]["recorded_at"], 80);
 }
 
 /// Verifies deleting a run preserves the workspace and its independent session aggregate.

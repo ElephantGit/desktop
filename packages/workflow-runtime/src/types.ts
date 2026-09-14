@@ -277,6 +277,16 @@ export interface WorkflowNodeFileChange {
   deletions: number;
 }
 
+/** Structured failure persisted on a node run as `payload.error_detail`. */
+export interface WorkflowNodeErrorDetail {
+  kind: string;
+  message: string;
+  sourceChain: string[];
+  attempt: number;
+  resumable: boolean;
+  recordedAt: number;
+}
+
 export interface GraphWorkflowNodeState {
   status: GraphWorkflowNodeStatus;
   /** Session bound to this node execution; opaque to the workflow UI. */
@@ -284,6 +294,8 @@ export interface GraphWorkflowNodeState {
   startedAt?: string;
   finishedAt?: string;
   errorMessage?: string;
+  /** Machine-readable failure detail parsed from `payload.error_detail`. */
+  errorDetail?: WorkflowNodeErrorDetail;
   /** ACP stop reason recorded in `payload.stop_reason` when the node succeeded. */
   stopReason?: string;
   /** What this step received when it started (kickoff, upstream, schema…). */

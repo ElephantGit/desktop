@@ -3,8 +3,8 @@ use crate::agent_runtime::AgentRuntimeManager;
 use crate::clock::SystemClock;
 use crate::git_cleanup::KeyedResourceLocks;
 use ora_application::{
-    FileChange, UuidWorkflowNodeRunIdGenerator, WorkflowGraph, WorkflowRunCallback,
-    WorkflowRunControlHandler, WorkflowRunEngine, WorkflowRunEngineRepository,
+    FileChange, NodeFailure, NodeFailureKind, UuidWorkflowNodeRunIdGenerator, WorkflowGraph,
+    WorkflowRunCallback, WorkflowRunControlHandler, WorkflowRunEngine, WorkflowRunEngineRepository,
 };
 use ora_db::{
     RepositoryPool, SqliteAgentDefinitionRepository, SqliteWorkflowRunEngineRepository,
@@ -97,13 +97,12 @@ impl WorkflowRunCallback for WorkflowRunEngineCallback {
         &self,
         run_id: &WorkflowRunId,
         node_run_id: &WorkflowNodeRunId,
-        error: String,
-        output: Option<String>,
+        failure: NodeFailure,
     ) {
         let _gate = self.run_locks.acquire_exclusive(run_id.as_ref());
         if let Ok(guard) = self.engine.read()
             && let Some(engine) = guard.as_ref()
-            && let Err(callback_error) = engine.fail_node(node_run_id, error, output)
+            && let Err(callback_error) = engine.fail_node(node_run_id, failure)
         {
             ora_error!(run_id = %run_id, node_run_id = %node_run_id, error = %callback_error, "node fail callback failed");
         }
@@ -225,8 +224,10 @@ pub(crate) fn reconcile_running_workflow_runs(
                 ora_warn!(run_id = %run_id, node_run_id = %node_run.id, "failing invalid pending node after restart");
                 if let Err(error) = engine.fail_node(
                     &node_run.id,
-                    "invalid pending node after restart".to_string(),
-                    None,
+                    NodeFailure::new(
+                        NodeFailureKind::InterruptedByRestart,
+                        "invalid pending node after restart",
+                    ),
                 ) {
                     ora_error!(run_id = %run_id, node_run_id = %node_run.id, error = %error, "failed to fail invalid pending node");
                 }

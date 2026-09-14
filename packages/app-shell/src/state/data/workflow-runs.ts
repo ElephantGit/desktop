@@ -10,6 +10,7 @@ import {
   type GraphWorkflowRun,
   type WorkflowDefinition,
   type WorkflowNodeConversationItem,
+  type WorkflowNodeErrorDetail,
   type WorkflowNodeFileChange,
 } from "@ora/workflow-runtime";
 import { useContractsClient } from "../../contracts-client-context";
@@ -385,6 +386,7 @@ export function buildDisplayRun(
     const nodeRun = nodeRunByNodeId.get(node.id) ?? null;
     const payload =
       nodeRun?.payload != null ? parseNodePayload(nodeRun.payload) : null;
+    const errorDetail = parseErrorDetail(payload?.error_detail);
     const conversation =
       node.data.kind === "agent" && nodeRun?.output != null
         ? conversationFromNodeOutput(
@@ -411,6 +413,7 @@ export function buildDisplayRun(
         ? { finishedAt: toIso(nodeRun.finishedAt) }
         : {}),
       ...(nodeRun?.error != null ? { errorMessage: nodeRun.error } : {}),
+      ...(errorDetail != null ? { errorDetail } : {}),
       ...(payload?.stop_reason != null
         ? { stopReason: payload.stop_reason }
         : {}),
@@ -517,11 +520,12 @@ function conversationFromNodeOutput(
   }
 }
 
-/** Reads the ACP stop reason and file changes from a node run's `payload` JSON,
+/** Reads the ACP stop reason, file changes, and failure detail from a node run's `payload` JSON,
  * tolerating malformed payloads. */
 function parseNodePayload(payload: string): {
   stop_reason?: string;
   file_changes?: WorkflowNodeFileChange[];
+  error_detail?: unknown;
 } | null {
   try {
     const value = JSON.parse(payload) as {
@@ -531,6 +535,7 @@ function parseNodePayload(payload: string): {
         additions?: unknown;
         deletions?: unknown;
       }>;
+      error_detail?: unknown;
     };
     return {
       ...(typeof value.stop_reason === "string"
@@ -553,10 +558,41 @@ function parseNodePayload(payload: string): {
             ),
           }
         : {}),
+      ...(value.error_detail !== undefined
+        ? { error_detail: value.error_detail }
+        : {}),
     };
   } catch {
     return null;
   }
+}
+
+/** Maps a persisted `error_detail` object onto camelCase node-state fields. */
+function parseErrorDetail(value: unknown): WorkflowNodeErrorDetail | undefined {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const detail = value as {
+    kind?: unknown;
+    message?: unknown;
+    source_chain?: unknown;
+    attempt?: unknown;
+    resumable?: unknown;
+    recorded_at?: unknown;
+  };
+  if (typeof detail.kind !== "string") {
+    return undefined;
+  }
+  return {
+    kind: detail.kind,
+    message: typeof detail.message === "string" ? detail.message : "",
+    sourceChain: Array.isArray(detail.source_chain)
+      ? detail.source_chain.filter((item): item is string => typeof item === "string")
+      : [],
+    attempt: typeof detail.attempt === "number" ? detail.attempt : 1,
+    resumable: typeof detail.resumable === "boolean" ? detail.resumable : true,
+    recordedAt: typeof detail.recorded_at === "number" ? detail.recorded_at : 0,
+  };
 }
 
 /** Parses the run's `{"current_nodes":[...]}` state blob into a node-id list. */

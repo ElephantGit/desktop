@@ -29,6 +29,26 @@ import type {
   WorkflowVariableValueType,
 } from "@ora/workflow-runtime";
 
+const KNOWN_NODE_FAILURE_KINDS = new Set([
+  "missing_agent_ref",
+  "workflow_model_not_found",
+  "missing_agent_config",
+  "invalid_run_payload",
+  "prompt_template",
+  "structured_output",
+  "missing_skill_materialization",
+  "session_ended_without_stop_reason",
+  "session_binding_rejected",
+  "baseline_persist",
+  "repository",
+  "session",
+  "agent_refusal",
+  "unknown_stop_reason",
+  "interrupted_by_restart",
+  "multiple_outputs",
+  "condition_evaluation",
+]);
+
 interface RunActInspectorProps {
   nodeId: string | null;
   data: WorkflowNodeData | null;
@@ -455,12 +475,34 @@ function RunActInspectorPanel({
             </p>
           )}
           {state.errorMessage !== undefined && state.errorMessage !== "" && (
-            <p
+            <div
               role="alert"
               className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-[11px] leading-5 text-destructive"
             >
-              {state.errorMessage}
-            </p>
+              {state.errorDetail != null && (
+                <div className="mb-2 space-y-1">
+                  <p className="font-medium">
+                    {KNOWN_NODE_FAILURE_KINDS.has(state.errorDetail.kind)
+                      ? t(`workflowRun.errorKind.${state.errorDetail.kind}`)
+                      : state.errorDetail.kind}
+                  </p>
+                  {KNOWN_NODE_FAILURE_KINDS.has(state.errorDetail.kind) && (
+                    <p>
+                      {t(`workflowRun.errorHint.${state.errorDetail.kind}`)}
+                    </p>
+                  )}
+                  <p>
+                    {t("workflowRun.errorAttempt", {
+                      count: state.errorDetail.attempt,
+                    })}
+                  </p>
+                  {state.errorDetail.resumable === false && (
+                    <p>{t("workflowRun.errorNotResumableHint")}</p>
+                  )}
+                </div>
+              )}
+              <p>{state.errorMessage}</p>
+            </div>
           )}
         </InspectorSection>
 

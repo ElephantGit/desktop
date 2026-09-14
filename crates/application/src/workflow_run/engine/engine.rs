@@ -2,6 +2,7 @@ use crate::RepositoryError;
 use crate::project::Clock;
 use crate::workflow_run::engine::branch_projection::BranchProjection;
 use crate::workflow_run::engine::condition::{ConditionError, ELSE_BRANCH_ID, evaluate_condition};
+use crate::workflow_run::engine::failure::{NodeFailure, NodeFailureKind};
 use crate::workflow_run::engine::graph::{GraphError, WorkflowGraph, WorkflowGraphNode};
 use crate::workflow_run::engine::node_type::NodeType;
 use crate::workflow_run::engine::ports::{
@@ -51,13 +52,12 @@ pub trait WorkflowRunCallback: Send + Sync {
         file_changes: Vec<FileChange>,
     );
 
-    /// Reports a failed node execution with an actionable error and any accumulated output.
+    /// Reports a failed node execution with a classified failure and any accumulated output.
     fn fail_node(
         &self,
         run_id: &WorkflowRunId,
         node_run_id: &WorkflowNodeRunId,
-        error: String,
-        output: Option<String>,
+        failure: NodeFailure,
     );
 }
 
@@ -287,11 +287,10 @@ where
     pub fn fail_node(
         &self,
         node_run_id: &WorkflowNodeRunId,
-        error: String,
-        output: Option<String>,
+        failure: NodeFailure,
     ) -> Result<(), EngineError> {
         let now = self.clock.now_timestamp_millis();
-        match self.repository.fail_node(node_run_id, error, output, now)? {
+        match self.repository.fail_node(node_run_id, failure, now)? {
             AdvanceWorkflowRunResult::Advanced
             | AdvanceWorkflowRunResult::NotRunning
             | AdvanceWorkflowRunResult::NotFound => Ok(()),
@@ -355,8 +354,11 @@ where
                                 "multiple active output nodes: {} and {}",
                                 previous.node_id, node.id
                             );
-                            self.repository
-                                .fail_node(&node_run.id, message, None, now)?;
+                            self.repository.fail_node(
+                                &node_run.id,
+                                NodeFailure::new(NodeFailureKind::MultipleOutputs, message),
+                                now,
+                            )?;
                             return Ok(());
                         }
                         match control_node_output(node, &context, &pool) {
@@ -372,8 +374,11 @@ where
                                 completed_control = true;
                             }
                             Err(message) => {
-                                self.repository
-                                    .fail_node(&node_run.id, message, None, now)?;
+                                self.repository.fail_node(
+                                    &node_run.id,
+                                    NodeFailure::new(NodeFailureKind::InvalidRunPayload, message),
+                                    now,
+                                )?;
                                 return Ok(());
                             }
                         }
@@ -401,8 +406,10 @@ where
                                 // node and the run rather than guessing a branch.
                                 self.repository.fail_node(
                                     &node_run.id,
-                                    error.to_string(),
-                                    None,
+                                    NodeFailure::new(
+                                        NodeFailureKind::ConditionEvaluation,
+                                        error.to_string(),
+                                    ),
                                     now,
                                 )?;
                                 return Ok(());

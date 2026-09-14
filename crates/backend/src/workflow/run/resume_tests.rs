@@ -1,6 +1,7 @@
 use super::test_fixture::{ClockAt, RecordingExecutor, SeqGen, bootstrap, started_run_with};
 use ora_application::{
-    ResumeWorkflowRunResult, WorkflowRunEngine, WorkflowRunEngineRepository, WorkflowRunRepository,
+    NodeFailure, NodeFailureKind, ResumeWorkflowRunResult, WorkflowRunEngine,
+    WorkflowRunEngineRepository, WorkflowRunRepository,
 };
 use ora_db::{SqliteWorkflowRunEngineRepository, SqliteWorkflowRunRepository};
 use ora_domain::{WorkflowNodeRun, WorkflowNodeStatus, WorkflowRunId, WorkflowRunStatus};
@@ -132,7 +133,10 @@ fn resume_from_failure_redoes_failed_join_and_finishes() {
         let after_ab = live_nodes(&pool, &run_id);
         let c_old = live(&after_ab, "c").id.clone();
         engine
-            .fail_node(&c_old, "c failed".to_string(), None)
+            .fail_node(
+                &c_old,
+                NodeFailure::new(NodeFailureKind::Session, "c failed"),
+            )
             .unwrap();
 
         assert_eq!(
@@ -179,7 +183,7 @@ fn failed_run_does_not_dispatch_on_late_success_then_resume_clears_only_failed_b
         let a_id = live(&nodes, "a").id.clone();
         let b_id = live(&nodes, "b").id.clone();
         engine
-            .fail_node(&a_id, "error-a".to_string(), None)
+            .fail_node(&a_id, NodeFailure::new(NodeFailureKind::Session, "error-a"))
             .unwrap();
         complete(&engine, &run_id, &b_id);
 

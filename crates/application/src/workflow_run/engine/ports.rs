@@ -1,3 +1,4 @@
+use super::failure::NodeFailure;
 use super::skill_delivery::SkillMaterializationReceipt;
 use crate::RepositoryError;
 use crate::workflow_run::engine::graph::WorkflowGraph;
@@ -242,11 +243,13 @@ pub trait WorkflowRunEngineRepository {
     ) -> Result<AdvanceWorkflowRunResult, RepositoryError>;
 
     /// Marks one node-run and its run failed, anchoring the failed node in `current_nodes`.
+    ///
+    /// Persists `failure.message` in `error`, `failure.output` in `output`, and the full
+    /// `NodeFailureDetail` under `payload.error_detail`.
     fn fail_node(
         &self,
         node_run_id: &WorkflowNodeRunId,
-        error: String,
-        output: Option<String>,
+        failure: NodeFailure,
         now: i64,
     ) -> Result<AdvanceWorkflowRunResult, RepositoryError>;
 

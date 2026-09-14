@@ -1,12 +1,13 @@
 use ora_application::{
     AdvanceWorkflowRunResult, BindWorkflowNodeSessionResult, CancelWorkflowRunResult,
-    ExecutionContext, FileChange, NodeRunToStart, RepositoryError, RestartWorkflowRunResult,
-    ResumeWorkflowRunResult, StartWorkflowRunResult, UpdateWorkflowRunInputResult,
-    WorkflowRunEngineRepository, WorkflowRunPayload, WorkflowVariablePool,
+    ExecutionContext, FileChange, NodeFailure, NodeRunToStart, RepositoryError,
+    RestartWorkflowRunResult, ResumeWorkflowRunResult, StartWorkflowRunResult,
+    UpdateWorkflowRunInputResult, WorkflowRunEngineRepository, WorkflowRunPayload,
+    WorkflowVariablePool,
 };
 use ora_domain::{
-    SessionId, SessionStatus, WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus,
-    WorkflowRunId, WorkflowRunStatus,
+    SessionId, WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunId,
+    WorkflowRunStatus,
 };
 use rusqlite::{OptionalExtension, Row, Transaction, TransactionBehavior, params};
 
@@ -15,12 +16,11 @@ use super::workspace::{map_workspace_row, workspace_select_sql};
 use crate::repository::RepositoryPool;
 
 mod current_nodes;
+mod failure_detail;
 mod resume;
 
 use current_nodes::{current_nodes_from_state, current_nodes_to_state, rewrite_current_nodes};
-
-/// Error written to node runs and runs interrupted by a backend restart.
-const INTERRUPTED_BY_RESTART: &str = r#"{"reason":"interrupted_by_restart"}"#;
+use failure_detail::{fail_orphaned_run, persist_failed_node_run};
 
 /// Persists workflow-run engine state transitions in SQLite.
 ///
@@ -395,23 +395,23 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
     fn fail_node(
         &self,
         node_run_id: &WorkflowNodeRunId,
-        error: String,
-        output: Option<String>,
+        failure: NodeFailure,
         now: i64,
     ) -> Result<AdvanceWorkflowRunResult, RepositoryError> {
         self.pool
             .with_connection_mut(|connection| {
                 let transaction =
                     Transaction::new(connection, TransactionBehavior::Immediate)?;
-                let Some((run_id, node_id, status)) = transaction
+                let Some((run_id, node_id, status, payload)) = transaction
                     .query_row(
-                        "SELECT run_id, node_id, status FROM workflow_node_runs WHERE id = ?1 AND is_deleted = 0",
+                        "SELECT run_id, node_id, status, payload FROM workflow_node_runs WHERE id = ?1 AND is_deleted = 0",
                         params![node_run_id.as_ref()],
                         |row| {
                             Ok((
                                 row.get::<_, String>(0)?,
                                 row.get::<_, String>(1)?,
                                 row.get::<_, i64>(2)?,
+                                row.get::<_, Option<String>>(3)?,
                             ))
                         },
                     )
@@ -422,16 +422,14 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                 if WorkflowNodeStatus::from_database_value(status)? != WorkflowNodeStatus::Running {
                     return Ok(AdvanceWorkflowRunResult::NotRunning);
                 }
-                transaction.execute(
-                    "UPDATE workflow_node_runs SET status = ?2, error = ?3, output = ?4, finished_at = ?5, updated_at = ?5
-                     WHERE id = ?1 AND is_deleted = 0",
-                    params![
-                        node_run_id.as_ref(),
-                        WorkflowNodeStatus::Failed.database_value(),
-                        &error,
-                        output,
-                        now,
-                    ],
+                persist_failed_node_run(
+                    &transaction,
+                    node_run_id.as_ref(),
+                    &run_id,
+                    &node_id,
+                    &failure,
+                    payload.as_deref(),
+                    now,
                 )?;
                 let run_id = WorkflowRunId::new(run_id);
                 rewrite_current_nodes(&transaction, &run_id, now, |current_nodes| {
@@ -444,7 +442,7 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                     params![
                         run_id.as_ref(),
                         WorkflowRunStatus::Failed.database_value(),
-                        error,
+                        failure.message,
                         now,
                         WorkflowRunStatus::Running.database_value(),
                     ],
@@ -676,58 +674,9 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
     ) -> Result<(), RepositoryError> {
         self.pool
             .with_connection_mut(|connection| {
-                let transaction =
-                    Transaction::new(connection, TransactionBehavior::Immediate)?;
+                let transaction = Transaction::new(connection, TransactionBehavior::Immediate)?;
                 for run_id in run_ids {
-                    // An awaiting (`Pending`) node is parked on human input, not computing: a
-                    // restart must not destroy it. Only a run that has a `Running` (actively
-                    // generating) node fails, and it takes every non-terminal node with it.
-                    let has_generating: bool = transaction.query_row(
-                        "SELECT EXISTS(
-                            SELECT 1 FROM workflow_node_runs
-                            WHERE run_id = ?1 AND status = ?2 AND is_deleted = 0
-                         )",
-                        params![
-                            run_id.as_ref(),
-                            WorkflowNodeStatus::Running.database_value()
-                        ],
-                        |row| row.get(0),
-                    )?;
-                    if !has_generating {
-                        continue;
-                    }
-                    transaction.execute(
-                        "UPDATE workflow_node_runs SET status = ?2, error = ?3, finished_at = ?4, updated_at = ?4
-                         WHERE run_id = ?1 AND status IN (0, 1) AND is_deleted = 0",
-                        params![
-                            run_id.as_ref(),
-                            WorkflowNodeStatus::Failed.database_value(),
-                            INTERRUPTED_BY_RESTART,
-                            now,
-                        ],
-                    )?;
-                    transaction.execute(
-                        "UPDATE workflow_runs SET run_status = ?2, error = ?3, finished_at = ?4, updated_at = ?4
-                         WHERE id = ?1 AND run_status = ?5 AND is_deleted = 0",
-                        params![
-                            run_id.as_ref(),
-                            WorkflowRunStatus::Failed.database_value(),
-                            INTERRUPTED_BY_RESTART,
-                            now,
-                            WorkflowRunStatus::Running.database_value(),
-                        ],
-                    )?;
-                    transaction.execute(
-                        "UPDATE sessions SET status = ?2, updated_at = ?3
-                         WHERE workspace_id = (SELECT workspace_id FROM workflow_runs WHERE id = ?1 AND is_deleted = 0)
-                           AND status = ?4 AND is_deleted = 0",
-                        params![
-                            run_id.as_ref(),
-                            SessionStatus::Stopped.database_value(),
-                            now,
-                            SessionStatus::Running.database_value(),
-                        ],
-                    )?;
+                    fail_orphaned_run(&transaction, run_id, now)?;
                 }
                 transaction.commit()?;
                 Ok(())

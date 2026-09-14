@@ -15,7 +15,10 @@ import {
 } from "../../test/hook-harness";
 import { appI18n } from "../../i18n/i18n-instance";
 import { RunActInspector } from "./run-act-inspector";
-import type { WorkflowNodeData } from "@ora/workflow-runtime";
+import type {
+  GraphWorkflowNodeState,
+  WorkflowNodeData,
+} from "@ora/workflow-runtime";
 import { AGENT_REF } from "../../test/agent-identity";
 
 /** State for this test surface; no unrelated domain fixtures are initialized. */
@@ -59,7 +62,9 @@ const AGENT_DATA: WorkflowNodeData = {
 };
 
 /** Mounts the act inspector with catalog-backed Agent/Skill names. */
-function renderInspector() {
+function renderInspector(
+  nodeState: GraphWorkflowNodeState = { status: "succeeded" },
+) {
   const state = createFixtureState();
   state.agents = [
     {
@@ -103,7 +108,7 @@ function renderInspector() {
         <RunActInspector
           nodeId="agent-1"
           data={AGENT_DATA}
-          state={{ status: "succeeded" }}
+          state={nodeState}
           artifacts={[]}
           revealedArtifactId={null}
           onClose={() => undefined}
@@ -148,5 +153,66 @@ describe("RunActInspector agent config", () => {
       }),
     );
     expect(await screen.findByText("探索仓库结构与约束")).toBeInTheDocument();
+  });
+});
+
+describe("RunActInspector failure detail", () => {
+  it("renders the kind title, hint, and attempt line for a failed node", async () => {
+    await appI18n.changeLanguage("zh-CN");
+    renderInspector({
+      status: "failed",
+      errorMessage: "agent node review structured output failed: not json",
+      errorDetail: {
+        kind: "structured_output",
+        message: "agent node review structured output failed: not json",
+        sourceChain: ["not json"],
+        attempt: 2,
+        resumable: false,
+        recordedAt: 50,
+      },
+    });
+
+    expect(await screen.findByText("结构化输出不合格")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "智能体的回复不符合输出结构，调整提示词或输出结构后发布新版本",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("第 2 次尝试")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "这类失败通常源于工作流本身，直接续跑很可能再次失败；建议修改工作流后重新运行。",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("agent node review structured output failed: not json"),
+    ).toBeInTheDocument();
+  });
+
+  it("omits the not-resumable hint when the failure is resumable", async () => {
+    await appI18n.changeLanguage("zh-CN");
+    renderInspector({
+      status: "failed",
+      errorMessage: '{"reason":"interrupted_by_restart"}',
+      errorDetail: {
+        kind: "interrupted_by_restart",
+        message: '{"reason":"interrupted_by_restart"}',
+        sourceChain: [],
+        attempt: 1,
+        resumable: true,
+        recordedAt: 80,
+      },
+    });
+
+    expect(await screen.findByText("被应用重启打断")).toBeInTheDocument();
+    expect(
+      screen.getByText("应用重启时该节点仍在运行，可直接续跑"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("第 1 次尝试")).toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        "这类失败通常源于工作流本身，直接续跑很可能再次失败；建议修改工作流后重新运行。",
+      ),
+    ).not.toBeInTheDocument();
   });
 });
