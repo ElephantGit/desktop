@@ -11,6 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   Button,
+  Checkbox,
   RadioGroup,
   RadioGroupItem,
   Spinner,
@@ -35,6 +36,16 @@ const REASON_KEYS = {
   not_resumable: "workflowRun.resume.reason.not_resumable",
 } as const;
 
+const SNAPSHOT_REASON_KEYS = {
+  node_missing: "workflowRun.resume.snapshotReason.node_missing",
+  node_type_changed: "workflowRun.resume.snapshotReason.node_type_changed",
+  start_node_changed: "workflowRun.resume.snapshotReason.start_node_changed",
+  start_variables_changed:
+    "workflowRun.resume.snapshotReason.start_variables_changed",
+  variable_type_changed: "workflowRun.resume.snapshotReason.variable_type_changed",
+  variable_missing: "workflowRun.resume.snapshotReason.variable_missing",
+} as const;
+
 /** Confirms how to treat the worktree before resuming a failed or cancelled run. */
 export function ResumeRunDialog({
   open,
@@ -46,6 +57,7 @@ export function ResumeRunDialog({
   const preview = usePreviewWorkflowRunResume();
   const resume = useResumeWorkflowRun();
   const [rollback, setRollback] = useState<ResumeRollbackMode>("keep");
+  const [usePublished, setUsePublished] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [seedKey, setSeedKey] = useState<string | null>(null);
   const previewMutate = preview.mutate;
@@ -54,6 +66,7 @@ export function ResumeRunDialog({
   if (nextSeedKey !== null && nextSeedKey !== seedKey) {
     setSeedKey(nextSeedKey);
     setRollback("keep");
+    setUsePublished(false);
     setError(null);
   }
   if (!open && seedKey !== null) {
@@ -78,7 +91,13 @@ export function ResumeRunDialog({
   async function confirm(): Promise<void> {
     setError(null);
     try {
-      await resume.mutateAsync({ runId, rollback });
+      await resume.mutateAsync({
+        runId,
+        rollback,
+        ...(usePublished && previewData?.publishedSnapshotId != null
+          ? { snapshotId: previewData.publishedSnapshotId }
+          : {}),
+      });
       onResumed();
       onOpenChange(false);
     } catch (cause) {
@@ -147,6 +166,38 @@ export function ResumeRunDialog({
               );
             })
           : null}
+
+        {previewData?.publishedSnapshotId != null &&
+        previewData.publishedSnapshotId !== previewData.currentSnapshotId ? (
+          <label
+            className={`mt-3 flex items-start gap-2 text-sm ${
+              !previewData.publishedSnapshotSwitchable ? "opacity-50" : ""
+            }`}
+          >
+            <Checkbox
+              className="mt-0.5"
+              checked={usePublished}
+              disabled={!previewData.publishedSnapshotSwitchable}
+              onCheckedChange={(checked) => setUsePublished(checked === true)}
+            />
+            <span className="space-y-1">
+              <span className="block">
+                {t("workflowRun.resume.switchPublished", {
+                  version: previewData.publishedSnapshotVersion,
+                  current: previewData.currentSnapshotVersion,
+                })}
+              </span>
+              {!previewData.publishedSnapshotSwitchable ? (
+                <span className="block text-xs text-muted-foreground">
+                  {snapshotReasonText(
+                    previewData.publishedSnapshotIncompatibleReason,
+                    t,
+                  )}
+                </span>
+              ) : null}
+            </span>
+          </label>
+        ) : null}
 
         <RadioGroup
           className="mt-3 gap-2"
@@ -259,4 +310,36 @@ function checkpointReasonText(
     return t(REASON_KEYS.not_resumable);
   }
   return null;
+}
+
+/** Maps a machine-readable snapshot incompatibility onto the matching translated explanation. */
+function snapshotReasonText(
+  reason: string | null | undefined,
+  t: TFunction,
+): string | null {
+  if (reason === null || reason === undefined || reason === "") {
+    return null;
+  }
+  const separator = reason.indexOf(":");
+  const prefix = separator === -1 ? reason : reason.slice(0, separator);
+  const id = separator === -1 ? "" : reason.slice(separator + 1);
+  if (prefix === "node_missing") {
+    return t(SNAPSHOT_REASON_KEYS.node_missing, { id });
+  }
+  if (prefix === "node_type_changed") {
+    return t(SNAPSHOT_REASON_KEYS.node_type_changed, { id });
+  }
+  if (prefix === "start_node_changed") {
+    return t(SNAPSHOT_REASON_KEYS.start_node_changed);
+  }
+  if (prefix === "start_variables_changed") {
+    return t(SNAPSHOT_REASON_KEYS.start_variables_changed);
+  }
+  if (prefix === "variable_type_changed") {
+    return t(SNAPSHOT_REASON_KEYS.variable_type_changed, { id });
+  }
+  if (prefix === "variable_missing") {
+    return t(SNAPSHOT_REASON_KEYS.variable_missing, { id });
+  }
+  return reason;
 }

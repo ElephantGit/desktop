@@ -144,6 +144,12 @@ export type PreviewWorkflowRunResumeResponse = {
    * `"no_checkpoint"` | `"siblings_ran_after_checkpoint"` | `"not_resumable"`.
    */
   checkpointUnavailableReason: string | null;
+  currentSnapshotId: string;
+  currentSnapshotVersion: string;
+  publishedSnapshotId: string | null;
+  publishedSnapshotVersion: string | null;
+  publishedSnapshotSwitchable: boolean;
+  publishedSnapshotIncompatibleReason: string | null;
 };
 
 /**
@@ -199,6 +205,10 @@ export type ResumeWorkflowRunRequest = {
    * `None` keeps the worktree as it is.
    */
   rollback?: ResumeRollbackMode;
+  /**
+   * `None` keeps the run on its current snapshot.
+   */
+  snapshotId?: string;
 };
 
 /**

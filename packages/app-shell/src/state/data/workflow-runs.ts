@@ -177,8 +177,11 @@ export function useResumeWorkflowRun() {
   const client = useContractsClient();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { runId: string; rollback?: ResumeRollbackMode }) =>
-      client.workflowRun.resumeFromFailure(input),
+    mutationFn: (input: {
+      runId: string;
+      rollback?: ResumeRollbackMode;
+      snapshotId?: string;
+    }) => client.workflowRun.resumeFromFailure(input),
     onSuccess: (_result, variables) => {
       void queryClient.invalidateQueries({
         queryKey: workflowRunKeys.detail(variables.runId),
@@ -427,6 +430,7 @@ export function buildDisplayRun(
         : {}),
       ...(nodeRun?.error != null ? { errorMessage: nodeRun.error } : {}),
       ...(errorDetail != null ? { errorDetail } : {}),
+      ...(payload?.snapshot_id != null ? { snapshotId: payload.snapshot_id } : {}),
       ...(payload?.stop_reason != null
         ? { stopReason: payload.stop_reason }
         : {}),
@@ -539,6 +543,7 @@ function parseNodePayload(payload: string): {
   stop_reason?: string;
   file_changes?: WorkflowNodeFileChange[];
   error_detail?: unknown;
+  snapshot_id?: string;
 } | null {
   try {
     const value = JSON.parse(payload) as {
@@ -549,6 +554,7 @@ function parseNodePayload(payload: string): {
         deletions?: unknown;
       }>;
       error_detail?: unknown;
+      snapshot_id?: unknown;
     };
     return {
       ...(typeof value.stop_reason === "string"
@@ -573,6 +579,9 @@ function parseNodePayload(payload: string): {
         : {}),
       ...(value.error_detail !== undefined
         ? { error_detail: value.error_detail }
+        : {}),
+      ...(typeof value.snapshot_id === "string" && value.snapshot_id !== ""
+        ? { snapshot_id: value.snapshot_id }
         : {}),
     };
   } catch {

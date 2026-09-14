@@ -38,6 +38,12 @@ const PREVIEW: PreviewWorkflowRunResumeResponse = {
   nodeFilesAvailable: true,
   checkpointAvailable: true,
   checkpointUnavailableReason: null,
+  currentSnapshotId: "snap-1",
+  currentSnapshotVersion: "v1",
+  publishedSnapshotId: null,
+  publishedSnapshotVersion: null,
+  publishedSnapshotSwitchable: false,
+  publishedSnapshotIncompatibleReason: null,
 };
 
 /** Builds a dialog harness with mocked preview and resume operations. */
@@ -159,6 +165,69 @@ describe("ResumeRunDialog", () => {
     expect(resumeFromFailure.mock.calls[0]?.[0]).toEqual({
       runId: "run-1",
       rollback: "keep",
+    });
+    runtime.dispose();
+  });
+
+  it("shows the version checkbox only when the preview carries a different published snapshot", async () => {
+    const { runtime } = renderDialog(PREVIEW);
+    await screen.findByText(/节点 c：/);
+    expect(
+      screen.queryByText(/改用当前发布版本/),
+    ).not.toBeInTheDocument();
+    runtime.dispose();
+
+    const { runtime: withPublished } = renderDialog({
+      ...PREVIEW,
+      publishedSnapshotId: "snap-2",
+      publishedSnapshotVersion: "v2",
+      publishedSnapshotSwitchable: true,
+    });
+    expect(
+      await screen.findByText("改用当前发布版本 v2 续跑（当前运行用的是 v1）"),
+    ).toBeInTheDocument();
+    withPublished.dispose();
+  });
+
+  it("disables the version checkbox and shows the mapped reason when not switchable", async () => {
+    const { runtime } = renderDialog({
+      ...PREVIEW,
+      publishedSnapshotId: "snap-2",
+      publishedSnapshotVersion: "v2",
+      publishedSnapshotSwitchable: false,
+      publishedSnapshotIncompatibleReason: "node_missing:b",
+    });
+    expect(
+      await screen.findByText("新版本删掉了节点 b"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("checkbox")).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    runtime.dispose();
+  });
+
+  it("submits snapshotId when the published-version checkbox is checked", async () => {
+    const user = userEvent.setup();
+    const { resumeFromFailure, runtime } = renderDialog({
+      ...PREVIEW,
+      publishedSnapshotId: "snap-2",
+      publishedSnapshotVersion: "v2",
+      publishedSnapshotSwitchable: true,
+    });
+    await screen.findByText("改用当前发布版本 v2 续跑（当前运行用的是 v1）");
+    await user.click(screen.getByRole("checkbox"));
+    const dialog = screen.getByRole("alertdialog");
+    await user.click(
+      within(dialog).getByRole("button", { name: "从失败处继续" }),
+    );
+    await waitFor(() => {
+      expect(resumeFromFailure).toHaveBeenCalledTimes(1);
+    });
+    expect(resumeFromFailure.mock.calls[0]?.[0]).toEqual({
+      runId: "run-1",
+      rollback: "keep",
+      snapshotId: "snap-2",
     });
     runtime.dispose();
   });

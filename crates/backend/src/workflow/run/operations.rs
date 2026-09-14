@@ -39,6 +39,7 @@ pub struct WorkflowRuns {
     records: WorkflowRunApi,
     sessions_root: PathBuf,
     baselines_root: PathBuf,
+    skills_root: PathBuf,
     agent_runtime: Arc<AgentRuntimeManager>,
     engine: Arc<ConcreteWorkflowRunControl>,
     run_locks: Arc<KeyedResourceLocks>,
@@ -49,10 +50,15 @@ impl WorkflowRuns {
     /// Captures the instances composed at startup; no lock, worker, or supervisor is restarted.
     pub(crate) fn new(setup: WorkflowRunSetup) -> Self {
         Self {
-            records: WorkflowRunApi::new(setup.pool.clone(), setup.skills_root, setup.clock),
+            records: WorkflowRunApi::new(
+                setup.pool.clone(),
+                setup.skills_root.clone(),
+                setup.clock,
+            ),
             pool: setup.pool,
             sessions_root: setup.sessions_root,
             baselines_root: setup.baselines_root,
+            skills_root: setup.skills_root,
             agent_runtime: setup.agent_runtime,
             engine: setup.engine,
             run_locks: setup.run_locks,
@@ -306,6 +312,7 @@ impl WorkflowRuns {
         super::rollback::resume_from_failure(
             &self.pool,
             &self.agent_runtime,
+            &self.skills_root,
             &self.engine,
             request,
             SystemClock.now_timestamp_millis(),

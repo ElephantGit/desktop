@@ -165,6 +165,7 @@ impl WorkflowRunEngineRepository for RecordingRepository {
     fn record_node_checkpoint(
         &self,
         _node_run_id: &WorkflowNodeRunId,
+        _snapshot_id: &str,
         _checkpoint: Option<&str>,
         _checkpoint_error: Option<&str>,
         _now: i64,
@@ -206,6 +207,16 @@ impl WorkflowRunEngineRepository for RecordingRepository {
         *self.cleared.lock().expect("cleared lock") = Some(node_ids_to_clear.to_vec());
         // The persisted context stays Failed, so the follow-up schedule wave is a no-op.
         Ok(ResumeWorkflowRunResult::Resumed)
+    }
+
+    fn switch_run_snapshot(
+        &self,
+        _run_id: &WorkflowRunId,
+        _snapshot_id: &WorkflowSnapshotId,
+        _payload_json: &str,
+        _now: i64,
+    ) -> Result<bool, RepositoryError> {
+        Ok(true)
     }
 
     fn update_run_input(

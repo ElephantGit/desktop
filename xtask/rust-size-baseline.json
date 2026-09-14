@@ -12,7 +12,7 @@
     },
     "crates/db/src/repository/workflow_run_engine.rs": {
       "owner": "ora-db",
-      "lines": 947,
+      "lines": 941,
       "split_plan": "Group remaining run-state transitions, node/history rows and artifact persistence into private repository modules. Resume-from-failure and current_nodes helpers already live in workflow_run_engine/. Preserve transaction scopes and the repository interface, with real SQLite transition tests accompanying extraction."
     }
   }

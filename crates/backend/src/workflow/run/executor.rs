@@ -374,6 +374,7 @@ async fn drive_agent_node(
             &context.run.id,
             &node.id,
             node_run_id,
+            context.run.snapshot_id.as_ref(),
             clock.now_timestamp_millis(),
         )?;
         let baseline = capture_worktree_snapshot(&workspace_root);

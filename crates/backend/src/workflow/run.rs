@@ -12,11 +12,14 @@ mod prompt;
 mod recovery;
 mod rollback;
 mod session_mcp;
+mod snapshot_switch;
 pub(crate) use session_mcp::WorkflowSessionMcpSelectionSource;
 #[cfg(test)]
 mod resume_tests;
 #[cfg(test)]
 mod rollback_tests;
+#[cfg(test)]
+mod snapshot_switch_tests;
 #[cfg(test)]
 mod test_fixture;
 mod worktree;

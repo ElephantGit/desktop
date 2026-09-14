@@ -176,6 +176,12 @@ pub(super) fn preview(
         node_files_available: plan.node_files_available(),
         checkpoint_available: plan.checkpoint_available,
         checkpoint_unavailable_reason: plan.checkpoint_unavailable_reason.map(str::to_string),
+        current_snapshot_id: String::new(),
+        current_snapshot_version: String::new(),
+        published_snapshot_id: None,
+        published_snapshot_version: None,
+        published_snapshot_switchable: false,
+        published_snapshot_incompatible_reason: None,
     })
 }
 
@@ -273,27 +279,45 @@ pub(super) fn apply_rollback(
     }
 }
 
-/// Plans and applies rollback, then resumes through the shared engine handler.
+/// Plans and applies rollback, then optionally switches snapshot, then resumes through the engine.
 pub(super) fn resume_from_failure(
     pool: &RepositoryPool,
     agent_runtime: &AgentRuntimeManager,
+    skills_root: &Path,
     engine: &ConcreteWorkflowRunControl,
     request: ResumeWorkflowRunRequest,
     now: i64,
 ) -> Result<ResumeWorkflowRunResponse, BackendError> {
     let mode = request.rollback.unwrap_or(ResumeRollbackMode::Keep);
     let run_id = WorkflowRunId::new(&request.run_id);
-    let pre_rollback_checkpoint = if mode == ResumeRollbackMode::Keep {
-        None
-    } else {
-        let plan = plan_rollback(pool, &run_id)?;
-        if !plan.resumable() {
-            return Err(not_resumable());
-        }
+    let needs_workspace = mode != ResumeRollbackMode::Keep || request.snapshot_id.is_some();
+    let workspace_root = if needs_workspace {
         let workspace_id = load_workspace_id(pool, &run_id)?;
-        let workspace_root = agent_runtime.workspace_cwd(&workspace_id)?;
-        apply_rollback(&workspace_root, &plan, mode, &run_id, now)?
+        Some(agent_runtime.workspace_cwd(&workspace_id)?)
+    } else {
+        None
     };
+    let pre_rollback_checkpoint = match (mode, workspace_root.as_deref()) {
+        (ResumeRollbackMode::Keep, _) => None,
+        (_, Some(workspace_root)) => {
+            let plan = plan_rollback(pool, &run_id)?;
+            if !plan.resumable() {
+                return Err(not_resumable());
+            }
+            apply_rollback(workspace_root, &plan, mode, &run_id, now)?
+        }
+        (_, None) => return Err(not_resumable()),
+    };
+    if let Some(workspace_root) = workspace_root.as_deref() {
+        super::snapshot_switch::switch_if_requested(
+            pool,
+            skills_root,
+            workspace_root,
+            &run_id,
+            request.snapshot_id.as_deref(),
+            now,
+        )?;
+    }
     let ResumeWorkflowRunResponse { run, .. } = engine.resume_from_failure(request)?;
     Ok(ResumeWorkflowRunResponse {
         run,
@@ -310,7 +334,46 @@ pub(super) fn preview_resume(
     let run_id = WorkflowRunId::new(&request.run_id);
     let workspace_id = load_workspace_id(pool, &run_id)?;
     let workspace_root = agent_runtime.workspace_cwd(&workspace_id)?;
-    preview(pool, &workspace_root, &run_id)
+    let mut response = preview(pool, &workspace_root, &run_id)?;
+    fill_snapshot_preview(pool, &run_id, &mut response)?;
+    Ok(response)
+}
+
+pub(super) fn fill_snapshot_preview(
+    pool: &RepositoryPool,
+    run_id: &WorkflowRunId,
+    response: &mut PreviewWorkflowRunResumeResponse,
+) -> Result<(), BackendError> {
+    let context = super::snapshot_switch::load_context(pool, run_id)?;
+    response.current_snapshot_id = context.current.id.to_string();
+    response.current_snapshot_version = context.current.version.clone();
+    let Some(published) = context.published.as_ref() else {
+        return Ok(());
+    };
+    response.published_snapshot_id = Some(published.id.to_string());
+    response.published_snapshot_version = Some(published.version.clone());
+    if published.id == context.current.id {
+        response.published_snapshot_switchable = false;
+        response.published_snapshot_incompatible_reason = None;
+        return Ok(());
+    }
+    match super::snapshot_switch::check_switch(pool, &context, published) {
+        Ok(_) => {
+            response.published_snapshot_switchable = true;
+            response.published_snapshot_incompatible_reason = None;
+        }
+        Err(error) => {
+            if let PublicError::WorkflowSnapshotIncompatibleWithResume(params) =
+                error.public_error()
+            {
+                response.published_snapshot_switchable = false;
+                response.published_snapshot_incompatible_reason = Some(params.reason.clone());
+            } else {
+                return Err(error);
+            }
+        }
+    }
+    Ok(())
 }
 
 struct ParsedPayload {

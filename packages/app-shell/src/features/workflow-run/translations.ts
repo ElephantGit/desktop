@@ -13,6 +13,8 @@ export const workflowRunTranslations = {
     "errors.workflow_run_start_failed": "启动工作流运行失败。",
     "errors.workflow_run_not_restartable": "该工作流运行无法重新启动。",
     "errors.workflow_run_not_resumable": "该工作流运行当前无法从失败处继续。",
+    "errors.workflow_snapshot_incompatible_with_resume":
+      "新版本与本次运行不兼容，无法换版本续跑：{{reason}}",
     "errors.workflow_run_not_editable": "该工作流运行当前不可编辑。",
     "errors.workflow_node_not_found": "未找到该工作流节点。",
     "errors.workflow_node_not_awaiting_input":
@@ -53,6 +55,18 @@ export const workflowRunTranslations = {
     "workflowRun.resume.loadingPreview": "正在读取改动…",
     "workflowRun.resume.previewFailed": "无法读取改动。",
     "workflowRun.resume.confirm": "从失败处继续",
+    "workflowRun.resume.switchPublished":
+      "改用当前发布版本 {{version}} 续跑（当前运行用的是 {{current}}）",
+    "workflowRun.resume.snapshotReason.node_missing": "新版本删掉了节点 {{id}}",
+    "workflowRun.resume.snapshotReason.node_type_changed":
+      "节点 {{id}} 的类型变了",
+    "workflowRun.resume.snapshotReason.start_node_changed": "开始节点变了",
+    "workflowRun.resume.snapshotReason.start_variables_changed":
+      "开始节点的输入变量变了",
+    "workflowRun.resume.snapshotReason.variable_type_changed":
+      "变量 {{id}} 的类型变了",
+    "workflowRun.resume.snapshotReason.variable_missing":
+      "新版本没有变量 {{id}}",
     "workflowRun.stopAction": "终止",
     "workflowRun.stopTitle": "终止此次运行？",
     "workflowRun.stopDescription":
@@ -284,6 +298,8 @@ export const workflowRunTranslations = {
       "The workflow run cannot be restarted.",
     "errors.workflow_run_not_resumable":
       "The workflow run cannot be resumed from failure right now.",
+    "errors.workflow_snapshot_incompatible_with_resume":
+      "The new version is incompatible with this run and cannot be used to resume: {{reason}}",
     "errors.workflow_run_not_editable":
       "The workflow run is not editable right now.",
     "errors.workflow_node_not_found": "Workflow node not found.",
@@ -327,6 +343,20 @@ export const workflowRunTranslations = {
     "workflowRun.resume.loadingPreview": "Reading changes…",
     "workflowRun.resume.previewFailed": "Could not read the changes.",
     "workflowRun.resume.confirm": "Resume from failure",
+    "workflowRun.resume.switchPublished":
+      "Resume with the currently published version {{version}} (this run uses {{current}})",
+    "workflowRun.resume.snapshotReason.node_missing":
+      "The new version removed node {{id}}",
+    "workflowRun.resume.snapshotReason.node_type_changed":
+      "Node {{id}} changed type",
+    "workflowRun.resume.snapshotReason.start_node_changed":
+      "The start node changed",
+    "workflowRun.resume.snapshotReason.start_variables_changed":
+      "The start node's input variables changed",
+    "workflowRun.resume.snapshotReason.variable_type_changed":
+      "Variable {{id}} changed type",
+    "workflowRun.resume.snapshotReason.variable_missing":
+      "Variable {{id}} no longer exists",
     "workflowRun.stopAction": "Stop",
     "workflowRun.stopTitle": "Stop this run?",
     "workflowRun.stopDescription":

@@ -7,7 +7,7 @@ use ora_application::{
 };
 use ora_domain::{
     SessionId, WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunId,
-    WorkflowRunStatus,
+    WorkflowRunStatus, WorkflowSnapshotId,
 };
 use rusqlite::{OptionalExtension, Row, Transaction, TransactionBehavior, params};
 
@@ -17,8 +17,10 @@ use crate::repository::RepositoryPool;
 
 mod current_nodes;
 mod failure_detail;
+mod finish;
 mod payload_json;
 mod resume;
+mod snapshot_switch;
 
 use current_nodes::{current_nodes_from_state, current_nodes_to_state, rewrite_current_nodes};
 use failure_detail::{fail_orphaned_run, persist_failed_node_run};
@@ -451,6 +453,7 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
     fn record_node_checkpoint(
         &self,
         node_run_id: &WorkflowNodeRunId,
+        snapshot_id: &str,
         checkpoint: Option<&str>,
         checkpoint_error: Option<&str>,
         now: i64,
@@ -458,6 +461,7 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
         payload_json::record_node_checkpoint(
             &self.pool,
             node_run_id,
+            snapshot_id,
             checkpoint,
             checkpoint_error,
             now,
@@ -470,26 +474,7 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
         output: Option<String>,
         now: i64,
     ) -> Result<(), RepositoryError> {
-        self.pool
-            .with_connection_mut(|connection| {
-                let transaction =
-                    Transaction::new(connection, TransactionBehavior::Immediate)?;
-                let state = current_nodes_to_state(&[])?;
-                transaction.execute(
-                    "UPDATE workflow_runs SET run_status = ?2, output = ?3, finished_at = ?4, updated_at = ?4, state = ?5
-                     WHERE id = ?1 AND is_deleted = 0 AND run_status IN (0, 1)",
-                    params![
-                        run_id.as_ref(),
-                        WorkflowRunStatus::Succeeded.database_value(),
-                        output,
-                        now,
-                        state,
-                    ],
-                )?;
-                transaction.commit()?;
-                Ok(())
-            })
-            .map_err(engine_repository_error_from_database)
+        finish::finish_run(&self.pool, run_id, output, now)
     }
 
     fn cancel_run(
@@ -597,6 +582,16 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
         now: i64,
     ) -> Result<ResumeWorkflowRunResult, RepositoryError> {
         resume::resume_from_failure(&self.pool, run_id, node_ids_to_clear, now)
+    }
+
+    fn switch_run_snapshot(
+        &self,
+        run_id: &WorkflowRunId,
+        snapshot_id: &WorkflowSnapshotId,
+        payload_json: &str,
+        now: i64,
+    ) -> Result<bool, RepositoryError> {
+        snapshot_switch::switch_run_snapshot(&self.pool, run_id, snapshot_id, payload_json, now)
     }
 
     fn update_run_input(

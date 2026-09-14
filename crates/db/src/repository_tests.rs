@@ -765,6 +765,80 @@ fn resume_from_failure_rejects_a_running_run() {
     );
 }
 
+/// Switching snapshot and payload is allowed only for Failed/Cancelled runs.
+#[test]
+fn switch_run_snapshot_updates_snapshot_and_payload_only_for_terminal_runs() {
+    let (temp_dir, pool) = bootstrapped_pool();
+    let engine_repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+    let run_repository = SqliteWorkflowRunRepository::new(pool.clone());
+    let original = r#"{"locale":"zh-CN","skillMaterialization":{"bindings":[]}}"#;
+    let migrated =
+        r#"{"locale":"zh-CN","skillMaterialization":{"bindings":[]},"startNodeId":"start"}"#;
+    let failed_id = seed_run(
+        &temp_dir,
+        &pool,
+        WorkflowRunStatus::Failed,
+        Some(original.to_string()),
+        Some("err".to_string()),
+        Some(20),
+        Some(30),
+    );
+    pool.with_connection_mut(|connection| {
+        connection.execute(
+            "INSERT INTO workflow_snapshots (id, workflow_id, version, graph, created_at, updated_at, is_deleted)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params!["snapshot-2", "workflow-1", "v2", "{}", 40, None::<i64>, 0],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    assert!(
+        engine_repository
+            .switch_run_snapshot(
+                &failed_id,
+                &WorkflowSnapshotId::new("snapshot-2"),
+                migrated,
+                80,
+            )
+            .unwrap()
+    );
+    let failed = run_repository.find_run(&failed_id).unwrap().unwrap();
+    assert_eq!(failed.snapshot_id, WorkflowSnapshotId::new("snapshot-2"));
+    assert_eq!(failed.payload.as_deref(), Some(migrated));
+
+    let (running_dir, running_pool) = bootstrapped_pool();
+    let running_engine = SqliteWorkflowRunEngineRepository::new(running_pool.clone());
+    let running_runs = SqliteWorkflowRunRepository::new(running_pool.clone());
+    let running_id = seed_pending_run(&running_dir, &running_pool);
+    running_engine
+        .start_run(
+            &running_id,
+            &NodeRunToStart {
+                id: WorkflowNodeRunId::new("nr-start"),
+                node_id: "start".to_string(),
+                node_type: "start".to_string(),
+                input: None,
+            },
+            40,
+        )
+        .unwrap();
+    let before = running_runs.find_run(&running_id).unwrap().unwrap();
+    assert!(
+        !running_engine
+            .switch_run_snapshot(
+                &running_id,
+                &WorkflowSnapshotId::new("snapshot-2"),
+                migrated,
+                80,
+            )
+            .unwrap()
+    );
+    let after = running_runs.find_run(&running_id).unwrap().unwrap();
+    assert_eq!(after.snapshot_id, before.snapshot_id);
+    assert_eq!(after.payload, before.payload);
+    assert_eq!(after.status, WorkflowRunStatus::Running);
+}
+
 /// The second failing node keeps the first run-level error and finished_at.
 #[test]
 fn second_fail_node_does_not_overwrite_run_level_error() {
@@ -1110,6 +1184,7 @@ fn record_node_checkpoint_merges_into_existing_payload() {
     engine_repository
         .record_node_checkpoint(
             &WorkflowNodeRunId::new("nr-review"),
+            "snapshot-1",
             Some("abc123"),
             None,
             50,
@@ -1121,6 +1196,7 @@ fn record_node_checkpoint_merges_into_existing_payload() {
     let parsed: serde_json::Value = serde_json::from_str(node.payload.as_deref().unwrap()).unwrap();
     assert_eq!(parsed["stop_reason"], "end_turn");
     assert_eq!(parsed["checkpoint"], "abc123");
+    assert_eq!(parsed["snapshot_id"], "snapshot-1");
     assert!(parsed.get("checkpoint_error").is_none());
 }
 
@@ -1153,6 +1229,7 @@ fn record_node_checkpoint_writes_null_and_error_when_snapshot_fails() {
     engine_repository
         .record_node_checkpoint(
             &WorkflowNodeRunId::new("nr-review"),
+            "snapshot-1",
             None,
             Some("not a git repository"),
             50,
@@ -1194,7 +1271,13 @@ fn fail_node_writes_file_changes_in_the_same_shape_as_complete_node() {
         )
         .unwrap();
     engine_repository
-        .record_node_checkpoint(&WorkflowNodeRunId::new("nr-fail"), Some("def456"), None, 45)
+        .record_node_checkpoint(
+            &WorkflowNodeRunId::new("nr-fail"),
+            "snapshot-1",
+            Some("def456"),
+            None,
+            45,
+        )
         .unwrap();
     let file_changes = vec![
         FileChange {

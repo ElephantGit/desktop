@@ -204,6 +204,8 @@ pub enum ApplicationError {
     WorkflowRunNotRestartable,
     #[error("workflow run cannot be resumed from failure")]
     WorkflowRunNotResumable,
+    #[error("workflow snapshot is incompatible with resume: {reason}")]
+    WorkflowSnapshotIncompatibleWithResume { reason: String },
     #[error("workflow run input can only be changed while the run is pending")]
     WorkflowRunNotEditable,
     #[error("workflow node not found: {node_id}")]
@@ -543,6 +545,10 @@ impl PartialEq for ApplicationError {
             | (WorkflowRunNotRestartable, WorkflowRunNotRestartable)
             | (WorkflowRunNotResumable, WorkflowRunNotResumable)
             | (WorkflowRunNotEditable, WorkflowRunNotEditable) => true,
+            (
+                WorkflowSnapshotIncompatibleWithResume { reason: left },
+                WorkflowSnapshotIncompatibleWithResume { reason: right },
+            ) => left == right,
             (WorkflowNodeNotFound { node_id: left }, WorkflowNodeNotFound { node_id: right }) => {
                 left == right
             }

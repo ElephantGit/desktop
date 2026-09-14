@@ -65,6 +65,14 @@ pub struct SkillFolderConflictParams {
     pub name: String,
 }
 
+/// Explains why a published snapshot cannot take over an existing run on resume.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct WorkflowSnapshotIncompatibleWithResumeParams {
+    pub reason: String,
+}
+
 /// Carries the user-selected base branch name when Git cannot resolve it.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -224,6 +232,7 @@ pub enum PublicError {
     WorkflowRunStartFailed(EmptyErrorParams),
     WorkflowRunNotRestartable(EmptyErrorParams),
     WorkflowRunNotResumable(EmptyErrorParams),
+    WorkflowSnapshotIncompatibleWithResume(WorkflowSnapshotIncompatibleWithResumeParams),
     WorkflowRunNotEditable(EmptyErrorParams),
     WorkflowNodeNotFound(EmptyErrorParams),
     WorkflowNodeNotAwaitingInput(EmptyErrorParams),
@@ -348,6 +357,9 @@ impl PublicError {
             Self::WorkflowRunStartFailed(_) => "workflow_run_start_failed",
             Self::WorkflowRunNotRestartable(_) => "workflow_run_not_restartable",
             Self::WorkflowRunNotResumable(_) => "workflow_run_not_resumable",
+            Self::WorkflowSnapshotIncompatibleWithResume(_) => {
+                "workflow_snapshot_incompatible_with_resume"
+            }
             Self::WorkflowRunNotEditable(_) => "workflow_run_not_editable",
             Self::WorkflowNodeNotFound(_) => "workflow_node_not_found",
             Self::WorkflowNodeNotAwaitingInput(_) => "workflow_node_not_awaiting_input",
@@ -372,6 +384,7 @@ pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
     OpenLocationTarget::export_all(config)?;
     OpenLocationFailedParams::export_all(config)?;
     SkillFolderConflictParams::export_all(config)?;
+    WorkflowSnapshotIncompatibleWithResumeParams::export_all(config)?;
     TaskBaseBranchNotFoundParams::export_all(config)?;
     PluginConfigurationFieldError::export_all(config)?;
     PluginConfigurationValidationParams::export_all(config)?;
@@ -387,7 +400,7 @@ mod tests {
         ContractError, EmptyErrorParams, MarketplaceArtifactRetrievalFieldInvalidParams,
         OpenLocationFailedParams, OpenLocationTarget, PluginConfigurationValidationParams,
         PublicError, RequestId, SessionMcpSetupFailedParams, SkillFolderConflictParams,
-        TaskBaseBranchNotFoundParams,
+        TaskBaseBranchNotFoundParams, WorkflowSnapshotIncompatibleWithResumeParams,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -536,6 +549,11 @@ mod tests {
             PublicError::WorkflowRunNotFound(empty),
             PublicError::WorkflowRunActive(empty),
             PublicError::WorkflowRunNotResumable(empty),
+            PublicError::WorkflowSnapshotIncompatibleWithResume(
+                WorkflowSnapshotIncompatibleWithResumeParams {
+                    reason: "node_missing:b".to_string(),
+                },
+            ),
             PublicError::WorkflowNodeNotFound(empty),
             PublicError::WorkflowNodeNotAwaitingInput(empty),
         ];
@@ -649,6 +667,7 @@ mod tests {
                 | PublicError::WorkflowRunStartFailed(_)
                 | PublicError::WorkflowRunNotRestartable(_)
                 | PublicError::WorkflowRunNotResumable(_)
+                | PublicError::WorkflowSnapshotIncompatibleWithResume(_)
                 | PublicError::WorkflowRunNotEditable(_)
                 | PublicError::WorkflowNodeNotFound(_)
                 | PublicError::WorkflowNodeNotAwaitingInput(_) => {}
@@ -662,7 +681,7 @@ mod tests {
     #[test]
     fn public_error_codes_match_serde_tags_for_every_variant() {
         let samples = public_error_samples();
-        assert_eq!(samples.len(), 103);
+        assert_eq!(samples.len(), 104);
 
         for error in samples {
             let serialized = serde_json::to_value(&error).unwrap();
@@ -673,5 +692,25 @@ mod tests {
                 "code mismatch for {error:?}"
             );
         }
+    }
+
+    /// The resume-switch conflict round-trips the machine-readable incompatibility reason.
+    #[test]
+    fn workflow_snapshot_incompatible_with_resume_round_trips_its_reason() {
+        let error = PublicError::WorkflowSnapshotIncompatibleWithResume(
+            WorkflowSnapshotIncompatibleWithResumeParams {
+                reason: "node_missing:b".to_string(),
+            },
+        );
+        let serialized = serde_json::to_value(&error).unwrap();
+        assert_eq!(
+            serialized,
+            json!({
+                "code": "workflow_snapshot_incompatible_with_resume",
+                "params": { "reason": "node_missing:b" },
+            })
+        );
+        let deserialized: PublicError = serde_json::from_value(serialized).unwrap();
+        assert_eq!(deserialized, error);
     }
 }

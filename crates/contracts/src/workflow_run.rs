@@ -333,6 +333,10 @@ pub struct ResumeWorkflowRunRequest {
     #[serde(default)]
     #[ts(optional)]
     pub rollback: Option<ResumeRollbackMode>,
+    /// `None` keeps the run on its current snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub snapshot_id: Option<String>,
 }
 
 /// Returns the resumed and re-running run.
@@ -392,6 +396,12 @@ pub struct PreviewWorkflowRunResumeResponse {
     pub checkpoint_available: bool,
     /// `"no_checkpoint"` | `"siblings_ran_after_checkpoint"` | `"not_resumable"`.
     pub checkpoint_unavailable_reason: Option<String>,
+    pub current_snapshot_id: String,
+    pub current_snapshot_version: String,
+    pub published_snapshot_id: Option<String>,
+    pub published_snapshot_version: Option<String>,
+    pub published_snapshot_switchable: bool,
+    pub published_snapshot_incompatible_reason: Option<String>,
 }
 
 /// Sets the kickoff input of a pending run, used as the start node's input on start.
@@ -844,6 +854,7 @@ mod tests {
             ResumeWorkflowRunRequest {
                 run_id: "r".to_string(),
                 rollback: None,
+                snapshot_id: None,
             }
         );
         let node_files: ResumeWorkflowRunRequest =
@@ -853,8 +864,17 @@ mod tests {
             ResumeWorkflowRunRequest {
                 run_id: "r".to_string(),
                 rollback: Some(ResumeRollbackMode::NodeFiles),
+                snapshot_id: None,
             }
         );
+    }
+
+    /// Omitting `snapshotId` deserializes as `None` so keep-resume stays the default.
+    #[test]
+    fn deserializes_resume_workflow_run_request_without_snapshot_id() {
+        let omitted: ResumeWorkflowRunRequest =
+            serde_json::from_value(json!({ "runId": "r" })).unwrap();
+        assert_eq!(omitted.snapshot_id, None);
     }
 
     /// Serializes one value and compares the full JSON payload so field names stay stable.

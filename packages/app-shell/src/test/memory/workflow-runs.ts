@@ -164,6 +164,12 @@ export function workflowRunHandlers(
       nodeFilesAvailable: true,
       checkpointAvailable: true,
       checkpointUnavailableReason: null,
+      currentSnapshotId: "snap-1",
+      currentSnapshotVersion: "v1",
+      publishedSnapshotId: null,
+      publishedSnapshotVersion: null,
+      publishedSnapshotSwitchable: false,
+      publishedSnapshotIncompatibleReason: null,
     }),
     updateWorkflowRunInput: async (req) => {
       const record = state.workflowRuns.find(

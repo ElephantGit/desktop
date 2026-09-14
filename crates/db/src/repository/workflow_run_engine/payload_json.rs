@@ -61,6 +61,7 @@ pub(super) fn complete_payload(
 pub(super) fn record_node_checkpoint(
     pool: &RepositoryPool,
     node_run_id: &WorkflowNodeRunId,
+    snapshot_id: &str,
     checkpoint: Option<&str>,
     checkpoint_error: Option<&str>,
     now: i64,
@@ -77,7 +78,10 @@ pub(super) fn record_node_checkpoint(
         let Some(existing) = existing else {
             return Ok(());
         };
-        let mut keys = vec![("checkpoint", serde_json::json!(checkpoint))];
+        let mut keys = vec![
+            ("checkpoint", serde_json::json!(checkpoint)),
+            ("snapshot_id", serde_json::json!(snapshot_id)),
+        ];
         if let Some(error) = checkpoint_error {
             keys.push(("checkpoint_error", serde_json::json!(error)));
         }

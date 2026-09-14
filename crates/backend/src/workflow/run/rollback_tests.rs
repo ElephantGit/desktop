@@ -170,7 +170,12 @@ fn fail_c_after_checkpoint(graph: &str) -> FailedCFixture {
     let checkpoint = take_checkpoint(&workspace_root, &run_id, "c", &c_old);
     let oid = checkpoint.commit_oid.expect("checkpoint oid");
     engine
-        .record_node_checkpoint(&c_old, Some(&oid), /*checkpoint_error*/ None)
+        .record_node_checkpoint(
+            &c_old,
+            "snapshot-1",
+            Some(&oid),
+            /*checkpoint_error*/ None,
+        )
         .unwrap();
     write_workspace_file(&workspace_root, "f1", "node-f1\n");
     write_workspace_file(&workspace_root, "f2", "node-f2\n");
@@ -325,7 +330,12 @@ fn resume_checkpoint_rejects_when_siblings_ran_after() {
         let checkpoint = take_checkpoint(&workspace_root, &run_id, "c", &c_old);
         let oid = checkpoint.commit_oid.expect("checkpoint oid");
         engine
-            .record_node_checkpoint(&c_old, Some(&oid), /*checkpoint_error*/ None)
+            .record_node_checkpoint(
+                &c_old,
+                "snapshot-1",
+                Some(&oid),
+                /*checkpoint_error*/ None,
+            )
             .unwrap();
         write_workspace_file(&workspace_root, "f1", "node-f1\n");
         write_workspace_file(&workspace_root, "f2", "node-f2\n");

@@ -296,6 +296,8 @@ export interface GraphWorkflowNodeState {
   errorMessage?: string;
   /** Machine-readable failure detail parsed from `payload.error_detail`. */
   errorDetail?: WorkflowNodeErrorDetail;
+  /** Snapshot id recorded when this node last ran, from `payload.snapshot_id`. */
+  snapshotId?: string;
   /** ACP stop reason recorded in `payload.stop_reason` when the node succeeded. */
   stopReason?: string;
   /** What this step received when it started (kickoff, upstream, schema…). */

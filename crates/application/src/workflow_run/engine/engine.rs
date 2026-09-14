@@ -303,12 +303,14 @@ where
     pub fn record_node_checkpoint(
         &self,
         node_run_id: &WorkflowNodeRunId,
+        snapshot_id: &str,
         checkpoint: Option<&str>,
         checkpoint_error: Option<&str>,
     ) -> Result<(), EngineError> {
         let now = self.clock.now_timestamp_millis();
         Ok(self.repository.record_node_checkpoint(
             node_run_id,
+            snapshot_id,
             checkpoint,
             checkpoint_error,
             now,

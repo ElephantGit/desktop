@@ -71,11 +71,13 @@ pub(super) fn record_pre_node_checkpoint(
     run_id: &WorkflowRunId,
     node_id: &str,
     node_run_id: &WorkflowNodeRunId,
+    snapshot_id: &str,
     now: i64,
 ) -> Result<(), ora_application::RepositoryError> {
     let checkpoint = take_checkpoint(workspace_root, run_id, node_id, node_run_id);
     repository.record_node_checkpoint(
         node_run_id,
+        snapshot_id,
         checkpoint.commit_oid.as_deref(),
         checkpoint.error.as_deref(),
         now,

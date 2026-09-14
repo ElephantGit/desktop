@@ -4,7 +4,7 @@ use crate::RepositoryError;
 use crate::workflow_run::engine::graph::WorkflowGraph;
 use ora_domain::{
     SessionId, WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRun, WorkflowRunId,
-    Workspace,
+    WorkflowSnapshotId, Workspace,
 };
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -262,10 +262,12 @@ pub trait WorkflowRunEngineRepository {
     ) -> Result<AdvanceWorkflowRunResult, RepositoryError>;
 
     /// Records the git checkpoint taken before a node started (or why none could be taken) under
-    /// `payload.checkpoint` / `payload.checkpoint_error`. Provenance only: never fails the node.
+    /// `payload.checkpoint` / `payload.checkpoint_error`, and the run snapshot id under
+    /// `payload.snapshot_id`. Provenance only: never fails the node.
     fn record_node_checkpoint(
         &self,
         node_run_id: &WorkflowNodeRunId,
+        snapshot_id: &str,
         checkpoint: Option<&str>,
         checkpoint_error: Option<&str>,
         now: i64,
@@ -303,6 +305,16 @@ pub trait WorkflowRunEngineRepository {
         node_ids_to_clear: &[String],
         now: i64,
     ) -> Result<ResumeWorkflowRunResult, RepositoryError>;
+
+    /// Points a Failed/Cancelled run at another snapshot and stores the migrated payload in one
+    /// transaction. `false` when the run is missing or not in a resumable status.
+    fn switch_run_snapshot(
+        &self,
+        run_id: &WorkflowRunId,
+        snapshot_id: &WorkflowSnapshotId,
+        payload_json: &str,
+        now: i64,
+    ) -> Result<bool, RepositoryError>;
 
     /// Sets the kickoff input of a `Pending` run with empty `current_nodes`, so the start node
     /// receives it when the run starts.

@@ -17,6 +17,7 @@ mod handlers;
 mod node_type;
 mod ports;
 mod skill_delivery;
+mod snapshot_switch;
 mod structured_output;
 mod variable_pool;
 mod variable_template;
@@ -44,6 +45,7 @@ pub use skill_delivery::{
     AgentSkillDelivery, AgentSkillDeliveryError, AgentSkillDeliveryProvider,
     MaterializedSkillBinding, SkillDiscoveryRoots, SkillMaterializationReceipt, WorkflowRunPayload,
 };
+pub use snapshot_switch::{SnapshotIncompatibility, SnapshotSwitchPlan, plan_snapshot_switch};
 pub use structured_output::{StructuredOutputError, extract_json_object, validate_against_schema};
 pub use variable_pool::WorkflowVariablePool;
 pub use variable_template::{VariableTemplateError, render_variable_template};

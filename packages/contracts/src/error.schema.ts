@@ -24,6 +24,10 @@ export const skillFolderConflictParamsSchema = z.object({
     name: z.string()
 });
 
+export const workflowSnapshotIncompatibleWithResumeParamsSchema = z.object({
+    reason: z.string()
+});
+
 export const openLocationTargetSchema = z.union([z.literal("explorer"), z.literal("terminal"), z.literal("vscode")]);
 
 export const pluginConfigurationFieldErrorSchema = z.object({
@@ -363,6 +367,9 @@ export const contractErrorSchema = z.object({
         "code": z.literal("workflow_run_not_resumable"),
         "params": emptyErrorParamsSchema
     }), z.object({
+        "code": z.literal("workflow_snapshot_incompatible_with_resume"),
+        "params": workflowSnapshotIncompatibleWithResumeParamsSchema
+    }), z.object({
         "code": z.literal("workflow_run_not_editable"),
         "params": emptyErrorParamsSchema
     }), z.object({
@@ -694,6 +701,9 @@ export const publicErrorSchema = z.union([z.object({
     }), z.object({
         "code": z.literal("workflow_run_not_resumable"),
         "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_snapshot_incompatible_with_resume"),
+        "params": workflowSnapshotIncompatibleWithResumeParamsSchema
     }), z.object({
         "code": z.literal("workflow_run_not_editable"),
         "params": emptyErrorParamsSchema
