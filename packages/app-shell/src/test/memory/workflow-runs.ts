@@ -17,7 +17,13 @@ export interface MockWorkflowRunRecord {
   /** Version label surfaced by list views; mock snapshots always resolve to this. */
   version: string;
   name: string;
-  status: "pending" | "running" | "succeeded" | "failed" | "cancelled";
+  status:
+    | "pending"
+    | "running"
+    | "succeeded"
+    | "failed"
+    | "cancelled"
+    | "awaitingInput";
   workspaceId: string;
   createdAt: bigint;
   updatedAt: bigint;
@@ -137,6 +143,14 @@ export function workflowRunHandlers(
       return { run: mockWorkflowRun(record) };
     },
     restartWorkflowRun: async (req) => {
+      const record = state.workflowRuns.find(
+        (candidate) => candidate.id === req.runId,
+      );
+      if (record === undefined)
+        throw new Error(`workflow run ${req.runId} not found`);
+      return { run: mockWorkflowRun(record) };
+    },
+    resumeWorkflowRunFromFailure: async (req) => {
       const record = state.workflowRuns.find(
         (candidate) => candidate.id === req.runId,
       );

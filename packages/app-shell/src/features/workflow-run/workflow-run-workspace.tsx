@@ -30,6 +30,7 @@ import {
   useCancelWorkflowRun,
   useRealWorkflowRun,
   useRestartWorkflowRun,
+  useResumeWorkflowRun,
   useStartWorkflowRun,
   useUpdateWorkflowRunInput,
 } from "../../state/data/workflow-runs";
@@ -83,6 +84,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   const updateRunInput = useUpdateWorkflowRunInput();
   const cancelRun = useCancelWorkflowRun();
   const rerun = useRestartWorkflowRun();
+  const resume = useResumeWorkflowRun();
 
   const [viewMode, setViewMode] = useState<WorkflowRunViewMode>("overview");
   const [focusNodeId, setFocusNodeId] = useState<string | null>(null);
@@ -356,6 +358,8 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     run !== null &&
     (run.status === "running" || run.status === "awaiting_input");
   const canRunAgain = run !== null && isTerminalRunStatus(run.status);
+  const canResume =
+    run !== null && (run.status === "failed" || run.status === "cancelled");
   const startNode =
     run?.definitionSnapshot.nodes.find((node) => node.data.kind === "start") ??
     null;
@@ -365,7 +369,8 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     startRun.isPending ||
     updateRunInput.isPending ||
     cancelRun.isPending ||
-    rerun.isPending;
+    rerun.isPending ||
+    resume.isPending;
 
   // WorkflowRun has no implicit worktree Task. Its detail already carries the
   // project projection needed to scope the generic review surface.
@@ -490,6 +495,22 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     }
   }
 
+  /**
+   * Resumes a failed or cancelled run from its failed nodes. Resume keeps the run id, so the
+   * workspace selection must be preserved the same way restart does.
+   */
+  async function handleResumeFromFailure(): Promise<void> {
+    if (run === null || !canResume) {
+      return;
+    }
+    try {
+      await resume.mutateAsync({ runId: run.id });
+      selectWorkflowRun(run.id, run.projectId);
+    } catch {
+      toast.error(t("workflowRun.resumeFailed"));
+    }
+  }
+
   return (
     <main
       id="main-content"
@@ -605,6 +626,24 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
               {t("workflowRun.runAgainAction")}
             </Button>
           )}
+          {canResume && run && (
+            <Button
+              type="button"
+              size="sm"
+              className="h-7 gap-1.5 px-2.5 text-xs"
+              disabled={actionBusy}
+              onClick={() => {
+                void handleResumeFromFailure();
+              }}
+            >
+              {resume.isPending ? (
+                <Spinner className="size-3.5" />
+              ) : (
+                <IconPlayerPlay className="size-3.5" />
+              )}
+              {t("workflowRun.resumeFromFailure")}
+            </Button>
+          )}
         </div>
         <LocationActionsButton workspaceId={workspaceId} />
         <WindowControls />
@@ -702,7 +741,10 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
           initialPrompt={startNode?.data.input ?? run.kickoffInput ?? ""}
           variables={startVariables}
           busy={
-            updateRunInput.isPending || startRun.isPending || rerun.isPending
+            updateRunInput.isPending ||
+            startRun.isPending ||
+            rerun.isPending ||
+            resume.isPending
           }
           onOpenChange={setStartOpen}
           onStart={handleStartFromDialog}

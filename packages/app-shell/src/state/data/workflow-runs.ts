@@ -158,6 +158,21 @@ export function useRestartWorkflowRun() {
   });
 }
 
+/** Resumes one failed or cancelled workflow run from its failed nodes, keeping succeeded work. */
+export function useResumeWorkflowRun() {
+  const client = useContractsClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { runId: string }) =>
+      client.workflowRun.resumeFromFailure(input),
+    onSuccess: (_result, variables) => {
+      void queryClient.invalidateQueries({
+        queryKey: workflowRunKeys.detail(variables.runId),
+      });
+    },
+  });
+}
+
 /** Sets the kickoff input of a pending run, used as the start node's input on start. */
 export function useUpdateWorkflowRunInput() {
   const client = useContractsClient();

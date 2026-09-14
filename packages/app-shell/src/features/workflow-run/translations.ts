@@ -12,6 +12,7 @@ export const workflowRunTranslations = {
     "errors.workflow_role_not_found": "未找到该工作流角色。",
     "errors.workflow_run_start_failed": "启动工作流运行失败。",
     "errors.workflow_run_not_restartable": "该工作流运行无法重新启动。",
+    "errors.workflow_run_not_resumable": "该工作流运行当前无法从失败处继续。",
     "errors.workflow_run_not_editable": "该工作流运行当前不可编辑。",
     "errors.workflow_node_not_found": "未找到该工作流节点。",
     "errors.workflow_node_not_awaiting_input":
@@ -34,7 +35,8 @@ export const workflowRunTranslations = {
     "workflowRun.currentNodeCancelled": "已取消",
     "workflowRun.cancelAction": "取消运行",
     "workflowRun.startAction": "启动",
-    "workflowRun.runAgainAction": "再次运行",
+    "workflowRun.runAgainAction": "从头重新运行",
+    "workflowRun.resumeFromFailure": "从失败处继续",
     "workflowRun.stopAction": "终止",
     "workflowRun.stopTitle": "终止此次运行？",
     "workflowRun.stopDescription":
@@ -193,6 +195,7 @@ export const workflowRunTranslations = {
     "workflowRun.selectPlaceholder": "请选择",
     "workflowRun.cancelFailed": "停止运行失败。",
     "workflowRun.rerunFailed": "重新运行失败。",
+    "workflowRun.resumeFailed": "从失败处继续失败。",
   },
   "en-US": {
     "errors.workflow_no_published_snapshot":
@@ -209,6 +212,8 @@ export const workflowRunTranslations = {
     "errors.workflow_run_start_failed": "Failed to start the workflow run.",
     "errors.workflow_run_not_restartable":
       "The workflow run cannot be restarted.",
+    "errors.workflow_run_not_resumable":
+      "The workflow run cannot be resumed from failure right now.",
     "errors.workflow_run_not_editable":
       "The workflow run is not editable right now.",
     "errors.workflow_node_not_found": "Workflow node not found.",
@@ -232,7 +237,8 @@ export const workflowRunTranslations = {
     "workflowRun.currentNodeCancelled": "Cancelled",
     "workflowRun.cancelAction": "Cancel run",
     "workflowRun.startAction": "Start",
-    "workflowRun.runAgainAction": "Run again",
+    "workflowRun.runAgainAction": "Run again from start",
+    "workflowRun.resumeFromFailure": "Resume from failure",
     "workflowRun.stopAction": "Stop",
     "workflowRun.stopTitle": "Stop this run?",
     "workflowRun.stopDescription":
@@ -403,5 +409,6 @@ export const workflowRunTranslations = {
     "workflowRun.selectPlaceholder": "Select an option",
     "workflowRun.cancelFailed": "Failed to stop the run.",
     "workflowRun.rerunFailed": "Failed to run again.",
+    "workflowRun.resumeFailed": "Failed to resume from failure.",
   },
 } as const;
