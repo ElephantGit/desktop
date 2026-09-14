@@ -156,8 +156,15 @@ export function workflowRunHandlers(
       );
       if (record === undefined)
         throw new Error(`workflow run ${req.runId} not found`);
-      return { run: mockWorkflowRun(record) };
+      return { run: mockWorkflowRun(record), preRollbackCheckpoint: null };
     },
+    previewWorkflowRunResume: async () => ({
+      resumable: true,
+      failedNodes: [],
+      nodeFilesAvailable: true,
+      checkpointAvailable: true,
+      checkpointUnavailableReason: null,
+    }),
     updateWorkflowRunInput: async (req) => {
       const record = state.workflowRuns.find(
         (candidate) => candidate.id === req.runId,

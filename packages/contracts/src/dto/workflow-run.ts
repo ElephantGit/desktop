@@ -115,6 +115,34 @@ export type ListWorkflowRunsResponse = { runs: Array<WorkflowRunSummary> };
 export type NodeCompletionRequester = "human";
 
 /**
+ * Identifies the failed or cancelled run whose resume preview should be loaded.
+ */
+export type PreviewWorkflowRunResumeRequest = { runId: string };
+
+/**
+ * Describes whether a run can be resumed and which rollback modes are available.
+ */
+export type PreviewWorkflowRunResumeResponse = {
+  /**
+   * Run is failed/cancelled, no running node, and at least one failed/cancelled node.
+   */
+  resumable: boolean;
+  failedNodes: Array<ResumeFailedNodePreview>;
+  /**
+   * Every failed node has a checkpoint.
+   */
+  nodeFilesAvailable: boolean;
+  /**
+   * `node_files_available` and no sibling node run started after the earliest failed checkpoint.
+   */
+  checkpointAvailable: boolean;
+  /**
+   * `"no_checkpoint"` | `"siblings_ran_after_checkpoint"` | `"not_resumable"`.
+   */
+  checkpointUnavailableReason: string | null;
+};
+
+/**
  * Identifies the workflow run whose Workspace-owned display name should change.
  */
 export type RenameWorkflowRunRequest = { runId: string; name: string };
@@ -135,14 +163,47 @@ export type RestartWorkflowRunRequest = { runId: string };
 export type RestartWorkflowRunResponse = { run: WorkflowRun };
 
 /**
+ * Preview of one failed or cancelled node that would be re-run.
+ */
+export type ResumeFailedNodePreview = {
+  nodeId: string;
+  nodeRunId: string;
+  startedAt: bigint | null;
+  checkpoint: string | null;
+  checkpointError: string | null;
+  /**
+   * What the node itself recorded (`payload.file_changes` of the failed run).
+   */
+  nodeFileChanges: Array<WorkflowFileChange>;
+  /**
+   * Live diff of the worktree against this node's checkpoint (includes edits made after the failure).
+   */
+  changedSinceCheckpoint: Array<WorkflowFileChange>;
+};
+
+/**
+ * How the worktree is treated before a failed run is resumed.
+ */
+export type ResumeRollbackMode = "keep" | "node_files" | "checkpoint";
+
+/**
  * Identifies the failed or cancelled run to resume from its failed nodes.
  */
-export type ResumeWorkflowRunRequest = { runId: string };
+export type ResumeWorkflowRunRequest = {
+  runId: string;
+  /**
+   * `None` keeps the worktree as it is.
+   */
+  rollback?: ResumeRollbackMode;
+};
 
 /**
  * Returns the resumed and re-running run.
  */
-export type ResumeWorkflowRunResponse = { run: WorkflowRun };
+export type ResumeWorkflowRunResponse = {
+  run: WorkflowRun;
+  preRollbackCheckpoint: string | null;
+};
 
 /**
  * Identifies the run to start executing against its frozen snapshot graph.
@@ -170,6 +231,15 @@ export type UpdateWorkflowRunInputRequest = {
  * Returns the run with its updated input.
  */
 export type UpdateWorkflowRunInputResponse = { run: WorkflowRun };
+
+/**
+ * One file's incremental change, matching the node payload `file_changes` shape.
+ */
+export type WorkflowFileChange = {
+  path: string;
+  additions: bigint;
+  deletions: bigint;
+};
 
 /**
  * Public node-run payload without persistence audit metadata.

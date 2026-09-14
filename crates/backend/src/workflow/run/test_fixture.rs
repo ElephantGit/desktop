@@ -21,6 +21,8 @@ use ora_domain::{
 use ora_domain::{WorkflowNodeRunId, WorkflowNodeStatus};
 use std::cell::Cell;
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
@@ -86,6 +88,36 @@ impl Clock for ClockAt {
     fn now_timestamp_millis(&self) -> i64 {
         self.0
     }
+}
+
+/// Initializes a real git repository in the fixture workspace and returns that root.
+pub(crate) fn init_git_workspace(temp: &TempDir) -> PathBuf {
+    let root = temp.path().join("fixture-project");
+    std::fs::create_dir_all(&root).unwrap();
+    run_git(&root, &["init", "--initial-branch=main"]);
+    std::fs::write(root.join("README.md"), "seed\n").unwrap();
+    run_git(&root, &["add", "README.md"]);
+    run_git(&root, &["commit", "-m", "seed"]);
+    root
+}
+
+fn run_git(cwd: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .current_dir(cwd)
+        .args([
+            "-c",
+            "user.name=ora-test",
+            "-c",
+            "user.email=ora-test@example.com",
+        ])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 /// Opens a migrated SQLite fixture independent of a live backend runtime.

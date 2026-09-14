@@ -120,7 +120,10 @@ where
             }
         }
         let run = self.find_run(&run_id)?;
-        Ok(ResumeWorkflowRunResponse { run: map_run(run) })
+        Ok(ResumeWorkflowRunResponse {
+            run: map_run(run),
+            pre_rollback_checkpoint: None,
+        })
     }
 
     /// Sets the kickoff input of a pending run.

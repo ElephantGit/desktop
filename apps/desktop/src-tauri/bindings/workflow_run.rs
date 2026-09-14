@@ -59,6 +59,11 @@ pub(super) const BINDINGS: &[Binding] = &[
         permission: Permission::MainWebview,
     },
     Binding::Unary {
+        operation: "previewWorkflowRunResume",
+        handler: "commands::workflow_run::preview_workflow_run_resume",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
         operation: "updateWorkflowRunInput",
         handler: "commands::workflow_run::update_workflow_run_input",
         permission: Permission::MainWebview,

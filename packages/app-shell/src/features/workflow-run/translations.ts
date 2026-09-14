@@ -37,6 +37,22 @@ export const workflowRunTranslations = {
     "workflowRun.startAction": "启动",
     "workflowRun.runAgainAction": "从头重新运行",
     "workflowRun.resumeFromFailure": "从失败处继续",
+    "workflowRun.resume.title": "从失败处继续",
+    "workflowRun.resume.description":
+      "已成功的节点不会重跑。先决定失败节点改过的文件怎么处理：",
+    "workflowRun.resume.keep": "保留现状（默认）",
+    "workflowRun.resume.nodeFiles": "只回滚失败节点改过的文件",
+    "workflowRun.resume.checkpoint": "整体回滚到检查点",
+    "workflowRun.resume.nodeSummary":
+      "节点 {{nodeId}}：节点记录改动 {{nodeFiles}} 个文件；自检查点以来共 {{total}} 个变化，其中 {{extra}} 个不在节点记录里（可能是失败后手工改的）",
+    "workflowRun.resume.reason.no_checkpoint": "该节点没有记录检查点",
+    "workflowRun.resume.reason.siblings_ran_after_checkpoint":
+      "检查点之后有其他节点跑过，整体回滚会抹掉它们的成果",
+    "workflowRun.resume.reason.not_resumable": "当前运行不能续跑",
+    "workflowRun.resume.safetyNote": "回滚前会自动再存一个检查点，可以反悔。",
+    "workflowRun.resume.loadingPreview": "正在读取改动…",
+    "workflowRun.resume.previewFailed": "无法读取改动。",
+    "workflowRun.resume.confirm": "从失败处继续",
     "workflowRun.stopAction": "终止",
     "workflowRun.stopTitle": "终止此次运行？",
     "workflowRun.stopDescription":
@@ -291,6 +307,24 @@ export const workflowRunTranslations = {
     "workflowRun.startAction": "Start",
     "workflowRun.runAgainAction": "Run again from start",
     "workflowRun.resumeFromFailure": "Resume from failure",
+    "workflowRun.resume.title": "Resume from failure",
+    "workflowRun.resume.description":
+      "Succeeded nodes will not run again. First decide what to do with the files the failed nodes changed:",
+    "workflowRun.resume.keep": "Keep the worktree as it is (default)",
+    "workflowRun.resume.nodeFiles": "Roll back only the files the failed nodes changed",
+    "workflowRun.resume.checkpoint": "Roll back everything to the checkpoint",
+    "workflowRun.resume.nodeSummary":
+      "Node {{nodeId}}: the node recorded {{nodeFiles}} files; {{total}} changes since the checkpoint, {{extra}} of which are not in the node record (possibly edited by hand after the failure)",
+    "workflowRun.resume.reason.no_checkpoint":
+      "No checkpoint was recorded for this node",
+    "workflowRun.resume.reason.siblings_ran_after_checkpoint":
+      "Other nodes ran after the checkpoint; a full rollback would erase their work",
+    "workflowRun.resume.reason.not_resumable": "This run cannot be resumed",
+    "workflowRun.resume.safetyNote":
+      "A checkpoint is saved automatically before rollback, so you can undo.",
+    "workflowRun.resume.loadingPreview": "Reading changes…",
+    "workflowRun.resume.previewFailed": "Could not read the changes.",
+    "workflowRun.resume.confirm": "Resume from failure",
     "workflowRun.stopAction": "Stop",
     "workflowRun.stopTitle": "Stop this run?",
     "workflowRun.stopDescription":

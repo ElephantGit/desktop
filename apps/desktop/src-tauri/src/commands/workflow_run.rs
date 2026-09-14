@@ -80,6 +80,13 @@ backend_command!(
     "Resumes one workflow run from its failed nodes through the shared Backend."
 );
 backend_command!(
+    preview_workflow_run_resume,
+    PreviewWorkflowRunResumeRequest,
+    PreviewWorkflowRunResumeResponse,
+    workflow_runs.preview_resume,
+    "Previews rollback options before resuming a failed workflow run through the shared Backend."
+);
+backend_command!(
     update_workflow_run_input,
     UpdateWorkflowRunInputRequest,
     UpdateWorkflowRunInputResponse,

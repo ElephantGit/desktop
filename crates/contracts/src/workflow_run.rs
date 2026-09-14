@@ -309,12 +309,26 @@ pub struct RestartWorkflowRunResponse {
     pub run: WorkflowRun,
 }
 
+/// How the worktree is treated before a failed run is resumed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "workflow-run.ts")]
+pub enum ResumeRollbackMode {
+    Keep,
+    NodeFiles,
+    Checkpoint,
+}
+
 /// Identifies the failed or cancelled run to resume from its failed nodes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "workflow-run.ts")]
 pub struct ResumeWorkflowRunRequest {
     pub run_id: String,
+    /// `None` keeps the worktree as it is.
+    #[serde(default)]
+    #[ts(optional)]
+    pub rollback: Option<ResumeRollbackMode>,
 }
 
 /// Returns the resumed and re-running run.
@@ -323,6 +337,57 @@ pub struct ResumeWorkflowRunRequest {
 #[ts(export_to = "workflow-run.ts")]
 pub struct ResumeWorkflowRunResponse {
     pub run: WorkflowRun,
+    pub pre_rollback_checkpoint: Option<String>,
+}
+
+/// Identifies the failed or cancelled run whose resume preview should be loaded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflow-run.ts")]
+pub struct PreviewWorkflowRunResumeRequest {
+    pub run_id: String,
+}
+
+/// One file's incremental change, matching the node payload `file_changes` shape.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflow-run.ts")]
+pub struct WorkflowFileChange {
+    pub path: String,
+    pub additions: u64,
+    pub deletions: u64,
+}
+
+/// Preview of one failed or cancelled node that would be re-run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflow-run.ts")]
+pub struct ResumeFailedNodePreview {
+    pub node_id: String,
+    pub node_run_id: String,
+    pub started_at: Option<i64>,
+    pub checkpoint: Option<String>,
+    pub checkpoint_error: Option<String>,
+    /// What the node itself recorded (`payload.file_changes` of the failed run).
+    pub node_file_changes: Vec<WorkflowFileChange>,
+    /// Live diff of the worktree against this node's checkpoint (includes edits made after the failure).
+    pub changed_since_checkpoint: Vec<WorkflowFileChange>,
+}
+
+/// Describes whether a run can be resumed and which rollback modes are available.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflow-run.ts")]
+pub struct PreviewWorkflowRunResumeResponse {
+    /// Run is failed/cancelled, no running node, and at least one failed/cancelled node.
+    pub resumable: bool,
+    pub failed_nodes: Vec<ResumeFailedNodePreview>,
+    /// Every failed node has a checkpoint.
+    pub node_files_available: bool,
+    /// `node_files_available` and no sibling node run started after the earliest failed checkpoint.
+    pub checkpoint_available: bool,
+    /// `"no_checkpoint"` | `"siblings_ran_after_checkpoint"` | `"not_resumable"`.
+    pub checkpoint_unavailable_reason: Option<String>,
 }
 
 /// Sets the kickoff input of a pending run, used as the start node's input on start.
@@ -407,8 +472,13 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     CancelWorkflowRunResponse::export(config)?;
     RestartWorkflowRunRequest::export(config)?;
     RestartWorkflowRunResponse::export(config)?;
+    ResumeRollbackMode::export(config)?;
     ResumeWorkflowRunRequest::export(config)?;
     ResumeWorkflowRunResponse::export(config)?;
+    PreviewWorkflowRunResumeRequest::export(config)?;
+    WorkflowFileChange::export(config)?;
+    ResumeFailedNodePreview::export(config)?;
+    PreviewWorkflowRunResumeResponse::export(config)?;
     UpdateWorkflowRunInputRequest::export(config)?;
     UpdateWorkflowRunInputResponse::export(config)?;
     NodeCompletionRequester::export(config)?;
@@ -425,8 +495,9 @@ mod tests {
         GetWorkflowRunRequest, GetWorkflowRunResponse, ListWorkflowNodeRunsRequest,
         ListWorkflowNodeRunsResponse, ListWorkflowRunsByWorkflowRequest,
         ListWorkflowRunsByWorkflowResponse, ListWorkflowRunsRequest, ListWorkflowRunsResponse,
-        NodeCompletionRequester, WorkflowNodeRun, WorkflowNodeStatus, WorkflowRun,
-        WorkflowRunLocale, WorkflowRunStatus, WorkflowRunSummary, WorkflowRunVariable,
+        NodeCompletionRequester, ResumeRollbackMode, ResumeWorkflowRunRequest, WorkflowNodeRun,
+        WorkflowNodeStatus, WorkflowRun, WorkflowRunLocale, WorkflowRunStatus, WorkflowRunSummary,
+        WorkflowRunVariable,
     };
     use pretty_assertions::assert_eq;
     use serde::Serialize;
@@ -742,6 +813,29 @@ mod tests {
             }),
         );
         assert_serialized_json(&WorkflowRunStatus::AwaitingInput, json!("awaitingInput"));
+    }
+
+    /// A resume request without `rollback` stays `Keep`; snake_case values map onto the enum.
+    #[test]
+    fn deserializes_resume_workflow_run_request_rollback() {
+        let omitted: ResumeWorkflowRunRequest =
+            serde_json::from_value(json!({ "runId": "r" })).unwrap();
+        assert_eq!(
+            omitted,
+            ResumeWorkflowRunRequest {
+                run_id: "r".to_string(),
+                rollback: None,
+            }
+        );
+        let node_files: ResumeWorkflowRunRequest =
+            serde_json::from_value(json!({ "runId": "r", "rollback": "node_files" })).unwrap();
+        assert_eq!(
+            node_files,
+            ResumeWorkflowRunRequest {
+                run_id: "r".to_string(),
+                rollback: Some(ResumeRollbackMode::NodeFiles),
+            }
+        );
     }
 
     /// Serializes one value and compares the full JSON payload so field names stay stable.

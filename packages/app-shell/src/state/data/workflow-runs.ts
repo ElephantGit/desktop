@@ -15,7 +15,7 @@ import {
 } from "@ora/workflow-runtime";
 import { useContractsClient } from "../../contracts-client-context";
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
-import type { WorkflowRunSummary } from "@ora/contracts";
+import type { ResumeRollbackMode, WorkflowRunSummary } from "@ora/contracts";
 import { activeLocale } from "../../i18n/i18n-instance";
 
 /** Persisted runs deliberately do not share the mock runtime detail tuple. */
@@ -159,12 +159,21 @@ export function useRestartWorkflowRun() {
   });
 }
 
+/** Previews rollback options for a failed run. Runs git, so this is a mutation opened on demand. */
+export function usePreviewWorkflowRunResume() {
+  const client = useContractsClient();
+  return useMutation({
+    mutationFn: (input: { runId: string }) =>
+      client.workflowRun.previewResume(input),
+  });
+}
+
 /** Resumes one failed or cancelled workflow run from its failed nodes, keeping succeeded work. */
 export function useResumeWorkflowRun() {
   const client = useContractsClient();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { runId: string }) =>
+    mutationFn: (input: { runId: string; rollback?: ResumeRollbackMode }) =>
       client.workflowRun.resumeFromFailure(input),
     onSuccess: (_result, variables) => {
       void queryClient.invalidateQueries({

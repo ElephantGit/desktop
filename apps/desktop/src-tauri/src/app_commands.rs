@@ -87,6 +87,7 @@ desktop_command_registry! {
     surface::workbench_bridge::plugin_webview_invoke,
     commands::agent::prepare_agent_import,
     commands::skill::prepare_skill_import,
+    commands::workflow_run::preview_workflow_run_resume,
     commands::workflow::publish_workflow,
     commands::workspace::push_workspace_branch,
     commands::plugin::read_plugin_readme,

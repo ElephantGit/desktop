@@ -468,10 +468,27 @@ describe("WorkflowRunWorkspace", () => {
       }),
     );
 
+    const dialog = await screen.findByRole("alertdialog");
+    await waitFor(() => {
+      expect(
+        within(dialog).getByRole("button", {
+          name: /从失败处继续|Resume from failure/,
+        }),
+      ).toBeEnabled();
+    });
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: /从失败处继续|Resume from failure/,
+      }),
+    );
+
     await waitFor(() => {
       expect(resumeFromFailure).toHaveBeenCalledTimes(1);
     });
-    expect(resumeFromFailure.mock.calls[0]?.[0]).toEqual({ runId: "run-1" });
+    expect(resumeFromFailure.mock.calls[0]?.[0]).toEqual({
+      runId: "run-1",
+      rollback: "keep",
+    });
     expect(useWorkspaceSelectionStore.getState().selection.workflowRunId).toBe(
       "run-1",
     );

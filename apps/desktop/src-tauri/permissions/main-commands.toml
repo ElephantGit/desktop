@@ -90,6 +90,7 @@ commands.allow = [
     "plugin_webview_invoke",
     "prepare_agent_import",
     "prepare_skill_import",
+    "preview_workflow_run_resume",
     "publish_workflow",
     "push_workspace_branch",
     "read_plugin_readme",

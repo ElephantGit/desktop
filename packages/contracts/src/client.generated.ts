@@ -816,6 +816,13 @@ export function createContractsClient(
           transport,
           options,
         ),
+      previewResume: (request, options) =>
+        executeOperation(
+          "previewWorkflowRunResume",
+          request,
+          transport,
+          options,
+        ),
       rename: (request, options) =>
         executeOperation(
           "renameWorkflowRun",

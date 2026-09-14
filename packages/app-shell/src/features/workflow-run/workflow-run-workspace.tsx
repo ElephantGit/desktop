@@ -30,7 +30,6 @@ import {
   useCancelWorkflowRun,
   useRealWorkflowRun,
   useRestartWorkflowRun,
-  useResumeWorkflowRun,
   useStartWorkflowRun,
   useUpdateWorkflowRunInput,
 } from "../../state/data/workflow-runs";
@@ -49,6 +48,7 @@ import { RunStatusBadge } from "./run-status-mark";
 import { runStatusTone } from "./run-status-style";
 import type { WorkflowRunViewMode } from "./run-view-mode";
 import { WorkflowRunStartDialog } from "./workflow-run-start-dialog";
+import { ResumeRunDialog } from "./resume-run-dialog";
 import { LocationActionsButton } from "../workspace/location-actions-button";
 import {
   WorkspaceReviewLayout,
@@ -84,7 +84,6 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   const updateRunInput = useUpdateWorkflowRunInput();
   const cancelRun = useCancelWorkflowRun();
   const rerun = useRestartWorkflowRun();
-  const resume = useResumeWorkflowRun();
 
   const [viewMode, setViewMode] = useState<WorkflowRunViewMode>("overview");
   const [focusNodeId, setFocusNodeId] = useState<string | null>(null);
@@ -97,6 +96,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     useState<string | null>(null);
   const [stopOpen, setStopOpen] = useState(false);
   const [startOpen, setStartOpen] = useState(false);
+  const [resumeOpen, setResumeOpen] = useState(false);
   /** One-shot: Overview node click should open Theater's act inspector. */
   const [openInspectorOnTheaterEnter, setOpenInspectorOnTheaterEnter] =
     useState(false);
@@ -369,8 +369,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     startRun.isPending ||
     updateRunInput.isPending ||
     cancelRun.isPending ||
-    rerun.isPending ||
-    resume.isPending;
+    rerun.isPending;
 
   // WorkflowRun has no implicit worktree Task. Its detail already carries the
   // project projection needed to scope the generic review surface.
@@ -495,22 +494,6 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     }
   }
 
-  /**
-   * Resumes a failed or cancelled run from its failed nodes. Resume keeps the run id, so the
-   * workspace selection must be preserved the same way restart does.
-   */
-  async function handleResumeFromFailure(): Promise<void> {
-    if (run === null || !canResume) {
-      return;
-    }
-    try {
-      await resume.mutateAsync({ runId: run.id });
-      selectWorkflowRun(run.id, run.projectId);
-    } catch {
-      toast.error(t("workflowRun.resumeFailed"));
-    }
-  }
-
   return (
     <main
       id="main-content"
@@ -632,15 +615,9 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
               size="sm"
               className="h-7 gap-1.5 px-2.5 text-xs"
               disabled={actionBusy}
-              onClick={() => {
-                void handleResumeFromFailure();
-              }}
+              onClick={() => setResumeOpen(true)}
             >
-              {resume.isPending ? (
-                <Spinner className="size-3.5" />
-              ) : (
-                <IconPlayerPlay className="size-3.5" />
-              )}
+              <IconPlayerPlay className="size-3.5" />
               {t("workflowRun.resumeFromFailure")}
             </Button>
           )}
@@ -741,13 +718,18 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
           initialPrompt={startNode?.data.input ?? run.kickoffInput ?? ""}
           variables={startVariables}
           busy={
-            updateRunInput.isPending ||
-            startRun.isPending ||
-            rerun.isPending ||
-            resume.isPending
+            updateRunInput.isPending || startRun.isPending || rerun.isPending
           }
           onOpenChange={setStartOpen}
           onStart={handleStartFromDialog}
+        />
+      )}
+      {run !== null && (
+        <ResumeRunDialog
+          open={resumeOpen}
+          runId={run.id}
+          onOpenChange={setResumeOpen}
+          onResumed={() => selectWorkflowRun(run.id, run.projectId)}
         />
       )}
     </main>

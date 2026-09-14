@@ -8,7 +8,7 @@ use crate::clock::SystemClock;
 use crate::error::BackendError;
 use crate::git_cleanup::KeyedResourceLocks;
 use crate::repository_work::spawn_repository_work;
-use ora_application::{ApplicationError, WorkflowRunEngineRepository};
+use ora_application::{ApplicationError, Clock, WorkflowRunEngineRepository};
 use ora_contracts::*;
 use ora_db::{RepositoryPool, SqliteWorkflowRunEngineRepository};
 use ora_logging::ora_warn;
@@ -303,9 +303,22 @@ impl WorkflowRuns {
         request: ResumeWorkflowRunRequest,
     ) -> Result<ResumeWorkflowRunResponse, BackendError> {
         let _gate = self.run_locks.acquire_exclusive(request.run_id.clone());
-        self.engine
-            .resume_from_failure(request)
-            .map_err(BackendError::from)
+        super::rollback::resume_from_failure(
+            &self.pool,
+            &self.agent_runtime,
+            &self.engine,
+            request,
+            SystemClock.now_timestamp_millis(),
+        )
+    }
+
+    /// Reads rollback availability and live worktree diffs without mutating the run.
+    pub fn preview_resume(
+        &self,
+        request: PreviewWorkflowRunResumeRequest,
+    ) -> Result<PreviewWorkflowRunResumeResponse, BackendError> {
+        let _gate = self.run_locks.acquire_shared(request.run_id.clone());
+        super::rollback::preview_resume(&self.pool, &self.agent_runtime, request)
     }
 
     /// Sets the kickoff input of a pending workflow run.

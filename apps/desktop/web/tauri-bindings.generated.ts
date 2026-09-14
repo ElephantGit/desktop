@@ -90,6 +90,7 @@ export const tauriCommands = {
   moveWorkspaceEntry: "move_workspace_entry",
   prepareAgentImport: "prepare_agent_import",
   prepareSkillImport: "prepare_skill_import",
+  previewWorkflowRunResume: "preview_workflow_run_resume",
   publishWorkflow: "publish_workflow",
   pushWorkspaceBranch: "push_workspace_branch",
   readPluginReadme: "read_plugin_readme",
