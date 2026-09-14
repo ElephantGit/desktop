@@ -15,7 +15,9 @@ runtime registered for its node type.
   synchronously inside a scheduling wave; the async Agent runtime wraps the backend's
   `NodeExecutor`. The registry is the single place a node type couples to an execution strategy:
   the scheduling core looks runtimes up by node type and dispatches on the registered execution
-  form, never on the node type itself.
+  form, never on the node type itself. Run-output precedence is runtime metadata too — each
+  runtime declares the rank with which its succeeded nodes contribute the run's final output —
+  so a new terminal node type picks its own precedence without touching the scheduling core.
 - **Engine persistence port** (`ports.rs`): the `WorkflowRunEngineRepository` trait that the run
   engine uses, implemented in `ora-db`; plus the `WorkflowRunInvalidationPublisher` port that
   publishes a stateless invalidation after every committed run or node-run state transition.
@@ -62,20 +64,29 @@ The engine wraps the executor as the Agent runtime and registers the swift contr
 one assembly step. The backend also implements `WorkflowRunInvalidationPublisher` as a bridge
 onto the application event hub: after every committed state transition the engine publishes one
 `AppEvent::WorkflowRunInvalidated { run_id }`, which carries no workflow state — observers
-re-query the persisted run. `ora-db` implements `WorkflowRunEngineRepository`. Agent-node
-sessions are a live path, not a test-only stub.
+re-query the persisted run. The interactive chain (an awaiting node parking, a human turn
+beginning or ending) commits its guarded transitions through the backend's
+`WorkflowRunTransitions` sink, which shares the same invalidation mechanism, so every committed
+node-run transition — engine or interactive — publishes one event. `ora-db` implements
+`WorkflowRunEngineRepository`. Agent-node sessions are a live path, not a test-only stub.
 
 ## Key invariants
 
 - `WorkflowGraph` is immutable after `parse`; every topology query is deterministic.
 - The graph is acyclic (validated by `petgraph::algo::toposort`), has unique node ids, and at most
   one start node; all three are rejected at parse time with a `GraphError` variant.
-- The scheduling core is type-agnostic: `run_schedule` and its scheduling-path helpers contain no
-  node-type literals, pinned by the `run_schedule_contains_no_node_type_literals` source test.
-  Adding a node type means adding a runtime plus one registration line in the registry assembly.
+- The scheduling core is type-agnostic: the engine module and the registry's scheduling-facing
+  surface contain no node-type literals outside the documented policy seams (registry assembly,
+  registry lookups by parsed type, runtime implementations, start-time graph-structural
+  validation), pinned by the `scheduling_core_contains_no_node_type_literals` source test that
+  scans both modules rather than a single function. Adding a node type means adding a runtime
+  plus one registration line in the registry assembly.
 - Swift runtimes complete inside the scheduling wave and receive only in-memory committed facts —
-  the `SwiftNodeRuntime` signature gives them no handle through which IO or persistence could be
-  performed, so the per-run serial gate is never held across a wait.
+  the `SwiftNodeRuntime` signature hands them no IO or persistence handle, and the
+  `node_runtime_module_performs_no_io_or_waiting` source test rejects IO and waiting primitives
+  anywhere in the runtime module, so the per-run serial gate is never held across a wait. Rust
+  cannot make this a hard type-system guarantee, so the signature and the scan pin it together;
+  bounded work remains a review obligation.
 - Rust identifiers use `node_type` (aligned with `workflow_node_runs.node_type`); the wire source
   is React Flow's `data.kind`, read through a serde rename.
 - Full-graph order and transitive closures use the same topological rank (upstream first), giving

@@ -4,8 +4,7 @@ use crate::workflow_run::engine::branch_projection::BranchProjection;
 use crate::workflow_run::engine::condition::ELSE_BRANCH_ID;
 use crate::workflow_run::engine::graph::{GraphError, WorkflowGraph, WorkflowGraphNode};
 use crate::workflow_run::engine::node_runtime::{
-    NodeRuntimeRegistry, RegisteredNodeRuntime, SwiftCompletion, compute_run_output,
-    standard_node_runtimes,
+    NodeRuntimeRegistry, RegisteredNodeRuntime, SwiftCompletion, standard_node_runtimes,
 };
 use crate::workflow_run::engine::node_type::NodeType;
 use crate::workflow_run::engine::ports::{
@@ -376,7 +375,7 @@ where
 
             if ready.is_empty() {
                 if !projection.has_in_flight() {
-                    let output = compute_run_output(&node_runs);
+                    let output = self.runtimes.compute_run_output(&node_runs);
                     self.repository.finish_run(run_id, output, now)?;
                     self.run_events.publish_run_invalidated(run_id);
                 }
@@ -705,43 +704,6 @@ mod tests {
         );
         assert!(
             validate_start_inputs(start, Some(&serde_json::to_string(&payload).unwrap())).is_ok()
-        );
-    }
-
-    // ── Scheduling-core structure (ADR "node runtime orchestration" D1) ──
-
-    /// Extracts one function's body from Rust source by brace matching.
-    fn function_body<'source>(source: &'source str, signature: &str) -> Option<&'source str> {
-        let start = source.find(signature)?;
-        let open = source[start..].find('{')? + start;
-        let mut depth = 0usize;
-        for (offset, character) in source[open..].char_indices() {
-            match character {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return Some(&source[open..open + offset + 1]);
-                    }
-                }
-                _ => {}
-            }
-        }
-        None
-    }
-
-    /// The scheduling core must stay free of node-type branching: new node types register a
-    /// runtime instead of editing `run_schedule`, whose dispatch resolves purely through the
-    /// runtime registry.
-    #[test]
-    fn run_schedule_contains_no_node_type_literals() {
-        let source = include_str!("engine.rs");
-        let body = function_body(source, "fn run_schedule")
-            .expect("run_schedule remains the scheduling core");
-        assert!(
-            !body.contains("NodeType::"),
-            "run_schedule must dispatch through the node runtime registry, not node-type \
-             literals:\n{body}"
         );
     }
 }

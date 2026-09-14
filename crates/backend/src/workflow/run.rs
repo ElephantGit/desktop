@@ -12,6 +12,7 @@ mod session_mcp;
 pub(crate) use session_mcp::WorkflowSessionMcpSelectionSource;
 #[cfg(test)]
 mod test_fixture;
+mod transitions;
 mod worktree;
 
 pub(crate) use engine::build_workflow_run_engine;

@@ -19,6 +19,11 @@ impl NodeRuntime for StartRuntime {
     fn start_input(&self, _node: &WorkflowGraphNode, context: &ExecutionContext) -> Option<String> {
         context.run.input.clone()
     }
+
+    /// The Start node records the kickoff input, not a terminal result.
+    fn run_output_rank(&self) -> Option<u32> {
+        None
+    }
 }
 
 impl SwiftNodeRuntime for StartRuntime {
@@ -40,6 +45,11 @@ impl NodeRuntime for ConditionRuntime {
         _node: &WorkflowGraphNode,
         _context: &ExecutionContext,
     ) -> Option<String> {
+        None
+    }
+
+    /// A Condition routes the run; it never contributes the run output.
+    fn run_output_rank(&self) -> Option<u32> {
         None
     }
 }
@@ -70,6 +80,12 @@ impl NodeRuntime for OutputRuntime {
         _context: &ExecutionContext,
     ) -> Option<String> {
         None
+    }
+
+    /// A completed Output node is the run's terminal result and outranks every other
+    /// contributor (the Agent fallback declares rank 1).
+    fn run_output_rank(&self) -> Option<u32> {
+        Some(0)
     }
 }
 

@@ -1,11 +1,12 @@
 //! Real SQLite fixtures shared by workflow coordination and public lifecycle tests.
 
 use super::interactive::CompletingNodeRuns;
+use super::transitions::WorkflowRunTransitions;
 use crate::git_cleanup::KeyedResourceLocks;
 use ora_application::{
     Clock, ExecutionContext, NodeExecutor, ProjectRepository, SessionRepository, WorkflowGraphNode,
     WorkflowNodeRunIdGenerator, WorkflowRepository, WorkflowRunEngine, WorkflowRunEngineRepository,
-    WorkflowRunPayload, WorkflowRunRepository,
+    WorkflowRunInvalidationPublisher, WorkflowRunPayload, WorkflowRunRepository,
 };
 use ora_contracts::WorkflowRunLocale;
 use ora_db::{
@@ -250,6 +251,35 @@ pub(crate) fn bind_and_park(
         )
         .unwrap();
     (session_id, node_run.id.clone())
+}
+
+/// Captures the run ids each invalidation identified, for tests of the D7 event channel.
+pub(crate) struct RecordingInvalidations {
+    pub(crate) published: std::sync::Mutex<Vec<String>>,
+}
+
+impl Default for RecordingInvalidations {
+    fn default() -> Self {
+        Self {
+            published: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl WorkflowRunInvalidationPublisher for RecordingInvalidations {
+    fn publish_run_invalidated(&self, run_id: &WorkflowRunId) {
+        self.published.lock().unwrap().push(run_id.to_string());
+    }
+}
+
+/// Builds a transition sink over the fixture pool whose invalidations are recorded, so tests
+/// assert the D7 publish discipline of engine-external commits.
+pub(crate) fn recording_transitions(
+    pool: &RepositoryPool,
+) -> (Arc<WorkflowRunTransitions>, Arc<RecordingInvalidations>) {
+    let recording = Arc::new(RecordingInvalidations::default());
+    let transitions = Arc::new(WorkflowRunTransitions::new(pool.clone(), recording.clone()));
+    (transitions, recording)
 }
 
 /// Keeps bootstrap and every emitting operation under the same scoped TRACE subscriber.

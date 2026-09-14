@@ -1,4 +1,5 @@
 use super::executor::WorkflowRunNodeExecutor;
+use super::transitions::WorkflowRunTransitions;
 use crate::agent_runtime::AgentRuntimeManager;
 use crate::app_event::AppEventPublisher;
 use crate::clock::SystemClock;
@@ -119,6 +120,9 @@ pub(crate) struct WorkflowRunEngineAssembly {
     pub run_locks: Arc<KeyedResourceLocks>,
     /// The raw engine, used by boot recovery to resume scheduling on a stalled run.
     pub engine: Arc<ConcreteWorkflowRunEngine>,
+    /// The commit-and-publish sink for node-run transitions committed outside the engine (the
+    /// interactive chain), sharing the engine's invalidation mechanism.
+    pub transitions: Arc<WorkflowRunTransitions>,
 }
 
 /// Projects engine run invalidations onto the shared application event stream.
@@ -157,6 +161,15 @@ pub(crate) fn build_workflow_run_engine(
 ) -> WorkflowRunEngineAssembly {
     let run_locks = KeyedResourceLocks::new();
     let callback = Arc::new(WorkflowRunEngineCallback::new(run_locks.clone()));
+    // One invalidation mechanism serves every commit site: the engine publishes its own
+    // transitions, and the interactive chain's direct commits (parking an awaiting node,
+    // human turns beginning and ending) publish through the same bridge via the transitions
+    // sink (ADR "node runtime orchestration" D7).
+    let invalidations = Arc::new(WorkflowRunInvalidations::new(app_events));
+    let transitions = Arc::new(WorkflowRunTransitions::new(
+        pool.clone(),
+        invalidations.clone(),
+    ));
     let executor = WorkflowRunNodeExecutor::new(
         agent_runtime,
         pool.clone(),
@@ -164,13 +177,14 @@ pub(crate) fn build_workflow_run_engine(
         callback.clone(),
         clock,
         baselines_root,
+        transitions.clone(),
     );
     let engine = Arc::new(WorkflowRunEngine::with_run_events(
         SqliteWorkflowRunEngineRepository::new(pool.clone()),
         executor,
         UuidWorkflowNodeRunIdGenerator::new(),
         clock,
-        Arc::new(WorkflowRunInvalidations::new(app_events)),
+        invalidations,
     ));
     callback.set_engine(engine.clone());
     let control = Arc::new(WorkflowRunControlHandler::new(
@@ -181,6 +195,7 @@ pub(crate) fn build_workflow_run_engine(
         control,
         run_locks,
         engine,
+        transitions,
     }
 }
 
@@ -293,8 +308,8 @@ fn is_awaiting_input(node_run: &WorkflowNodeRun, graph: &WorkflowGraph) -> bool 
 #[cfg(test)]
 mod tests {
     use super::super::test_fixture::{
-        CONDITION_GRAPH, CONTROL_GRAPH, ClockAt, NoopExecutor, SeqGen, TWO_AGENT_GRAPH, bootstrap,
-        run_test, seeded_pending_run, started_run,
+        CONDITION_GRAPH, CONTROL_GRAPH, ClockAt, NoopExecutor, RecordingInvalidations, SeqGen,
+        TWO_AGENT_GRAPH, bootstrap, run_test, seeded_pending_run, started_run,
     };
     use super::{WorkflowRunInvalidations, is_awaiting_input};
     use crate::app_event::AppEventHub;
@@ -308,7 +323,7 @@ mod tests {
         WorkflowRunId, WorkflowRunStatus,
     };
     use pretty_assertions::assert_eq;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     fn node_run(status: WorkflowNodeStatus, session_id: Option<&str>) -> WorkflowNodeRun {
         WorkflowNodeRun::new(
@@ -358,18 +373,6 @@ mod tests {
             &node_run(WorkflowNodeStatus::Pending, Some("s")),
             &missing
         ));
-    }
-
-    /// Captures the run ids each invalidation identified, for tests of the D7 event channel.
-    #[derive(Default)]
-    struct RecordingInvalidations {
-        published: Mutex<Vec<String>>,
-    }
-
-    impl WorkflowRunInvalidationPublisher for RecordingInvalidations {
-        fn publish_run_invalidated(&self, run_id: &WorkflowRunId) {
-            self.published.lock().unwrap().push(run_id.to_string());
-        }
     }
 
     /// An engine assembled without an event bus drops every invalidation, so engines built by

@@ -13,7 +13,9 @@ use crate::workflow_run::engine::ports::ExecutionContext;
 use crate::workflow_run::engine::variable_pool::WorkflowVariablePool;
 use control::{ConditionRuntime, OutputRuntime, StartRuntime};
 use ora_domain::{WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus};
+use std::cmp::Reverse;
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 
 /// Base capability shared by every node runtime regardless of execution form.
@@ -24,14 +26,27 @@ use std::sync::Arc;
 pub trait NodeRuntime: Send + Sync {
     /// Computes the scalar input recorded on a node-run when a scheduling wave starts it.
     fn start_input(&self, node: &WorkflowGraphNode, context: &ExecutionContext) -> Option<String>;
+
+    /// The precedence rank with which this runtime's succeeded node-runs contribute the run's
+    /// final output; `None` means nodes of this type never contribute.
+    ///
+    /// Run-output selection is node-type policy, so it is declared here as runtime metadata
+    /// (ADR "node runtime orchestration" D1) instead of a type list in the scheduling core:
+    /// the run output is the output of the latest-finished succeeded node-run carrying the
+    /// lowest rank present in the run. A new terminal node type decides its own precedence by
+    /// declaring a rank, without editing any scheduling-layer code.
+    fn run_output_rank(&self) -> Option<u32>;
 }
 
 /// A runtime that completes its nodes synchronously inside a scheduling wave.
 ///
 /// The call happens while the per-run serial gate is held, so implementations must be pure: no
-/// IO, no waiting, bounded work (ADR D2). The signature enforces this statically — a swift
-/// runtime receives only in-memory committed facts and returns its terminal decision, with no
-/// handle through which IO or persistence could be performed.
+/// IO, no waiting, bounded work (ADR D2). The signature upholds this by construction — a swift
+/// runtime receives only in-memory committed facts, so no repository or async handle is ever
+/// handed in — but Rust cannot stop an implementation from reaching `std::fs` or sleeping on
+/// its own, so the discipline is also pinned by an executable source constraint:
+/// `node_runtime_module_performs_no_io_or_waiting` (see `engine/tests.rs`) rejects IO and
+/// waiting primitives anywhere in the runtime module.
 pub trait SwiftNodeRuntime: NodeRuntime {
     /// Computes the terminal output of one running node, or the failure message that fails it.
     fn complete_running(
@@ -58,8 +73,9 @@ pub trait AsyncNodeRuntime: NodeRuntime {
 
 /// The committed facts a swift runtime reads to complete one running node inside a wave.
 ///
-/// Everything here is in-memory state loaded by the scheduling wave; handing a repository or
-/// any IO handle to a swift runtime would break the no-IO-under-the-run-lock invariant.
+/// Everything here is in-memory state loaded by the scheduling wave; the runtime module holds
+/// no IO or persistence handles at all — the no-IO-under-the-run-lock invariant (ADR D2)
+/// depends on that boundary, not on the signature alone.
 pub struct SwiftCompletion<'a> {
     /// The running node-run being completed.
     pub node_run: &'a WorkflowNodeRun,
@@ -83,6 +99,16 @@ pub enum RegisteredNodeRuntime {
     Swift(Arc<dyn SwiftNodeRuntime>),
     /// Dispatched to a background driver that reports through the callback sink.
     Async(Arc<dyn AsyncNodeRuntime>),
+}
+
+impl RegisteredNodeRuntime {
+    /// The run-output precedence rank of the registered runtime's node type.
+    fn run_output_rank(&self) -> Option<u32> {
+        match self {
+            Self::Swift(runtime) => runtime.run_output_rank(),
+            Self::Async(runtime) => runtime.run_output_rank(),
+        }
+    }
 }
 
 /// Maps node types onto their registered runtimes.
@@ -125,6 +151,31 @@ impl NodeRuntimeRegistry {
             Some(RegisteredNodeRuntime::Async(runtime)) => runtime.start_input(node, context),
             None => None,
         }
+    }
+
+    /// Computes the run output written at finish, from the run-output precedence the registered
+    /// runtimes declare (ADR "node runtime orchestration" D1).
+    ///
+    /// The winning candidate is the succeeded node-run whose runtime declares the lowest
+    /// `run_output_rank`; ties on a rank are broken by the latest `finished_at`, then by row
+    /// order. A succeeded node-run whose type has no runtime, or whose runtime declares no
+    /// rank, never contributes.
+    pub fn compute_run_output(&self, node_runs: &[WorkflowNodeRun]) -> Option<String> {
+        node_runs
+            .iter()
+            .filter(|node_run| node_run.status == WorkflowNodeStatus::Succeeded)
+            .filter_map(|node_run| {
+                let rank = NodeType::from_str(&node_run.node_type)
+                    .ok()
+                    .and_then(|node_type| self.runtime(node_type))
+                    .and_then(RegisteredNodeRuntime::run_output_rank)?;
+                Some((rank, node_run))
+            })
+            // Max over (reversed rank, finish time) picks the lowest rank first and the latest
+            // finish within it, preferring the later row on full ties - matching the previous
+            // latest-by-type selection exactly.
+            .max_by_key(|(rank, node_run)| (Reverse(*rank), node_run.finished_at.unwrap_or(0)))
+            .and_then(|(_, node_run)| node_run.output.clone())
     }
 }
 
@@ -183,6 +234,12 @@ where
             .as_ref()
             .map(|config| config.prompt.clone())
     }
+
+    /// A completed Agent is the run-output fallback: it contributes only when no higher-ranked
+    /// terminal runtime (Output) completed.
+    fn run_output_rank(&self) -> Option<u32> {
+        Some(1)
+    }
 }
 
 impl<E> AsyncNodeRuntime for AgentNodeRuntime<E>
@@ -197,27 +254,6 @@ where
     ) {
         self.executor.dispatch(node_run_id, node, context);
     }
-}
-
-/// Computes the run output written at finish.
-///
-/// A completed Output node is the run's terminal result; a graph without one falls back to the
-/// latest completed Agent output. This precedence is node-type policy, so it lives with the
-/// registry — the type-aware assembly point — rather than in the scheduling core.
-pub fn compute_run_output(node_runs: &[WorkflowNodeRun]) -> Option<String> {
-    for node_type in [NodeType::Output, NodeType::Agent] {
-        let latest = node_runs
-            .iter()
-            .filter(|node_run| {
-                node_run.status == WorkflowNodeStatus::Succeeded
-                    && node_run.node_type == node_type.as_str()
-            })
-            .max_by_key(|node_run| node_run.finished_at.unwrap_or(0));
-        if let Some(node_run) = latest {
-            return node_run.output.clone();
-        }
-    }
-    None
 }
 
 #[cfg(test)]
@@ -360,9 +396,11 @@ mod tests {
     }
 
     /// The run output prefers the latest finished Output node and only falls back to the
-    /// latest finished Agent when no Output completed.
+    /// latest finished Agent when no Output completed, exactly as the runtimes' declared
+    /// run-output ranks prescribe.
     #[test]
     fn run_output_prefers_output_nodes_and_falls_back_to_agents() {
+        let runtimes = standard_node_runtimes(NoopExecutor);
         let node_runs = vec![
             node_run(
                 "a",
@@ -386,7 +424,10 @@ mod tests {
                 Some(30),
             ),
         ];
-        assert_eq!(compute_run_output(&node_runs), Some("last".to_string()));
+        assert_eq!(
+            runtimes.compute_run_output(&node_runs),
+            Some("last".to_string())
+        );
 
         let agents_only = vec![
             node_run(
@@ -404,7 +445,10 @@ mod tests {
                 Some(20),
             ),
         ];
-        assert_eq!(compute_run_output(&agents_only), Some("newer".to_string()));
+        assert_eq!(
+            runtimes.compute_run_output(&agents_only),
+            Some("newer".to_string())
+        );
 
         // A succeeded Output with no recorded output still wins over later Agent output.
         let empty_output = vec![
@@ -423,7 +467,7 @@ mod tests {
                 Some(20),
             ),
         ];
-        assert_eq!(compute_run_output(&empty_output), None);
+        assert_eq!(runtimes.compute_run_output(&empty_output), None);
 
         // Failed and cancelled runs never contribute.
         let no_contributors = vec![
@@ -442,7 +486,7 @@ mod tests {
                 Some(20),
             ),
         ];
-        assert_eq!(compute_run_output(&no_contributors), None);
+        assert_eq!(runtimes.compute_run_output(&no_contributors), None);
     }
 
     /// A node-run row never carries a session binding for swift types in this fixture helper;
