@@ -51,9 +51,8 @@ impl WorkflowSessionTurns {
             Err(error) => {
                 // The turn never started; put the awaiting node back where it was.
                 if let Some(node_run_id) = node_run_id.as_ref() {
-                    let _ =
-                        crate::workflow::run::interactive::end_human_turn(&self.pool, node_run_id)
-                            .await;
+                    crate::workflow::run::interactive::end_human_turn(&self.pool, node_run_id)
+                        .await?;
                 }
                 return Err(error);
             }
@@ -62,11 +61,8 @@ impl WorkflowSessionTurns {
             return Ok(stream);
         };
         let pool = self.pool.clone();
-        Ok(stream.attach_cleanup(move || {
-            tokio::spawn(async move {
-                let _ =
-                    crate::workflow::run::interactive::end_human_turn(&pool, &node_run_id).await;
-            });
+        Ok(stream.attach_cleanup(move || async move {
+            crate::workflow::run::interactive::end_human_turn(&pool, &node_run_id).await
         }))
     }
 }

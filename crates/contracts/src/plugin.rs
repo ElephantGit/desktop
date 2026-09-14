@@ -1,3 +1,7 @@
+mod marketplace_sync;
+
+pub use marketplace_sync::MarketplaceAutoSyncEvent;
+
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt};
 use ts_rs::TS;
@@ -747,6 +751,7 @@ pub struct ResetPluginConfigurationResponse {
 
 /// Exports every TypeScript binding declared in this module into the target directory.
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
+    marketplace_sync::export(config)?;
     InstalledPluginContribution::export(config)?;
     PluginInstallationValidity::export(config)?;
     PluginConfigurationCompleteness::export(config)?;

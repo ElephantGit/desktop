@@ -5,7 +5,7 @@ use ts_rs::TS;
 /// Describes the lifecycle state of a workflow run in the public contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub enum WorkflowRunStatus {
     Pending,
     Running,
@@ -20,7 +20,7 @@ pub enum WorkflowRunStatus {
 /// Describes the lifecycle state of one node execution in the public contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub enum WorkflowNodeStatus {
     Pending,
     Running,
@@ -32,7 +32,7 @@ pub enum WorkflowNodeStatus {
 /// Public workflow run payload without persistence audit metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct WorkflowRun {
     pub id: String,
     pub workspace_id: String,
@@ -53,7 +53,7 @@ pub struct WorkflowRun {
 /// Public node-run payload without persistence audit metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct WorkflowNodeRun {
     pub id: String,
     pub run_id: String,
@@ -74,7 +74,7 @@ pub struct WorkflowNodeRun {
 /// Lightweight run summary for list views with direct workspace ownership.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct WorkflowRunSummary {
     pub id: String,
     pub name: String,
@@ -92,7 +92,7 @@ pub struct WorkflowRunSummary {
 
 /// Identifies the Ora display language frozen for generated workflow-run prompts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub enum WorkflowRunLocale {
     #[serde(rename = "zh-CN")]
     #[ts(rename = "zh-CN")]
@@ -107,7 +107,7 @@ pub enum WorkflowRunLocale {
 /// Carries the fields required to create a workflow run against a published snapshot and workspace.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct CreateWorkflowRunRequest {
     pub workspace_id: String,
     pub workflow_id: String,
@@ -126,7 +126,7 @@ pub struct CreateWorkflowRunRequest {
 /// Returns the created workspace-owned run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct CreateWorkflowRunResponse {
     pub run: WorkflowRun,
 }
@@ -136,7 +136,7 @@ pub struct CreateWorkflowRunResponse {
 /// Identifies the workflow run to retrieve by its stable identifier.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct GetWorkflowRunRequest {
     pub run_id: String,
 }
@@ -144,7 +144,7 @@ pub struct GetWorkflowRunRequest {
 /// Returns the full run detail including its display name and node runs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct GetWorkflowRunResponse {
     pub run: WorkflowRun,
     pub name: String,
@@ -160,7 +160,7 @@ pub struct GetWorkflowRunResponse {
 /// One declared run variable and its optional current value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct WorkflowRunVariable {
     pub selector: Vec<String>,
     pub value_type: String,
@@ -175,7 +175,7 @@ pub struct WorkflowRunVariable {
 /// Requests the workflow run summaries for one project.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct ListWorkflowRunsRequest {
     pub project_id: String,
 }
@@ -183,7 +183,7 @@ pub struct ListWorkflowRunsRequest {
 /// Returns the visible run summaries for the project.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct ListWorkflowRunsResponse {
     pub runs: Vec<WorkflowRunSummary>,
 }
@@ -193,7 +193,7 @@ pub struct ListWorkflowRunsResponse {
 /// Requests the workflow run summaries for one workflow.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct ListWorkflowRunsByWorkflowRequest {
     pub workflow_id: String,
 }
@@ -201,7 +201,7 @@ pub struct ListWorkflowRunsByWorkflowRequest {
 /// Returns the visible run summaries for the workflow.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct ListWorkflowRunsByWorkflowResponse {
     pub runs: Vec<WorkflowRunSummary>,
 }
@@ -211,7 +211,7 @@ pub struct ListWorkflowRunsByWorkflowResponse {
 /// Identifies the run whose node-run history to retrieve.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct ListWorkflowNodeRunsRequest {
     pub run_id: String,
 }
@@ -219,7 +219,7 @@ pub struct ListWorkflowNodeRunsRequest {
 /// Returns the node-run records of one run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct ListWorkflowNodeRunsResponse {
     pub nodes: Vec<WorkflowNodeRun>,
 }
@@ -229,7 +229,7 @@ pub struct ListWorkflowNodeRunsResponse {
 /// Identifies the workflow run to soft-delete.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct DeleteWorkflowRunRequest {
     pub run_id: String,
 }
@@ -237,7 +237,7 @@ pub struct DeleteWorkflowRunRequest {
 /// Returns the identifier of the soft-deleted run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct DeleteWorkflowRunResponse {
     pub run_id: String,
 }
@@ -245,7 +245,7 @@ pub struct DeleteWorkflowRunResponse {
 /// Identifies the workflow run whose Workspace-owned display name should change.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct RenameWorkflowRunRequest {
     pub run_id: String,
     pub name: String,
@@ -254,7 +254,7 @@ pub struct RenameWorkflowRunRequest {
 /// Returns the workflow run after its display name was replaced.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct RenameWorkflowRunResponse {
     pub run: WorkflowRun,
 }
@@ -264,7 +264,7 @@ pub struct RenameWorkflowRunResponse {
 /// Identifies the run to start executing against its frozen snapshot graph.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct StartWorkflowRunRequest {
     pub run_id: String,
 }
@@ -272,7 +272,7 @@ pub struct StartWorkflowRunRequest {
 /// Returns the run after starting (or idempotently its current state).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct StartWorkflowRunResponse {
     pub run: WorkflowRun,
 }
@@ -280,7 +280,7 @@ pub struct StartWorkflowRunResponse {
 /// Identifies the running run whose node sessions should be stopped and run cancelled.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct CancelWorkflowRunRequest {
     pub run_id: String,
 }
@@ -288,7 +288,7 @@ pub struct CancelWorkflowRunRequest {
 /// Returns the cancelled run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct CancelWorkflowRunResponse {
     pub run: WorkflowRun,
 }
@@ -296,7 +296,7 @@ pub struct CancelWorkflowRunResponse {
 /// Identifies the non-running run to reset and re-run from its start node.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct RestartWorkflowRunRequest {
     pub run_id: String,
 }
@@ -304,7 +304,7 @@ pub struct RestartWorkflowRunRequest {
 /// Returns the reset and re-running run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct RestartWorkflowRunResponse {
     pub run: WorkflowRun,
 }
@@ -312,7 +312,7 @@ pub struct RestartWorkflowRunResponse {
 /// Sets the kickoff input of a pending run, used as the start node's input on start.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct UpdateWorkflowRunInputRequest {
     pub run_id: String,
     pub input: Option<String>,
@@ -325,7 +325,7 @@ pub struct UpdateWorkflowRunInputRequest {
 /// Returns the run with its updated input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct UpdateWorkflowRunInputResponse {
     pub run: WorkflowRun,
 }
@@ -337,7 +337,7 @@ pub struct UpdateWorkflowRunInputResponse {
 /// Phase 1 carries only the human path; the agent/CLI path reuses the same command later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub enum NodeCompletionRequester {
     Human,
 }
@@ -345,7 +345,7 @@ pub enum NodeCompletionRequester {
 /// Identifies the awaiting interactive node to complete.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct CompleteWorkflowNodeRequest {
     pub run_id: String,
     pub node_id: String,
@@ -357,7 +357,7 @@ pub struct CompleteWorkflowNodeRequest {
 /// Returns the run after the node completed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export_to = "workflowRun.ts")]
+#[ts(export_to = "workflow-run.ts")]
 pub struct CompleteWorkflowNodeResponse {
     pub run: WorkflowRun,
 }

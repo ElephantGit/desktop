@@ -6,6 +6,8 @@
 
 ## 在现有领域中添加操作
 
+DTO 模块在 `#[ts(export_to = "...")]` 中声明的文件名统一使用 kebab-case（例如 `app-event.ts`、`workflow-run.ts`）。生成的 DTO barrel 沿用这些声明。
+
 1. 在负责该领域的 `crates/contracts/src/<domain>.rs` 中定义请求／响应 DTO，并在同一模块的 `export` 函数中注册其 TypeScript 导出。不要把 transport 路由和 Webview 授权放入公共 DTO／manifest。真正新增的 DTO 家族还需要新增一个明确的 Rust 模块／导出组合入口。
 2. 在 `xtask/src/frontend/namespaces/<namespace>.rs` 中添加逻辑操作：操作名称、客户端命名空间／成员、DTO 名称，以及明确的 `FrontendResponseMode::Unary` 或 `Stream`。没有需要更新的集中式 stream 名称回退机制。
 3. 在 `apps/desktop/src-tauri/bindings/` 中添加 Desktop 所有的绑定。Unary 绑定必须显式声明 Rust handler 和 `Permission`。Stream 绑定必须声明领域启动 handler，并复用现有的、已授权的 `stream_contract`／`cancel_contract_stream` 对。即使没有 SDK 操作，新的 native command 也属于 Desktop catalog。
@@ -19,6 +21,7 @@
 ## 前端所有权检查清单
 
 - 将翻译数据放在负责该功能的位置。只有新增所有者时才在根 i18n 组合中添加资源；保留一个同步的 `appI18n` 初始化和 locale 存储语义。资源 key 的对应关系／重复项必须通过检查。使用翻译的渲染测试要自行初始化该实例，并通过 clean-stderr 检查，不能依赖基于计时的警告抑制。
+- 共享 Cut、Copy、Paste、Select All 文案归 `features/editor/translations.ts` 所有，包括 Chat 消息按钮使用的 Copy。保留历史 `chat.*` key 名称；Chat 专用的 Copy code 文案继续归 Chat 所有。
 - 将查询身份、权威响应采用和失效放入 `state/data/` 下的数据所有者。保留有意义的 tuple／prefix 区分、删除级联和事件刷新范围。UI 负责选择和呈现，不得复制 query-key 字符串。
 - 在功能的 `interface.json` 中只声明所需的公共符号，并写明其用途。其他符号即使位于同一个源文件中也保持私有。在暴露私有实现之前，先判断该职责是否真的共享，或调用方是否应使用已有的公共接口。
 - 显式组合测试用 memory adapter。缺少的操作必须失败；只有测试明确选择这种合成行为时，空成功才有效。通过类型化 handler 配置自定义行为，不要替换生成客户端的方法。

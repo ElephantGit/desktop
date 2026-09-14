@@ -1,5 +1,7 @@
 # Runtime Logging
 
+English | [中文](runtime-logging.zh.md)
+
 Ora Rust services initialize shared structured logging through `ora-logging`.
 
 ## Ownership boundary
@@ -12,7 +14,9 @@ Initialization is process-wide and the timezone can be set only once, so it must
 
 ## Desktop configuration
 
-Desktop reads an optional `ORA_LOG_LEVEL` value and otherwise restores `user_config.log_level`, defaulting to `info`. Accepted values are `trace`, `debug`, `info`, `warn`, and `error`, ignoring surrounding whitespace and ASCII case; an unsupported value is a startup error. The environment override controls the effective level for that process without changing the stored preference.
+Desktop initializes provisional logging at the explicit `info` level before opening storage, then restores `user_config.log_level`; an unset preference also means `info`. Storage read errors and malformed persisted values abort startup rather than being treated as an unset preference. Desktop does not read `ORA_LOG_LEVEL`, including invalid legacy values, and has no startup override.
+
+Eric's decision on 2026-09-12 makes in-app dynamic settings and persisted preferences the Desktop configuration entry points. Settings owns only persistence; the runtime manager owns the process filter, update coordination, and rollback. This decision is scoped to the current Desktop chain and does not define future Controller/Node configuration. The compile-time logging ceiling is unchanged.
 
 The `ora-runtime-settings` manager serializes live updates. It reloads the process filter before persisting the preference, rolls the filter back if persistence fails, and completes a started commit or compensation even if the requesting Tauri future is cancelled. The file sink remains `app_data_dir/logs/ora.log` with daily rotation and three retained days; debug builds also write to stdout, and the timezone comes from the operating system. Error toasts that expose a diagnostic request ID offer a **Download logs** action, and the same export is available as a button under Settings → Developer options while developer mode is enabled; Desktop copies the current daily log to the destination selected in the native save dialog without exposing the private application-data path to the frontend. See [Desktop Runtime](desktop-runtime.md).
 
@@ -95,3 +99,5 @@ Both runtime roots call `register_gitlancer_logger()` immediately after `init_lo
 ## Testing
 
 `with_trace_logging` and `with_recorded_trace_logging` install a thread-scoped `TRACE` dispatcher. Use them for tests that assert on structured output _and_ for ordinary tests that merely touch the same callsites — `tracing` caches callsite interest, so an unscoped test running first can otherwise make a later log assertion fail intermittently.
+
+Desktop startup logging is tested in isolated subprocesses because `init_logging` owns a process-global clock and subscriber. Each child executes the same `initialize_desktop_logging` step as `bootstrap_desktop`, checks the real filter at `info` before opening storage, then restores the preference through the production startup path. For each legacy environment value (including invalid and empty values), a first process verifies the unset default and saves `warn` through the runtime manager; a second process verifies restoration from the same database. Only child environments are configured. The child-only test is ignored by the ordinary test runner and explicitly invoked by its parent regression test.

@@ -41,7 +41,7 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
   Rollback restores recovery detection to the old column and reinstalls the Workspace trigger.
 - Migration `0011` persists the MCP selection owned by each Session. Existing ordinary Sessions
   remain automatic; workflow-bound Sessions receive an explicit set projected from their frozen
-  snapshot. Malformed legacy IDs are not promoted into authority, and rollback removes the column.
+  snapshot, and rollback removes the column.
 - Target requests use pending, claimed, blocked, and retry-scheduled states. Generation and fencing
   establish authority; audit time never grants a claim or changes retry eligibility.
 - Every Workspace has one Scope. Publishing a new Skill Source seeds existing Scopes; creating a

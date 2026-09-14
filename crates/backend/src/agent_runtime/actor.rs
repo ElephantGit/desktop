@@ -5,7 +5,7 @@ use super::prompt_liveness::PromptLiveness;
 use super::replay::recorded_replay;
 use super::routing::{SessionControl, SessionEvent};
 use super::scheduling::{ActiveInput, ActiveInputState};
-use super::session_followers::SessionFollowers;
+use super::session_followers::{FollowerOutput, SessionFollowers};
 use super::title_acquisition::PollAttempt;
 use super::tool_timing::ToolTimings;
 use super::*;
@@ -13,6 +13,8 @@ use super::*;
 mod actor_history;
 #[path = "actor_mcp.rs"]
 mod actor_mcp;
+#[path = "cleanup.rs"]
+mod cleanup;
 #[path = "title_polling.rs"]
 mod title_polling;
 mod usage;
@@ -105,9 +107,14 @@ impl RuntimeActor {
             };
             match command {
                 RuntimeCommand::Load {
-                    events, accepted, ..
+                    cleanup,
+                    operation_id,
+                    events,
+                    accepted,
                 } => {
                     self.run_load(events, accepted).await;
+                    self.record_cleanup(operation_id, Ok(()));
+                    let _ = cleanup.send(Ok(()));
                 }
                 RuntimeCommand::Prompt {
                     operation_id,
@@ -152,7 +159,15 @@ impl RuntimeActor {
                     }));
                 }
                 RuntimeCommand::CancelActivePrompt => {}
-                RuntimeCommand::Cancel { .. } => {}
+                RuntimeCommand::Cancel {
+                    operation_id,
+                    completion,
+                } => {
+                    if let Some(completion) = completion {
+                        let result = self.cleanup_outcome(operation_id);
+                        let _ = completion.send(result);
+                    }
+                }
                 RuntimeCommand::ClaimDirectProviderCall { response } => {
                     let _ = response.send(self.provider_session_id().to_string());
                 }
@@ -212,6 +227,8 @@ impl RuntimeActor {
         record_prompt: Option<Vec<ContentBlock>>,
         events: mpsc::Sender<Result<PromptSessionEvent, BackendError>>,
     ) {
+        // An exit without a terminal provider response cannot prove remote work stopped.
+        self.record_cleanup(operation_id, Err(runtime_unavailable()));
         let Some(mut channel) = self.channel.take() else {
             return;
         };
@@ -422,6 +439,7 @@ impl RuntimeActor {
                     }
                     match pending.finish(response) {
                         Ok(response) => {
+                            self.record_cleanup(operation_id, Ok(()));
                             ora_debug!(session_id = %self.session.id, stop_reason = ?response.stop_reason, "prompt completed");
                             let token_usage = usage::normalize_token_usage(
                                 &self.session.agent_ref,
@@ -446,6 +464,9 @@ impl RuntimeActor {
                         }
                         Err(error) => {
                             let reusable = matches!(&error, ora_acp::AcpError::RequestFailed(_));
+                            if reusable {
+                                self.record_cleanup(operation_id, Ok(()));
+                            }
                             ora_debug!(session_id = %self.session.id, error = %error, reusable = reusable, "prompt failed");
                             self.end_timed_turn(StopReason::Cancelled, &tool_timings);
                             followers.finish(StopReason::Cancelled);
@@ -487,17 +508,31 @@ impl RuntimeActor {
                 }
                 ActiveInput::Command(RuntimeCommand::Cancel {
                     operation_id: cancelled,
-                }) if followers.remove(cancelled) => {}
+                    completion,
+                }) if followers.contains(cancelled) => {
+                    // Waiting for a view's disk replay must not stall the independent prompt.
+                    let cleanup = followers.remove_and_wait(cancelled);
+                    tokio::spawn(async move {
+                        let result = cleanup.await;
+                        if let Some(completion) = completion {
+                            let _ = completion.send(result);
+                        }
+                    });
+                }
                 ActiveInput::Command(command)
                     if matches!(&command, RuntimeCommand::CancelActivePrompt)
                         || matches!(
                             &command,
                             RuntimeCommand::Cancel {
-                                operation_id: cancelled
+                                operation_id: cancelled, ..
                             } if *cancelled == operation_id
                         ) =>
                 {
                     let notify_owner = matches!(command, RuntimeCommand::CancelActivePrompt);
+                    let completion = match command {
+                        RuntimeCommand::Cancel { completion, .. } => completion,
+                        _ => None,
+                    };
                     self.cancel(&client, &permissions).await;
                     let settled = timeout(
                         CANCELLATION_GRACE,
@@ -525,6 +560,18 @@ impl RuntimeActor {
                     } else {
                         self.isolate_channel(channel).await;
                     }
+                    let result = if reusable {
+                        Ok(())
+                    } else {
+                        Err(BackendError::internal(
+                            "provider did not confirm cancelled operation stopped",
+                            std::io::Error::other("cancellation grace expired or provider failed"),
+                        ))
+                    };
+                    self.record_cleanup(operation_id, result.clone());
+                    if let Some(completion) = completion {
+                        let _ = completion.send(result);
+                    }
                     return;
                 }
                 ActiveInput::Command(RuntimeCommand::Stop { response }) => {
@@ -541,6 +588,7 @@ impl RuntimeActor {
                     let _ = accepted.send(Err(session_busy()));
                 }
                 ActiveInput::Command(RuntimeCommand::Load {
+                    cleanup,
                     operation_id,
                     events,
                     accepted,
@@ -549,12 +597,16 @@ impl RuntimeActor {
                     // follower registration atomically (no await), then let the follower's relay
                     // task stream the merged prefix before live events. The actor returns to its
                     // select loop immediately, so a slow view can never backpressure the prompt.
+                    self.record_cleanup(operation_id, Ok(()));
                     let cutoff = self.recorder.durable_bytes();
                     let pending = self.recorder.pending_records();
                     if accepted.send(Ok(())).is_ok() {
                         followers.insert(
                             operation_id,
-                            events,
+                            FollowerOutput {
+                                events,
+                                completion: cleanup,
+                            },
                             self.sessions_root.clone(),
                             self.session.id.to_string(),
                             cutoff,
@@ -569,7 +621,14 @@ impl RuntimeActor {
                     self.adopt_user_title(title);
                     let _ = response.send(());
                 }
-                ActiveInput::Command(RuntimeCommand::Cancel { .. }) => {}
+                ActiveInput::Command(RuntimeCommand::Cancel {
+                    operation_id,
+                    completion,
+                }) => {
+                    if let Some(completion) = completion {
+                        let _ = completion.send(self.cleanup_outcome(operation_id));
+                    }
+                }
                 ActiveInput::Command(RuntimeCommand::CancelActivePrompt) => {}
                 ActiveInput::Command(RuntimeCommand::McpDesiredMaybeChanged) => {
                     self.note_desired_mcp();
@@ -626,74 +685,6 @@ impl RuntimeActor {
                 self.unload().await;
             }
             Some(SessionControl::ConnectionLost(_)) | None => self.mark_stopped(),
-        }
-    }
-
-    /// Cancels the provider turn and settles every outstanding permission request.
-    pub(super) async fn cancel(
-        &self,
-        client: &AgentAcpClient,
-        permissions: &HashMap<String, (agent_client_protocol_schema::v1::RequestId, Vec<String>)>,
-    ) {
-        ora_debug!(session_id = %self.session.id, pending_permissions = permissions.len(), "cancelling prompt");
-        for (request_id, _) in permissions.values() {
-            let _ = client
-                .respond(
-                    request_id,
-                    &RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled),
-                )
-                .await;
-        }
-        let _ = client
-            .notify(
-                AGENT_METHOD_NAMES.session_cancel,
-                &CancelNotification::new(self.provider_session_id().to_string()),
-            )
-            .await;
-    }
-
-    /// Closes only this live ACP registration and preserves provider-owned history.
-    async fn unload(&mut self) {
-        if let Some(channel) = self.channel.take() {
-            self.close_provider_session(&channel).await;
-            self.persist_session_status(SessionStatus::Stopped);
-        } else {
-            self.persist_session_status(SessionStatus::Stopped);
-        }
-    }
-
-    /// Detaches from the provider without recording any lifecycle change.
-    ///
-    /// Used only when the manager retires this actor, because it owns the row's
-    /// next state and this actor's view of it is already out of date.
-    async fn release(&mut self) {
-        self.title_acquisition.close();
-        if let Some(channel) = self.channel.take() {
-            self.close_provider_session(&channel).await;
-        }
-    }
-
-    /// Detaches one routed session while leaving the shared CLI process available.
-    async fn isolate_channel(&mut self, channel: SessionChannel) {
-        self.title_acquisition.close();
-        self.close_provider_session(&channel).await;
-        self.mark_stopped();
-    }
-
-    /// Releases the provider-side registration when the agent advertises the call.
-    async fn close_provider_session(&self, channel: &SessionChannel) {
-        if channel.connection.close_session_supported {
-            let _ = timeout(
-                CANCELLATION_GRACE,
-                channel
-                    .connection
-                    .client
-                    .request::<_, CloseSessionResponse>(
-                        AGENT_METHOD_NAMES.session_close,
-                        &CloseSessionRequest::new(self.provider_session_id().to_string()),
-                    ),
-            )
-            .await;
         }
     }
 
@@ -896,6 +887,7 @@ mod tests {
         let command_sender = commands.downgrade();
         let (exit_sender, exit) = oneshot::channel();
         let actor = RuntimeActor {
+            cleanup_outcomes: HashMap::new(),
             session,
             cwd: temporary.path().to_path_buf(),
             repository: ora_db::SqliteSessionRepository::new(pool),
@@ -971,6 +963,7 @@ mod tests {
         let (commands, command_receiver) = mpsc::unbounded_channel();
         let command_sender = commands.downgrade();
         let mut actor = RuntimeActor {
+            cleanup_outcomes: HashMap::new(),
             session,
             cwd: temporary.path().to_path_buf(),
             repository: ora_db::SqliteSessionRepository::new(pool),

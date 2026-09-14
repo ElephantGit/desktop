@@ -474,9 +474,7 @@ export function WorkspaceFilesView({
   const commitCreate = async (path: string, kind: FileCreateDraft["kind"]) => {
     const created = await scopeApi.createEntry(path, kind);
     setCreateDraft(null);
-    await queryClient.invalidateQueries({
-      queryKey: directoryQueryKey(scope, parentPath(created.path)),
-    });
+    await invalidateFilesScope(queryClient, scope);
     if (created.kind === "file") {
       setSelectedDirectory(null);
       setSelectedPath(created.path);

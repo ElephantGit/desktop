@@ -7,6 +7,9 @@ are separate categories; multiple changed files do not by themselves indicate du
 
 ## Add an operation in an existing domain
 
+Use kebab-case for DTO module filenames in `#[ts(export_to = "...")]` (for example,
+`app-event.ts` and `workflow-run.ts`). The generated DTO barrel follows these declarations.
+
 1. Define its request/response DTOs in the owning `crates/contracts/src/<domain>.rs` and register
    their TypeScript exports in that same module's `export` function. Keep transport routing and
    Webview authorization out of public DTOs/manifests. A genuinely new DTO family also needs its
@@ -47,6 +50,9 @@ counted separately. Adding an entirely new domain may also change explicit compo
   for a new owner; retain one synchronous `appI18n` initialization and locale storage semantics.
   Resource key parity/duplicates must pass. A rendering test using translations initializes the
   instance itself and passes the clean-stderr gate without timing-based warning suppression.
+- Shared Cut, Copy, Paste, and Select All copy belongs to `features/editor/translations.ts`,
+  including Copy used by Chat message buttons. Historical `chat.*` keys retain their names;
+  Chat-specific Copy code copy remains with Chat.
 - Put query identity, authoritative response adoption and invalidation in the data owner under
   `state/data/`. Preserve meaningful tuple/prefix distinctions, delete cascades and event refresh
   scopes. The UI owns selection and presentation; it must not copy query-key strings.

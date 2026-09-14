@@ -1,3 +1,6 @@
+import type { MarketplaceAutoSyncEvent } from "@ora/contracts";
+export type { MarketplaceAutoSyncEvent } from "@ora/contracts";
+
 export type PathSelectionKind = "file" | "directory";
 
 export interface SelectPathOptions {
@@ -105,13 +108,6 @@ export interface PluginInstallProgress {
   downloaded: number;
   total: number | null;
 }
-
-/**
- * Span of one marketplace refresh the host started on its own, rather than one the user asked
- * for. The shell holds back its own Sync action for as long as one is running.
- */
-export type MarketplaceAutoSyncEvent =
-  { kind: "started" } | { kind: "finished" };
 
 /** Exposes native marketplace transfer events without coupling shared UI to Tauri. */
 export interface PluginMarketplaceCapability {

@@ -17,13 +17,15 @@
     "./text-edit-context-menu": {
       "exports": [
         "TextEditContextMenu",
-        "copyImageElement",
-        "readClipboardFiles",
-        "readClipboardText",
         "selectElementContents",
         "writeClipboardText"
       ],
       "purpose": "Reusable text and image editing context menu shared across chat, transcript, and composer."
+    },
+    "./translations": {
+      "exports": ["editorTranslations"],
+      "purpose": "Shared editing action resources for the single application i18n composition.",
+      "kind": "resources"
     }
   }
 }

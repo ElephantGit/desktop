@@ -206,7 +206,6 @@ pub enum PublicError {
     WorkflowSnapshotNotFound(EmptyErrorParams),
     WorkflowVersionAlreadyExists(EmptyErrorParams),
     WorkflowVersionInvalid(EmptyErrorParams),
-    WorkflowGraphInvalid(EmptyErrorParams),
     WorkflowVersionReserved(EmptyErrorParams),
     WorkflowCannotDeleteDraft(EmptyErrorParams),
     WorkflowCannotDeleteActiveVersion(EmptyErrorParams),
@@ -330,7 +329,6 @@ impl PublicError {
             Self::WorkflowSnapshotNotFound(_) => "workflow_snapshot_not_found",
             Self::WorkflowVersionAlreadyExists(_) => "workflow_version_already_exists",
             Self::WorkflowVersionInvalid(_) => "workflow_version_invalid",
-            Self::WorkflowGraphInvalid(_) => "workflow_graph_invalid",
             Self::WorkflowVersionReserved(_) => "workflow_version_reserved",
             Self::WorkflowCannotDeleteDraft(_) => "workflow_cannot_delete_draft",
             Self::WorkflowCannotDeleteActiveVersion(_) => "workflow_cannot_delete_active_version",
@@ -524,7 +522,6 @@ mod tests {
             PublicError::WorkflowSnapshotNotFound(empty),
             PublicError::WorkflowVersionAlreadyExists(empty),
             PublicError::WorkflowVersionInvalid(empty),
-            PublicError::WorkflowGraphInvalid(empty),
             PublicError::WorkflowVersionReserved(empty),
             PublicError::WorkflowCannotDeleteDraft(empty),
             PublicError::WorkflowCannotDeleteActiveVersion(empty),
@@ -631,7 +628,6 @@ mod tests {
                 | PublicError::WorkflowSnapshotNotFound(_)
                 | PublicError::WorkflowVersionAlreadyExists(_)
                 | PublicError::WorkflowVersionInvalid(_)
-                | PublicError::WorkflowGraphInvalid(_)
                 | PublicError::WorkflowVersionReserved(_)
                 | PublicError::WorkflowCannotDeleteDraft(_)
                 | PublicError::WorkflowCannotDeleteActiveVersion(_)
@@ -662,7 +658,7 @@ mod tests {
     #[test]
     fn public_error_codes_match_serde_tags_for_every_variant() {
         let samples = public_error_samples();
-        assert_eq!(samples.len(), 103);
+        assert_eq!(samples.len(), 102);
 
         for error in samples {
             let serialized = serde_json::to_value(&error).unwrap();

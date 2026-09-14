@@ -165,6 +165,8 @@ pub(crate) struct PluginApi {
     pub(crate) lifecycle: BackendPluginLifecycle,
     marketplace_sources: MarketplaceSourceStore,
     settings: Arc<Settings>,
+    // Synchronous Git/cache rebuilds already run on the host blocking executor.
+    sync_settings: ora_application::UserConfigService<ora_db::SqliteUserConfigRepository>,
     registry_index_path: PathBuf,
     home_directory: PathBuf,
     installer: Installer<ReqwestDownloader>,
@@ -232,6 +234,10 @@ impl PluginApi {
             lifecycle,
             marketplace_sources,
             settings,
+            // Synchronous Git/cache rebuilds already run on the host blocking executor.
+            sync_settings: ora_application::UserConfigService::new(
+                ora_db::SqliteUserConfigRepository::new(pool.clone()),
+            ),
             registry_index_path,
             home_directory,
             installer,
@@ -433,10 +439,10 @@ impl PluginApi {
     /// Binds every enabled marketplace source to a registry checkout, applying proxy policy.
     fn prepared_registry_sources(
         &self,
+        proxy_settings: Option<ora_application::NetworkProxySettings>,
     ) -> Result<Vec<(ora_plugin_registry::RegistrySource, bool, Option<S3Config>)>, BackendError>
     {
         let configured = self.enabled_marketplace_sources()?;
-        let proxy_settings = self.settings.network_proxy_settings()?;
         let mut registry_sources = Vec::with_capacity(configured.len());
 
         for (source, mut registry_source) in configured.iter().zip(self.registry_sources()?) {

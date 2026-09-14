@@ -11,8 +11,6 @@ pub enum DesktopBootstrapError {
     AppDataDirectory(#[source] tauri::Error),
     #[error("failed to resolve the Ora home directory")]
     OraHomeDirectory(#[source] tauri::Error),
-    #[error("invalid ORA_LOG_LEVEL value {value}")]
-    InvalidLogLevel { value: String },
     #[error(transparent)]
     Logging(#[from] ora_logging::LoggingInitError),
     #[error("failed to apply the persisted Desktop log level")]

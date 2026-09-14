@@ -8,10 +8,14 @@
 //! A refresh only rebuilds the cached listing; it never installs or updates an installed plugin,
 //! so it needs no user consent and is safe to run unattended in every build.
 
+#[path = "../bindings/marketplace_sync.rs"]
+mod binding;
+
+use binding::AUTO_SYNC_EVENT;
 use ora_backend::Plugins;
+use ora_contracts::MarketplaceAutoSyncEvent;
 use ora_logging::{ora_info, ora_warn};
 use ora_scheduler::{BoxFuture, CronHandle, DelayHandle, Job, Scheduler, SchedulerError};
-use serde::Serialize;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
@@ -25,8 +29,6 @@ const STARTUP_SYNC_DELAY: Duration = Duration::from_secs(15);
 /// Refreshes the marketplace index every six hours in the host's local time.
 const MARKETPLACE_SYNC_CRON: &str = "0 0 */6 * * *";
 
-const AUTO_SYNC_EVENT: &str = "marketplace-auto-sync-changed";
-
 /// Distinguishes the two automatic triggers in logs so a failed refresh can be traced back to the
 /// run that produced it. Both drive an identical rebuild.
 #[derive(Clone, Copy, Debug)]
@@ -36,20 +38,13 @@ enum AutoSyncTrigger {
 }
 
 impl AutoSyncTrigger {
+    /// Identifies the scheduling trigger in refresh diagnostics.
     fn as_str(self) -> &'static str {
         match self {
             AutoSyncTrigger::Startup => "startup",
             AutoSyncTrigger::Periodic => "periodic",
         }
     }
-}
-
-/// Reports the span of one automatic refresh so the shell can hold back a user-initiated one.
-#[derive(Clone, Debug, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum AutoSyncEvent {
-    Started,
-    Finished,
 }
 
 /// Owns the scheduler registrations that keep the marketplace index current.
@@ -127,7 +122,7 @@ async fn run_auto_sync(app: AppHandle, plugins: Plugins, trigger: AutoSyncTrigge
             );
             return;
         };
-        emit_status(&app, AutoSyncEvent::Started);
+        emit_status(&app, MarketplaceAutoSyncEvent::Started);
         if let Err(error) = admitted.run() {
             ora_warn!(
                 message = "automatic marketplace sync failed",
@@ -135,7 +130,7 @@ async fn run_auto_sync(app: AppHandle, plugins: Plugins, trigger: AutoSyncTrigge
                 error = %error,
             );
         }
-        emit_status(&app, AutoSyncEvent::Finished);
+        emit_status(&app, MarketplaceAutoSyncEvent::Finished);
     });
     if let Err(error) = blocking.await {
         ora_warn!(
@@ -150,11 +145,44 @@ async fn run_auto_sync(app: AppHandle, plugins: Plugins, trigger: AutoSyncTrigge
 ///
 /// A webview that never receives it only loses the disabled state on its Sync button, so a failed
 /// emit is logged rather than allowed to abort the refresh around it.
-fn emit_status(app: &AppHandle, event: AutoSyncEvent) {
+fn emit_status<R: tauri::Runtime>(app: &AppHandle<R>, event: MarketplaceAutoSyncEvent) {
     if let Err(error) = app.emit(AUTO_SYNC_EVENT, event) {
         ora_warn!(
             message = "failed to emit marketplace sync status",
             error = %error,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AUTO_SYNC_EVENT, MarketplaceAutoSyncEvent, emit_status};
+    use pretty_assertions::assert_eq;
+    use std::sync::{Arc, Mutex};
+    use tauri::Listener;
+
+    /// Exercises Tauri serialization on the route from the shared Desktop binding.
+    #[test]
+    fn emits_both_refresh_states_on_the_declared_native_route() {
+        let app = tauri::test::mock_app();
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let captured = received.clone();
+        let subscription = app.listen(AUTO_SYNC_EVENT, move |event| {
+            captured
+                .lock()
+                .unwrap()
+                .push(serde_json::from_str::<serde_json::Value>(event.payload()).unwrap());
+        });
+        emit_status(app.handle(), MarketplaceAutoSyncEvent::Started);
+        emit_status(app.handle(), MarketplaceAutoSyncEvent::Finished);
+        app.unlisten(subscription);
+        emit_status(app.handle(), MarketplaceAutoSyncEvent::Started);
+        assert_eq!(
+            *received.lock().unwrap(),
+            vec![
+                serde_json::json!({ "kind": "started" }),
+                serde_json::json!({ "kind": "finished" }),
+            ],
         );
     }
 }

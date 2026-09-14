@@ -101,7 +101,9 @@ impl PluginApi {
         &self,
     ) -> Result<SyncAvailablePluginsResponse, BackendError> {
         let git = Git::new(CliGitRunner);
-        let registry_sources = self.prepared_registry_sources()?;
+        // This entire Git/cache rebuild runs synchronously on the host's blocking executor.
+        let proxy_settings = self.sync_settings.network_proxy_settings()?;
+        let registry_sources = self.prepared_registry_sources(proxy_settings)?;
         for (source, _, _) in &registry_sources {
             RegistrySync::sync(&git, source)
                 .map_err(|error| BackendError::internal("failed to sync plugin registry", error))?;

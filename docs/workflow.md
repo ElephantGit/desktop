@@ -35,7 +35,7 @@ Snapshot versions are strings. The draft is identified by the reserved string `"
 
 ## Graph storage
 
-The `graph` column stores the complete React Flow JSON document. Workflow definition CRUD treats it as an opaque string while editing. Publication validates stable IDs and graph structure before creating an immutable snapshot; the [workflow run engine](../crates/application/src/workflow_run/engine/README.md) validates executable prerequisites again when a run starts.
+The `graph` column stores the complete React Flow JSON document. Workflow definition CRUD treats it as an opaque string; the [workflow run engine](../crates/application/src/workflow_run/engine/README.md) parses and validates the frozen snapshot when a run starts.
 
 ## Agent-node MCP bindings
 
@@ -49,10 +49,7 @@ Workspace files, and the enabled bindings form the node Session's strict allowli
 Bindings use `mcps: [{ mcpId, enabled }]` in the graph, where `mcpId` is the full installed plugin
 ID. Draft save, publish, duplicate, and import/export retain these values, including disabled
 bindings. No selection (including old graphs without `mcps`) means the node is authorized to use no
-MCP servers. Legacy demo IDs are retained in editable drafts without guessing a replacement. An
-import containing them remains unpublished; the publish dialog lists the affected nodes until the
-bindings are removed or replaced. Empty, duplicate, noncanonical IDs and invalid field types are
-rejected by publication and executable-graph parsing.
+MCP servers. Malformed bindings are rejected when the executable graph is parsed.
 
 Execution uses the frozen run's enabled IDs throughout Session creation, restore, rebuild, and
 refresh. Editing a draft affects later runs only. An unavailable enabled dependency fails the node

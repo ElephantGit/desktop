@@ -1,3 +1,4 @@
+import { onMarketplaceAutoSyncChanged } from "./marketplace-sync.generated";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -10,7 +11,6 @@ import {
   type DiagnosticLogsCapability,
   type LocationTarget,
   type PlatformAdapter,
-  type MarketplaceAutoSyncEvent,
   type PluginInstallProgress,
   type PluginMarketplaceCapability,
   type SelectPathOptions,
@@ -31,7 +31,6 @@ import {
 const SURFACE_EVENT = "surface://event";
 const DESKTOP_UPDATE_EVENT = "desktop-update-status-changed";
 const PLUGIN_INSTALL_PROGRESS_EVENT = "plugin-install-progress";
-const MARKETPLACE_AUTO_SYNC_EVENT = "marketplace-auto-sync-changed";
 
 /** Reads the host OS from the webview user agent without an async Tauri call. */
 function detectWindowManagerOs(): WindowManagerOs | null {
@@ -116,10 +115,7 @@ function createTauriPluginMarketplace(): PluginMarketplaceCapability {
       listen<PluginInstallProgress>(PLUGIN_INSTALL_PROGRESS_EVENT, (event) => {
         listener(event.payload);
       }),
-    onAutoSyncChanged: (listener) =>
-      listen<MarketplaceAutoSyncEvent>(MARKETPLACE_AUTO_SYNC_EVENT, (event) => {
-        listener(event.payload);
-      }),
+    onAutoSyncChanged: onMarketplaceAutoSyncChanged,
   };
 }
 

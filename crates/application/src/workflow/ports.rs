@@ -44,7 +44,6 @@ pub enum PublishSnapshotResult {
     Published(WorkflowSnapshot),
     WorkflowNotFound,
     DraftNotFound,
-    GraphInvalid,
     VersionAlreadyExists,
 }
 

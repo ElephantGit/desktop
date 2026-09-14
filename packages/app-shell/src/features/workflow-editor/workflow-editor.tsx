@@ -55,7 +55,6 @@ import {
   deriveWorkflowVariableCatalog,
   normalizeWorkflowGlobalVariables,
   normalizeWorkflowNodeAgentConfigs,
-  parseDemoWorkflow,
   type DemoWorkflow,
   type MockWorkflowVersion,
   type WorkflowCapabilities,
@@ -83,7 +82,7 @@ import { organizeWorkflowNodes } from "./workflow-flow/layout";
 import type { WorkflowCanvasNode } from "./workflow-flow/types";
 import { WorkflowInspector } from "./workflow-inspector";
 import { WorkflowGlobalVariablesDialog } from "./workflow-global-variables-dialog";
-import { invalidWorkflowMcpBindings, workflowMcpChoices } from "./mcp-catalog";
+import { workflowMcpChoices } from "./mcp-catalog";
 import { useInstalledPlugins } from "../../state/hooks/use-installed-plugins";
 import {
   useWorkflowEditorStore,
@@ -394,10 +393,6 @@ function WorkflowEditorContent({
   const inspectorCurrentWidthRef = useRef(0);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
   const [inspectorVisualWidth, setInspectorVisualWidth] = useState(0);
-  const invalidMcpBindings = useMemo(
-    () => (workflow === null ? [] : invalidWorkflowMcpBindings(workflow.nodes)),
-    [workflow],
-  );
 
   const restoreHistorySnapshot = useCallback(
     (snapshot: Parameters<typeof restoreWorkflowHistorySnapshot>[1]): void => {
@@ -1036,7 +1031,7 @@ function WorkflowEditorContent({
 
   /** Publishes the current draft as an immutable snapshot with an optional version name. */
   async function confirmPublish(): Promise<void> {
-    if (workflow === null || invalidMcpBindings.length > 0) {
+    if (workflow === null) {
       return;
     }
     setPublishDialogOpen(false);
@@ -1062,7 +1057,7 @@ function WorkflowEditorContent({
     setManagerError(null);
     let imported: DemoWorkflow;
     try {
-      imported = parseDemoWorkflow(JSON.parse(await file.text()));
+      imported = JSON.parse(await file.text()) as DemoWorkflow;
     } catch {
       setManagerError(t("settings.workflow.importError"));
       return false;
@@ -1105,15 +1100,6 @@ function WorkflowEditorContent({
       setHydratedWorkflowId(null);
       setWorkflow(null);
       setSelectedWorkflowId(result.workflow.id);
-      const invalidImportedBindings = invalidWorkflowMcpBindings(
-        definition.nodes,
-      );
-      if (invalidImportedBindings.length > 0) {
-        toast.success(
-          t("settings.workflow.importDraftNeedsMcpRepair", { name }),
-        );
-        return true;
-      }
       // Import should leave a runnable published snapshot, not only an editable draft.
       const published = await publishWorkflowMutation.mutateAsync({
         workflowId: result.workflow.id,
@@ -2024,35 +2010,9 @@ function WorkflowEditorContent({
               }
             }}
           />
-          {invalidMcpBindings.length > 0 && (
-            <div
-              role="alert"
-              className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-xs"
-            >
-              <p className="font-medium text-destructive">
-                {t("settings.workflow.publishInvalidMcpTitle")}
-              </p>
-              <p className="mt-1 text-muted-foreground">
-                {t("settings.workflow.publishInvalidMcpDescription")}
-              </p>
-              <ul className="mt-2 list-disc space-y-1 pl-4">
-                {invalidMcpBindings.map((binding) => (
-                  <li key={`${binding.nodeId}:${binding.mcpId}`}>
-                    {t("settings.workflow.publishInvalidMcpItem", {
-                      node: binding.nodeTitle,
-                      id: binding.mcpId,
-                    })}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
           <AlertDialogFooter>
             <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={invalidMcpBindings.length > 0}
-              onClick={() => void confirmPublish()}
-            >
+            <AlertDialogAction onClick={() => void confirmPublish()}>
               <IconVersions />
               {t("settings.workflow.publish")}
             </AlertDialogAction>

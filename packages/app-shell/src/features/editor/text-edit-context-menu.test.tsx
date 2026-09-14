@@ -1,6 +1,13 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { appI18n } from "../../i18n/i18n-instance";
 import {
@@ -9,46 +16,59 @@ import {
   writeClipboardText,
 } from "./text-edit-context-menu";
 
-void appI18n;
+afterEach(async () => {
+  cleanup();
+  await appI18n.changeLanguage("zh-CN");
+});
 
 const ONE_PIXEL_PNG =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
 describe("TextEditContextMenu", () => {
-  it("shows Cut Copy Paste and Select All, disabling cut and paste when read-only", async () => {
-    const user = userEvent.setup();
-    render(
-      <AppI18nProvider>
-        <TextEditContextMenu
-          trigger={<div data-testid="host">body</div>}
-          editable={false}
-          hasSelection={false}
-          onCut={() => undefined}
-          onCopy={() => undefined}
-          onPaste={() => undefined}
-          onSelectAll={() => undefined}
-        >
-          visible
-        </TextEditContextMenu>
-      </AppI18nProvider>,
-    );
+  it.each([
+    { locale: "zh-CN", labels: ["剪切", "复制", "粘贴", "全选"] },
+    { locale: "en-US", labels: ["Cut", "Copy", "Paste", "Select All"] },
+  ] as const)(
+    "renders editing actions in $locale and disables read-only actions",
+    async ({ locale, labels }) => {
+      await act(async () => {
+        await appI18n.changeLanguage(locale);
+      });
+      const [cut, copy, paste, selectAll] = labels;
+      const user = userEvent.setup();
+      render(
+        <AppI18nProvider>
+          <TextEditContextMenu
+            trigger={<div data-testid="host">body</div>}
+            editable={false}
+            hasSelection={false}
+            onCut={() => undefined}
+            onCopy={() => undefined}
+            onPaste={() => undefined}
+            onSelectAll={() => undefined}
+          >
+            visible
+          </TextEditContextMenu>
+        </AppI18nProvider>,
+      );
 
-    fireEvent.contextMenu(screen.getByTestId("host"));
+      fireEvent.contextMenu(screen.getByTestId("host"));
 
-    expect(
-      await screen.findByRole("menuitem", { name: "剪切" }),
-    ).toHaveAttribute("data-disabled");
-    expect(screen.getByRole("menuitem", { name: "复制" })).toHaveAttribute(
-      "data-disabled",
-    );
-    expect(screen.getByRole("menuitem", { name: "粘贴" })).toHaveAttribute(
-      "data-disabled",
-    );
-    expect(screen.getByRole("menuitem", { name: "全选" })).not.toHaveAttribute(
-      "data-disabled",
-    );
-    await user.click(screen.getByRole("menuitem", { name: "全选" }));
-  });
+      expect(
+        await screen.findByRole("menuitem", { name: cut }),
+      ).toHaveAttribute("data-disabled");
+      expect(screen.getByRole("menuitem", { name: copy })).toHaveAttribute(
+        "data-disabled",
+      );
+      expect(screen.getByRole("menuitem", { name: paste })).toHaveAttribute(
+        "data-disabled",
+      );
+      expect(
+        screen.getByRole("menuitem", { name: selectAll }),
+      ).not.toHaveAttribute("data-disabled");
+      await user.click(screen.getByRole("menuitem", { name: selectAll }));
+    },
+  );
 
   it("copies the bitmap when the right-click target is a copyable image", async () => {
     const user = userEvent.setup();

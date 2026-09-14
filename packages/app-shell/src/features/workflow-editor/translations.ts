@@ -7,7 +7,6 @@ export const workflowEditorTranslations = {
     "errors.workflow_snapshot_not_found": "未找到该工作流快照。",
     "errors.workflow_version_already_exists": "该工作流版本已存在。",
     "errors.workflow_version_invalid": "工作流版本无效。",
-    "errors.workflow_graph_invalid": "工作流图结构无效，请修复后再发布。",
     "errors.workflow_version_reserved": "该工作流版本名称已保留。",
     "errors.workflow_cannot_delete_draft": "不能删除工作流草稿。",
     "errors.workflow_cannot_delete_active_version":
@@ -40,8 +39,6 @@ export const workflowEditorTranslations = {
     "settings.workflow.importError": "无法导入：请选择有效的工作流 JSON 文件。",
     "settings.workflow.importPublishSuccess":
       "已导入“{{name}}”并发布版本 {{version}}",
-    "settings.workflow.importDraftNeedsMcpRepair":
-      "已将“{{name}}”导入为草稿；请修复旧版 MCP 标识后再发布",
     "settings.workflow.exportError": "无法导出工作流文件。",
     "settings.workflow.noWorkflows": "没有匹配的工作流",
     "settings.workflow.deleteWorkflowTitle": "删除“{{name}}”？",
@@ -243,10 +240,6 @@ export const workflowEditorTranslations = {
     "settings.workflow.publishTitle": "发布工作流",
     "settings.workflow.publishDescription":
       "发布后，当前草稿将固化为可运行的工作流版本。",
-    "settings.workflow.publishInvalidMcpTitle": "当前草稿不能发布",
-    "settings.workflow.publishInvalidMcpDescription":
-      "以下 MCP 标识不是“命名空间/名称”格式。请在对应节点中移除或替换这些绑定。",
-    "settings.workflow.publishInvalidMcpItem": "节点“{{node}}”：{{id}}",
     "settings.workflow.publishVersionPlaceholder":
       "版本名（可选，留空自动生成）",
     "settings.workflow.publishError": "发布工作流失败。",
@@ -367,8 +360,6 @@ export const workflowEditorTranslations = {
     "errors.workflow_version_already_exists":
       "That workflow version already exists.",
     "errors.workflow_version_invalid": "Workflow version is invalid.",
-    "errors.workflow_graph_invalid":
-      "The workflow graph is invalid. Repair it before publishing.",
     "errors.workflow_version_reserved": "That workflow version is reserved.",
     "errors.workflow_cannot_delete_draft": "Cannot delete the workflow draft.",
     "errors.workflow_cannot_delete_active_version":
@@ -407,8 +398,6 @@ export const workflowEditorTranslations = {
       "Import failed. Select a valid workflow JSON file.",
     "settings.workflow.importPublishSuccess":
       "Imported “{{name}}” and published version {{version}}",
-    "settings.workflow.importDraftNeedsMcpRepair":
-      "Imported “{{name}}” as a draft. Repair its legacy MCP IDs before publishing.",
     "settings.workflow.exportError": "The workflow file could not be exported.",
     "settings.workflow.noWorkflows": "No matching workflows",
     "settings.workflow.deleteWorkflowTitle": "Delete “{{name}}”?",
@@ -625,11 +614,6 @@ export const workflowEditorTranslations = {
     "settings.workflow.publishTitle": "Publish workflow",
     "settings.workflow.publishDescription":
       "Publishing freezes the current draft into a runnable workflow version.",
-    "settings.workflow.publishInvalidMcpTitle":
-      "The current draft cannot be published",
-    "settings.workflow.publishInvalidMcpDescription":
-      "These MCP IDs do not use the namespace/name format. Remove or replace the bindings in their nodes.",
-    "settings.workflow.publishInvalidMcpItem": "Node “{{node}}”: {{id}}",
     "settings.workflow.publishVersionPlaceholder":
       "Version name (optional; auto-generated when empty)",
     "settings.workflow.publishError": "Failed to publish the workflow.",

@@ -22,5 +22,5 @@ that stored selection and never infer authority from workflow-run relationships.
 
 This module does not install plugins, materialize Skills, expose Setting values in logs, or decide
 which MCP bindings an editor should offer. The workflow graph parser validates canonical plugin
-IDs before publication, while this runtime verifies current installation and configuration only
+IDs when a run starts, while this runtime verifies current installation and configuration only
 when a Session is set up.

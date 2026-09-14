@@ -98,3 +98,35 @@ it("releases the running state and its subscription on unmount", async () => {
   expect(stop).toHaveBeenCalledOnce();
   expect(useMarketplaceSyncStore.getState().hostRefreshing).toBe(false);
 });
+
+/** A late native subscription must be released even if its bridge has already unmounted. */
+it("releases a subscription that resolves after unmount and ignores late events", async () => {
+  const stop = vi.fn();
+  let resolveSubscription!: (stop: () => void) => void;
+  let report!: (event: MarketplaceAutoSyncEvent) => void;
+  const subscription = new Promise<() => void>((resolve) => {
+    resolveSubscription = resolve;
+  });
+  const platform: PlatformAdapter = {
+    ...createStubPlatform(),
+    pluginMarketplace: {
+      onInstallProgress: vi.fn(async () => () => undefined),
+      onAutoSyncChanged: (listener) => {
+        report = listener;
+        return subscription;
+      },
+    },
+  };
+  const { view, queryClient } = await renderBridge(platform);
+  const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+  view.unmount();
+  await act(async () => {
+    resolveSubscription(stop);
+    await subscription;
+    report({ kind: "started" });
+    report({ kind: "finished" });
+  });
+  expect(stop).toHaveBeenCalledOnce();
+  expect(useMarketplaceSyncStore.getState().hostRefreshing).toBe(false);
+  expect(invalidate).not.toHaveBeenCalled();
+});

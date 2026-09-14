@@ -411,9 +411,6 @@ impl WorkflowRepository for SqliteWorkflowRepository {
                 let Some(draft) = draft else {
                     return Ok(PublishSnapshotResult::DraftNotFound);
                 };
-                if ora_application::WorkflowGraph::parse(&draft.graph).is_err() {
-                    return Ok(PublishSnapshotResult::GraphInvalid);
-                }
 
                 let snapshot = WorkflowSnapshot::new(
                     snapshot_id,

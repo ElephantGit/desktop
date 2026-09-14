@@ -114,7 +114,6 @@ describe("SettingsDialog developer options", () => {
     state.runtimeLogLevel = {
       configuredLevel: "info",
       effectiveLevel: "trace",
-      startupOverride: "trace",
     };
     renderDialog(createTestClient(createFixtureHandlers(state)));
 
@@ -128,7 +127,6 @@ describe("SettingsDialog developer options", () => {
     ).toBeChecked();
     const selector = await screen.findByRole("combobox", { name: "Log level" });
     expect(selector).toHaveTextContent("Trace (most detailed)");
-    expect(screen.queryByText(/ORA_LOG_LEVEL/)).not.toBeInTheDocument();
   });
 
   it("stays on Developer options and hides log level after developer mode is disabled", async () => {

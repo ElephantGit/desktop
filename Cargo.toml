@@ -128,7 +128,8 @@ futures-util = { version = "0.3", features = ["sink"] }
 gray_matter = { version = "0.3", default-features = false, features = ["yaml"] }
 libc = "0.2"
 log = "0.4"
-notify = "8.2"
+# ora-fs native release receipts audit notify backend destruction order; see crates/fs/src/watch/retirement.rs.
+notify = "=8.2.0"
 petgraph = "0.7"
 portable-pty = "0.9"
 pretty_assertions = "1"
