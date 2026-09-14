@@ -109,6 +109,10 @@ export const chatTranslations = {
     "chat.modelSelector.search": "搜索模型",
     "chat.modelSelector.noResults": "未找到匹配的模型",
     "chat.modelSelector.noAgentPackage": "从插件市场安装 Agent",
+    "chat.thoughtLevel.label": "选择思考强度",
+    "chat.thoughtLevel.title": "思考强度",
+    "chat.thoughtLevel.faster": "更快",
+    "chat.thoughtLevel.smarter": "更强",
     "chat.agentUnavailable.title": "当前 Agent 不可用",
     "chat.agentUnavailable.uninstalled":
       "当前 Agent 不可用，请切换 Agent 继续对话。",
@@ -420,6 +424,10 @@ export const chatTranslations = {
     "chat.modelSelector.noResults": "No matching models",
     "chat.modelSelector.noAgentPackage":
       "Install an agent from the plugin marketplace",
+    "chat.thoughtLevel.label": "Select thought level",
+    "chat.thoughtLevel.title": "Thought level",
+    "chat.thoughtLevel.faster": "Faster",
+    "chat.thoughtLevel.smarter": "Smarter",
     "chat.agentUnavailable.title": "This session's agent is unavailable",
     "chat.agentUnavailable.uninstalled":
       "This session's agent is unavailable. Switch agents to continue the conversation.",

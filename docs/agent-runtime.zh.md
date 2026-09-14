@@ -23,6 +23,7 @@ Backend 启动时，会为每个已安装的 [Agent 插件](../crates/backend/sr
 
 - 连接丢失会失败该 Agent 的进行中操作，只把已注册 Session 标为 Stopped，先让插件生命周期停止旧进程，再启动 replacement。Session 仅按需重新 load，prompt 永不自动重放。
 - `initialize` 会声明 session config-option 能力。模型选择依赖这一能力；Ora 当前不声明布尔配置选项，因为 UI 只渲染带 id 的 selector。
+- 思考强度（thought level / reasoning effort）选择器只读取 provider session 上报的 `thought_level` 配置项，来源与模型配置项相同：`session/new` 响应、`session/load` 回放以及 `session/set_config_option` 的应答。Ora 不维护会话前的思考强度目录——它随 Agent 不同而不同，部分 Agent 还随模型变化——因此尚未开始的对话不显示该控件；在已有 provider 的会话上选择会立即通过 `setSessionConfig` 应用。
 
 ### 首个 Session 标题
 

@@ -27,6 +27,7 @@ Configured MCP plugins are Session Runtime Input. `startSession` `session/new`, 
 
 - Connection loss fails that agent's in-flight operations, marks only its registered Sessions Stopped, asks the plugin lifecycle to stop the old process, and only then starts a replacement. Sessions are loaded again only on demand; prompts are never replayed automatically.
 - The `initialize` handshake advertises the client's session config-option capability. Agents withhold configuration options from clients that do not, so the model selector depends on it. Boolean options stay undeclared because Ora renders only id-valued selectors.
+- The thought-level (reasoning effort) selector reads only the `thought_level` option a provider session reports, through the same `session/new` response, `session/load` replay, and `session/set_config_option` answers that carry the model option. Ora keeps no pre-session catalog of effort levels — they differ per agent and, for some agents, per model — so the composer shows no effort control for a chat that has not started, and a pick on a live session is applied immediately with `setSessionConfig`.
 
 ### First session title acquisition
 
