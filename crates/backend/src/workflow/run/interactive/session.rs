@@ -251,7 +251,7 @@ mod tests {
                 ClockAt(40),
             );
             engine
-                .fail_node(&right.id, "boom".to_string(), None)
+                .fail_node(&run_id, &right.id, "boom".to_string(), None)
                 .unwrap();
 
             let (run_locks, completing) = locks();

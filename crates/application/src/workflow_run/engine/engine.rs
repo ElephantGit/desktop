@@ -1,26 +1,33 @@
 use crate::RepositoryError;
 use crate::project::Clock;
 use crate::workflow_run::engine::branch_projection::BranchProjection;
-use crate::workflow_run::engine::condition::{ConditionError, ELSE_BRANCH_ID, evaluate_condition};
+use crate::workflow_run::engine::condition::ELSE_BRANCH_ID;
 use crate::workflow_run::engine::graph::{GraphError, WorkflowGraph, WorkflowGraphNode};
+use crate::workflow_run::engine::node_runtime::{
+    NodeRuntimeRegistry, RegisteredNodeRuntime, SwiftCompletion, compute_run_output,
+    standard_node_runtimes,
+};
 use crate::workflow_run::engine::node_type::NodeType;
 use crate::workflow_run::engine::ports::{
     AdvanceWorkflowRunResult, CancelWorkflowRunResult, ExecutionContext, FileChange,
-    NodeRunToStart, RestartWorkflowRunResult, StartWorkflowRunResult, UpdateWorkflowRunInputResult,
-    WorkflowNodeRunIdGenerator, WorkflowRunEngineRepository,
+    NoRunInvalidations, NodeRunToStart, RestartWorkflowRunResult, StartWorkflowRunResult,
+    UpdateWorkflowRunInputResult, WorkflowNodeRunIdGenerator, WorkflowRunEngineRepository,
+    WorkflowRunInvalidationPublisher,
 };
 use crate::workflow_run::engine::skill_delivery::WorkflowRunPayload;
 use crate::workflow_run::engine::variable_pool::WorkflowVariablePool;
-use ora_domain::{WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunId};
+use ora_domain::{WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunId};
 use std::collections::HashSet;
+use std::sync::Arc;
 use thiserror::Error;
 
 /// Executes one agent node through a real session, calling the engine back when done.
 ///
 /// The implementation lives in the backend and drives the session asynchronously; it MUST report
 /// completion through `WorkflowRunEngine::complete_node`/`fail_node` on the same per-run serial
-/// executor so state transitions stay serial.
-pub trait NodeExecutor {
+/// executor so state transitions stay serial. The engine wraps every `NodeExecutor` as the
+/// Agent node runtime, so this port remains the backend's single integration seam.
+pub trait NodeExecutor: Send + Sync {
     /// Dispatches one agent node; returns immediately while the session runs in the background.
     fn dispatch(
         &self,
@@ -101,32 +108,60 @@ pub enum EngineError {
 /// Drives one workflow run through start/cancel/restart and the reactive DAG scheduler.
 ///
 /// The engine is synchronous and stateless: every command recomputes the completed, in-flight,
-/// and ready sets from persistence. Agent execution is delegated through `NodeExecutor`; the
-/// backend must route all commands and callbacks for one run through a single serial executor.
+/// and ready sets from persistence. Each node type's execution policy lives behind a
+/// `NodeRuntime` registered in [`NodeRuntimeRegistry`]; the scheduling core dispatches on the
+/// registered execution form, never on node types. The backend must route all commands and
+/// callbacks for one run through a single serial executor.
 #[derive(Clone)]
-pub struct WorkflowRunEngine<R, E, G, C> {
+pub struct WorkflowRunEngine<R, G, C> {
     repository: R,
-    node_executor: E,
+    runtimes: NodeRuntimeRegistry,
     node_run_id_generator: G,
     clock: C,
+    run_events: Arc<dyn WorkflowRunInvalidationPublisher>,
 }
 
-impl<R, E, G, C> WorkflowRunEngine<R, E, G, C> {
-    /// Builds an engine from its ports.
-    pub fn new(repository: R, node_executor: E, node_run_id_generator: G, clock: C) -> Self {
-        Self {
+impl<R, G, C> WorkflowRunEngine<R, G, C> {
+    /// Builds an engine from its ports with the standard v1 node runtimes and no run
+    /// invalidation events.
+    pub fn new<E>(repository: R, agent_executor: E, node_run_id_generator: G, clock: C) -> Self
+    where
+        E: NodeExecutor + 'static,
+    {
+        Self::with_run_events(
             repository,
-            node_executor,
+            agent_executor,
             node_run_id_generator,
             clock,
+            Arc::new(NoRunInvalidations),
+        )
+    }
+
+    /// Builds an engine that also publishes one run invalidation event after every run or
+    /// node-run state transition commits (ADR "node runtime orchestration" D7).
+    pub fn with_run_events<E>(
+        repository: R,
+        agent_executor: E,
+        node_run_id_generator: G,
+        clock: C,
+        run_events: Arc<dyn WorkflowRunInvalidationPublisher>,
+    ) -> Self
+    where
+        E: NodeExecutor + 'static,
+    {
+        Self {
+            repository,
+            runtimes: standard_node_runtimes(agent_executor),
+            node_run_id_generator,
+            clock,
+            run_events,
         }
     }
 }
 
-impl<R, E, G, C> WorkflowRunEngine<R, E, G, C>
+impl<R, G, C> WorkflowRunEngine<R, G, C>
 where
     R: WorkflowRunEngineRepository,
-    E: NodeExecutor,
     G: WorkflowNodeRunIdGenerator,
     C: Clock,
 {
@@ -160,11 +195,12 @@ where
             id: self.node_run_id_generator.generate_node_run_id(),
             node_id: start_node.id.clone(),
             node_type: start_node.node_type.as_str().to_string(),
-            input: context.run.input,
+            input: self.runtimes.start_input(start_node, &context),
         };
         let now = self.clock.now_timestamp_millis();
         match self.repository.start_run(run_id, &start_node_run, now)? {
             StartWorkflowRunResult::Started => {
+                self.run_events.publish_run_invalidated(run_id);
                 self.run_schedule(run_id)?;
                 Ok(StartWorkflowRunResult::Started)
             }
@@ -180,7 +216,11 @@ where
     /// executor's in-flight callbacks no-ops against the already-cancelled node runs.
     pub fn cancel(&self, run_id: &WorkflowRunId) -> Result<CancelWorkflowRunResult, EngineError> {
         let now = self.clock.now_timestamp_millis();
-        Ok(self.repository.cancel_run(run_id, now)?)
+        let result = self.repository.cancel_run(run_id, now)?;
+        if matches!(result, CancelWorkflowRunResult::Cancelled) {
+            self.run_events.publish_run_invalidated(run_id);
+        }
+        Ok(result)
     }
 
     /// Restarts a non-running run by resetting it and re-running it immediately.
@@ -188,6 +228,7 @@ where
         let now = self.clock.now_timestamp_millis();
         match self.repository.restart_run(run_id, now)? {
             RestartWorkflowRunResult::Restarted => {
+                self.run_events.publish_run_invalidated(run_id);
                 self.start(run_id)?;
                 Ok(RestartWorkflowRunResult::Restarted)
             }
@@ -230,7 +271,10 @@ where
             file_changes,
             now,
         )? {
-            AdvanceWorkflowRunResult::Advanced => self.run_schedule(run_id),
+            AdvanceWorkflowRunResult::Advanced => {
+                self.run_events.publish_run_invalidated(run_id);
+                self.run_schedule(run_id)
+            }
             AdvanceWorkflowRunResult::NotRunning | AdvanceWorkflowRunResult::NotFound => Ok(()),
         }
     }
@@ -238,16 +282,17 @@ where
     /// Marks one node-run and its run failed; the run is terminal so no scheduling follows.
     pub fn fail_node(
         &self,
+        run_id: &WorkflowRunId,
         node_run_id: &WorkflowNodeRunId,
         error: String,
         output: Option<String>,
     ) -> Result<(), EngineError> {
         let now = self.clock.now_timestamp_millis();
         match self.repository.fail_node(node_run_id, error, output, now)? {
-            AdvanceWorkflowRunResult::Advanced
-            | AdvanceWorkflowRunResult::NotRunning
-            | AdvanceWorkflowRunResult::NotFound => Ok(()),
+            AdvanceWorkflowRunResult::Advanced => self.run_events.publish_run_invalidated(run_id),
+            AdvanceWorkflowRunResult::NotRunning | AdvanceWorkflowRunResult::NotFound => {}
         }
+        Ok(())
     }
 
     /// Resumes scheduling for a `Running` run left with no active node by a crash between a node
@@ -257,8 +302,13 @@ where
         self.run_schedule(run_id)
     }
 
-    /// Runs one reactive scheduling pass: complete in-flight control nodes, dispatch ready nodes,
+    /// Runs one reactive scheduling pass: complete in-flight swift nodes, dispatch ready nodes,
     /// and finish the run once the graph is drained.
+    ///
+    /// This is the scheduling core: it resolves every node through the runtime registry and
+    /// never matches on node types itself. In-flight nodes without a background driver — the
+    /// swift runtimes — complete synchronously against the committed pool; async runtimes are
+    /// owned by their background drivers and report through the callback sink instead.
     fn run_schedule(&self, run_id: &WorkflowRunId) -> Result<(), EngineError> {
         let now = self.clock.now_timestamp_millis();
         loop {
@@ -267,9 +317,7 @@ where
             let node_runs = self.repository.list_node_runs(run_id)?;
             let (pool, _) = execution_state_from(context.run.payload.as_deref());
 
-            // In-flight control nodes have no session to call back; complete them synchronously.
-            // A condition evaluates against the committed pool and reports its selected branch.
-            let mut completed_control = false;
+            let mut completed_swift = false;
             for node_run in node_runs
                 .iter()
                 .filter(|node_run| node_run.status == WorkflowNodeStatus::Running)
@@ -277,10 +325,20 @@ where
                 let Some(node) = graph.node(&node_run.node_id) else {
                     continue;
                 };
-                match node.node_type {
-                    NodeType::Start => {
-                        let output = context.run.input.clone().unwrap_or_default();
-                        self.repository.complete_node(
+                let Some(RegisteredNodeRuntime::Swift(runtime)) =
+                    self.runtimes.runtime(node.node_type)
+                else {
+                    continue;
+                };
+                let completion = SwiftCompletion {
+                    node_run,
+                    run_input: context.run.input.as_deref(),
+                    pool: &pool,
+                    node_runs: &node_runs,
+                };
+                match runtime.complete_running(node, &completion) {
+                    Ok(output) => {
+                        let advanced = self.repository.complete_node(
                             &node_run.id,
                             Some(output),
                             None,
@@ -288,82 +346,25 @@ where
                             Vec::new(),
                             now,
                         )?;
-                        completed_control = true;
+                        if matches!(advanced, AdvanceWorkflowRunResult::Advanced) {
+                            self.run_events.publish_run_invalidated(run_id);
+                        }
+                        completed_swift = true;
                     }
-                    NodeType::Output => {
-                        // A workflow must reach exactly one Output; a second one completing means
-                        // the active path degenerated into two terminals.
-                        let current_run_id = node_run.id.clone();
-                        let duplicate = node_runs.iter().find(|candidate| {
-                            candidate.id != current_run_id
-                                && candidate.node_type == "output"
-                                && candidate.status == WorkflowNodeStatus::Succeeded
-                        });
-                        if let Some(previous) = duplicate {
-                            let message = format!(
-                                "multiple active output nodes: {} and {}",
-                                previous.node_id, node.id
-                            );
+                    Err(message) => {
+                        let advanced =
                             self.repository
                                 .fail_node(&node_run.id, message, None, now)?;
-                            return Ok(());
+                        if matches!(advanced, AdvanceWorkflowRunResult::Advanced) {
+                            self.run_events.publish_run_invalidated(run_id);
                         }
-                        match control_node_output(node, &context, &pool) {
-                            Ok(output) => {
-                                self.repository.complete_node(
-                                    &node_run.id,
-                                    Some(output),
-                                    None,
-                                    None,
-                                    Vec::new(),
-                                    now,
-                                )?;
-                                completed_control = true;
-                            }
-                            Err(message) => {
-                                self.repository
-                                    .fail_node(&node_run.id, message, None, now)?;
-                                return Ok(());
-                            }
-                        }
+                        return Ok(());
                     }
-                    NodeType::Condition => {
-                        let outcome = node
-                            .condition_config
-                            .as_ref()
-                            .map(|config| evaluate_condition(config, &pool))
-                            .unwrap_or_else(|| Err(ConditionError::MissingConfig));
-                        match outcome {
-                            Ok(selected) => {
-                                self.repository.complete_node(
-                                    &node_run.id,
-                                    Some(selected),
-                                    None,
-                                    None,
-                                    Vec::new(),
-                                    now,
-                                )?;
-                                completed_control = true;
-                            }
-                            Err(error) => {
-                                // A condition that reads an unset or invalid variable fails the
-                                // node and the run rather than guessing a branch.
-                                self.repository.fail_node(
-                                    &node_run.id,
-                                    error.to_string(),
-                                    None,
-                                    now,
-                                )?;
-                                return Ok(());
-                            }
-                        }
-                    }
-                    _ => {}
                 }
             }
 
-            // Control completions persist internal routing state; reload before projecting branches.
-            if completed_control {
+            // Swift completions persist internal routing state; reload before projecting branches.
+            if completed_swift {
                 continue;
             }
 
@@ -377,6 +378,7 @@ where
                 if !projection.has_in_flight() {
                     let output = compute_run_output(&node_runs);
                     self.repository.finish_run(run_id, output, now)?;
+                    self.run_events.publish_run_invalidated(run_id);
                 }
                 return Ok(());
             }
@@ -387,16 +389,19 @@ where
                     id: self.node_run_id_generator.generate_node_run_id(),
                     node_id: node.id.clone(),
                     node_type: node.node_type.as_str().to_string(),
-                    input: node_input(node, &context),
+                    input: self.runtimes.start_input(node, &context),
                 })
                 .collect();
             self.repository
                 .start_ready_nodes(run_id, &ready_runs, now)?;
+            self.run_events.publish_run_invalidated(run_id);
 
-            // Control nodes complete on the next loop iteration; agent nodes dispatch now.
+            // Async runtimes dispatch now; swift runtimes complete on the next loop iteration.
             for (node, node_run) in ready.iter().zip(ready_runs.iter()) {
-                if node.node_type == NodeType::Agent {
-                    self.node_executor.dispatch(&node_run.id, node, &context);
+                if let Some(RegisteredNodeRuntime::Async(runtime)) =
+                    self.runtimes.runtime(node.node_type)
+                {
+                    runtime.dispatch(&node_run.id, node, &context);
                 }
             }
         }
@@ -450,44 +455,12 @@ fn validate_start_inputs(
     Ok(())
 }
 
-/// Computes the output a control node writes when it completes synchronously.
-///
-/// An Output node resolves only its explicitly declared variable bindings into a JSON object.
-fn control_node_output(
-    node: &WorkflowGraphNode,
-    context: &ExecutionContext,
-    pool: &WorkflowVariablePool,
-) -> Result<String, String> {
-    match node.node_type {
-        NodeType::Start => Ok(context.run.input.clone().unwrap_or_default()),
-        NodeType::Output => {
-            if let Some(config) = &node.output_config {
-                let mut result = serde_json::Map::new();
-                for binding in &config.outputs {
-                    let value = pool
-                        .resolve(&binding.variable_selector)
-                        .map_err(|error| error.to_string())?
-                        .ok_or_else(|| {
-                            format!(
-                                "result {} references unassigned variable {}",
-                                binding.name,
-                                binding.variable_selector.qualified()
-                            )
-                        })?;
-                    result.insert(binding.name.clone(), value.clone());
-                }
-                Ok(serde_json::Value::Object(result).to_string())
-            } else {
-                Ok(String::new())
-            }
-        }
-        _ => Ok(String::new()),
-    }
-}
-
 /// Validates the structural invariants that make a graph executable: a terminal output, no edges
 /// leaving an output, unique condition case ids, real condition branch handles, and result names
 /// that are unique within each output node.
+///
+/// This is start-time graph-structural policy, not scheduling: it inspects node kinds the same
+/// way `WorkflowGraph::parse` does, so it stays here rather than behind the runtime registry.
 fn validate_executable_graph(graph: &WorkflowGraph) -> Result<(), WorkflowValidationError> {
     for node in graph.nodes() {
         match node.node_type {
@@ -539,39 +512,6 @@ fn validate_executable_graph(graph: &WorkflowGraph) -> Result<(), WorkflowValida
     Ok(())
 }
 
-/// Computes the run output written at finish: the last output node's output, or the last
-/// completed agent's output when the graph has no output node.
-fn compute_run_output(node_runs: &[WorkflowNodeRun]) -> Option<String> {
-    let succeeded: Vec<&WorkflowNodeRun> = node_runs
-        .iter()
-        .filter(|node_run| node_run.status == WorkflowNodeStatus::Succeeded)
-        .collect();
-    if let Some(output_node) = succeeded
-        .iter()
-        .filter(|node_run| node_run.node_type == "output")
-        .max_by_key(|node_run| node_run.finished_at.unwrap_or(0))
-    {
-        return output_node.output.clone();
-    }
-    let last_agent = succeeded
-        .iter()
-        .filter(|node_run| node_run.node_type == "agent")
-        .max_by_key(|node_run| node_run.finished_at.unwrap_or(0));
-    last_agent.and_then(|node_run| node_run.output.clone())
-}
-
-/// Computes the scalar input recorded on a node run when it starts.
-fn node_input(node: &WorkflowGraphNode, context: &ExecutionContext) -> Option<String> {
-    match node.node_type {
-        NodeType::Start => context.run.input.clone(),
-        NodeType::Agent => node
-            .agent_config
-            .as_ref()
-            .map(|config| config.prompt.clone()),
-        NodeType::Output | NodeType::Prompt | NodeType::Condition | NodeType::Tool => None,
-    }
-}
-
 /// Loads user variables and private routing decisions, including decisions from legacy pools.
 fn execution_state_from(
     serialized_payload: Option<&str>,
@@ -593,131 +533,8 @@ mod tests {
     use super::*;
     use crate::workflow_run::engine::variable_pool::WorkflowVariablePool;
     use ora_contracts::WorkflowRunLocale;
-    use ora_domain::{
-        AuditFields, WorkflowRun, WorkflowRunId, WorkflowRunStatus, Workspace, WorkspaceId,
-        WorkspaceKind, WorkspaceLifecycle, WorkspaceLocation,
-    };
     use pretty_assertions::assert_eq;
     use serde_json::json;
-
-    /// Builds a run context whose run input is fixed; workspace and graph are unused by the test.
-    fn context() -> ExecutionContext {
-        ExecutionContext {
-            run: WorkflowRun::new(
-                WorkflowRunId::new("run-1"),
-                WorkspaceId::new("workspace-1"),
-                ora_domain::WorkflowId::new("workflow-1"),
-                ora_domain::WorkflowSnapshotId::new("snapshot-1"),
-                "Review",
-                WorkflowRunStatus::Running,
-                None,
-                Some("task".to_string()),
-                None,
-                None,
-                None,
-                None,
-                None,
-                AuditFields::new(1, 1, false),
-            ),
-            workspace: Workspace::new(
-                WorkspaceId::new("workspace-1"),
-                ora_domain::ProjectId::new("project-1"),
-                WorkspaceKind::Main,
-                WorkspaceLocation::local_filesystem("/tmp/workspace"),
-                WorkspaceLifecycle::Active,
-                AuditFields::new(1, 1, false),
-            ),
-            graph_json: String::new(),
-        }
-    }
-
-    /// An output node with declared bindings resolves each named result from the variable pool.
-    #[test]
-    fn output_resolves_declared_bindings_from_the_pool() {
-        let graph = WorkflowGraph::parse(
-            r#"{
-                "nodes": [
-                    {"id":"review","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"review"}}},
-                    {"id":"out","data":{"kind":"output","outputs":[
-                        {"name":"approved","variableSelector":["review","structured_output","approved"]},
-                        {"name":"files","variableSelector":["review","structured_output","files"]},
-                        {"name":"summary","variableSelector":["review","text"]}
-                    ]}}
-                ],
-                "edges": [{"source":"review","target":"out"}]
-            }"#,
-        )
-        .unwrap();
-        let mut pool = WorkflowVariablePool::default();
-        pool.declare("review.structured_output", "object", "review");
-        pool.declare("review.text", "string", "review");
-        pool.set(
-            "review.structured_output",
-            "review",
-            json!({
-                "approved": true,
-                "files": [{
-                    "file_path": "src/vs/base/common/numbers.ts",
-                    "lines": [{
-                        "symbol": "formatTokenCount",
-                        "start_line": 15,
-                        "end_line": 26
-                    }]
-                }]
-            }),
-        )
-        .unwrap();
-        pool.set("review.text", "review", json!("ok")).unwrap();
-
-        let node = graph.node("out").unwrap();
-        let output = control_node_output(node, &context(), &pool).unwrap();
-        assert_eq!(
-            output,
-            r#"{"approved":true,"files":[{"file_path":"src/vs/base/common/numbers.ts","lines":[{"symbol":"formatTokenCount","start_line":15,"end_line":26}]}],"summary":"ok"}"#
-        );
-    }
-
-    /// An output binding that references an unassigned variable fails instead of emitting null.
-    #[test]
-    fn output_fails_when_a_binding_is_unassigned() {
-        let graph = WorkflowGraph::parse(
-            r#"{
-                "nodes": [
-                    {"id":"out","data":{"kind":"output","outputs":[
-                        {"name":"summary","variableSelector":["writer","text"]}
-                    ]}}
-                ],
-                "edges": []
-            }"#,
-        )
-        .unwrap();
-        let mut pool = WorkflowVariablePool::default();
-        // The variable is declared by the graph but the writer has not produced it yet.
-        pool.declare("writer.text", "string", "writer");
-
-        let node = graph.node("out").unwrap();
-        let error = control_node_output(node, &context(), &pool).unwrap_err();
-        assert!(error.contains("unassigned variable writer.text"));
-    }
-
-    /// An output node without bindings does not import predecessor output implicitly.
-    #[test]
-    fn output_without_bindings_is_empty() {
-        let graph = WorkflowGraph::parse(
-            r#"{
-                "nodes": [
-                    {"id":"a","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"a"}}},
-                    {"id":"out","data":{"kind":"output"}}
-                ],
-                "edges": [{"source":"a","target":"out"}]
-            }"#,
-        )
-        .unwrap();
-        let node = graph.node("out").unwrap();
-        let output =
-            control_node_output(node, &context(), &WorkflowVariablePool::default()).unwrap();
-        assert_eq!(output, "");
-    }
 
     // ── Executable-graph validation ──
 
@@ -888,6 +705,43 @@ mod tests {
         );
         assert!(
             validate_start_inputs(start, Some(&serde_json::to_string(&payload).unwrap())).is_ok()
+        );
+    }
+
+    // ── Scheduling-core structure (ADR "node runtime orchestration" D1) ──
+
+    /// Extracts one function's body from Rust source by brace matching.
+    fn function_body<'source>(source: &'source str, signature: &str) -> Option<&'source str> {
+        let start = source.find(signature)?;
+        let open = source[start..].find('{')? + start;
+        let mut depth = 0usize;
+        for (offset, character) in source[open..].char_indices() {
+            match character {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(&source[open..open + offset + 1]);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// The scheduling core must stay free of node-type branching: new node types register a
+    /// runtime instead of editing `run_schedule`, whose dispatch resolves purely through the
+    /// runtime registry.
+    #[test]
+    fn run_schedule_contains_no_node_type_literals() {
+        let source = include_str!("engine.rs");
+        let body = function_body(source, "fn run_schedule")
+            .expect("run_schedule remains the scheduling core");
+        assert!(
+            !body.contains("NodeType::"),
+            "run_schedule must dispatch through the node runtime registry, not node-type \
+             literals:\n{body}"
         );
     }
 }

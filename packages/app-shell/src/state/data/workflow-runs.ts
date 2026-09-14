@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { QueryClient } from "@tanstack/react-query";
 import {
   computeInactiveNodes,
   isTerminalRunStatus,
@@ -32,6 +33,25 @@ function hasActiveRun(runs: WorkflowRunSummary[] | undefined): boolean {
     runs?.some((run) => run.status === "pending" || run.status === "running") ??
     false
   );
+}
+
+/** Invalidates one run's detail and the run lists after a backend state transition.
+ *
+ * The backend publishes `workflow_run_invalidated` after every committed run or node-run
+ * transition; the event carries no state, so the only correct reaction is to re-query the
+ * authoritative run detail and lists. A dropped event leaves a stale view until the next
+ * event or the polling fallback converges it.
+ */
+export function invalidateWorkflowRun(queryClient: QueryClient, runId: string) {
+  void queryClient.invalidateQueries({
+    queryKey: workflowRunKeys.detail(runId),
+  });
+  void queryClient.invalidateQueries({
+    queryKey: workflowRunKeys.projectLists,
+  });
+  void queryClient.invalidateQueries({
+    queryKey: workflowRunKeys.workflowLists,
+  });
 }
 
 /** Lists the persisted workflow runs of one project. */
