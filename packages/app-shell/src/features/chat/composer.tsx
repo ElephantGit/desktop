@@ -33,6 +33,7 @@ import type { JSONContent } from "@tiptap/core";
 import type { Agent, Skill } from "@ora/contracts";
 import { useTranslation } from "react-i18next";
 import { ModelSelector } from "./model-selector";
+import { ThoughtLevelSelector } from "./thought-level-selector";
 import { PermissionSelector } from "./permission-selector";
 import { ComposerActionMenu } from "./composer-action-menu";
 import { ImagePreviewDialog } from "./image-preview-dialog";
@@ -1088,10 +1089,18 @@ export function Composer({
             className="flex shrink-0 items-center gap-2"
           >
             {showModelSelector && (
-              <ModelSelector
-                disabled={modelSelectorDisabled}
-                sessionId={modelSelectorSessionId}
-              />
+              <>
+                <ModelSelector
+                  disabled={modelSelectorDisabled}
+                  sessionId={modelSelectorSessionId}
+                />
+                {/* Shares the model picker's overflow gate: both describe the
+                    session's provider configuration and collapse together. */}
+                <ThoughtLevelSelector
+                  disabled={modelSelectorDisabled}
+                  sessionId={modelSelectorSessionId}
+                />
+              </>
             )}
             <Tooltip
               // Controlled so the refusal can pin it open. `onOpenChange` is
