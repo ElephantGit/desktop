@@ -2,7 +2,9 @@ export {
   currentModel,
   currentValueName,
   findModelOption,
+  findThoughtLevelOption,
   selectableValues,
+  thoughtLevelScale,
 } from "./model-option.ts";
 export {
   createChatStore,
