@@ -457,6 +457,34 @@ pub struct CompleteWorkflowNodeResponse {
     pub run: WorkflowRun,
 }
 
+/// Identifies the failed agent node whose one-off AI diagnosis should be generated.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflow-run.ts")]
+pub struct DiagnoseWorkflowNodeFailureRequest {
+    pub run_id: String,
+    pub node_id: String,
+}
+
+/// Plain-text diagnosis stored on the node run as `payload.ai_diagnosis` and shown as an AI guess.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflow-run.ts")]
+pub struct WorkflowNodeAiDiagnosis {
+    pub text: String,
+    pub agent_cli: String,
+    pub model: String,
+    pub generated_at: i64,
+}
+
+/// Returns the generated diagnosis; nothing in scheduling or resume reads this value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflow-run.ts")]
+pub struct DiagnoseWorkflowNodeFailureResponse {
+    pub diagnosis: WorkflowNodeAiDiagnosis,
+}
+
 /// Exports every TypeScript binding declared in this module into the target directory.
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     WorkflowRunStatus::export(config)?;
@@ -498,6 +526,9 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     NodeCompletionRequester::export(config)?;
     CompleteWorkflowNodeRequest::export(config)?;
     CompleteWorkflowNodeResponse::export(config)?;
+    DiagnoseWorkflowNodeFailureRequest::export(config)?;
+    WorkflowNodeAiDiagnosis::export(config)?;
+    DiagnoseWorkflowNodeFailureResponse::export(config)?;
     Ok(())
 }
 
@@ -506,10 +537,11 @@ mod tests {
     use super::{
         CompleteWorkflowNodeRequest, CompleteWorkflowNodeResponse, CreateWorkflowRunRequest,
         CreateWorkflowRunResponse, DeleteWorkflowRunRequest, DeleteWorkflowRunResponse,
-        GetWorkflowRunRequest, GetWorkflowRunResponse, ListWorkflowNodeRunsRequest,
-        ListWorkflowNodeRunsResponse, ListWorkflowRunsByWorkflowRequest,
-        ListWorkflowRunsByWorkflowResponse, ListWorkflowRunsRequest, ListWorkflowRunsResponse,
-        NodeCompletionRequester, ResumeRollbackMode, ResumeWorkflowRunRequest, WorkflowNodeRun,
+        DiagnoseWorkflowNodeFailureRequest, GetWorkflowRunRequest, GetWorkflowRunResponse,
+        ListWorkflowNodeRunsRequest, ListWorkflowNodeRunsResponse,
+        ListWorkflowRunsByWorkflowRequest, ListWorkflowRunsByWorkflowResponse,
+        ListWorkflowRunsRequest, ListWorkflowRunsResponse, NodeCompletionRequester,
+        ResumeRollbackMode, ResumeWorkflowRunRequest, WorkflowNodeAiDiagnosis, WorkflowNodeRun,
         WorkflowNodeStatus, WorkflowRun, WorkflowRunLocale, WorkflowRunStatus, WorkflowRunSummary,
         WorkflowRunVariable,
     };
@@ -875,6 +907,47 @@ mod tests {
         let omitted: ResumeWorkflowRunRequest =
             serde_json::from_value(json!({ "runId": "r" })).unwrap();
         assert_eq!(omitted.snapshot_id, None);
+    }
+
+    /// Diagnosis request identifiers stay camelCase on the wire.
+    #[test]
+    fn diagnose_workflow_node_failure_request_round_trips() {
+        let request = DiagnoseWorkflowNodeFailureRequest {
+            run_id: "run-1".to_string(),
+            node_id: "agent".to_string(),
+        };
+        assert_serialized_json(&request, json!({ "runId": "run-1", "nodeId": "agent" }));
+        let parsed: DiagnoseWorkflowNodeFailureRequest =
+            serde_json::from_value(json!({ "runId": "run-1", "nodeId": "agent" })).unwrap();
+        assert_eq!(parsed, request);
+    }
+
+    /// Diagnosis payload field names stay camelCase so the inspector can render the guess as stored.
+    #[test]
+    fn workflow_node_ai_diagnosis_round_trips() {
+        let diagnosis = WorkflowNodeAiDiagnosis {
+            text: "the schema rejected the reply".to_string(),
+            agent_cli: "open_code".to_string(),
+            model: "m".to_string(),
+            generated_at: 50,
+        };
+        assert_serialized_json(
+            &diagnosis,
+            json!({
+                "text": "the schema rejected the reply",
+                "agentCli": "open_code",
+                "model": "m",
+                "generatedAt": 50,
+            }),
+        );
+        let parsed: WorkflowNodeAiDiagnosis = serde_json::from_value(json!({
+            "text": "the schema rejected the reply",
+            "agentCli": "open_code",
+            "model": "m",
+            "generatedAt": 50,
+        }))
+        .unwrap();
+        assert_eq!(parsed, diagnosis);
     }
 
     /// Serializes one value and compares the full JSON payload so field names stay stable.

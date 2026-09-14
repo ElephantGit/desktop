@@ -173,6 +173,15 @@ impl WorkflowRunEngineRepository for RecordingRepository {
         Ok(())
     }
 
+    fn record_node_ai_diagnosis(
+        &self,
+        _node_run_id: &WorkflowNodeRunId,
+        _diagnosis_json: &str,
+        _now: i64,
+    ) -> Result<(), RepositoryError> {
+        Ok(())
+    }
+
     fn finish_run(
         &self,
         _run_id: &WorkflowRunId,

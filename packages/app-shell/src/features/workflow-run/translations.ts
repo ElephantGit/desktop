@@ -19,6 +19,8 @@ export const workflowRunTranslations = {
     "errors.workflow_node_not_found": "未找到该工作流节点。",
     "errors.workflow_node_not_awaiting_input":
       "该节点当前不在等待人工输入，无法完成。",
+    "errors.workflow_node_not_diagnosable":
+      "只有失败的智能体节点才能做 AI 分析。",
     "workflowRun.loading": "正在加载运行…",
     "workflowRun.placeholderTitle": "工作流运行台",
     "workflowRun.placeholderSubtitle": "运行工作区",
@@ -280,6 +282,12 @@ export const workflowRunTranslations = {
     "workflowRun.errorAttempt": "第 {{count}} 次尝试",
     "workflowRun.errorNotResumableHint":
       "这类失败通常源于工作流本身，直接续跑很可能再次失败；建议修改工作流后重新运行。",
+    "workflowRun.aiDiagnosis.run": "让 AI 分析",
+    "workflowRun.aiDiagnosis.running": "AI 正在分析…",
+    "workflowRun.aiDiagnosis.rerun": "重新分析",
+    "workflowRun.aiDiagnosis.title": "AI 推测（{{model}}）",
+    "workflowRun.aiDiagnosis.disclaimer":
+      "这是模型的推测，不参与任何自动判断。",
   },
   "en-US": {
     "errors.workflow_no_published_snapshot":
@@ -305,6 +313,8 @@ export const workflowRunTranslations = {
     "errors.workflow_node_not_found": "Workflow node not found.",
     "errors.workflow_node_not_awaiting_input":
       "This node is not awaiting input and cannot be completed.",
+    "errors.workflow_node_not_diagnosable":
+      "AI analysis is only available for a failed agent node.",
     "workflowRun.loading": "Loading run…",
     "workflowRun.placeholderTitle": "Workflow run workspace",
     "workflowRun.placeholderSubtitle": "Run workspace",
@@ -590,5 +600,11 @@ export const workflowRunTranslations = {
     "workflowRun.errorAttempt": "Attempt {{count}}",
     "workflowRun.errorNotResumableHint":
       "This kind of failure usually comes from the workflow itself; resuming as-is will likely fail again. Edit the workflow and run it again.",
+    "workflowRun.aiDiagnosis.run": "Ask AI to analyze",
+    "workflowRun.aiDiagnosis.running": "AI is analyzing…",
+    "workflowRun.aiDiagnosis.rerun": "Analyze again",
+    "workflowRun.aiDiagnosis.title": "AI guess ({{model}})",
+    "workflowRun.aiDiagnosis.disclaimer":
+      "This is a model's guess and drives no automatic decision.",
   },
 } as const;

@@ -38,6 +38,7 @@ commands.allow = [
     "delete_workflow_run",
     "delete_workflow_snapshot",
     "delete_workspace_entry",
+    "diagnose_workflow_node_failure",
     "download_today_log",
     "get_agent",
     "get_agent_runtime_status",

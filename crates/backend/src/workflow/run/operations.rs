@@ -11,7 +11,7 @@ use crate::repository_work::spawn_repository_work;
 use ora_application::{ApplicationError, Clock, WorkflowRunEngineRepository};
 use ora_contracts::*;
 use ora_db::{RepositoryPool, SqliteWorkflowRunEngineRepository};
-use ora_logging::ora_warn;
+use ora_logging::{ora_info, ora_warn};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -326,6 +326,64 @@ impl WorkflowRuns {
     ) -> Result<PreviewWorkflowRunResumeResponse, BackendError> {
         let _gate = self.run_locks.acquire_shared(request.run_id.clone());
         super::rollback::preview_resume(&self.pool, &self.agent_runtime, request)
+    }
+
+    /// Asks the node's own agent to guess why it failed. The answer is stored as provenance only.
+    pub async fn diagnose_node_failure(
+        &self,
+        request: DiagnoseWorkflowNodeFailureRequest,
+    ) -> Result<DiagnoseWorkflowNodeFailureResponse, BackendError> {
+        let run_id = request.run_id.clone();
+        let node_id = request.node_id.clone();
+        let pool = self.pool.clone();
+        let sessions_root = self.sessions_root.clone();
+        let run_locks = self.run_locks.clone();
+        let (input, executor, workspace_id, node_run_id) = spawn_repository_work({
+            let run_id = run_id.clone();
+            move || {
+                let _gate = run_locks.acquire_shared(run_id.clone());
+                super::diagnosis::load_input(&pool, &sessions_root, &run_id, &node_id)
+            }
+        })
+        .await?;
+        let prompt = super::diagnosis::build_diagnosis_prompt(&input);
+        let text =
+            super::diagnosis::run_diagnosis(&self.agent_runtime, workspace_id, &executor, prompt)
+                .await?;
+        let generated_at = SystemClock.now_timestamp_millis();
+        let diagnosis = WorkflowNodeAiDiagnosis {
+            text,
+            agent_cli: executor.agent_cli.clone(),
+            model: executor.model_id.clone(),
+            generated_at,
+        };
+        let diagnosis_json = serde_json::json!({
+            "text": diagnosis.text,
+            "agent_cli": diagnosis.agent_cli,
+            "model": diagnosis.model,
+            "generated_at": diagnosis.generated_at,
+        })
+        .to_string();
+        let pool = self.pool.clone();
+        let run_locks = self.run_locks.clone();
+        spawn_repository_work(move || {
+            let _gate = run_locks.acquire_shared(run_id.clone());
+            SqliteWorkflowRunEngineRepository::new(pool)
+                .record_node_ai_diagnosis(&node_run_id, &diagnosis_json, generated_at)
+                .map_err(|source| {
+                    BackendError::from(ApplicationError::WorkflowRunRepository { source })
+                })
+        })
+        .await?;
+        ora_info!(
+            run_id = %request.run_id,
+            node_id = %request.node_id,
+            agent = %diagnosis.agent_cli,
+            model = %diagnosis.model,
+            text_len = diagnosis.text.chars().count(),
+            "recorded workflow node AI diagnosis"
+        );
+        Ok(DiagnoseWorkflowNodeFailureResponse { diagnosis })
     }
 
     /// Sets the kickoff input of a pending workflow run.

@@ -212,6 +212,8 @@ pub enum ApplicationError {
     WorkflowNodeNotFound { node_id: String },
     #[error("workflow node is not awaiting input and cannot be completed: {node_id}")]
     WorkflowNodeNotAwaitingInput { node_id: String },
+    #[error("workflow node is not diagnosable")]
+    WorkflowNodeNotDiagnosable,
     #[error("workflow run is active and cannot be deleted")]
     WorkflowRunActive,
     #[error("workflow repository operation failed")]
@@ -544,7 +546,8 @@ impl PartialEq for ApplicationError {
             | (WorkflowRunValidation(_), WorkflowRunValidation(_))
             | (WorkflowRunNotRestartable, WorkflowRunNotRestartable)
             | (WorkflowRunNotResumable, WorkflowRunNotResumable)
-            | (WorkflowRunNotEditable, WorkflowRunNotEditable) => true,
+            | (WorkflowRunNotEditable, WorkflowRunNotEditable)
+            | (WorkflowNodeNotDiagnosable, WorkflowNodeNotDiagnosable) => true,
             (
                 WorkflowSnapshotIncompatibleWithResume { reason: left },
                 WorkflowSnapshotIncompatibleWithResume { reason: right },

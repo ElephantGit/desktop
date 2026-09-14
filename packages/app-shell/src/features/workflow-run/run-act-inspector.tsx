@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { Button, Input, Textarea, cn } from "@ora/ui";
+import { Button, Input, Spinner, Textarea, cn } from "@ora/ui";
 import {
   IconLayoutSidebarRightCollapse,
   IconSparkles,
@@ -20,6 +20,9 @@ import { RunActFileChanges } from "./run-act-file-changes";
 import { RunBriefPopover } from "./run-brief-popover";
 import { RunStatusBadge } from "./run-status-mark";
 import { shouldPreviewBrief } from "./should-preview-brief";
+import { useDiagnoseWorkflowNodeFailure } from "../../state/data/workflow-runs";
+import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
+import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 import type {
   GraphWorkflowNodeState,
   GraphWorkflowSnapshotNodePatch,
@@ -226,6 +229,9 @@ function RunActInspectorPanel({
   onClose?: () => void;
 }) {
   const { i18n, t } = useTranslation();
+  const runId = useWorkspaceSelectionStore((s) => s.selection.workflowRunId);
+  const diagnose = useDiagnoseWorkflowNodeFailure();
+  const showContractError = useContractErrorToast();
   const locale =
     i18n.resolvedLanguage === "en-US" ? ("en-US" as const) : ("zh-CN" as const);
   const nodeType = createMockWorkflowNodeType(data.kind, locale);
@@ -504,6 +510,49 @@ function RunActInspectorPanel({
               <p>{state.errorMessage}</p>
             </div>
           )}
+          {state.status === "failed" && data.kind === "agent" && runId != null ? (
+            <div className="space-y-2">
+              {state.aiDiagnosis != null ? (
+                <div className="rounded-lg border border-border px-3 py-2">
+                  <h5 className="text-[11px] font-medium">
+                    {t("workflowRun.aiDiagnosis.title", {
+                      model: state.aiDiagnosis.model,
+                    })}
+                  </h5>
+                  <p className="mt-1 whitespace-pre-wrap text-[11px] leading-5">
+                    {state.aiDiagnosis.text}
+                  </p>
+                  <p className="mt-2 text-[10px] text-muted-foreground">
+                    {t("workflowRun.aiDiagnosis.disclaimer")}
+                  </p>
+                </div>
+              ) : null}
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="cursor-pointer"
+                disabled={diagnose.isPending}
+                onClick={() => {
+                  diagnose.mutate(
+                    { runId, nodeId },
+                    { onError: (error) => showContractError(error) },
+                  );
+                }}
+              >
+                {diagnose.isPending ? (
+                  <>
+                    <Spinner className="size-3.5" />
+                    {t("workflowRun.aiDiagnosis.running")}
+                  </>
+                ) : state.aiDiagnosis != null ? (
+                  t("workflowRun.aiDiagnosis.rerun")
+                ) : (
+                  t("workflowRun.aiDiagnosis.run")
+                )}
+              </Button>
+            </div>
+          ) : null}
         </InspectorSection>
 
         <InspectorSection title={t("workflowRun.artifacts.title")}>

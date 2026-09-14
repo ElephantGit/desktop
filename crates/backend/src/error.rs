@@ -574,6 +574,11 @@ impl From<ApplicationError> for BackendError {
                 PublicError::WorkflowNodeNotAwaitingInput(EmptyErrorParams {}),
                 "workflow node is not awaiting input and cannot be completed",
             ),
+            ApplicationError::WorkflowNodeNotDiagnosable => (
+                ErrorClassification::Conflict,
+                PublicError::WorkflowNodeNotDiagnosable(EmptyErrorParams {}),
+                "AI analysis is only available for a failed agent node",
+            ),
             ApplicationError::WorkflowRunGraphParse(_) => (
                 ErrorClassification::InvalidRequest,
                 PublicError::WorkflowRunGraphParse(EmptyErrorParams {}),
@@ -862,6 +867,11 @@ mod tests {
                 },
                 ErrorClassification::InvalidRequest,
                 PublicError::WorkflowNodeNotAwaitingInput(EmptyErrorParams {}),
+            ),
+            (
+                ApplicationError::WorkflowNodeNotDiagnosable,
+                ErrorClassification::Conflict,
+                PublicError::WorkflowNodeNotDiagnosable(EmptyErrorParams {}),
             ),
             (
                 ApplicationError::WorkflowSnapshotIncompatibleWithResume {

@@ -171,6 +171,14 @@ export function workflowRunHandlers(
       publishedSnapshotSwitchable: false,
       publishedSnapshotIncompatibleReason: null,
     }),
+    diagnoseWorkflowNodeFailure: async () => ({
+      diagnosis: {
+        text: "guess",
+        agentCli: "open_code",
+        model: "m",
+        generatedAt: 1n,
+      },
+    }),
     updateWorkflowRunInput: async (req) => {
       const record = state.workflowRuns.find(
         (candidate) => candidate.id === req.runId,

@@ -73,4 +73,9 @@ pub(super) const BINDINGS: &[Binding] = &[
         handler: "commands::workflow_run::complete_workflow_node",
         permission: Permission::MainWebview,
     },
+    Binding::Unary {
+        operation: "diagnoseWorkflowNodeFailure",
+        handler: "commands::workflow_run::diagnose_workflow_node_failure",
+        permission: Permission::MainWebview,
+    },
 ];

@@ -171,6 +171,7 @@ export type ContractError =
     | { "code": "workflow_run_not_editable"; "params": EmptyErrorParams }
     | { "code": "workflow_node_not_found"; "params": EmptyErrorParams }
     | { "code": "workflow_node_not_awaiting_input"; "params": EmptyErrorParams }
+    | { "code": "workflow_node_not_diagnosable"; "params": EmptyErrorParams }
   );
 
 /**
@@ -361,7 +362,8 @@ export type PublicError =
   }
   | { "code": "workflow_run_not_editable"; "params": EmptyErrorParams }
   | { "code": "workflow_node_not_found"; "params": EmptyErrorParams }
-  | { "code": "workflow_node_not_awaiting_input"; "params": EmptyErrorParams };
+  | { "code": "workflow_node_not_awaiting_input"; "params": EmptyErrorParams }
+  | { "code": "workflow_node_not_diagnosable"; "params": EmptyErrorParams };
 
 /**
  * Identifies one Ora request across adapters, spans, responses, and completion events.

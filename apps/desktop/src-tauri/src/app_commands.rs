@@ -35,6 +35,7 @@ desktop_command_registry! {
     commands::workflow_run::delete_workflow_run,
     commands::workflow::delete_workflow_snapshot,
     commands::files::delete_workspace_entry,
+    commands::workflow_run::diagnose_workflow_node_failure,
     diagnostic_logs::download_today_log,
     commands::agent::get_agent,
     commands::agent_runtime::get_agent_runtime_status,

@@ -100,3 +100,10 @@ async_backend_command!(
     workflow_runs.complete_node,
     "Completes one awaiting interactive workflow node through its owned interface."
 );
+async_backend_command!(
+    diagnose_workflow_node_failure,
+    DiagnoseWorkflowNodeFailureRequest,
+    DiagnoseWorkflowNodeFailureResponse,
+    workflow_runs.diagnose_node_failure,
+    "Asks the node's own agent to guess why a failed agent node failed."
+);

@@ -56,6 +56,21 @@ export type DeleteWorkflowRunRequest = { runId: string };
 export type DeleteWorkflowRunResponse = { runId: string };
 
 /**
+ * Identifies the failed agent node whose one-off AI diagnosis should be generated.
+ */
+export type DiagnoseWorkflowNodeFailureRequest = {
+  runId: string;
+  nodeId: string;
+};
+
+/**
+ * Returns the generated diagnosis; nothing in scheduling or resume reads this value.
+ */
+export type DiagnoseWorkflowNodeFailureResponse = {
+  diagnosis: WorkflowNodeAiDiagnosis;
+};
+
+/**
  * Identifies the workflow run to retrieve by its stable identifier.
  */
 export type GetWorkflowRunRequest = { runId: string };
@@ -253,6 +268,16 @@ export type WorkflowFileChange = {
   path: string;
   additions: bigint;
   deletions: bigint;
+};
+
+/**
+ * Plain-text diagnosis stored on the node run as `payload.ai_diagnosis` and shown as an AI guess.
+ */
+export type WorkflowNodeAiDiagnosis = {
+  text: string;
+  agentCli: string;
+  model: string;
+  generatedAt: bigint;
 };
 
 /**

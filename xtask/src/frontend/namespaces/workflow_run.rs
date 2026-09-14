@@ -117,4 +117,12 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         response_type: "CompleteWorkflowNodeResponse",
         response_mode: FrontendResponseMode::Unary,
     },
+    FrontendEndpoint {
+        operation_name: "diagnoseWorkflowNodeFailure",
+        namespace: NAMESPACE,
+        member_name: "diagnoseNodeFailure",
+        request_type: "DiagnoseWorkflowNodeFailureRequest",
+        response_type: "DiagnoseWorkflowNodeFailureResponse",
+        response_mode: FrontendResponseMode::Unary,
+    },
 ];

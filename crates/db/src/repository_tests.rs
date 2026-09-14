@@ -1200,6 +1200,69 @@ fn record_node_checkpoint_merges_into_existing_payload() {
     assert!(parsed.get("checkpoint_error").is_none());
 }
 
+/// `record_node_ai_diagnosis` merges `ai_diagnosis` into an existing payload and overwrites only that key.
+#[test]
+fn record_node_ai_diagnosis_merges_into_existing_payload() {
+    let (temp_dir, pool) = bootstrapped_pool();
+    let engine_repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+    let run_id = seed_pending_run(&temp_dir, &pool);
+    engine_repository
+        .start_ready_nodes(
+            &run_id,
+            &[NodeRunToStart {
+                id: WorkflowNodeRunId::new("nr-review"),
+                node_id: "review".to_string(),
+                node_type: "agent".to_string(),
+                input: None,
+            }],
+            40,
+        )
+        .unwrap();
+    pool.with_connection(|connection| {
+        connection.execute(
+            "UPDATE workflow_node_runs SET payload = ?2 WHERE id = ?1",
+            rusqlite::params![
+                "nr-review",
+                r#"{"error_detail":{"kind":"session","message":"boom"}}"#
+            ],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    engine_repository
+        .record_node_ai_diagnosis(
+            &WorkflowNodeRunId::new("nr-review"),
+            r#"{"text":"first","agent_cli":"open_code","model":"m","generated_at":1}"#,
+            50,
+        )
+        .unwrap();
+    let nodes = engine_repository.list_node_runs(&run_id).unwrap();
+    let node = nodes.iter().find(|node| node.node_id == "review").unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(node.payload.as_deref().unwrap()).unwrap();
+    assert_eq!(parsed["error_detail"]["kind"], "session");
+    assert_eq!(parsed["ai_diagnosis"]["text"], "first");
+    engine_repository
+        .record_node_ai_diagnosis(
+            &WorkflowNodeRunId::new("nr-review"),
+            r#"{"text":"second","agent_cli":"open_code","model":"m","generated_at":2}"#,
+            60,
+        )
+        .unwrap();
+    let nodes = engine_repository.list_node_runs(&run_id).unwrap();
+    let node = nodes.iter().find(|node| node.node_id == "review").unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(node.payload.as_deref().unwrap()).unwrap();
+    assert_eq!(parsed["error_detail"]["kind"], "session");
+    assert_eq!(
+        parsed["ai_diagnosis"],
+        serde_json::json!({
+            "text": "second",
+            "agent_cli": "open_code",
+            "model": "m",
+            "generated_at": 2,
+        })
+    );
+}
+
 /// A failed snapshot writes `checkpoint: null` and `checkpoint_error` without dropping other keys.
 #[test]
 fn record_node_checkpoint_writes_null_and_error_when_snapshot_fails() {

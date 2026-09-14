@@ -11,6 +11,7 @@ import {
   type WorkflowDefinition,
   type WorkflowNodeConversationItem,
   type WorkflowNodeErrorDetail,
+  type WorkflowNodeAiDiagnosis,
   type WorkflowNodeFileChange,
 } from "@ora/workflow-runtime";
 import { useContractsClient } from "../../contracts-client-context";
@@ -182,6 +183,21 @@ export function useResumeWorkflowRun() {
       rollback?: ResumeRollbackMode;
       snapshotId?: string;
     }) => client.workflowRun.resumeFromFailure(input),
+    onSuccess: (_result, variables) => {
+      void queryClient.invalidateQueries({
+        queryKey: workflowRunKeys.detail(variables.runId),
+      });
+    },
+  });
+}
+
+/** Asks the node's own agent to guess why a failed agent node failed. */
+export function useDiagnoseWorkflowNodeFailure() {
+  const client = useContractsClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { runId: string; nodeId: string }) =>
+      client.workflowRun.diagnoseNodeFailure(input),
     onSuccess: (_result, variables) => {
       void queryClient.invalidateQueries({
         queryKey: workflowRunKeys.detail(variables.runId),
@@ -403,6 +419,7 @@ export function buildDisplayRun(
     const payload =
       nodeRun?.payload != null ? parseNodePayload(nodeRun.payload) : null;
     const errorDetail = parseErrorDetail(payload?.error_detail);
+    const aiDiagnosis = parseAiDiagnosis(payload?.ai_diagnosis);
     const conversation =
       node.data.kind === "agent" && nodeRun?.output != null
         ? conversationFromNodeOutput(
@@ -430,6 +447,7 @@ export function buildDisplayRun(
         : {}),
       ...(nodeRun?.error != null ? { errorMessage: nodeRun.error } : {}),
       ...(errorDetail != null ? { errorDetail } : {}),
+      ...(aiDiagnosis != null ? { aiDiagnosis } : {}),
       ...(payload?.snapshot_id != null ? { snapshotId: payload.snapshot_id } : {}),
       ...(payload?.stop_reason != null
         ? { stopReason: payload.stop_reason }
@@ -544,6 +562,7 @@ function parseNodePayload(payload: string): {
   file_changes?: WorkflowNodeFileChange[];
   error_detail?: unknown;
   snapshot_id?: string;
+  ai_diagnosis?: unknown;
 } | null {
   try {
     const value = JSON.parse(payload) as {
@@ -555,6 +574,7 @@ function parseNodePayload(payload: string): {
       }>;
       error_detail?: unknown;
       snapshot_id?: unknown;
+      ai_diagnosis?: unknown;
     };
     return {
       ...(typeof value.stop_reason === "string"
@@ -582,6 +602,9 @@ function parseNodePayload(payload: string): {
         : {}),
       ...(typeof value.snapshot_id === "string" && value.snapshot_id !== ""
         ? { snapshot_id: value.snapshot_id }
+        : {}),
+      ...(value.ai_diagnosis !== undefined
+        ? { ai_diagnosis: value.ai_diagnosis }
         : {}),
     };
   } catch {
@@ -614,6 +637,33 @@ function parseErrorDetail(value: unknown): WorkflowNodeErrorDetail | undefined {
     attempt: typeof detail.attempt === "number" ? detail.attempt : 1,
     resumable: typeof detail.resumable === "boolean" ? detail.resumable : true,
     recordedAt: typeof detail.recorded_at === "number" ? detail.recorded_at : 0,
+  };
+}
+
+/** Maps a persisted `ai_diagnosis` object onto camelCase node-state fields. */
+function parseAiDiagnosis(value: unknown): WorkflowNodeAiDiagnosis | undefined {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const diagnosis = value as {
+    text?: unknown;
+    agent_cli?: unknown;
+    model?: unknown;
+    generated_at?: unknown;
+  };
+  if (
+    typeof diagnosis.text !== "string" ||
+    typeof diagnosis.agent_cli !== "string" ||
+    typeof diagnosis.model !== "string" ||
+    typeof diagnosis.generated_at !== "number"
+  ) {
+    return undefined;
+  }
+  return {
+    text: diagnosis.text,
+    agentCli: diagnosis.agent_cli,
+    model: diagnosis.model,
+    generatedAt: diagnosis.generated_at,
   };
 }
 

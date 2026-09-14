@@ -2,6 +2,7 @@
 
 mod api;
 mod checkpoint;
+mod diagnosis;
 mod engine;
 mod executor;
 pub(crate) mod interactive;

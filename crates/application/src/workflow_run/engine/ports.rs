@@ -273,6 +273,17 @@ pub trait WorkflowRunEngineRepository {
         now: i64,
     ) -> Result<(), RepositoryError>;
 
+    /// Merges `payload.ai_diagnosis` onto one node-run row, overwriting a previous guess.
+    ///
+    /// Provenance only: nothing in scheduling, resume, or rollback reads this key. A missing row
+    /// is a no-op so a late write after resume cannot fail the request.
+    fn record_node_ai_diagnosis(
+        &self,
+        node_run_id: &WorkflowNodeRunId,
+        diagnosis_json: &str,
+        now: i64,
+    ) -> Result<(), RepositoryError>;
+
     /// Finishes a run as succeeded with the given output.
     fn finish_run(
         &self,

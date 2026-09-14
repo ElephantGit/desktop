@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createChatStore } from "@ora/chat";
 import {
   createTestClient,
@@ -15,6 +15,7 @@ import {
 } from "../../test/hook-harness";
 import { appI18n } from "../../i18n/i18n-instance";
 import { RunActInspector } from "./run-act-inspector";
+import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import type {
   GraphWorkflowNodeState,
   WorkflowNodeData,
@@ -61,10 +62,23 @@ const AGENT_DATA: WorkflowNodeData = {
   },
 };
 
+const START_DATA: WorkflowNodeData = {
+  kind: "start",
+  title: "开始",
+  description: "接收输入",
+};
+
 /** Mounts the act inspector with catalog-backed Agent/Skill names. */
 function renderInspector(
   nodeState: GraphWorkflowNodeState = { status: "succeeded" },
+  options: {
+    data?: WorkflowNodeData;
+    handlers?: TestHandlers;
+  } = {},
 ) {
+  useWorkspaceSelectionStore
+    .getState()
+    .selectWorkflowRun("run-1", "project-1");
   const state = createFixtureState();
   state.agents = [
     {
@@ -92,7 +106,10 @@ function renderInspector(
       availability: "available",
     },
   ];
-  const clientHandlers: TestHandlers = createFixtureHandlers(state);
+  const clientHandlers: TestHandlers = {
+    ...createFixtureHandlers(state),
+    ...options.handlers,
+  };
   const client = createTestClient(clientHandlers);
   const queryClient = createTestQueryClient();
   const Wrapper = createHookWrapper(
@@ -103,11 +120,12 @@ function renderInspector(
 
   return {
     user: userEvent.setup(),
+    clientHandlers,
     ...render(
       <Wrapper>
         <RunActInspector
           nodeId="agent-1"
-          data={AGENT_DATA}
+          data={options.data ?? AGENT_DATA}
           state={nodeState}
           artifacts={[]}
           revealedArtifactId={null}
@@ -214,5 +232,75 @@ describe("RunActInspector failure detail", () => {
         "这类失败通常源于工作流本身，直接续跑很可能再次失败；建议修改工作流后重新运行。",
       ),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("RunActInspector AI diagnosis", () => {
+  it("renders the analyze button only for a failed agent node", async () => {
+    await appI18n.changeLanguage("zh-CN");
+    const succeeded = renderInspector({ status: "succeeded" });
+    expect(
+      screen.queryByRole("button", { name: "让 AI 分析" }),
+    ).not.toBeInTheDocument();
+    succeeded.unmount();
+    const failedStart = renderInspector(
+      { status: "failed", errorMessage: "boom" },
+      { data: START_DATA },
+    );
+    expect(
+      screen.queryByRole("button", { name: "让 AI 分析" }),
+    ).not.toBeInTheDocument();
+    failedStart.unmount();
+    renderInspector({ status: "failed", errorMessage: "boom" });
+    expect(
+      await screen.findByRole("button", { name: "让 AI 分析" }),
+    ).toBeInTheDocument();
+  });
+
+  it("calls diagnoseNodeFailure with the selected run and node once", async () => {
+    await appI18n.changeLanguage("zh-CN");
+    const diagnoseNodeFailure = vi.fn(
+      async (request: { runId: string; nodeId: string }) => {
+        expect(request).toEqual({ runId: "run-1", nodeId: "agent-1" });
+        return {
+          diagnosis: {
+            text: "guess",
+            agentCli: "open_code",
+            model: "m",
+            generatedAt: 1n,
+          },
+        };
+      },
+    );
+    const { user } = renderInspector(
+      { status: "failed", errorMessage: "boom" },
+      { handlers: { diagnoseWorkflowNodeFailure: diagnoseNodeFailure } },
+    );
+    await user.click(await screen.findByRole("button", { name: "让 AI 分析" }));
+    expect(diagnoseNodeFailure).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders the guess title, text, and disclaimer when aiDiagnosis is present", async () => {
+    await appI18n.changeLanguage("zh-CN");
+    renderInspector({
+      status: "failed",
+      errorMessage: "boom",
+      aiDiagnosis: {
+        text: "模型推测根因是输出结构。",
+        agentCli: "open_code",
+        model: "deepseek/deepseek-v4-pro",
+        generatedAt: 50,
+      },
+    });
+    expect(
+      await screen.findByText("AI 推测（deepseek/deepseek-v4-pro）"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("模型推测根因是输出结构。")).toBeInTheDocument();
+    expect(
+      screen.getByText("这是模型的推测，不参与任何自动判断。"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "重新分析" }),
+    ).toBeInTheDocument();
   });
 });

@@ -287,6 +287,14 @@ export interface WorkflowNodeErrorDetail {
   recordedAt: number;
 }
 
+/** On-demand AI guess persisted on a node run as `payload.ai_diagnosis`. */
+export interface WorkflowNodeAiDiagnosis {
+  text: string;
+  agentCli: string;
+  model: string;
+  generatedAt: number;
+}
+
 export interface GraphWorkflowNodeState {
   status: GraphWorkflowNodeStatus;
   /** Session bound to this node execution; opaque to the workflow UI. */
@@ -298,6 +306,8 @@ export interface GraphWorkflowNodeState {
   errorDetail?: WorkflowNodeErrorDetail;
   /** Snapshot id recorded when this node last ran, from `payload.snapshot_id`. */
   snapshotId?: string;
+  /** On-demand AI guess stored as `payload.ai_diagnosis`; never used for scheduling or resume. */
+  aiDiagnosis?: WorkflowNodeAiDiagnosis;
   /** ACP stop reason recorded in `payload.stop_reason` when the node succeeded. */
   stopReason?: string;
   /** What this step received when it started (kickoff, upstream, schema…). */

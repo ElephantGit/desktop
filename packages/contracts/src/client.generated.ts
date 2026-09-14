@@ -788,6 +788,13 @@ export function createContractsClient(
           transport,
           options,
         ),
+      diagnoseNodeFailure: (request, options) =>
+        executeOperation(
+          "diagnoseWorkflowNodeFailure",
+          request,
+          transport,
+          options,
+        ),
       get: (request, options) =>
         executeOperation(
           "getWorkflowRun",

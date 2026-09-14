@@ -45,6 +45,7 @@ export const tauriCommands = {
   deleteWorkflow: "delete_workflow",
   deleteWorkflowRun: "delete_workflow_run",
   deleteWorkspaceEntry: "delete_workspace_entry",
+  diagnoseWorkflowNodeFailure: "diagnose_workflow_node_failure",
   getAgent: "get_agent",
   getAgentRuntimeStatus: "get_agent_runtime_status",
   getDeveloperMode: "get_developer_mode",

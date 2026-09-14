@@ -15,6 +15,8 @@ use super::workflow_run::map_run_row;
 use super::workspace::{map_workspace_row, workspace_select_sql};
 use crate::repository::RepositoryPool;
 
+mod ai_diagnosis;
+mod cancel;
 mod current_nodes;
 mod failure_detail;
 mod finish;
@@ -468,6 +470,15 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
         )
     }
 
+    fn record_node_ai_diagnosis(
+        &self,
+        node_run_id: &WorkflowNodeRunId,
+        diagnosis_json: &str,
+        now: i64,
+    ) -> Result<(), RepositoryError> {
+        ai_diagnosis::record_node_ai_diagnosis(&self.pool, node_run_id, diagnosis_json, now)
+    }
+
     fn finish_run(
         &self,
         run_id: &WorkflowRunId,
@@ -482,43 +493,7 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
         run_id: &WorkflowRunId,
         now: i64,
     ) -> Result<CancelWorkflowRunResult, RepositoryError> {
-        self.pool
-            .with_connection_mut(|connection| {
-                let transaction =
-                    Transaction::new(connection, TransactionBehavior::Immediate)?;
-                let status = transaction
-                    .query_row(
-                        "SELECT run_status FROM workflow_runs WHERE id = ?1 AND is_deleted = 0",
-                        params![run_id.as_ref()],
-                        |row| row.get::<_, i64>(0),
-                    )
-                    .optional()?;
-                let Some(status) = status else {
-                    return Ok(CancelWorkflowRunResult::NotFound);
-                };
-                if WorkflowRunStatus::from_database_value(status)? != WorkflowRunStatus::Running {
-                    return Ok(CancelWorkflowRunResult::NotActive);
-                }
-                transaction.execute(
-                    "UPDATE workflow_node_runs SET status = ?2, finished_at = ?3, updated_at = ?3
-                     WHERE run_id = ?1 AND status IN (0, 1) AND is_deleted = 0",
-                    params![run_id.as_ref(), WorkflowNodeStatus::Cancelled.database_value(), now],
-                )?;
-                let state = current_nodes_to_state(&[])?;
-                transaction.execute(
-                    "UPDATE workflow_runs SET run_status = ?2, finished_at = ?3, updated_at = ?3, state = ?4
-                     WHERE id = ?1 AND is_deleted = 0",
-                    params![
-                        run_id.as_ref(),
-                        WorkflowRunStatus::Cancelled.database_value(),
-                        now,
-                        state,
-                    ],
-                )?;
-                transaction.commit()?;
-                Ok(CancelWorkflowRunResult::Cancelled)
-            })
-            .map_err(engine_repository_error_from_database)
+        cancel::cancel_run(&self.pool, run_id, now)
     }
 
     fn restart_run(

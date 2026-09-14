@@ -236,6 +236,7 @@ pub enum PublicError {
     WorkflowRunNotEditable(EmptyErrorParams),
     WorkflowNodeNotFound(EmptyErrorParams),
     WorkflowNodeNotAwaitingInput(EmptyErrorParams),
+    WorkflowNodeNotDiagnosable(EmptyErrorParams),
 }
 
 impl PublicError {
@@ -363,6 +364,7 @@ impl PublicError {
             Self::WorkflowRunNotEditable(_) => "workflow_run_not_editable",
             Self::WorkflowNodeNotFound(_) => "workflow_node_not_found",
             Self::WorkflowNodeNotAwaitingInput(_) => "workflow_node_not_awaiting_input",
+            Self::WorkflowNodeNotDiagnosable(_) => "workflow_node_not_diagnosable",
         }
     }
 }
@@ -556,6 +558,7 @@ mod tests {
             ),
             PublicError::WorkflowNodeNotFound(empty),
             PublicError::WorkflowNodeNotAwaitingInput(empty),
+            PublicError::WorkflowNodeNotDiagnosable(empty),
         ];
 
         for error in &samples {
@@ -670,7 +673,8 @@ mod tests {
                 | PublicError::WorkflowSnapshotIncompatibleWithResume(_)
                 | PublicError::WorkflowRunNotEditable(_)
                 | PublicError::WorkflowNodeNotFound(_)
-                | PublicError::WorkflowNodeNotAwaitingInput(_) => {}
+                | PublicError::WorkflowNodeNotAwaitingInput(_)
+                | PublicError::WorkflowNodeNotDiagnosable(_) => {}
             }
         }
 
@@ -681,7 +685,7 @@ mod tests {
     #[test]
     fn public_error_codes_match_serde_tags_for_every_variant() {
         let samples = public_error_samples();
-        assert_eq!(samples.len(), 104);
+        assert_eq!(samples.len(), 105);
 
         for error in samples {
             let serialized = serde_json::to_value(&error).unwrap();
