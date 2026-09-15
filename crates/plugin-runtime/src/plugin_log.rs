@@ -19,3 +19,6 @@ pub use record::{DEFAULT_PLUGIN_TARGET, RAW_STDERR_TARGET};
 pub use sink::ACTIVE_LOG_FILE_NAME;
 
 pub(crate) use pipeline::{PluginLogCounters, PluginLogPipeline, finish, start};
+
+#[cfg(test)]
+mod pipeline_tests;

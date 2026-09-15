@@ -603,6 +603,10 @@ mod childprocess_tests;
 #[cfg(test)]
 mod data_plane_tests;
 #[cfg(test)]
+mod log_directory_tests;
+#[cfg(test)]
+mod log_level_tests;
+#[cfg(test)]
 mod storage_tests;
 #[cfg(test)]
 mod tests;

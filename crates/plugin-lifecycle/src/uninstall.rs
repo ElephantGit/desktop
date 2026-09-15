@@ -262,12 +262,14 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::TempDir;
 
+    /// Fails the N-th rename (0-based) so a test can break staging after specific moves.
     #[derive(Clone)]
-    struct FailSecondRename {
+    struct FailNthRename {
         calls: Arc<AtomicUsize>,
+        failing_call: usize,
     }
 
-    impl UninstallFileSystem for FailSecondRename {
+    impl UninstallFileSystem for FailNthRename {
         fn is_directory(&self, path: &Path) -> bool {
             path.is_dir()
         }
@@ -285,8 +287,8 @@ mod tests {
         }
 
         fn rename(&self, source: &Path, destination: &Path) -> std::io::Result<()> {
-            if self.calls.fetch_add(/*val*/ 1, Ordering::SeqCst) == 1 {
-                return Err(std::io::Error::other("injected data move failure"));
+            if self.calls.fetch_add(/*val*/ 1, Ordering::SeqCst) == self.failing_call {
+                return Err(std::io::Error::other("injected move failure"));
             }
             fs::rename(source, destination)
         }
@@ -294,6 +296,144 @@ mod tests {
         fn remove_dir_all(&self, path: &Path) -> std::io::Result<()> {
             fs::remove_dir_all(path)
         }
+    }
+
+    /// Writes one installed package plus its data and log trees, returning the discovered plugin
+    /// and the three roots.
+    fn installed_with_data_and_logs(
+        temporary: &TempDir,
+    ) -> (
+        ora_plugin_manager::InstalledPlugin,
+        std::path::PathBuf,
+        std::path::PathBuf,
+        std::path::PathBuf,
+    ) {
+        let package_root = temporary
+            .path()
+            .join("plugins")
+            .join("installed")
+            .join("official")
+            .join("example")
+            .join("1.0.0");
+        fs::create_dir_all(&package_root).expect("create package root");
+        fs::write(
+            package_root.join("main.js"),
+            "export {};
+",
+        )
+        .expect("write entrypoint");
+        fs::write(
+            package_root.join("orax.toml"),
+            "resolver = 1
+identifier = \"example\"
+namespace = \"official\"
+kind = \"agent\"
+version = \"1.0.0\"
+description = \"Example\"
+",
+        )
+        .expect("write manifest");
+        let data_root = temporary
+            .path()
+            .join("plugins")
+            .join("data")
+            .join("official")
+            .join("example");
+        fs::create_dir_all(&data_root).expect("create plugin data");
+        fs::write(data_root.join("store.json"), "{}").expect("write plugin data");
+        let log_root = temporary
+            .path()
+            .join("plugins")
+            .join("logs")
+            .join("official")
+            .join("example");
+        fs::create_dir_all(&log_root).expect("create plugin logs");
+        fs::write(
+            log_root.join("plugin.log"),
+            "{}
+",
+        )
+        .expect("write plugin log");
+        let plugin = PluginManager::discover(temporary.path())
+            .installed_plugins()
+            .first()
+            .cloned()
+            .expect("discover plugin");
+        (plugin, package_root, data_root, log_root)
+    }
+
+    /// Deleting data stages the package, the data tree, and the log tree together; committing
+    /// removes all three and retaining data leaves both trees alone.
+    #[test]
+    fn stages_the_log_tree_with_the_data_tree() {
+        for (disposition, expect_trees) in [
+            (PluginDataDisposition::Delete, false),
+            (PluginDataDisposition::Retain, true),
+        ] {
+            let temporary = TempDir::new().expect("create uninstall root");
+            let (plugin, package_root, data_root, log_root) =
+                installed_with_data_and_logs(&temporary);
+
+            let staged = stage_uninstall_with_file_system(
+                temporary.path(),
+                &plugin,
+                disposition,
+                FailNthRename {
+                    calls: Arc::new(AtomicUsize::new(0)),
+                    failing_call: usize::MAX,
+                },
+            )
+            .expect("staging succeeds");
+            staged.cleanup().expect("cleanup staging");
+
+            assert_eq!(
+                (
+                    package_root.exists(),
+                    data_root.join("store.json").is_file(),
+                    log_root.join("plugin.log").is_file(),
+                ),
+                (false, expect_trees, expect_trees),
+                "{disposition:?}"
+            );
+        }
+    }
+
+    /// A log-tree move failure rolls the already staged installation and data back to their
+    /// exact source paths, so a delete-data uninstall never reports success with logs left over.
+    #[test]
+    fn rolls_back_installation_and_data_when_staging_logs_fails() {
+        let temporary = TempDir::new().expect("create uninstall root");
+        let (plugin, package_root, data_root, log_root) = installed_with_data_and_logs(&temporary);
+
+        let error = stage_uninstall_with_file_system(
+            temporary.path(),
+            &plugin,
+            PluginDataDisposition::Delete,
+            FailNthRename {
+                calls: Arc::new(AtomicUsize::new(0)),
+                failing_call: 2,
+            },
+        )
+        .err()
+        .expect("staging must fail");
+
+        assert_eq!(
+            (
+                error.to_string(),
+                package_root.join("main.js").is_file(),
+                data_root.join("store.json").is_file(),
+                log_root.join("plugin.log").is_file(),
+            ),
+            (
+                format!(
+                    "failed to stage plugin uninstall at `{}`",
+                    log_root.display()
+                ),
+                true,
+                true,
+                true,
+            )
+        );
     }
 
     /// A data-move failure rolls the already staged installation back to its exact source path.
@@ -327,8 +467,9 @@ mod tests {
             .first()
             .cloned()
             .expect("discover plugin");
-        let file_system = FailSecondRename {
+        let file_system = FailNthRename {
             calls: Arc::new(AtomicUsize::new(0)),
+            failing_call: 1,
         };
 
         let error = stage_uninstall_with_file_system(

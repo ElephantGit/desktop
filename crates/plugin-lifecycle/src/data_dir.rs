@@ -108,7 +108,7 @@ impl PluginLogDirectories {
 
 #[cfg(test)]
 mod tests {
-    use super::PluginDataDirectories;
+    use super::{PluginDataDirectories, PluginLogDirectories};
     use ora_domain::PluginId;
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
@@ -135,6 +135,40 @@ mod tests {
         assert_eq!(
             (first, second, expected.join("downloads").is_dir()),
             (expected.clone(), expected, true),
+        );
+    }
+
+    /// Log directories sit beside, never inside, the data tree and are removed as a whole.
+    #[test]
+    fn log_directories_are_a_sibling_tree_keyed_by_identity() {
+        let temp_dir = TempDir::new().expect("create data directory");
+        let logs = PluginLogDirectories::new(temp_dir.path());
+        let plugin_id = PluginId::new("official", "ora.example").expect("plugin id");
+        let directory = logs.path_for(&plugin_id);
+        std::fs::create_dir_all(&directory).expect("create log directory");
+        std::fs::write(directory.join("plugin.log"), "{}\n").expect("write log");
+
+        logs.remove(&plugin_id).expect("remove log directory");
+        logs.remove(&plugin_id).expect("remove missing directory");
+
+        assert_eq!(
+            (
+                directory.clone(),
+                directory.exists(),
+                PluginDataDirectories::new(temp_dir.path())
+                    .path_for(&plugin_id)
+                    .starts_with(logs.root()),
+            ),
+            (
+                temp_dir
+                    .path()
+                    .join("plugins")
+                    .join("logs")
+                    .join("official")
+                    .join("ora.example"),
+                false,
+                false,
+            )
         );
     }
 

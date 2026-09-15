@@ -185,3 +185,159 @@ fn strip_carriage_return(mut bytes: Vec<u8>) -> Vec<u8> {
     }
     bytes
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{DecodedRecord, PluginLogRecord, RecordOrigin, decode_frame};
+    use ora_logging::LogLevel;
+    use ora_utils::text::LineFrame;
+    use pretty_assertions::assert_eq;
+    use serde_json::{Map, json};
+    use time::macros::datetime;
+
+    fn origin() -> RecordOrigin {
+        RecordOrigin {
+            plugin_id: "official/example".to_string(),
+            generation: 3,
+        }
+    }
+
+    const NOW: time::OffsetDateTime = datetime!(2026-09-14 10:00:00 +08:00);
+
+    /// Host identity overwrites whatever the payload claimed, and reserved keys stay in
+    /// `context` instead of being promoted to trusted top-level fields.
+    #[test]
+    fn structured_records_carry_host_identity_and_never_promote_reserved_keys() {
+        let frame = LineFrame::Line(
+            br#"@ora/plugin-log/v1 {"level":"ERROR","message":"boom","context":{"plugin_id":"evil/other","generation":99,"request_id":"r1","trace_id":"t1","span":"s"},"error":{"name":"E"}}"#
+                .to_vec(),
+        );
+        let decoded = decode_frame(frame, &origin(), NOW);
+        let mut context = Map::new();
+        context.insert("plugin_id".to_string(), json!("official/example"));
+        context.insert("generation".to_string(), json!(3));
+        context.insert("request_id".to_string(), json!("r1"));
+        context.insert("trace_id".to_string(), json!("t1"));
+        context.insert("span".to_string(), json!("s"));
+        let mut error = Map::new();
+        error.insert("name".to_string(), json!("E"));
+        assert_eq!(
+            decoded,
+            DecodedRecord {
+                record: PluginLogRecord {
+                    timestamp: NOW,
+                    level: LogLevel::Error,
+                    target: "plugin".to_string(),
+                    message: "boom".to_string(),
+                    method: None,
+                    context,
+                    error: Some(error),
+                },
+                format_failure: None,
+            }
+        );
+        let line = decoded.record.to_json_line();
+        let parsed: serde_json::Value = serde_json::from_str(line.trim_end()).expect("json line");
+        assert_eq!(
+            (
+                line.ends_with('\n'),
+                parsed.get("request_id"),
+                parsed.get("trace_id"),
+                parsed.get("span"),
+                parsed["timestamp"].as_str(),
+                parsed["level"].as_str(),
+            ),
+            (
+                true,
+                None,
+                None,
+                None,
+                Some("2026-09-14T10:00:00+08:00"),
+                Some("ERROR"),
+            )
+        );
+    }
+
+    /// Legacy SDK prefixes, invalid envelopes, and CRLF text all become raw `INFO` records under
+    /// `plugin.stderr`, with invalid envelopes naming their failure class.
+    #[test]
+    fn everything_else_becomes_a_raw_info_record() {
+        let cases: [(&[u8], Option<&str>); 4] = [
+            (b"[plugin:error] boom\r", None),
+            (b"@ora/plugin-log/v9 {}", Some("unknown_version")),
+            (b"@ora/plugin-log/v1 {oops", Some("malformed_json")),
+            (
+                b"@ora/plugin-log/v1 {\"level\":\"NOPE\",\"message\":\"m\"}",
+                Some("invalid_payload"),
+            ),
+        ];
+        let expected_messages = [
+            "[plugin:error] boom",
+            "@ora/plugin-log/v9 {}",
+            "@ora/plugin-log/v1 {oops",
+            "@ora/plugin-log/v1 {\"level\":\"NOPE\",\"message\":\"m\"}",
+        ];
+        for ((bytes, failure), message) in cases.iter().zip(expected_messages) {
+            let decoded = decode_frame(LineFrame::Line(bytes.to_vec()), &origin(), NOW);
+            let mut context = Map::new();
+            if let Some(failure) = failure {
+                context.insert("format_failure".to_string(), json!(failure));
+            }
+            context.insert("plugin_id".to_string(), json!("official/example"));
+            context.insert("generation".to_string(), json!(3));
+            assert_eq!(
+                decoded,
+                DecodedRecord {
+                    record: PluginLogRecord {
+                        timestamp: NOW,
+                        level: LogLevel::Info,
+                        target: "plugin.stderr".to_string(),
+                        message: message.to_string(),
+                        method: None,
+                        context,
+                        error: None,
+                    },
+                    format_failure: *failure,
+                }
+            );
+        }
+    }
+
+    /// Fragments and invalid UTF-8 keep their bytes and say how they were rendered.
+    #[test]
+    fn fragments_and_invalid_bytes_are_preserved_traceably() {
+        let decoded = decode_frame(
+            LineFrame::Fragment {
+                sequence: 7,
+                index: 2,
+                last: true,
+                bytes: b"tail\xff\r".to_vec(),
+            },
+            &origin(),
+            NOW,
+        );
+        let mut context = Map::new();
+        context.insert("encoding".to_string(), json!("escaped-bytes"));
+        context.insert("plugin_id".to_string(), json!("official/example"));
+        context.insert("generation".to_string(), json!(3));
+        context.insert(
+            "fragment".to_string(),
+            json!({ "sequence": 7, "index": 2, "last": true }),
+        );
+        assert_eq!(
+            decoded,
+            DecodedRecord {
+                record: PluginLogRecord {
+                    timestamp: NOW,
+                    level: LogLevel::Info,
+                    target: "plugin.stderr".to_string(),
+                    message: "tail\\xff".to_string(),
+                    method: None,
+                    context,
+                    error: None,
+                },
+                format_failure: None,
+            }
+        );
+    }
+}

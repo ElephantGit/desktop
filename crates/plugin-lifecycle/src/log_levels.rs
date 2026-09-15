@@ -199,3 +199,119 @@ impl PluginLogLevels {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{DEFAULT_PLUGIN_LOG_LEVEL, PluginLogLevelState, PluginLogLevels};
+    use ora_domain::PluginId;
+    use ora_logging::LogLevel;
+    use pretty_assertions::assert_eq;
+    use tempfile::TempDir;
+
+    fn id(name: &str) -> PluginId {
+        PluginId::new("official", name).expect("plugin id")
+    }
+
+    /// Unset plugins report the default; a set level persists across reopen, publishes to live
+    /// subscribers, and leaves other plugins untouched.
+    #[test]
+    fn levels_are_per_plugin_persisted_and_published_live() {
+        let temp = TempDir::new().expect("temp dir");
+        let levels = PluginLogLevels::open(temp.path());
+        let a_live = levels.subscribe(&id("a"));
+        let b_live = levels.subscribe(&id("b"));
+        assert_eq!(
+            (levels.state(&id("a")), *a_live.borrow()),
+            (
+                PluginLogLevelState {
+                    level: DEFAULT_PLUGIN_LOG_LEVEL,
+                    configured: false
+                },
+                LogLevel::Info
+            )
+        );
+
+        levels.set(&id("a"), LogLevel::Debug).expect("set a");
+
+        let reopened = PluginLogLevels::open(temp.path());
+        assert_eq!(
+            (
+                *a_live.borrow(),
+                *b_live.borrow(),
+                levels.state(&id("b")),
+                reopened.state(&id("a")),
+                reopened.state(&id("b")),
+            ),
+            (
+                LogLevel::Debug,
+                LogLevel::Info,
+                PluginLogLevelState {
+                    level: LogLevel::Info,
+                    configured: false
+                },
+                PluginLogLevelState {
+                    level: LogLevel::Debug,
+                    configured: true
+                },
+                PluginLogLevelState {
+                    level: LogLevel::Info,
+                    configured: false
+                },
+            )
+        );
+    }
+
+    /// A failed persist reports an error and changes neither the effective nor the stored level.
+    #[test]
+    fn a_failed_persist_changes_nothing() {
+        let temp = TempDir::new().expect("temp dir");
+        let levels = PluginLogLevels::open(temp.path());
+        levels.set(&id("a"), LogLevel::Warn).expect("initial set");
+        let live = levels.subscribe(&id("a"));
+        // Occupying the parent path with a file makes the atomic replace fail.
+        let plugins_dir = temp.path().join("plugins");
+        std::fs::remove_dir_all(&plugins_dir).expect("remove plugins dir");
+        std::fs::write(&plugins_dir, "not a directory").expect("occupy path");
+
+        let error = levels
+            .set(&id("a"), LogLevel::Trace)
+            .err()
+            .expect("persist fails");
+
+        assert_eq!(
+            (error.path, levels.state(&id("a")), *live.borrow(),),
+            (
+                plugins_dir.join("log-levels.json"),
+                PluginLogLevelState {
+                    level: LogLevel::Warn,
+                    configured: true
+                },
+                LogLevel::Warn,
+            )
+        );
+    }
+
+    /// Clearing removes the entry, publishes the default, and is a no-op for unset plugins.
+    #[test]
+    fn clear_restores_the_default_and_tolerates_unset_plugins() {
+        let temp = TempDir::new().expect("temp dir");
+        let levels = PluginLogLevels::open(temp.path());
+        let live = levels.subscribe(&id("a"));
+        levels.set(&id("a"), LogLevel::Error).expect("set");
+        levels.clear(&id("a")).expect("clear");
+        levels.clear(&id("never-set")).expect("clear unset");
+        assert_eq!(
+            (
+                *live.borrow(),
+                PluginLogLevels::open(temp.path()).state(&id("a")),
+            ),
+            (
+                LogLevel::Info,
+                PluginLogLevelState {
+                    level: LogLevel::Info,
+                    configured: false
+                }
+            )
+        );
+    }
+}

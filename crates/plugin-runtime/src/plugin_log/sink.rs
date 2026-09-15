@@ -168,3 +168,101 @@ fn open_without_following_links(path: &Path) -> io::Result<File> {
     }
     options.open(path)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{PluginLogSink, SinkOpenError};
+    use pretty_assertions::assert_eq;
+    use std::path::Path;
+    use tempfile::TempDir;
+
+    /// The root and every level below it are created, records append across reopen, and an
+    /// existing plain tree is reused rather than replaced.
+    #[test]
+    fn creates_every_level_reuses_and_appends() {
+        let temp = TempDir::new().expect("temp dir");
+        let root = temp.path().join("plugins").join("logs");
+        let directory = root.join("official").join("example");
+        let mut sink = PluginLogSink::open(&root, &directory).expect("first open");
+        sink.write_line("{\"a\":1}\n").expect("write");
+        sink.flush().expect("flush");
+        drop(sink);
+        let mut sink = PluginLogSink::open(&root, &directory).expect("second open");
+        sink.write_line("{\"b\":2}\n").expect("write");
+        sink.flush().expect("flush");
+        assert_eq!(
+            std::fs::read_to_string(directory.join("plugin.log")).expect("read log"),
+            "{\"a\":1}\n{\"b\":2}\n"
+        );
+    }
+
+    /// A file under a directory level, a non-regular active file, and a directory outside the
+    /// root are conflicts that leave the filesystem untouched.
+    #[test]
+    fn foreign_paths_are_a_conflict_and_stay_untouched() {
+        let temp = TempDir::new().expect("temp dir");
+        let root = temp.path().join("logs");
+        std::fs::create_dir_all(&root).expect("root");
+        std::fs::write(root.join("official"), "not a directory").expect("foreign file");
+        let error = PluginLogSink::open(&root, &root.join("official").join("example"))
+            .err()
+            .expect("conflict");
+        assert!(matches!(error, SinkOpenError::Conflict { .. }), "{error}");
+        assert_eq!(
+            std::fs::read_to_string(root.join("official")).expect("foreign file"),
+            "not a directory"
+        );
+
+        let other = root.join("other").join("example");
+        std::fs::create_dir_all(other.join("plugin.log")).expect("directory named plugin.log");
+        let error = PluginLogSink::open(&root, &other).err().expect("conflict");
+        assert!(matches!(error, SinkOpenError::Conflict { .. }), "{error}");
+        assert!(other.join("plugin.log").is_dir());
+
+        let outside = temp.path().join("elsewhere");
+        let error = PluginLogSink::open(&root, &outside)
+            .err()
+            .expect("conflict");
+        assert!(matches!(error, SinkOpenError::Conflict { .. }), "{error}");
+        assert!(!outside.exists());
+
+        let escaping = root.join("..").join("escaping");
+        let error = PluginLogSink::open(&root, &escaping)
+            .err()
+            .expect("conflict");
+        assert!(matches!(error, SinkOpenError::Conflict { .. }), "{error}");
+        assert!(!Path::new(&escaping).exists());
+    }
+
+    /// A symlinked directory level or active file is refused so writes never leave the root.
+    #[cfg(unix)]
+    #[test]
+    fn symlinks_at_any_level_are_refused() {
+        let temp = TempDir::new().expect("temp dir");
+        let root = temp.path().join("logs");
+        std::fs::create_dir_all(root.join("official")).expect("root");
+        let elsewhere = temp.path().join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).expect("elsewhere");
+        std::os::unix::fs::symlink(&elsewhere, root.join("official").join("linked"))
+            .expect("dir symlink");
+        let error = PluginLogSink::open(&root, &root.join("official").join("linked"))
+            .err()
+            .expect("conflict");
+        assert!(matches!(error, SinkOpenError::Conflict { .. }), "{error}");
+
+        let plain = root.join("official").join("plain");
+        std::fs::create_dir_all(&plain).expect("plain");
+        let target = temp.path().join("elsewhere.log");
+        std::fs::write(&target, "").expect("target");
+        std::os::unix::fs::symlink(&target, plain.join("plugin.log")).expect("file symlink");
+        let error = PluginLogSink::open(&root, &plain).err().expect("conflict");
+        assert!(matches!(error, SinkOpenError::Conflict { .. }), "{error}");
+        assert_eq!(
+            (
+                std::fs::read_dir(&elsewhere).expect("elsewhere").count(),
+                std::fs::read_to_string(&target).expect("target"),
+            ),
+            (0, String::new())
+        );
+    }
+}
