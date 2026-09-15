@@ -1,5 +1,10 @@
 import type { ReactElement } from "react";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@ora/ui";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@ora/ui";
 
 /** Cursor-style pause before the full sidebar title appears beside the row. */
 export const TREE_ROW_OVERFLOW_TOOLTIP_DELAY_MS = 400;
@@ -19,15 +24,17 @@ export function TreeRowOverflowTooltip({
   children: ReactElement;
 }) {
   return (
-    <Tooltip delay={TREE_ROW_OVERFLOW_TOOLTIP_DELAY_MS}>
-      <TooltipTrigger render={children} />
-      <TooltipContent
-        side="right"
-        sideOffset={8}
-        className="max-w-xs whitespace-normal break-words text-left"
-      >
-        {text}
-      </TooltipContent>
-    </Tooltip>
+    <TooltipProvider delay={TREE_ROW_OVERFLOW_TOOLTIP_DELAY_MS}>
+      <Tooltip>
+        <TooltipTrigger render={children} />
+        <TooltipContent
+          side="right"
+          sideOffset={8}
+          className="max-w-xs whitespace-normal break-words text-left"
+        >
+          {text}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
