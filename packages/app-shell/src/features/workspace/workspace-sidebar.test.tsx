@@ -1580,6 +1580,26 @@ describe("WorkspaceSidebar", () => {
     expect(treeRow("Stale chat metadata")).toBeNull();
   });
 
+  it("reveals the full session title in a right-side tooltip on hover", async () => {
+    const user = userEvent.setup();
+    const title = "文件树右键菜单以及一段足够长会被侧栏截断的会话标题内容";
+    const state = workspaceWithOneSession();
+    state.sessions = [{ ...SESSION, title }];
+    renderSidebar(state);
+
+    const row = await waitFor(() => {
+      const found = treeRow(title);
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(screen.queryByRole("tooltip", { hidden: true })).toBeNull();
+
+    await user.hover(row);
+    expect(
+      await screen.findByRole("tooltip", { hidden: true }),
+    ).toHaveTextContent(title);
+  });
+
   it("searches persisted titles but not agent labels or the localized fallback", async () => {
     const user = userEvent.setup();
     const state = workspaceWithOneSession();
