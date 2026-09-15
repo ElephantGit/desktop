@@ -268,7 +268,7 @@ export const chatTranslations = {
     "chat.content.binaryResource": "二进制资源",
     "chat.content.download": "下载 {{name}}",
     "chat.turnCancelled": "本轮已停止",
-    "chat.turnRetrying": "已重试 {{retry}}/{{maxRetries}} 次",
+    "chat.turnRetrying": "正在重试 {{retry}}/{{maxRetries}}",
     "chat.turnRetryUnreachable": "Agent 无响应",
     "chat.turnRetriesExhausted": "Agent 仍无响应，已重试 {{maxRetries}} 次",
     "chat.turnFailed": "本轮执行失败",
@@ -616,7 +616,7 @@ export const chatTranslations = {
     "chat.content.binaryResource": "Binary resource",
     "chat.content.download": "Download {{name}}",
     "chat.turnCancelled": "This turn was stopped",
-    "chat.turnRetrying": "Retry {{retry}} of {{maxRetries}}",
+    "chat.turnRetrying": "Retrying {{retry}}/{{maxRetries}}",
     "chat.turnRetryUnreachable": "The agent stopped responding",
     "chat.turnRetriesExhausted":
       "The agent never came back after {{maxRetries}} retries",
