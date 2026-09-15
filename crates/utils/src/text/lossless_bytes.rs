@@ -61,3 +61,29 @@ fn push_escaping_backslashes(output: &mut String, text: &str) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{ByteRendering, render_bytes_lossless};
+    use pretty_assertions::assert_eq;
+    use std::borrow::Cow;
+
+    /// Valid UTF-8 is returned untouched, backslashes included.
+    #[test]
+    fn valid_utf8_is_returned_verbatim() {
+        assert_eq!(
+            render_bytes_lossless("路径 C:\\logs".as_bytes()),
+            (Cow::Borrowed("路径 C:\\logs"), ByteRendering::Utf8)
+        );
+    }
+
+    /// Invalid bytes are spelled out and backslashes doubled so the original is recoverable.
+    #[test]
+    fn invalid_bytes_are_escaped_reversibly() {
+        let (rendered, rendering) = render_bytes_lossless(b"ok\\\xff\xfe end\xe4\xbd");
+        assert_eq!(
+            (rendered.as_ref(), rendering),
+            ("ok\\\\\\xff\\xfe end\\xe4\\xbd", ByteRendering::Escaped)
+        );
+    }
+}

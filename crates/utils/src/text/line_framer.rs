@@ -131,3 +131,112 @@ impl BoundedLineFramer {
         frame
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{BoundedLineFramer, LineFrame};
+    use pretty_assertions::assert_eq;
+
+    /// Collects every frame from one framer fed `chunks` and then finished.
+    fn frames_for(limit: usize, chunks: &[&[u8]]) -> Vec<LineFrame> {
+        let mut framer = BoundedLineFramer::new(limit);
+        let mut frames = Vec::new();
+        for chunk in chunks {
+            frames.extend(framer.push(chunk));
+        }
+        frames.extend(framer.finish());
+        frames
+    }
+
+    /// Splitting the input at every possible boundary produces identical frames.
+    #[test]
+    fn frames_do_not_depend_on_chunk_boundaries() {
+        let input = b"alpha\nbeta gamma\n\ndelta";
+        let whole = frames_for(8, &[input]);
+        for split in 0..=input.len() {
+            let (head, tail) = input.split_at(split);
+            assert_eq!(frames_for(8, &[head, tail]), whole, "split at {split}");
+        }
+        assert_eq!(
+            whole,
+            vec![
+                LineFrame::Line(b"alpha".to_vec()),
+                LineFrame::Fragment {
+                    sequence: 0,
+                    index: 0,
+                    last: false,
+                    bytes: b"beta gam".to_vec(),
+                },
+                LineFrame::Fragment {
+                    sequence: 0,
+                    index: 1,
+                    last: true,
+                    bytes: b"ma".to_vec(),
+                },
+                LineFrame::Line(Vec::new()),
+                LineFrame::Line(b"delta".to_vec()),
+            ]
+        );
+    }
+
+    /// A record of exactly the limit is one line, not a fragment plus an empty tail.
+    #[test]
+    fn a_record_exactly_at_the_limit_stays_whole() {
+        assert_eq!(
+            frames_for(4, &[b"abcd\nef"]),
+            vec![
+                LineFrame::Line(b"abcd".to_vec()),
+                LineFrame::Line(b"ef".to_vec())
+            ]
+        );
+    }
+
+    /// An unterminated oversized record at end of input still ends with a `last` fragment, and
+    /// separate oversized records get distinct sequence numbers.
+    #[test]
+    fn oversized_records_are_sequenced_and_closed_at_end_of_input() {
+        assert_eq!(
+            frames_for(3, &[b"abcdefg\nhijklm"]),
+            vec![
+                LineFrame::Fragment {
+                    sequence: 0,
+                    index: 0,
+                    last: false,
+                    bytes: b"abc".to_vec(),
+                },
+                LineFrame::Fragment {
+                    sequence: 0,
+                    index: 1,
+                    last: false,
+                    bytes: b"def".to_vec(),
+                },
+                LineFrame::Fragment {
+                    sequence: 0,
+                    index: 2,
+                    last: true,
+                    bytes: b"g".to_vec(),
+                },
+                LineFrame::Fragment {
+                    sequence: 1,
+                    index: 0,
+                    last: false,
+                    bytes: b"hij".to_vec(),
+                },
+                LineFrame::Fragment {
+                    sequence: 1,
+                    index: 1,
+                    last: true,
+                    bytes: b"klm".to_vec(),
+                },
+            ]
+        );
+    }
+
+    /// Finishing an empty framer yields nothing rather than an empty line.
+    #[test]
+    fn finish_without_buffered_bytes_yields_nothing() {
+        let mut framer = BoundedLineFramer::new(8);
+        assert_eq!(framer.push(b"x\n"), vec![LineFrame::Line(b"x".to_vec())]);
+        assert_eq!(framer.finish(), None);
+    }
+}
