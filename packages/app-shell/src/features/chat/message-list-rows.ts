@@ -1,4 +1,4 @@
-import type { ChatModelChange, ChatTurn } from "@ora/chat";
+import type { ChatModelChange, ChatTurn, ChatTurnRetry } from "@ora/chat";
 import { buildTurnDisplayItems } from "./turn-item-grouping";
 
 /** Below this row count the thread stays fully mounted; jsdom tests never measure a viewport. */
@@ -28,7 +28,13 @@ export type MessageListRow =
       turnIndex: number;
       responseAnchor: boolean;
     }
-  | { type: "running"; key: "running"; startedAt: number }
+  | {
+      type: "running";
+      key: "running";
+      startedAt: number;
+      /** Set while the backend has re-sent the streaming turn's prompt after a stall. */
+      retry?: ChatTurnRetry;
+    }
   | { type: "pad"; key: "pad" };
 
 /** Flattens turns into independently measurable rows so a long live tool list can window. */
@@ -105,6 +111,9 @@ export function buildMessageListRows(
       type: "running",
       key: "running",
       startedAt: lastTurn.createdAt,
+      ...(lastTurn.status === "streaming" && lastTurn.retry !== undefined
+        ? { retry: lastTurn.retry }
+        : {}),
     });
   }
   rows.push({ type: "pad", key: "pad" });

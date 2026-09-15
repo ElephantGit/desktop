@@ -15,7 +15,7 @@ import {
 } from "./response-turn";
 import { TurnDiffSummary } from "./turn-diff-summary";
 import { buildTurnDisplayItems } from "./turn-item-grouping";
-import type { ChatTurn } from "@ora/chat";
+import type { ChatTurn, ChatTurnRetry } from "@ora/chat";
 import type { MessageListRow } from "./message-list-rows";
 import { useElapsedDuration } from "./elapsed-clock";
 import { formatElapsedDuration } from "../../lib/format";
@@ -145,7 +145,7 @@ export const MessageListRowView = memo(function MessageListRowView({
       );
     }
     case "running":
-      return <RunningIndicator startedAt={row.startedAt} />;
+      return <RunningIndicator startedAt={row.startedAt} retry={row.retry} />;
     case "pad":
       return <div className="h-8" />;
   }
@@ -212,7 +212,13 @@ function ModelChangeDivider({ modelName }: { modelName: string }) {
  * while the agent is busy. The nine-dot grid carries the motion; the rotating
  * phrase reassures that time is passing rather than that anything has stalled.
  */
-function RunningIndicator({ startedAt }: { startedAt: number }) {
+function RunningIndicator({
+  startedAt,
+  retry,
+}: {
+  startedAt: number;
+  retry?: ChatTurnRetry;
+}) {
   const { t } = useTranslation();
   const words = useMemo(
     () =>
@@ -244,7 +250,16 @@ function RunningIndicator({ startedAt }: { startedAt: number }) {
     return () => clearTimeout(timer);
   }, [words]);
 
-  const word = words[index % words.length] ?? words[0] ?? "";
+  // The retry count replaces the rotating phrase: it is the one status the user
+  // needs while the prompt is being re-sent, and the elapsed time keeps counting
+  // from the original send so the wait reads as one turn.
+  const word =
+    retry === undefined
+      ? (words[index % words.length] ?? words[0] ?? "")
+      : t("chat.turnRetrying", {
+          retry: retry.retry,
+          maxRetries: retry.maxRetries,
+        });
   const elapsed = formatElapsedDuration(
     useElapsedDuration(startedAt, undefined),
   );

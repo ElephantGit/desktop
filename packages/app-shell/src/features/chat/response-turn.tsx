@@ -2,7 +2,6 @@ import {
   IconAlertTriangle,
   IconBan,
   IconInfoCircle,
-  IconRefresh,
 } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import type { ChatTurn } from "@ora/chat";
@@ -112,22 +111,6 @@ export function TurnTotalDuration({ durationMs }: { durationMs?: number }) {
 /** Explains non-standard turn endings without treating them as transport failures. */
 export function TurnEnding({ turn }: { turn: ChatTurn }) {
   const { t } = useTranslation();
-  // A retry is a live condition of the streaming turn, not an ending: once the
-  // turn settles, its final status says what happened and the notice steps aside.
-  if (turn.status === "streaming" && turn.retry !== undefined) {
-    return (
-      <p
-        role="status"
-        className="flex items-center gap-1.5 text-xs text-muted-foreground"
-      >
-        <IconRefresh className="size-3.5" />
-        {t("chat.turnRetrying", {
-          retry: turn.retry.retry,
-          maxRetries: turn.retry.maxRetries,
-        })}
-      </p>
-    );
-  }
   if (turn.status === "cancelled") {
     return (
       <p className="flex items-center gap-1.5 text-xs text-muted-foreground">

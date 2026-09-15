@@ -100,7 +100,12 @@ export function MessageList({
   // just reads as noise. It returns for thoughts, tool calls, and the waits between.
   const streamingBody =
     lastItem?.kind === "message" && lastItem.role === "assistant";
-  const showRunning = isResponding && !streamingBody;
+  // A retried turn keeps the indicator even under streaming text: the stalled
+  // attempt may have left an assistant message as the last item, and the retry
+  // count is the only thing telling the user why the answer restarted.
+  const retrying =
+    lastTurn?.status === "streaming" && lastTurn.retry !== undefined;
+  const showRunning = isResponding && (!streamingBody || retrying);
   const rows = useMemo(
     () => buildMessageListRows(turns, modelChanges, showRunning),
     [modelChanges, showRunning, turns],

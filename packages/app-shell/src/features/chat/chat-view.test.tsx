@@ -2981,6 +2981,46 @@ describe("MessageList", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("reports the retry count in the running indicator, even under streamed text", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(65_100);
+    const retried: ChatTurn = {
+      ...turn(
+        "turn-1",
+        "hello",
+        100,
+        [assistantItem("assistant-1", "Half an answer", 200)],
+        "streaming",
+      ),
+      retry: { retry: 1, maxRetries: 3 },
+    };
+    const view = renderWithI18n(
+      <MessageList turns={[retried]} userName="Eric" isResponding />,
+    );
+    // The stalled attempt left an assistant message last, which would normally
+    // hide the indicator; the retry keeps it and replaces the rotating phrase.
+    const indicator = screen.getByLabelText(/正在运行|is working/);
+    expect(indicator).toHaveTextContent(
+      appI18n.t("chat.turnRetrying", { retry: 1, maxRetries: 3 }),
+    );
+    expect(indicator).toHaveTextContent(
+      `${appI18n.t("chat.elapsedTime")} 1m 05s`,
+    );
+
+    // Settled: the indicator goes and the retry marker leaves no ending of its own.
+    view.rerender(
+      <MessageList
+        turns={[{ ...retried, status: "completed", stopReason: "end_turn" }]}
+        userName="Eric"
+        isResponding={false}
+      />,
+    );
+    expect(
+      screen.queryByLabelText(/正在运行|is working/),
+    ).not.toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent("1/3");
+  });
+
   it("renders streamed assistant text as markdown while keeping the thread responsive", () => {
     renderWithI18n(
       <MessageList
