@@ -22,6 +22,10 @@ This module adapts workflow-run application use cases to the production backend 
   boundaries include explicit blank lines because Agent providers may concatenate ACP blocks
   without adding separators.
 - `interactive/` coordinates human turns and manual completion for interactive nodes.
+- `transitions.rs` commits the node-run transitions that happen outside the scheduling engine —
+  an interactive node parking at awaiting input, a human turn beginning, and a turn ending —
+  through one sink that publishes the run invalidation only when the guarded transition commits,
+  sharing the engine's invalidation mechanism (ADR "node runtime orchestration" D7).
 
 ## Boundaries
 
