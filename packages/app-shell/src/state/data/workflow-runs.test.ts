@@ -2,7 +2,10 @@ import { QueryClient } from "@tanstack/react-query";
 import { mockWorkflowKeys } from "./mock-workflows";
 import { waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
-import { renderHookWithClient } from "../../test/hook-harness";
+import {
+  renderHookWithClient,
+  createTestQueryClient,
+} from "../../test/hook-harness";
 import {
   createTestClient,
   type TestHandlers,
@@ -469,6 +472,79 @@ describe("useRealWorkflowRun", () => {
     expect(result.current.data?.workspaceId).toBe("workspace-t1");
     expect(result.current.data?.run.id).toBe("run-1");
     expect(result.current.data?.run.name).toBe("审查流程 1");
+  });
+
+  it("copies Theater display status onto the sidebar list cache", async () => {
+    const state = seededState();
+    state.workflowRuns[0]!.status = "awaitingInput";
+    state.projects = [{ id: "p1", name: "Demo" }];
+    state.workflows = [
+      {
+        workflow: {
+          id: "workflow-a",
+          namespace: "local",
+          name: "审查流程",
+          publishedSnapshotId: "snap-1",
+          createdAt: 1n,
+          updatedAt: 1n,
+        },
+        draft: {
+          id: "draft-1",
+          workflowId: "workflow-a",
+          version: "draft",
+          graph: GRAPH,
+          createdAt: 1n,
+          updatedAt: 1n,
+        },
+        published: [
+          {
+            id: "snap-1",
+            workflowId: "workflow-a",
+            version: "v1",
+            graph: GRAPH,
+            createdAt: 1n,
+            updatedAt: null,
+          },
+        ],
+      },
+    ];
+    const client = createTestClient(createFixtureHandlers(state));
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(workflowRunKeys.byProject("p1"), [
+      {
+        id: "run-1",
+        name: "审查流程 1",
+        workspaceId: "workspace-t1",
+        projectId: "p1",
+        workflowId: "workflow-a",
+        version: "v1",
+        status: "succeeded" as const,
+        startedAt: null,
+        finishedAt: null,
+        createdAt: 1n,
+      },
+    ]);
+    const { result } = renderHookWithClient(
+      () => useRealWorkflowRun("run-1"),
+      client,
+      queryClient,
+    );
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    expect(result.current.data?.run.status).toBe("awaiting_input");
+    expect(queryClient.getQueryData(workflowRunKeys.byProject("p1"))).toEqual([
+      {
+        id: "run-1",
+        name: "审查流程 1",
+        workspaceId: "workspace-t1",
+        projectId: "p1",
+        workflowId: "workflow-a",
+        version: "v1",
+        status: "awaitingInput",
+        startedAt: null,
+        finishedAt: null,
+        createdAt: 1n,
+      },
+    ]);
   });
 });
 

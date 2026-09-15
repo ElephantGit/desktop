@@ -17,7 +17,13 @@ export interface MockWorkflowRunRecord {
   /** Version label surfaced by list views; mock snapshots always resolve to this. */
   version: string;
   name: string;
-  status: "pending" | "running" | "succeeded" | "failed" | "cancelled";
+  status:
+    | "pending"
+    | "running"
+    | "succeeded"
+    | "failed"
+    | "cancelled"
+    | "awaitingInput";
   workspaceId: string;
   createdAt: bigint;
   updatedAt: bigint;
