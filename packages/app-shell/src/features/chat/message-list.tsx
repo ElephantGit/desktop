@@ -29,6 +29,7 @@ import {
   rowIndexForAnchor,
 } from "./message-list-rows";
 import type * as acp from "@agentclientprotocol/sdk";
+import type { SessionSetupPresentation } from "./session-setup";
 
 interface MessageListProps {
   turns: ChatTurn[];
@@ -36,6 +37,8 @@ interface MessageListProps {
   modelChanges?: ChatModelChange[];
   userName: string;
   isResponding: boolean;
+  /** Ephemeral new-session and handoff timings; history replay intentionally omits them. */
+  sessionSetups?: SessionSetupPresentation[];
   taskId?: string;
   projectId?: string;
   workspaceId?: string;
@@ -52,6 +55,7 @@ export function MessageList({
   modelChanges = EMPTY_MODEL_CHANGES,
   userName,
   isResponding,
+  sessionSetups = [],
   taskId,
   projectId,
   workspaceId,
@@ -105,10 +109,15 @@ export function MessageList({
   // count is the only thing telling the user why the answer restarted.
   const retrying =
     lastTurn?.status === "streaming" && lastTurn.retry !== undefined;
-  const showRunning = isResponding && (!streamingBody || retrying);
+  const showRunning =
+    isResponding &&
+    !sessionSetups.some((setup) => setup.status === "connecting") &&
+    (sessionSetups.every((setup) => setup.turnIndex !== turns.length - 1) ||
+      lastTurn?.responseStartedAt !== undefined) &&
+    (!streamingBody || retrying);
   const rows = useMemo(
-    () => buildMessageListRows(turns, modelChanges, showRunning),
-    [modelChanges, showRunning, turns],
+    () => buildMessageListRows(turns, modelChanges, showRunning, sessionSetups),
+    [modelChanges, sessionSetups, showRunning, turns],
   );
   const windowed =
     viewportHeight > 0 && rows.length >= MESSAGE_LIST_VIRTUALIZE_MIN_ROWS;

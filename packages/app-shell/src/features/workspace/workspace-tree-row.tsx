@@ -30,6 +30,7 @@ import {
   useRenameWorkflowRun,
   useWorkflowRunsByProject,
 } from "../../state/data/workflow-runs";
+import { TreeRowOverflowTooltip } from "./tree-row-overflow-tooltip";
 import { useInlineTreeRename } from "./use-inline-tree-rename";
 
 /**
@@ -206,45 +207,47 @@ export function TreeRow({
               />
             </div>
           ) : (
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={onClick}
-              onDoubleClick={onDoubleClick}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter" && event.key !== " ") return;
-                event.preventDefault();
-                onClick();
-              }}
-              aria-expanded={expanded}
-              className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md text-left text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              style={{ paddingLeft: `${8 + depth * 18}px` }}
-            >
-              <span className="relative flex size-[18px] shrink-0 items-center justify-center">
-                <span
-                  className={`flex items-center justify-center transition-opacity duration-100 ${expanded === undefined ? "" : "group-hover/tree:opacity-0"}`}
-                >
-                  {icon}
+            <TreeRowOverflowTooltip text={label}>
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={onClick}
+                onDoubleClick={onDoubleClick}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  onClick();
+                }}
+                aria-expanded={expanded}
+                className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md text-left text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                style={{ paddingLeft: `${8 + depth * 18}px` }}
+              >
+                <span className="relative flex size-[18px] shrink-0 items-center justify-center">
+                  <span
+                    className={`flex items-center justify-center transition-opacity duration-100 ${expanded === undefined ? "" : "group-hover/tree:opacity-0"}`}
+                  >
+                    {icon}
+                  </span>
+                  {expanded !== undefined &&
+                    (expanded ? (
+                      <IconChevronDown className="absolute size-4 opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100" />
+                    ) : (
+                      <IconChevronRight className="absolute size-4 opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100" />
+                    ))}
                 </span>
-                {expanded !== undefined &&
-                  (expanded ? (
-                    <IconChevronDown className="absolute size-4 opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100" />
-                  ) : (
-                    <IconChevronRight className="absolute size-4 opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100" />
-                  ))}
-              </span>
-              <span className="min-w-0 flex-1 truncate font-medium">
-                {label}
-              </span>
-              {meta && (
-                <span
-                  title={meta}
-                  className={`min-w-0 max-w-28 shrink truncate text-[11px] opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100 group-focus-within/tree:opacity-100 ${active ? "text-sidebar-accent-foreground/80" : "text-muted-foreground"}`}
-                >
-                  {meta}
+                <span className="min-w-0 flex-1 truncate font-medium">
+                  {label}
                 </span>
-              )}
-            </div>
+                {meta && (
+                  <span
+                    title={meta}
+                    className={`min-w-0 max-w-28 shrink truncate text-[11px] opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100 group-focus-within/tree:opacity-100 ${active ? "text-sidebar-accent-foreground/80" : "text-muted-foreground"}`}
+                  >
+                    {meta}
+                  </span>
+                )}
+              </div>
+            </TreeRowOverflowTooltip>
           )}
         </ContextMenuTrigger>
         {/* Rename suppresses restore so the editor keeps focus; other actions still return it. */}

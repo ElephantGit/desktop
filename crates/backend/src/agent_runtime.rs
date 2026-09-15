@@ -45,7 +45,6 @@ use crate::clock::SystemClock;
 use crate::plugin::PluginApi;
 use crate::session_setup::{
     AgentSessionBarriers, BarrierReason, LiveMcpState, SessionMcpHost, SessionMcpSelection,
-    SessionMcpSelectionSource,
 };
 use crate::task::resolve_workspace_cwd;
 use crate::{BackendError, ErrorClassification};
@@ -156,7 +155,6 @@ pub(crate) struct AgentRuntimeManager {
 }
 
 struct ManagerInner {
-    mcp_selections: Arc<dyn SessionMcpSelectionSource>,
     pool: RepositoryPool,
     actors: RwLock<HashMap<SessionId, RuntimeActorHandle>>,
     /// Workflow sessions stay unpublished here until their durable node-run binding exists.
@@ -285,7 +283,6 @@ enum SessionVisibility {
 
 /// Groups the fixed dependencies the agent runtime is constructed from.
 pub(crate) struct AgentRuntimeSetup {
-    pub mcp_selections: Arc<dyn SessionMcpSelectionSource>,
     /// Owns the processes behind plugin-provided agents and the set of installed packages.
     pub plugin_host: Arc<PluginApi>,
     pub pool: RepositoryPool,
@@ -301,7 +298,6 @@ impl AgentRuntimeManager {
     /// Builds the manager, reconciles stale rows, and immediately starts the shared supervisor.
     pub(crate) fn new(setup: AgentRuntimeSetup) -> Result<Self, BackendError> {
         let AgentRuntimeSetup {
-            mcp_selections,
             plugin_host,
             pool,
             home_directory,
@@ -318,7 +314,6 @@ impl AgentRuntimeManager {
             ConnectionSupervisors::start(plugin_host, pool.clone(), home_directory, clock);
         Ok(Self {
             inner: Arc::new(ManagerInner {
-                mcp_selections,
                 pool,
                 actors: RwLock::new(HashMap::new()),
                 unpublished_workflow_sessions: RwLock::new(HashSet::new()),
@@ -547,7 +542,7 @@ impl AgentRuntimeManager {
         let session_mcp = self
             .inner
             .session_mcp
-            .with_selection(self.inner.mcp_selections.selection_for(&session.id)?);
+            .with_selection(session.mcp_selection.clone());
         let target = domain_agent_ref(request.agent_ref)?;
         if target == session.agent_ref {
             return Err(BackendError::new(
@@ -838,7 +833,7 @@ impl AgentRuntimeManager {
         let session_mcp = self
             .inner
             .session_mcp
-            .with_selection(self.inner.mcp_selections.selection_for(&session.id)?);
+            .with_selection(session.mcp_selection.clone());
         let mut opened = self.open_recorder(&session)?;
         let session = match opened.failure.take() {
             Some(reason) => self.settle_record(session, RecordOutcome::JustFailed { reason }),

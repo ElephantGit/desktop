@@ -1822,7 +1822,7 @@ test("shows the user turn before the session is persisted", async () => {
   assert.equal(conversation?.turns[0]?.status, "completed");
 });
 
-test("freezes turn duration when session preparation fails", async () => {
+test("omits response duration when session preparation fails", async () => {
   let timestamp = 100;
   const client: ChatSessionClient = {
     load: () => events<LoadSessionEvent>([]),
@@ -1861,11 +1861,10 @@ test("freezes turn duration when session preparation fails", async () => {
     stopReason: null,
     error: "prepare failed",
     createdAt: 100,
-    durationMs: 150,
   });
 });
 
-test("freezes turn duration when startup is stopped during preparation", async () => {
+test("omits response duration when startup is stopped during preparation", async () => {
   let timestamp = 100;
   let finishPrepare: () => void = () => {};
   const prepared = new Promise<void>((resolve) => {
@@ -1914,8 +1913,39 @@ test("freezes turn duration when startup is stopped during preparation", async (
     stopReason: null,
     error: null,
     createdAt: 100,
-    durationMs: 200,
   });
+});
+
+test("starts response duration after successful session preparation", async () => {
+  let timestamp = 100;
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([]),
+    prompt: () => ({
+      async *[Symbol.asyncIterator]() {
+        timestamp = 450;
+        yield { type: "completed", stopReason: "end_turn" } as const;
+      },
+    }),
+    respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
+  };
+  const store = createChatStore(client, {
+    createId: () => "turn",
+    now: () => timestamp,
+  });
+
+  await store.getState().sendMessage({
+    oraSessionId: "ora-1",
+    text: "hi",
+    prepare: async () => {
+      timestamp = 250;
+      return { availableCommands: [] };
+    },
+  });
+
+  const turn = store.getState().conversations["ora-1"]?.turns[0];
+  assert.equal(turn?.responseStartedAt, 250);
+  assert.equal(turn?.durationMs, 200);
 });
 
 test("rolls back staged load updates when replay fails before completion", async () => {

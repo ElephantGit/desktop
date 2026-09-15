@@ -103,6 +103,8 @@ export interface ChatTurn {
   stopReason: acp.StopReason | null;
   error: string | null;
   createdAt: number;
+  /** Starts after any pre-prompt session preparation, so response time excludes handoff. */
+  responseStartedAt?: number;
   durationMs?: number;
   retry?: ChatTurnRetry;
 }

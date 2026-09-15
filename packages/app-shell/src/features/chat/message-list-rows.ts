@@ -1,5 +1,6 @@
 import type { ChatModelChange, ChatTurn, ChatTurnRetry } from "@ora/chat";
 import { buildTurnDisplayItems } from "./turn-item-grouping";
+import type { SessionSetupPresentation } from "./session-setup";
 
 /** Below this row count the thread stays fully mounted; jsdom tests never measure a viewport. */
 export const MESSAGE_LIST_VIRTUALIZE_MIN_ROWS = 8;
@@ -7,6 +8,7 @@ export const MESSAGE_LIST_VIRTUALIZE_MIN_ROWS = 8;
 export type MessageListRow =
   | { type: "modelChange"; key: string; modelName: string }
   | { type: "user"; key: string; turnIndex: number }
+  | ({ type: "sessionSetup"; key: string } & SessionSetupPresentation)
   | {
       type: "display";
       key: string;
@@ -42,6 +44,7 @@ export function buildMessageListRows(
   turns: ChatTurn[],
   modelChanges: ChatModelChange[],
   showRunning: boolean,
+  sessionSetups: SessionSetupPresentation[] = [],
 ): MessageListRow[] {
   const rows: MessageListRow[] = [];
   for (let turnIndex = 0; turnIndex < turns.length; turnIndex += 1) {
@@ -54,6 +57,15 @@ export function buildMessageListRows(
       });
     }
     rows.push({ type: "user", key: `${turn.id}:user`, turnIndex });
+    for (const setup of sessionSetups.filter(
+      (candidate) => candidate.turnIndex === turnIndex,
+    )) {
+      rows.push({
+        type: "sessionSetup",
+        key: `session-setup:${setup.id}`,
+        ...setup,
+      });
+    }
     const showResponse = turn.items.length > 0 || turn.status !== "streaming";
     if (!showResponse) {
       continue;
@@ -110,7 +122,7 @@ export function buildMessageListRows(
     rows.push({
       type: "running",
       key: "running",
-      startedAt: lastTurn.createdAt,
+      startedAt: lastTurn.responseStartedAt ?? lastTurn.createdAt,
       ...(lastTurn.status === "streaming" && lastTurn.retry !== undefined
         ? { retry: lastTurn.retry }
         : {}),
@@ -163,6 +175,8 @@ export function estimateMessageListRowSize(row: MessageListRow): number {
       return 56;
     case "user":
       return 88;
+    case "sessionSetup":
+      return 48;
     case "display":
       return 140;
     case "activityAtom":
