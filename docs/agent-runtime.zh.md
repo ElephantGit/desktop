@@ -38,7 +38,7 @@ actor scheduler 只保留弱 command sender，因此 manager 关闭、删除或�
 
 ## 延迟创建 Session 与模型发现
 
-打开或切换聊天界面不会创建后端 Session。前端先在本地创建 optimistic 首个 turn，`startSession` 完成握手和持久化后再接管返回的 Ora session id，并发送 prompt。Workflow node 使用同一路径，但在 node-run binding 提交前保持未发布状态。
+打开或切换聊天界面不会创建后端 Session。前端先在本地创建 optimistic 首个 turn，`startSession` 完成握手和持久化后再接管返回的 Ora session id，并发送 prompt。首次发送和 Agent handoff 期间，界面将 Session 建立显示为独立的临时阶段并单独计时；时钟只在阶段结束后出现，并表示完成时刻。建立成功后，response turn 才开始自己的计时，且使用相同的完成时刻语义。连接阶段展示按 Session 缓存到当前 renderer 结束，因此切走再返回仍会保留；重启 Ora 或在新 renderer 中回放历史不会重建。Workflow node 使用同一路径，但在 node-run binding 提交前保持未发布状态。
 
 Session 创建前的模型来自按需调用的 `agent/list_models`，输入为 Workspace 的真实 cwd。Ora 不缓存，也不会在共享 ACP 连接启动时读取。模型发现拥有独立 60 秒预算，失败只影响该请求。Session 创建前选择的模型是本地 intent，只有新 Session 握手确实报告相同值时才应用；已存在 Session 始终使用自身配置。
 

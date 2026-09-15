@@ -522,13 +522,12 @@ export function createChatStore(
         try {
           prepared = await prepare();
         } catch (error) {
-          // Nothing streamed yet; settle the optimistic turn and stop here.
+          // Preparation failed before the prompt phase began, so there is no response duration.
           const message = errorMessage(error);
           updateTurn(set, key, turnId, (current) => ({
             ...current,
             status: "failed",
             error: message,
-            durationMs: elapsedDuration(current.createdAt, now()),
           }));
           updateConversation(set, key, (conversation) => ({
             ...conversation,
@@ -545,7 +544,6 @@ export function createChatStore(
               ? {
                   ...current,
                   status: "cancelled",
-                  durationMs: elapsedDuration(current.createdAt, now()),
                 }
               : current,
           );
@@ -556,6 +554,10 @@ export function createChatStore(
           operations.delete(key);
           return;
         }
+        updateTurn(set, key, turnId, (current) => ({
+          ...current,
+          responseStartedAt: now(),
+        }));
         // This turn was streamed live, so the local conversation already is the
         // session's history. Marking it loaded stops the workspace's "load if not
         // loaded" effect from firing once the session becomes selectable — that
@@ -655,7 +657,10 @@ export function createChatStore(
                       ? ("cancelled" as const)
                       : ("completed" as const),
                   stopReason: event.stopReason,
-                  durationMs: elapsedDuration(current.createdAt, now()),
+                  durationMs: elapsedDuration(
+                    current.responseStartedAt ?? current.createdAt,
+                    now(),
+                  ),
                 },
                 impliedToolStatus(event.stopReason),
                 completedAt,
@@ -680,7 +685,10 @@ export function createChatStore(
                   {
                     ...current,
                     status: "cancelled",
-                    durationMs: elapsedDuration(current.createdAt, now()),
+                    durationMs: elapsedDuration(
+                      current.responseStartedAt ?? current.createdAt,
+                      now(),
+                    ),
                   },
                   "cancelled",
                   now(),
@@ -700,7 +708,10 @@ export function createChatStore(
                     ...current,
                     status: "failed",
                     error: message,
-                    durationMs: elapsedDuration(current.createdAt, now()),
+                    durationMs: elapsedDuration(
+                      current.responseStartedAt ?? current.createdAt,
+                      now(),
+                    ),
                   },
                   "cancelled",
                   now(),
@@ -731,7 +742,10 @@ export function createChatStore(
                 {
                   ...current,
                   status: "completed",
-                  durationMs: elapsedDuration(current.createdAt, now()),
+                  durationMs: elapsedDuration(
+                    current.responseStartedAt ?? current.createdAt,
+                    now(),
+                  ),
                 },
                 "cancelled",
                 now(),

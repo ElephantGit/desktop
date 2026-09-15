@@ -41,6 +41,7 @@ import {
   agentRuntimeHandlers,
 } from "../../test/memory/agent-runtime";
 import { createPluginMemory, pluginHandlers } from "../../test/memory/plugins";
+import { formatClock } from "../../lib/format";
 import { ChatView } from "./chat-view";
 import { Composer } from "./composer";
 import { ConversationNavigator } from "./conversation-navigator";
@@ -2225,6 +2226,69 @@ describe("Structured ACP content", () => {
 });
 
 describe("ChatView", () => {
+  it("shows session setup separately before starting the response timer", () => {
+    const liveTurn = turn("turn-1", "hello", Date.now(), [], "streaming");
+    const view = renderWithI18n(
+      <ChatView
+        turns={[liveTurn]}
+        userName="Eric"
+        isResponding
+        sessionSetups={[
+          {
+            id: "setup-1",
+            turnIndex: 0,
+            status: "connecting",
+            startedAt: Date.now(),
+          },
+        ]}
+        error={null}
+        onSend={() => {}}
+      />,
+    );
+
+    expect(
+      screen.getByRole("status", {
+        name: /正在建立 Agent 会话|Establishing Agent session/,
+      }),
+    ).not.toHaveTextContent(formatClock(liveTurn.createdAt));
+    expect(
+      screen.queryByRole("status", {
+        name: /助手正在运行|Assistant is working/,
+      }),
+    ).toBeNull();
+
+    liveTurn.responseStartedAt = 3_000;
+    view.rerender(
+      <ChatView
+        turns={[liveTurn]}
+        userName="Eric"
+        isResponding
+        sessionSetups={[
+          {
+            id: "setup-1",
+            turnIndex: 0,
+            status: "connected",
+            startedAt: 1_000,
+            durationMs: 2_000,
+          },
+        ]}
+        error={null}
+        onSend={() => {}}
+      />,
+    );
+
+    expect(
+      screen.getByRole("status", {
+        name: /Agent 会话已建立|Agent session established/,
+      }),
+    ).toHaveTextContent(
+      `${formatClock(3_000)} · ${appI18n.t("chat.sessionSetup.connected")} · ${appI18n.t("chat.totalTime")} 2s`,
+    );
+    expect(
+      screen.getByRole("status", { name: /助手正在运行|Assistant is working/ }),
+    ).toBeInTheDocument();
+  });
+
   it("disables composition and shows the unavailable Agent session error", () => {
     renderWithI18n(
       <ChatView
@@ -2486,6 +2550,35 @@ describe("ChatView", () => {
 });
 
 describe("MessageList", () => {
+  it("shows assistant clock time only after completion and uses the completion time", () => {
+    const startedAt = new Date(2026, 0, 1, 10, 0).getTime();
+    const firstChunkAt = startedAt + 60_000;
+    const completedAt = startedAt + 180_000;
+    const liveTurn = turn(
+      "live-turn",
+      "go",
+      startedAt,
+      [assistantItem("live-answer", "working", firstChunkAt)],
+      "streaming",
+    );
+    const view = renderWithI18n(
+      <MessageList turns={[liveTurn]} userName="Eric" isResponding />,
+    );
+
+    expect(document.body).not.toHaveTextContent(formatClock(firstChunkAt));
+
+    view.rerender(
+      <MessageList
+        turns={[{ ...liveTurn, status: "completed", durationMs: 180_000 }]}
+        userName="Eric"
+        isResponding={false}
+      />,
+    );
+
+    expect(document.body).toHaveTextContent(formatClock(completedAt));
+    expect(document.body).not.toHaveTextContent(formatClock(firstChunkAt));
+  });
+
   it("shows explicit turn and tool durations and omits missing timing labels", async () => {
     const user = userEvent.setup();
     const timedTurn: ChatTurn = {

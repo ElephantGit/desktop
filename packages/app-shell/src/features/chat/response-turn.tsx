@@ -89,6 +89,11 @@ export function DisplayTurnItemView({
             turn.status === "streaming" && displayIndex === displayCount - 1
           }
           durationMs={durationMs}
+          completedAt={
+            durationMs === undefined
+              ? undefined
+              : (turn.responseStartedAt ?? turn.createdAt) + durationMs
+          }
         />
       );
     case "content":
