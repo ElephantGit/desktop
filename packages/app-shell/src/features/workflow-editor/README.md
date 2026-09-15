@@ -27,7 +27,9 @@ category.
 - Agent-node MCP choices derive from `useInstalledPlugins` (`kind: "mcp"`) and share plugin-query
   invalidation with Settings. Canonical IDs and enabled flags persist in the graph; availability
   is display metadata. Missing or unavailable bindings stay editable, and discovery failure
-  offers retry without claiming that installed plugins disappeared.
+  offers retry without claiming that installed plugins disappeared. Installation only populates
+  the global catalog; enabled bindings are the node Session's allowlist. Agent-node Skill switches
+  instead express mandatory invocation and do not provide node-level Skill isolation.
 
 ## Key invariants
 
