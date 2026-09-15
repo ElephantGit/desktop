@@ -1,10 +1,16 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 import {
   computeInactiveNodes,
   isTerminalRunStatus,
   parseWorkflowGraph,
   projectNodeStatus,
   projectRunStatus,
+  toListRunStatus,
   type GraphWorkflowNodeState,
   type GraphWorkflowNodeStatus,
   type GraphWorkflowRun,
@@ -26,12 +32,45 @@ export const workflowRunKeys = {
   workflowLists: ["workflowRun", "byWorkflow"] as const,
 };
 
-/** True while any run in the list is still pending or executing, so list views can poll. */
+/** Refreshes the open Theater view and every project sidebar list after a run mutates. */
+function invalidateRunViews(queryClient: QueryClient, runId: string) {
+  void queryClient.invalidateQueries({
+    queryKey: workflowRunKeys.detail(runId),
+  });
+  void queryClient.invalidateQueries({
+    queryKey: workflowRunKeys.projectLists,
+  });
+}
+
+/** True while any run in the list is still pending, executing, or waiting on HITL. */
 function hasActiveRun(runs: WorkflowRunSummary[] | undefined): boolean {
   return (
-    runs?.some((run) => run.status === "pending" || run.status === "running") ??
-    false
+    runs?.some(
+      (run) =>
+        run.status === "pending" ||
+        run.status === "running" ||
+        run.status === "awaitingInput",
+    ) ?? false
   );
+}
+
+/** Invalidates one run's detail and the run lists after a backend state transition.
+ *
+ * The backend publishes `workflow_run_invalidated` after every committed run or node-run
+ * transition; the event carries no state, so the only correct reaction is to re-query the
+ * authoritative run detail and lists. A dropped event leaves a stale view until the next
+ * event or the polling fallback converges it.
+ */
+export function invalidateWorkflowRun(queryClient: QueryClient, runId: string) {
+  void queryClient.invalidateQueries({
+    queryKey: workflowRunKeys.detail(runId),
+  });
+  void queryClient.invalidateQueries({
+    queryKey: workflowRunKeys.projectLists,
+  });
+  void queryClient.invalidateQueries({
+    queryKey: workflowRunKeys.workflowLists,
+  });
 }
 
 /** Lists the persisted workflow runs of one project. */
@@ -123,9 +162,7 @@ export function useStartWorkflowRun() {
   return useMutation({
     mutationFn: (input: { runId: string }) => client.workflowRun.start(input),
     onSuccess: (_result, variables) => {
-      void queryClient.invalidateQueries({
-        queryKey: workflowRunKeys.detail(variables.runId),
-      });
+      invalidateRunViews(queryClient, variables.runId);
     },
   });
 }
@@ -137,9 +174,7 @@ export function useCancelWorkflowRun() {
   return useMutation({
     mutationFn: (input: { runId: string }) => client.workflowRun.cancel(input),
     onSuccess: (_result, variables) => {
-      void queryClient.invalidateQueries({
-        queryKey: workflowRunKeys.detail(variables.runId),
-      });
+      invalidateRunViews(queryClient, variables.runId);
     },
   });
 }
@@ -151,9 +186,7 @@ export function useRestartWorkflowRun() {
   return useMutation({
     mutationFn: (input: { runId: string }) => client.workflowRun.restart(input),
     onSuccess: (_result, variables) => {
-      void queryClient.invalidateQueries({
-        queryKey: workflowRunKeys.detail(variables.runId),
-      });
+      invalidateRunViews(queryClient, variables.runId);
     },
   });
 }
@@ -193,10 +226,9 @@ export function useCompleteWorkflowNode() {
         runId: input.runId,
         nodeId: input.nodeId,
       }),
-    onSuccess: (_result, variables) =>
-      queryClient.invalidateQueries({
-        queryKey: workflowRunKeys.detail(variables.runId),
-      }),
+    onSuccess: (_result, variables) => {
+      invalidateRunViews(queryClient, variables.runId);
+    },
   });
 }
 
@@ -257,6 +289,7 @@ export function useRenameWorkflowRun() {
  */
 export function useRealWorkflowRun(runId: string | null | undefined) {
   const client = useContractsClient();
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: workflowRunKeys.detail(runId ?? ""),
     queryFn: async (): Promise<RealWorkflowRunDetail> => {
@@ -264,8 +297,21 @@ export function useRealWorkflowRun(runId: string | null | undefined) {
       const { snapshot } = await client.workflow.getSnapshot({
         snapshotId: detail.run.snapshotId,
       });
+      const run = buildDisplayRun(detail, snapshot.graph);
+      // Theater polls faster than the sidebar list and is the source of truth for
+      // HITL (`awaiting_input`). Copy that status onto the list cache so the tree
+      // dot cannot stay on a stale `running` / `succeeded` colour.
+      queryClient.setQueryData<WorkflowRunSummary[]>(
+        workflowRunKeys.byProject(detail.projectId),
+        (current) =>
+          current?.map((item) =>
+            item.id === run.id
+              ? { ...item, status: toListRunStatus(run.status) }
+              : item,
+          ),
+      );
       return {
-        run: buildDisplayRun(detail, snapshot.graph),
+        run,
         workspaceId: detail.workspaceId,
         projectId: detail.projectId,
       };

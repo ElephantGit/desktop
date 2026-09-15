@@ -13,6 +13,7 @@ mod condition;
 mod engine;
 mod graph;
 mod handlers;
+mod node_runtime;
 mod node_type;
 mod ports;
 mod skill_delivery;
@@ -33,9 +34,10 @@ pub use handlers::WorkflowRunControlHandler;
 pub use node_type::{NodeType, UnknownNodeType};
 pub use ports::{
     AdvanceWorkflowRunResult, BindWorkflowNodeSessionResult, CancelWorkflowRunResult,
-    ExecutionContext, FileChange, NodeRunToStart, RestartWorkflowRunResult,
+    ExecutionContext, FileChange, NoRunInvalidations, NodeRunToStart, RestartWorkflowRunResult,
     StartPrerequisitesError, StartWorkflowRunResult, UpdateWorkflowRunInputResult,
-    WorkflowNodeRunIdGenerator, WorkflowRunEngineRepository, WorkflowRunWorkspaceInitializer,
+    WorkflowNodeRunIdGenerator, WorkflowRunEngineRepository, WorkflowRunInvalidationPublisher,
+    WorkflowRunWorkspaceInitializer,
 };
 pub use skill_delivery::{
     AgentSkillDelivery, AgentSkillDeliveryError, AgentSkillDeliveryProvider,

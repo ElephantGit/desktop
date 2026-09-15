@@ -48,6 +48,25 @@ pub trait WorkflowNodeRunIdGenerator {
     fn generate_node_run_id(&self) -> WorkflowNodeRunId;
 }
 
+/// Publishes run invalidation events after run or node-run state transitions commit
+/// (ADR "node runtime orchestration" D7).
+///
+/// Events carry no workflow state: they only signal that one run's persisted state changed so
+/// observers re-query the authoritative persistence. Publishing must be non-blocking, and a
+/// lost or reordered event may only leave a stale view that the next event or refresh clears;
+/// the persisted state remains the single source of truth.
+pub trait WorkflowRunInvalidationPublisher: Send + Sync {
+    /// Signals that the persisted state of one run changed; observers should re-query it.
+    fn publish_run_invalidated(&self, run_id: &WorkflowRunId);
+}
+
+/// A publisher that drops every invalidation, for engines assembled without an event bus.
+pub struct NoRunInvalidations;
+
+impl WorkflowRunInvalidationPublisher for NoRunInvalidations {
+    fn publish_run_invalidated(&self, _run_id: &WorkflowRunId) {}
+}
+
 /// Failures raised while setting up a run workspace's initial state at deploy time.
 #[derive(Debug, Error)]
 pub enum StartPrerequisitesError {

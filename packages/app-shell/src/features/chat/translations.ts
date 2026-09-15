@@ -109,6 +109,10 @@ export const chatTranslations = {
     "chat.modelSelector.search": "搜索模型",
     "chat.modelSelector.noResults": "未找到匹配的模型",
     "chat.modelSelector.noAgentPackage": "从插件市场安装 Agent",
+    "chat.thoughtLevel.label": "选择思考强度",
+    "chat.thoughtLevel.title": "思考强度",
+    "chat.thoughtLevel.faster": "更快",
+    "chat.thoughtLevel.smarter": "更强",
     "chat.agentUnavailable.title": "当前 Agent 不可用",
     "chat.agentUnavailable.uninstalled":
       "当前 Agent 不可用，请切换 Agent 继续对话。",
@@ -159,6 +163,9 @@ export const chatTranslations = {
     "chat.typing": "助手正在运行",
     "chat.elapsedTime": "耗时",
     "chat.totalTime": "用时",
+    "chat.sessionSetup.connecting": "正在建立 Agent 会话",
+    "chat.sessionSetup.connected": "Agent 会话已建立",
+    "chat.sessionSetup.failed": "Agent 会话建立失败",
     "chat.runningWords":
       "思考中…|冥思中…|构思中…|酝酿中…|推演中…|琢磨中…|捣鼓中…|开动脑筋…|苦思冥想…|灵光闪现…|运转中…|加载脑洞…|盘算中…|推敲中…|排查中…|摸索中…|绞尽脑汁…|拼命运转…|一顿操作…|正在思索…|脑力全开…|深度思考…",
     "chat.thinking": "正在分析",
@@ -420,6 +427,10 @@ export const chatTranslations = {
     "chat.modelSelector.noResults": "No matching models",
     "chat.modelSelector.noAgentPackage":
       "Install an agent from the plugin marketplace",
+    "chat.thoughtLevel.label": "Select thought level",
+    "chat.thoughtLevel.title": "Thought level",
+    "chat.thoughtLevel.faster": "Faster",
+    "chat.thoughtLevel.smarter": "Smarter",
     "chat.agentUnavailable.title": "This session's agent is unavailable",
     "chat.agentUnavailable.uninstalled":
       "This session's agent is unavailable. Switch agents to continue the conversation.",
@@ -478,6 +489,9 @@ export const chatTranslations = {
     "chat.typing": "Assistant is working",
     "chat.elapsedTime": "Elapsed",
     "chat.totalTime": "Took",
+    "chat.sessionSetup.connecting": "Establishing Agent session",
+    "chat.sessionSetup.connected": "Agent session established",
+    "chat.sessionSetup.failed": "Agent session setup failed",
     "chat.runningWords":
       "Thinking…|Pondering…|Imagining…|Conjuring…|Percolating…|Noodling…|Tinkering…|Brewing…|Musing…|Summoning…|Cooking…|Computing…|Ruminating…|Scheming…|Mulling…|Sifting…|Untangling…|Crunching…|Puzzling…|Deliberating…|Synthesizing…|Weighing options…",
     "chat.thinking": "Analyzing",

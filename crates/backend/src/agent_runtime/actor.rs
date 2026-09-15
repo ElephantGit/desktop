@@ -880,6 +880,7 @@ mod tests {
             agent_ref,
             "provider-session-1",
             SessionStatus::Stopped,
+            ora_domain::SessionMcpSelection::Automatic,
             AuditFields::new(0, 0, false),
         );
         let (commands, command_receiver) = mpsc::unbounded_channel();
@@ -956,6 +957,7 @@ mod tests {
             agent_ref,
             "provider-session-1",
             SessionStatus::Stopped,
+            ora_domain::SessionMcpSelection::Automatic,
             AuditFields::new(0, 0, false),
         );
         let (commands, command_receiver) = mpsc::unbounded_channel();

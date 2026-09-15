@@ -27,6 +27,7 @@ Configured MCP plugins are Session Runtime Input. `startSession` `session/new`, 
 
 - Connection loss fails that agent's in-flight operations, marks only its registered Sessions Stopped, asks the plugin lifecycle to stop the old process, and only then starts a replacement. Sessions are loaded again only on demand; prompts are never replayed automatically.
 - The `initialize` handshake advertises the client's session config-option capability. Agents withhold configuration options from clients that do not, so the model selector depends on it. Boolean options stay undeclared because Ora renders only id-valued selectors.
+- The thought-level (reasoning effort) selector reads only the `thought_level` option a provider session reports, through the same `session/new` response, `session/load` replay, and `session/set_config_option` answers that carry the model option. Ora keeps no pre-session catalog of effort levels — they differ per agent and, for some agents, per model — so the composer shows no effort control for a chat that has not started, and a pick on a live session is applied immediately with `setSessionConfig`.
 
 ### First session title acquisition
 
@@ -42,7 +43,7 @@ Actor-owned scheduler callbacks keep only a weak command sender. Once deletion, 
 
 ## Lazy Session Creation and Model Discovery
 
-Opening or navigating to a chat surface creates no backend session state. The frontend keeps the optimistic first turn locally while `startSession` performs the provider handshake and persistence, then adopts the returned Ora session id before prompting it. Workflow nodes use the same path with an unpublished marker until the node-run binding commits.
+Opening or navigating to a chat surface creates no backend session state. The frontend keeps the optimistic first turn locally while `startSession` performs the provider handshake and persistence, then adopts the returned Ora session id before prompting it. During the first send and an Agent handoff, the UI presents session setup as an ephemeral phase with its own elapsed time; its clock appears only when the phase settles and names that completion time. The response turn starts a separate timer only after setup succeeds and follows the same completion-clock convention. Setup presentation is cached by session for the renderer lifetime, so navigating away and back preserves it, while restarting Ora or replaying history in a fresh renderer does not recreate it. Workflow nodes use the same path with an unpublished marker until the node-run binding commits.
 
 Pre-session models come from `agent/list_models`, called on demand with the Workspace's resolved working directory. Ora does not cache the result or read it while bringing up the shared ACP connection. The plugin owns discovery and its cache lifetime; if discovery requires ACP, the plugin must ask the host's child-process service to launch a separate one-shot agent process rather than injecting frames into Ora's shared connection or spawning an unmanaged process itself. The call has a dedicated 60-second budget, and a failure affects only that discovery request, never the shared connection lifecycle. Empty model lists are valid.
 
