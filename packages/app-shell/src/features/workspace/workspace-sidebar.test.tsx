@@ -873,6 +873,31 @@ describe("WorkspaceSidebar", () => {
     ).not.toBeNull();
   });
 
+  it("uses the Theater HITL colour for an awaiting workflow run", async () => {
+    const state = workspaceWithOneSession();
+    state.workflowRuns = [
+      {
+        id: "run1",
+        projectId: PROJECT.id,
+        workflowId: "wf1",
+        snapshotId: "snap1",
+        version: "v3",
+        name: "Review bot",
+        status: "awaitingInput",
+        workspaceId: "workspace-p1",
+        createdAt: 0n,
+        updatedAt: 0n,
+      },
+    ];
+    renderSidebar(state);
+
+    await waitFor(() => expect(treeRow("Review bot")).not.toBeNull());
+    const mark = within(treeRow("Review bot")!).getByLabelText(
+      /等待参与|Awaiting input/,
+    );
+    expect(mark.className).toContain("bg-amber-500");
+  });
+
   it("places task workflow runs under the owning task", async () => {
     const state = workspaceWithOneSession();
     state.workflowRuns = [

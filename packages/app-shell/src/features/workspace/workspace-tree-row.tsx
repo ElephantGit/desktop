@@ -25,11 +25,12 @@ import {
   IconRoute,
   IconTrash,
 } from "@tabler/icons-react";
-import type { GraphWorkflowRunStatus } from "@ora/workflow-runtime";
+import { toDisplayRunStatus } from "@ora/workflow-runtime";
 import {
   useRenameWorkflowRun,
   useWorkflowRunsByProject,
 } from "../../state/data/workflow-runs";
+import { runStatusTone } from "../workflow-run/run-status-style";
 import { TreeRowOverflowTooltip } from "./tree-row-overflow-tooltip";
 import { useInlineTreeRename } from "./use-inline-tree-rename";
 
@@ -304,24 +305,6 @@ function ArchiveButton() {
   );
 }
 
-/** Status dot color for sidebar GraphWorkflowRun rows. */
-function runStatusClass(status: GraphWorkflowRunStatus): string {
-  switch (status) {
-    case "running":
-      return "bg-sky-500";
-    case "awaiting_input":
-      return "bg-amber-500";
-    case "succeeded":
-      return "bg-emerald-500";
-    case "failed":
-      return "bg-rose-500";
-    case "cancelled":
-      return "bg-zinc-400";
-    case "pending":
-      return "bg-amber-400";
-  }
-}
-
 /** Renders workflow runs belonging to one workspace within a project run query. */
 export const ProjectWorkflowRunRows = memo(function ProjectWorkflowRunRows({
   projectId,
@@ -352,10 +335,8 @@ export const ProjectWorkflowRunRows = memo(function ProjectWorkflowRunRows({
   return (
     <>
       {runs.map((run) => {
-        // The backend derives `awaitingInput` on the wire while the display model spells it
-        // `awaiting_input`; normalize so the sidebar dot and label match the run detail.
-        const displayStatus: GraphWorkflowRunStatus =
-          run.status === "awaitingInput" ? "awaiting_input" : run.status;
+        // List/wire `awaitingInput` is the same HITL pause Theater spells `awaiting_input`.
+        const displayStatus = toDisplayRunStatus(run.status);
         return (
           <TreeRow
             key={run.id}
@@ -368,7 +349,7 @@ export const ProjectWorkflowRunRows = memo(function ProjectWorkflowRunRows({
                   aria-hidden
                 />
                 <span
-                  className={`absolute -right-0.5 -top-0.5 size-1.5 rounded-full ${runStatusClass(displayStatus)}`}
+                  className={`absolute -right-0.5 -top-0.5 size-1.5 rounded-full ${runStatusTone(displayStatus).dot}`}
                   aria-label={t(`workflowRun.status.${displayStatus}`)}
                 />
               </span>
