@@ -702,6 +702,10 @@ export function createChatStore(
           clearPendingPermissions(set, key);
         } else {
           const message = errorMessage(error);
+          // A timeout after the backend already re-sent the prompt means every
+          // retry stalled too; the turn keeps that so the UI can say the agent
+          // never came back rather than showing a generic failure.
+          const retriesExhausted = isAgentTimedOutError(error);
           // The failure ended the turn, so tools the agent never settled were
           // interrupted by it. They are not marked failed: the stream broke, and
           // whether the tool itself succeeded is exactly what was never reported.
@@ -712,6 +716,9 @@ export function createChatStore(
                     ...current,
                     status: "failed",
                     error: message,
+                    ...(retriesExhausted && current.retry !== undefined
+                      ? { retry: { ...current.retry, exhausted: true } }
+                      : {}),
                     durationMs: elapsedDuration(current.createdAt, now()),
                   },
                   "cancelled",
@@ -1559,6 +1566,13 @@ async function* promptWithReattach(
     { signal },
   );
 }
+/** Reports whether a failure is the backend giving up on a prompt that made no progress. */
+function isAgentTimedOutError(error: unknown): boolean {
+  return (
+    error instanceof RemoteContractError && error.code === "agent_timed_out"
+  );
+}
+
 /** Reports whether a failure is the backend refusing a session that holds no live route. */
 function isSessionStoppedError(error: unknown): boolean {
   return (

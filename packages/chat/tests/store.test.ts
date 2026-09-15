@@ -793,6 +793,76 @@ test("marks the turn as retrying and interrupts the stalled attempt's tools", as
   });
 });
 
+test("marks the retry exhausted when the backend times out after re-sending", async () => {
+  const store = createChatStore(
+    {
+      load: () => events<LoadSessionEvent>([{ type: "completed" }]),
+      prompt: async function* () {
+        yield { type: "retrying", retry: 3, maxRetries: 3 } as const;
+        throw new RemoteContractError(
+          {
+            code: "agent_timed_out",
+            params: {},
+            requestId: "00000000-0000-4000-8000-000000000000",
+          },
+          null,
+        );
+      },
+      respondToPermission: async () => ({}),
+      setConfig: async () => ({ configOptions: [] }),
+    },
+    { createId: () => "local", now: () => 42 },
+  );
+
+  await store.getState().loadSession("ora-1");
+  await assert.rejects(
+    store.getState().sendMessage({ oraSessionId: "ora-1", text: "hello" }),
+  );
+
+  const [turn] = store.getState().conversations["ora-1"]!.turns;
+  assert.deepEqual(turn, {
+    id: "local",
+    userMessage: {
+      kind: "message",
+      id: "local",
+      role: "user",
+      content: "hello",
+      createdAt: 42,
+    },
+    items: [],
+    status: "failed",
+    stopReason: null,
+    error: turn!.error,
+    createdAt: 42,
+    durationMs: 0,
+    retry: { retry: 3, maxRetries: 3, exhausted: true },
+  });
+});
+
+test("keeps a retried turn's failure generic when it was not the agent timing out", async () => {
+  const store = createChatStore(
+    {
+      load: () => events<LoadSessionEvent>([{ type: "completed" }]),
+      prompt: async function* () {
+        yield { type: "retrying", retry: 1, maxRetries: 3 } as const;
+        throw new Error("connection lost");
+      },
+      respondToPermission: async () => ({}),
+      setConfig: async () => ({ configOptions: [] }),
+    },
+    { createId: () => "local", now: () => 42 },
+  );
+
+  await store.getState().loadSession("ora-1");
+  await assert.rejects(
+    store.getState().sendMessage({ oraSessionId: "ora-1", text: "hello" }),
+  );
+
+  const [turn] = store.getState().conversations["ora-1"]!.turns;
+  assert.deepEqual(turn?.retry, { retry: 1, maxRetries: 3 });
+  assert.equal(turn?.status, "failed");
+});
+
 test("shows an unsettled tool call as interrupted when the turn was cut short", async () => {
   for (const stopReason of [
     "max_tokens",

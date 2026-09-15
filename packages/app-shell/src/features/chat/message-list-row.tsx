@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
+import { IconWifi } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import { AgentActivityDots } from "../../components/agent-activity-dots";
 import { AnchorHighlight } from "./anchor-highlight";
@@ -250,9 +251,10 @@ function RunningIndicator({
     return () => clearTimeout(timer);
   }, [words]);
 
-  // The retry count replaces the rotating phrase: it is the one status the user
-  // needs while the prompt is being re-sent, and the elapsed time keeps counting
-  // from the original send so the wait reads as one turn.
+  // The retry count replaces the rotating phrase and a slowly breathing Wi-Fi
+  // icon replaces the dots: the agent is unreachable rather than working, and
+  // the elapsed time keeps counting from the original send so the wait reads
+  // as one turn.
   const word =
     retry === undefined
       ? (words[index % words.length] ?? words[0] ?? "")
@@ -270,10 +272,18 @@ function RunningIndicator({
       aria-label={t("chat.typing")}
     >
       <span className="flex size-6 shrink-0 items-center justify-center text-muted-foreground">
-        <AgentActivityDots
-          label={t("common.running")}
-          dotClassName="size-[3.5px]"
-        />
+        {retry === undefined ? (
+          <AgentActivityDots
+            label={t("common.running")}
+            dotClassName="size-[3.5px]"
+          />
+        ) : (
+          <IconWifi
+            role="img"
+            aria-label={t("chat.turnRetryUnreachable")}
+            className="size-4 animate-retry-pulse"
+          />
+        )}
       </span>
       {/* Keyed so each phrase crossfades in as the rotation advances. */}
       <span

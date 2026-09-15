@@ -90,6 +90,8 @@ export type ChatTurnStatus = "streaming" | "completed" | "cancelled" | "failed";
 export interface ChatTurnRetry {
   retry: number;
   maxRetries: number;
+  /** The last retry also stalled and the turn failed with the agent's timeout. */
+  exhausted?: boolean;
 }
 
 /** Groups one user message with every agent update produced in response. */

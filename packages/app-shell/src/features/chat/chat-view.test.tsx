@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
@@ -3006,6 +3007,15 @@ describe("MessageList", () => {
     expect(indicator).toHaveTextContent(
       `${appI18n.t("chat.elapsedTime")} 1m 05s`,
     );
+    // The working dots give way to a slowly breathing Wi-Fi icon: the agent is
+    // unreachable, not busy.
+    const wifi = within(indicator).getByRole("img", {
+      name: appI18n.t("chat.turnRetryUnreachable"),
+    });
+    expect(wifi).toHaveClass("animate-retry-pulse");
+    expect(
+      within(indicator).queryByRole("img", { name: /正在运行|running/i }),
+    ).not.toBeInTheDocument();
 
     // Settled: the indicator goes and the retry marker leaves no ending of its own.
     view.rerender(
@@ -3019,6 +3029,32 @@ describe("MessageList", () => {
       screen.queryByLabelText(/正在运行|is working/),
     ).not.toBeInTheDocument();
     expect(document.body).not.toHaveTextContent("1/3");
+  });
+
+  it("ends a turn whose every retry stalled with a slashed Wi-Fi icon", () => {
+    renderWithI18n(
+      <MessageList
+        turns={[
+          {
+            ...turn("turn-1", "hello", 100, [], "failed"),
+            error: appI18n.t("errors.agent_timed_out"),
+            retry: { retry: 3, maxRetries: 3, exhausted: true },
+          },
+        ]}
+        userName="Eric"
+        isResponding={false}
+      />,
+    );
+
+    const ending = screen
+      .getByRole("img", { name: appI18n.t("chat.turnRetryUnreachable") })
+      .closest("p");
+    expect(ending).toHaveClass("text-destructive");
+    expect(ending).toHaveTextContent(
+      appI18n.t("chat.turnRetriesExhausted", { maxRetries: 3 }),
+    );
+    // Nothing still breathes once the turn is over.
+    expect(document.querySelector(".animate-retry-pulse")).toBeNull();
   });
 
   it("renders streamed assistant text as markdown while keeping the thread responsive", () => {
