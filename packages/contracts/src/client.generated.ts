@@ -266,6 +266,13 @@ export function createContractsClient(
           transport,
           options,
         ),
+      getLogLevel: (request, options) =>
+        executeOperation(
+          "getPluginLogLevel",
+          request,
+          transport,
+          options,
+        ),
       import: (request, options) =>
         executeOperation(
           "importPlugin",
@@ -325,6 +332,13 @@ export function createContractsClient(
       scan: (request, options) =>
         executeOperation(
           "scanPlugins",
+          request,
+          transport,
+          options,
+        ),
+      setLogLevel: (request, options) =>
+        executeOperation(
+          "setPluginLogLevel",
           request,
           transport,
           options,
