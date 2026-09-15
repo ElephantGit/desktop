@@ -18,8 +18,9 @@ import { buildTurnDisplayItems } from "./turn-item-grouping";
 import type { ChatTurn } from "@ora/chat";
 import type { MessageListRow } from "./message-list-rows";
 import { useElapsedDuration } from "./elapsed-clock";
-import { formatElapsedDuration } from "../../lib/format";
+import { formatClock, formatElapsedDuration } from "../../lib/format";
 import type * as acp from "@agentclientprotocol/sdk";
+import type { SessionSetupPresentation } from "./session-setup";
 
 /** Word rotation cadence — slow enough to read each phrase, quick enough to feel alive. */
 const RUNNING_WORD_INTERVAL_MS = 5000;
@@ -62,6 +63,8 @@ export const MessageListRowView = memo(function MessageListRowView({
         </div>
       );
     }
+    case "sessionSetup":
+      return <SessionSetupIndicator setup={row} />;
     case "display": {
       const turn = turns[row.turnIndex];
       if (turn === undefined) {
@@ -150,6 +153,37 @@ export const MessageListRowView = memo(function MessageListRowView({
       return <div className="h-8" />;
   }
 });
+
+/** Separates provider setup or handoff from the response turn that follows it. */
+function SessionSetupIndicator({ setup }: { setup: SessionSetupPresentation }) {
+  const { t } = useTranslation();
+  const duration = formatElapsedDuration(
+    useElapsedDuration(
+      setup.startedAt,
+      setup.status === "connecting" ? undefined : setup.durationMs,
+    ),
+  );
+  const label = t(`chat.sessionSetup.${setup.status}`);
+  const completedAt =
+    setup.status === "connecting"
+      ? undefined
+      : setup.startedAt + setup.durationMs;
+  return (
+    <p
+      className="py-1 text-xs text-muted-foreground"
+      role="status"
+      aria-label={label}
+    >
+      {completedAt === undefined
+        ? label
+        : `${formatClock(completedAt)} · ${label}`}
+      {duration !== null &&
+        ` · ${t(
+          setup.status === "connecting" ? "chat.elapsedTime" : "chat.totalTime",
+        )} ${duration}`}
+    </p>
+  );
+}
 
 function ResponseRow({
   turn,

@@ -1653,7 +1653,7 @@ test("shows the user turn before the session is persisted", async () => {
   assert.equal(conversation?.turns[0]?.status, "completed");
 });
 
-test("freezes turn duration when session preparation fails", async () => {
+test("omits response duration when session preparation fails", async () => {
   let timestamp = 100;
   const client: ChatSessionClient = {
     load: () => events<LoadSessionEvent>([]),
@@ -1692,11 +1692,10 @@ test("freezes turn duration when session preparation fails", async () => {
     stopReason: null,
     error: "prepare failed",
     createdAt: 100,
-    durationMs: 150,
   });
 });
 
-test("freezes turn duration when startup is stopped during preparation", async () => {
+test("omits response duration when startup is stopped during preparation", async () => {
   let timestamp = 100;
   let finishPrepare: () => void = () => {};
   const prepared = new Promise<void>((resolve) => {
@@ -1745,7 +1744,6 @@ test("freezes turn duration when startup is stopped during preparation", async (
     stopReason: null,
     error: null,
     createdAt: 100,
-    durationMs: 200,
   });
 });
 
