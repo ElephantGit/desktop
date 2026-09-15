@@ -39,9 +39,10 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
   insert trigger. Project and task Workspace repositories create and seed the Scope within their
   write transaction using an injected audit clock. Existing Effect rows and authority are retained.
   Rollback restores recovery detection to the old column and reinstalls the Workspace trigger.
-- Migration `0011` persists the MCP selection owned by each Session. Existing ordinary Sessions
-  remain automatic; workflow-bound Sessions receive an explicit set projected from their frozen
-  snapshot, and rollback removes the column.
+- Migration `0011` persists the MCP selection owned by each Session. All existing Sessions
+  default to an empty explicit set because MCP authorization has not yet been used by users;
+  migration does not inspect workflow metadata. New Sessions explicitly persist their selection,
+  and rollback removes the column.
 - Target requests use pending, claimed, blocked, and retry-scheduled states. Generation and fencing
   establish authority; audit time never grants a claim or changes retry eligibility.
 - Every Workspace has one Scope. Publishing a new Skill Source seeds existing Scopes; creating a

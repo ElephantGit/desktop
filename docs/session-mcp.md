@@ -41,9 +41,12 @@ Stopped Sessions do not refresh in the background.
 A workflow Session persists its node-local selection on the Session row at creation and retains it
 through restore, provider rebuild, Agent switching, and live refresh. Recovery reads that owned
 value directly; it never reconstructs authority from a node-run relationship, so missing or
-orphaned workflow metadata cannot widen an explicit selection to automatic discovery. Existing
-ordinary Sessions are migrated to automatic discovery, while historical workflow Sessions are
-backfilled from their frozen snapshots. Editing a draft cannot change an existing run's selection.
+orphaned workflow metadata cannot widen an explicit selection to automatic discovery. Migration
+`0011` gives all existing Sessions an empty explicit selection without consulting workflow metadata,
+since MCP authorization has not yet been used by users. Existing ordinary chats therefore do not
+automatically discover MCPs either. New ordinary Sessions explicitly select automatic discovery;
+new workflow Sessions persist their node's explicit selection. Editing a draft cannot change an
+existing run's selection.
 Plugin package versions and configuration values remain live inputs;
 changes outside the allowlist do not change that Session's Desired revision. The editor switches
 configure later runs; they are not controls for changing a running Session.
