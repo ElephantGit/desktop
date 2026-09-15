@@ -1747,6 +1747,38 @@ test("omits response duration when startup is stopped during preparation", async
   });
 });
 
+test("starts response duration after successful session preparation", async () => {
+  let timestamp = 100;
+  const client: ChatSessionClient = {
+    load: () => events<LoadSessionEvent>([]),
+    prompt: () => ({
+      async *[Symbol.asyncIterator]() {
+        timestamp = 450;
+        yield { type: "completed", stopReason: "end_turn" } as const;
+      },
+    }),
+    respondToPermission: async () => ({}),
+    setConfig: async () => ({ configOptions: [] }),
+  };
+  const store = createChatStore(client, {
+    createId: () => "turn",
+    now: () => timestamp,
+  });
+
+  await store.getState().sendMessage({
+    oraSessionId: "ora-1",
+    text: "hi",
+    prepare: async () => {
+      timestamp = 250;
+      return { availableCommands: [] };
+    },
+  });
+
+  const turn = store.getState().conversations["ora-1"]?.turns[0];
+  assert.equal(turn?.responseStartedAt, 250);
+  assert.equal(turn?.durationMs, 200);
+});
+
 test("rolls back staged load updates when replay fails before completion", async () => {
   const client: ChatSessionClient = {
     load: () => ({
