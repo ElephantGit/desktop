@@ -43,3 +43,40 @@ pub(super) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     PluginLogLevelResponse::export(config)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{GetPluginLogLevelRequest, PluginLogLevelResponse, SetPluginLogLevelRequest};
+    use crate::RuntimeLogLevel;
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+
+    /// The wire shape is camelCase with the shared lowercase level vocabulary.
+    #[test]
+    fn serializes_the_documented_wire_shape() {
+        assert_eq!(
+            (
+                serde_json::to_value(GetPluginLogLevelRequest {
+                    plugin_id: "official/example".to_string(),
+                })
+                .unwrap(),
+                serde_json::to_value(SetPluginLogLevelRequest {
+                    plugin_id: "official/example".to_string(),
+                    level: RuntimeLogLevel::Debug,
+                })
+                .unwrap(),
+                serde_json::to_value(PluginLogLevelResponse {
+                    plugin_id: "official/example".to_string(),
+                    level: RuntimeLogLevel::Info,
+                    configured: false,
+                })
+                .unwrap(),
+            ),
+            (
+                json!({ "pluginId": "official/example" }),
+                json!({ "pluginId": "official/example", "level": "debug" }),
+                json!({ "pluginId": "official/example", "level": "info", "configured": false }),
+            )
+        );
+    }
+}
