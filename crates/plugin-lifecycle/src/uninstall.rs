@@ -1,5 +1,5 @@
 use super::PluginLifecycleError;
-use crate::PluginDataDirectories;
+use crate::{PluginDataDirectories, PluginLogDirectories};
 use ora_contracts::PluginDataDisposition;
 use ora_domain::PluginId;
 use ora_logging::ora_warn;
@@ -205,25 +205,36 @@ where
         .push((package_name_root.to_path_buf(), staged_installation));
 
     if matches!(data_disposition, PluginDataDisposition::Delete) {
-        let data_root = plugin_data_root(data_directory, &plugin.id);
-        if file_system.exists(&data_root) {
-            let staged_data = staging_root.join("data");
-            if let Err(source) = file_system.rename(&data_root, &staged_data) {
+        // The data tree and the sibling log tree are two halves of one decision: either both
+        // move into staging or neither does. The log directory is only movable because the
+        // caller has already stopped the process and waited for its log writer to release the
+        // file; on Windows an open handle would make this rename fail, which then rolls back
+        // the package and data moves rather than leaving a half-deleted plugin.
+        let owned_trees = [
+            ("data", plugin_data_root(data_directory, &plugin.id)),
+            ("logs", plugin_log_root(data_directory, &plugin.id)),
+        ];
+        for (label, tree_root) in owned_trees {
+            if !file_system.exists(&tree_root) {
+                continue;
+            }
+            let staged_tree = staging_root.join(label);
+            if let Err(source) = file_system.rename(&tree_root, &staged_tree) {
                 if let Err(rollback_error) = staged.rollback() {
                     ora_warn!(
-                        data_root = %data_root.display(),
+                        tree_root = %tree_root.display(),
                         %source,
                         %rollback_error,
-                        "could not stage plugin data and rollback also failed"
+                        "could not stage a plugin-owned tree and rollback also failed"
                     );
                     return Err(rollback_error);
                 }
                 return Err(PluginLifecycleError::UninstallStaging {
-                    path: data_root,
+                    path: tree_root,
                     source,
                 });
             }
-            staged.moved.push((data_root, staged_data));
+            staged.moved.push((tree_root, staged_tree));
         }
     }
     Ok(staged)
@@ -232,6 +243,11 @@ where
 /// Resolves the host-owned data directory for one plugin identity.
 pub(crate) fn plugin_data_root(data_directory: &Path, plugin_id: &PluginId) -> PathBuf {
     PluginDataDirectories::new(data_directory).path_for(plugin_id)
+}
+
+/// Resolves the host-managed log directory for one plugin identity.
+pub(crate) fn plugin_log_root(data_directory: &Path, plugin_id: &PluginId) -> PathBuf {
+    PluginLogDirectories::new(data_directory).path_for(plugin_id)
 }
 
 #[cfg(test)]

@@ -1,9 +1,11 @@
-//! Owns the per-plugin writable data directory below the Ora data root.
+//! Owns the per-plugin writable data directory and the host-managed plugin log directory below
+//! the Ora data root.
 //!
-//! Installed packages are read-only; this is the only place a plugin may write, and it survives
-//! version upgrades because it is keyed by plugin identity, not by installed version. The
-//! directory levels are the id's namespace and name, which manifest validation already bounds
-//! to slug segments, so they are safe on every platform without further escaping.
+//! Installed packages are read-only; the data directory is the only place a plugin may write,
+//! and both trees survive version upgrades because they are keyed by plugin identity, not by
+//! installed version. The directory levels are the id's namespace and name, which manifest
+//! validation already bounds to slug segments, so they are safe on every platform without
+//! further escaping.
 
 use ora_domain::PluginId;
 use std::io;
@@ -12,6 +14,7 @@ use std::path::{Path, PathBuf};
 const PLUGINS_DIRECTORY: &str = "plugins";
 const DATA_DIRECTORY: &str = "data";
 const DOWNLOADS_DIRECTORY: &str = "downloads";
+const LOGS_DIRECTORY: &str = "logs";
 
 /// Creates and locates `<data-dir>/plugins/data/<namespace>/<name>/` directories.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +61,48 @@ impl PluginDataDirectories {
     /// Returns the `plugins/data` root shared by every plugin.
     pub fn root(&self) -> &Path {
         &self.root
+    }
+}
+
+/// Locates `<data-dir>/plugins/logs/<namespace>/<name>/` directories.
+///
+/// This is a third persistent tree beside installed packages and plugin data: `ora/storage/*`
+/// resolves against the data tree, so no logical storage path can reach it, and the log sink
+/// creates it level by level rather than eagerly so a foreign path under a plugin's name is
+/// refused instead of adopted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginLogDirectories {
+    root: PathBuf,
+}
+
+impl PluginLogDirectories {
+    /// Anchors plugin logs below the same data directory that holds packages and plugin data.
+    pub fn new(data_directory: impl Into<PathBuf>) -> Self {
+        Self {
+            root: data_directory
+                .into()
+                .join(PLUGINS_DIRECTORY)
+                .join(LOGS_DIRECTORY),
+        }
+    }
+
+    /// Returns the plugin's log directory without touching the filesystem.
+    pub fn path_for(&self, plugin_id: &PluginId) -> PathBuf {
+        self.root.join(plugin_id.namespace()).join(plugin_id.name())
+    }
+
+    /// Returns the `plugins/logs` root shared by every plugin.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Removes the plugin's log directory if it exists; a missing directory is not an error.
+    pub fn remove(&self, plugin_id: &PluginId) -> io::Result<()> {
+        match std::fs::remove_dir_all(self.path_for(plugin_id)) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 }
 
