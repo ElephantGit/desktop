@@ -37,6 +37,7 @@ export type {
   ChatToolCallStatus,
   ChatTurn,
   ChatTurnItem,
+  ChatTurnRetry,
   ChatTurnStatus,
   ContextUsageSnapshot,
   ContextUsageState,
@@ -642,6 +643,17 @@ export function createChatStore(
           } else if (event.type === "permission_request") {
             flushPendingTextChunk();
             appendPermission(set, key, event);
+          } else if (event.type === "retrying") {
+            flushPendingTextChunk();
+            // The stalled attempt was cancelled before the re-send, so tools it
+            // left open are interrupted now rather than ticking until the turn
+            // ends; its pending permissions were answered by that cancel too.
+            const retriedAt = now();
+            updateTurn(set, key, turnId, (current) => ({
+              ...settleActiveToolCalls(current, "cancelled", retriedAt),
+              retry: { retry: event.retry, maxRetries: event.maxRetries },
+            }));
+            clearPendingPermissions(set, key);
           } else {
             flushPendingTextChunk();
             usageCompleted = true;

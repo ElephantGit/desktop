@@ -374,6 +374,11 @@ async fn drive_agent_node(
                     accumulator.consume(&update);
                 }
                 PromptSessionEvent::PermissionRequest(_) => {}
+                // The re-sent prompt answers the node afresh; text the stalled attempt got out
+                // before Ora gave up on it is not part of the deliverable.
+                PromptSessionEvent::Retrying { .. } => {
+                    accumulator = AssistantOutputAccumulator::default();
+                }
                 PromptSessionEvent::Completed {
                     stop_reason: reason,
                     ..

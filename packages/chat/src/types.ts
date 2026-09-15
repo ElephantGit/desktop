@@ -80,6 +80,18 @@ export type ChatTurnItem =
 /** Describes the lifecycle of one user prompt and its agent response. */
 export type ChatTurnStatus = "streaming" | "completed" | "cancelled" | "failed";
 
+/**
+ * Records that the backend re-sent this turn's prompt after the agent stalled.
+ *
+ * Counted from the first retry so it reads as `retry / maxRetries`. Live state
+ * only: a reloaded transcript carries no retry marker, so the field is absent
+ * there and the notice belongs to the streaming turn alone.
+ */
+export interface ChatTurnRetry {
+  retry: number;
+  maxRetries: number;
+}
+
 /** Groups one user message with every agent update produced in response. */
 export interface ChatTurn {
   id: string;
@@ -90,6 +102,7 @@ export interface ChatTurn {
   error: string | null;
   createdAt: number;
   durationMs?: number;
+  retry?: ChatTurnRetry;
 }
 
 /**

@@ -12,6 +12,7 @@ import {
   createChatStore,
   type ChatSessionClient,
   type ChatToolCall,
+  type ChatTurn,
 } from "../src/index.ts";
 
 /** Builds one ACP text update without exposing protocol transport details to the tests. */
@@ -692,6 +693,104 @@ test("settles a live tool call the agent never reported finishing", async () => 
       protocolMessageId: "agent-1",
     },
   ]);
+});
+
+test("marks the turn as retrying and interrupts the stalled attempt's tools", async () => {
+  let observedDuringRetry: ChatTurn | undefined;
+  const store = createChatStore(
+    {
+      load: () => events<LoadSessionEvent>([{ type: "completed" }]),
+      prompt: async function* () {
+        yield {
+          type: "session_update",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "t1",
+            title: "Read file",
+            status: "in_progress",
+          },
+        } as const;
+        yield { type: "retrying", retry: 1, maxRetries: 3 } as const;
+        // The store applies each event before pulling the next, so this is the
+        // turn exactly as the UI sees it while the re-sent prompt is pending.
+        observedDuringRetry = store.getState().conversations["ora-1"]!.turns[0];
+        yield textEvent(
+          "agent_message_chunk",
+          "second time lucky",
+          "agent-1",
+        ) as PromptSessionEvent;
+        yield { type: "completed", stopReason: "end_turn" } as const;
+      },
+      respondToPermission: async () => ({}),
+      setConfig: async () => ({ configOptions: [] }),
+    },
+    {
+      createId: () => "local",
+      now: () => 42,
+    },
+  );
+
+  await store.getState().loadSession("ora-1");
+  await store
+    .getState()
+    .sendMessage({ oraSessionId: "ora-1", text: "read it" });
+
+  const interruptedTool: ChatToolCall = {
+    kind: "toolCall",
+    id: "t1",
+    title: "Read file",
+    status: "cancelled",
+    content: [],
+    locations: [],
+    createdAt: 42,
+    updatedAt: 42,
+  };
+  assert.deepEqual(observedDuringRetry, {
+    id: "local",
+    userMessage: {
+      kind: "message",
+      id: "local",
+      role: "user",
+      content: "read it",
+      createdAt: 42,
+    },
+    items: [interruptedTool],
+    status: "streaming",
+    stopReason: null,
+    error: null,
+    createdAt: 42,
+    retry: { retry: 1, maxRetries: 3 },
+  });
+  // The retry's own output lands after the interrupted tool, and the settled
+  // turn keeps the marker without re-settling the tool the retry never touched.
+  const [turn] = store.getState().conversations["ora-1"]!.turns;
+  assert.deepEqual(turn, {
+    id: "local",
+    userMessage: {
+      kind: "message",
+      id: "local",
+      role: "user",
+      content: "read it",
+      createdAt: 42,
+    },
+    items: [
+      interruptedTool,
+      {
+        kind: "message",
+        id: "message-agent-1",
+        role: "assistant",
+        content: "second time lucky",
+        createdAt: 42,
+        protocolMessageId: "agent-1",
+      },
+    ],
+    status: "completed",
+    stopReason: "end_turn",
+    error: null,
+    createdAt: 42,
+    durationMs: 0,
+    retry: { retry: 1, maxRetries: 3 },
+  });
 });
 
 test("shows an unsettled tool call as interrupted when the turn was cut short", async () => {

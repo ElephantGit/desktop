@@ -9,6 +9,7 @@ mod load;
 mod operations;
 pub(crate) mod plugin_agent;
 mod prompt_liveness;
+mod prompt_retry;
 mod record;
 mod replay;
 mod restart_circuit;
@@ -48,12 +49,9 @@ use crate::session_setup::{
 };
 use crate::task::resolve_workspace_cwd;
 use crate::{BackendError, ErrorClassification};
-use agent_client_protocol_schema::v1::AvailableCommand;
-use agent_client_protocol_schema::v1::ContentBlock;
-use agent_client_protocol_schema::v1::SessionUpdate;
-use agent_client_protocol_schema::v1::{RequestPermissionOutcome, RequestPermissionResponse};
 use agent_client_protocol_schema::v1::{
-    SessionConfigId, SessionConfigOption, SessionConfigOptionValue,
+    AvailableCommand, ContentBlock, RequestPermissionOutcome, RequestPermissionResponse,
+    SessionConfigId, SessionConfigOption, SessionConfigOptionValue, SessionUpdate,
 };
 use connection::{ConnectionStatus, ConnectionSupervisor, ConnectionSupervisors};
 use ora_application::{Clock, SessionRepository};
