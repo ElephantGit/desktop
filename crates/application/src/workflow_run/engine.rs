@@ -51,6 +51,8 @@ pub use variable_pool::WorkflowVariablePool;
 pub use variable_template::{VariableTemplateError, render_variable_template};
 
 #[cfg(test)]
+mod d2_tests;
+#[cfg(test)]
 mod resume_tests;
 #[cfg(test)]
 mod tests;

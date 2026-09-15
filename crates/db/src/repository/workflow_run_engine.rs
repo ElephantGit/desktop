@@ -16,6 +16,7 @@ use super::workspace::{map_workspace_row, workspace_select_sql};
 use crate::repository::RepositoryPool;
 
 mod ai_diagnosis;
+mod bind;
 mod cancel;
 mod current_nodes;
 mod failure_detail;
@@ -26,7 +27,7 @@ mod snapshot_switch;
 
 use current_nodes::{current_nodes_from_state, current_nodes_to_state, rewrite_current_nodes};
 use failure_detail::{fail_orphaned_run, persist_failed_node_run};
-use payload_json::complete_payload;
+use payload_json::merge_complete_payload;
 
 /// Persists workflow-run engine state transitions in SQLite.
 ///
@@ -118,53 +119,7 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
         session_id: &SessionId,
         now: i64,
     ) -> Result<BindWorkflowNodeSessionResult, RepositoryError> {
-        self.pool
-            .with_connection_mut(|connection| {
-                let transaction = Transaction::new(connection, TransactionBehavior::Immediate)?;
-                let state = transaction
-                    .query_row(
-                        "SELECT nr.status, wr.run_status,
-                                EXISTS(
-                                    SELECT 1 FROM sessions s
-                                    WHERE s.id = ?2
-                                      AND s.workspace_id = wr.workspace_id
-                                      AND s.is_deleted = 0
-                                )
-                         FROM workflow_node_runs nr
-                         JOIN workflow_runs wr ON wr.id = nr.run_id
-                         WHERE nr.id = ?1 AND nr.is_deleted = 0 AND wr.is_deleted = 0",
-                        params![node_run_id.as_ref(), session_id.as_ref()],
-                        |row| {
-                            Ok((
-                                row.get::<_, i64>(0)?,
-                                row.get::<_, i64>(1)?,
-                                row.get::<_, i64>(2)?,
-                            ))
-                        },
-                    )
-                    .optional()?;
-                let Some((node_status, run_status, session_matches_workspace)) = state else {
-                    return Ok(BindWorkflowNodeSessionResult::NotFound);
-                };
-                if session_matches_workspace == 0 {
-                    return Ok(BindWorkflowNodeSessionResult::NotFound);
-                }
-                if WorkflowNodeStatus::from_database_value(node_status)?
-                    != WorkflowNodeStatus::Running
-                    || WorkflowRunStatus::from_database_value(run_status)?
-                        != WorkflowRunStatus::Running
-                {
-                    return Ok(BindWorkflowNodeSessionResult::NotRunning);
-                }
-                transaction.execute(
-                    "UPDATE workflow_node_runs SET session_id = ?2, updated_at = ?3
-                     WHERE id = ?1 AND is_deleted = 0",
-                    params![node_run_id.as_ref(), session_id.as_ref(), now],
-                )?;
-                transaction.commit()?;
-                Ok(BindWorkflowNodeSessionResult::Bound)
-            })
-            .map_err(engine_repository_error_from_database)
+        bind::bind_node_run_session(&self.pool, node_run_id, session_id, now)
     }
 
     fn find_node_run_by_session_id(
@@ -329,24 +284,26 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
             .with_connection_mut(|connection| {
                 let transaction =
                     Transaction::new(connection, TransactionBehavior::Immediate)?;
-                let Some((run_id, node_id, node_type, status, run_payload)) = transaction
-                    .query_row(
-                        "SELECT nr.run_id, nr.node_id, nr.node_type, nr.status, wr.payload
-                         FROM workflow_node_runs nr
-                         JOIN workflow_runs wr ON wr.id = nr.run_id
-                         WHERE nr.id = ?1 AND nr.is_deleted = 0 AND wr.is_deleted = 0",
-                        params![node_run_id.as_ref()],
-                        |row| {
-                            Ok((
-                                row.get::<_, String>(0)?,
-                                row.get::<_, String>(1)?,
-                                row.get::<_, String>(2)?,
-                                row.get::<_, i64>(3)?,
-                                row.get::<_, Option<String>>(4)?,
-                            ))
-                        },
-                    )
-                    .optional()?
+                let Some((run_id, node_id, node_type, status, run_payload, node_payload)) =
+                    transaction
+                        .query_row(
+                            "SELECT nr.run_id, nr.node_id, nr.node_type, nr.status, wr.payload, nr.payload
+                             FROM workflow_node_runs nr
+                             JOIN workflow_runs wr ON wr.id = nr.run_id
+                             WHERE nr.id = ?1 AND nr.is_deleted = 0 AND wr.is_deleted = 0",
+                            params![node_run_id.as_ref()],
+                            |row| {
+                                Ok((
+                                    row.get::<_, String>(0)?,
+                                    row.get::<_, String>(1)?,
+                                    row.get::<_, String>(2)?,
+                                    row.get::<_, i64>(3)?,
+                                    row.get::<_, Option<String>>(4)?,
+                                    row.get::<_, Option<String>>(5)?,
+                                ))
+                            },
+                        )
+                        .optional()?
                 else {
                     return Ok(AdvanceWorkflowRunResult::NotFound);
                 };
@@ -358,7 +315,7 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                 ) {
                     return Ok(AdvanceWorkflowRunResult::NotRunning);
                 }
-                let payload = complete_payload(stop_reason, file_changes);
+                let payload = merge_complete_payload(node_payload, stop_reason, file_changes)?;
                 update_run_execution_state(
                     &transaction,
                     &run_id,

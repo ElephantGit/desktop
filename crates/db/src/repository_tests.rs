@@ -1,8 +1,9 @@
 use ora_application::{
-    BindWorkflowNodeSessionResult, FileChange, NodeFailure, NodeFailureKind, NodeRunToStart,
-    ProjectRepository, RestartWorkflowRunResult, ResumeWorkflowRunResult, SessionRepository,
-    SkillRepository, StartWorkflowRunResult, WorkflowRepository, WorkflowRunCreateOutcome,
-    WorkflowRunEngineRepository, WorkflowRunPayload, WorkflowRunRepository, WorkflowVariablePool,
+    BindWorkflowNodeSessionResult, CancelWorkflowRunResult, FileChange, NodeFailure,
+    NodeFailureKind, NodeRunToStart, ProjectRepository, RestartWorkflowRunResult,
+    ResumeWorkflowRunResult, SessionRepository, SkillRepository, StartWorkflowRunResult,
+    WorkflowRepository, WorkflowRunCreateOutcome, WorkflowRunEngineRepository, WorkflowRunPayload,
+    WorkflowRunRepository, WorkflowVariablePool,
 };
 use ora_contracts::WorkflowRunLocale;
 use ora_domain::{
@@ -366,6 +367,115 @@ fn standalone_session_list_excludes_workflow_node_sessions() {
     assert_eq!(
         session_repository.list_standalone_sessions().unwrap(),
         vec![standalone]
+    );
+}
+
+/// D2: a Failed run still binds an in-flight sibling whose node-run status is Running.
+#[test]
+fn bind_node_run_session_accepts_running_node_after_sibling_fails_the_run() {
+    let (temp_dir, pool) = bootstrapped_pool();
+    let engine_repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+    let run_repository = SqliteWorkflowRunRepository::new(pool.clone());
+    let run_id = seed_pending_run(&temp_dir, &pool);
+    assert_eq!(
+        engine_repository
+            .start_run(
+                &run_id,
+                &NodeRunToStart {
+                    id: WorkflowNodeRunId::new("nr-start"),
+                    node_id: "start".to_string(),
+                    node_type: "start".to_string(),
+                    input: None,
+                },
+                40,
+            )
+            .unwrap(),
+        StartWorkflowRunResult::Started
+    );
+    engine_repository
+        .start_ready_nodes(
+            &run_id,
+            &[
+                NodeRunToStart {
+                    id: WorkflowNodeRunId::new("nr-a"),
+                    node_id: "a".to_string(),
+                    node_type: "agent".to_string(),
+                    input: None,
+                },
+                NodeRunToStart {
+                    id: WorkflowNodeRunId::new("nr-b"),
+                    node_id: "b".to_string(),
+                    node_type: "agent".to_string(),
+                    input: None,
+                },
+            ],
+            50,
+        )
+        .unwrap();
+    let session_id = create_run_workspace_session(&pool, &run_id);
+    engine_repository
+        .fail_node(
+            &WorkflowNodeRunId::new("nr-b"),
+            NodeFailure::new(NodeFailureKind::PromptTemplate, "b prompt failed"),
+            60,
+        )
+        .unwrap();
+    let run = run_repository.find_run(&run_id).unwrap().unwrap();
+    assert_eq!(run.status, WorkflowRunStatus::Failed);
+
+    assert_eq!(
+        engine_repository
+            .bind_node_run_session(&WorkflowNodeRunId::new("nr-a"), &session_id, 70)
+            .unwrap(),
+        BindWorkflowNodeSessionResult::Bound
+    );
+    let nodes = engine_repository.list_node_runs(&run_id).unwrap();
+    let node_a = nodes.iter().find(|node| node.node_id == "a").unwrap();
+    assert_eq!(node_a.session_id.as_ref(), Some(&session_id));
+    assert_eq!(node_a.status, WorkflowNodeStatus::Running);
+}
+
+/// Cancellation rejects bind through the node-run status, not the run status.
+#[test]
+fn bind_node_run_session_rejects_cancelled_node_run() {
+    let (temp_dir, pool) = bootstrapped_pool();
+    let engine_repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+    let run_id = seed_pending_run(&temp_dir, &pool);
+    engine_repository
+        .start_run(
+            &run_id,
+            &NodeRunToStart {
+                id: WorkflowNodeRunId::new("nr-start"),
+                node_id: "start".to_string(),
+                node_type: "start".to_string(),
+                input: None,
+            },
+            40,
+        )
+        .unwrap();
+    engine_repository
+        .start_ready_nodes(
+            &run_id,
+            &[NodeRunToStart {
+                id: WorkflowNodeRunId::new("nr-a"),
+                node_id: "a".to_string(),
+                node_type: "agent".to_string(),
+                input: None,
+            }],
+            50,
+        )
+        .unwrap();
+    let session_id = create_run_workspace_session(&pool, &run_id);
+    assert_eq!(
+        engine_repository.cancel_run(&run_id, 60).unwrap(),
+        CancelWorkflowRunResult::Cancelled
+    );
+
+    assert_eq!(
+        engine_repository
+            .bind_node_run_session(&WorkflowNodeRunId::new("nr-a"), &session_id, 70)
+            .unwrap(),
+        BindWorkflowNodeSessionResult::NotRunning
     );
 }
 
@@ -1395,6 +1505,62 @@ fn fail_node_writes_file_changes_in_the_same_shape_as_complete_node() {
     assert_eq!(failed_payload["checkpoint"], "def456");
 }
 
+/// `complete_node` keeps checkpoint keys when merging stop_reason and file_changes.
+#[test]
+fn complete_node_merges_stop_reason_into_existing_checkpoint_payload() {
+    let (temp_dir, pool) = bootstrapped_pool();
+    let engine_repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+    let run_id = seed_pending_run(&temp_dir, &pool);
+    engine_repository
+        .start_ready_nodes(
+            &run_id,
+            &[NodeRunToStart {
+                id: WorkflowNodeRunId::new("nr-review"),
+                node_id: "review".to_string(),
+                node_type: "agent".to_string(),
+                input: None,
+            }],
+            40,
+        )
+        .unwrap();
+    engine_repository
+        .record_node_checkpoint(
+            &WorkflowNodeRunId::new("nr-review"),
+            "snapshot-1",
+            Some("abc123"),
+            None,
+            50,
+        )
+        .unwrap();
+    engine_repository
+        .complete_node(
+            &WorkflowNodeRunId::new("nr-review"),
+            Some("done".to_string()),
+            None,
+            Some("end_turn".to_string()),
+            vec![FileChange {
+                path: "src/a.ts".to_string(),
+                additions: 1,
+                deletions: 0,
+            }],
+            60,
+        )
+        .unwrap();
+
+    let nodes = engine_repository.list_node_runs(&run_id).unwrap();
+    let node = nodes.iter().find(|node| node.node_id == "review").unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(node.payload.as_deref().unwrap()).unwrap();
+    assert_eq!(
+        parsed,
+        serde_json::json!({
+            "checkpoint": "abc123",
+            "snapshot_id": "snapshot-1",
+            "stop_reason": "end_turn",
+            "file_changes": [{"path": "src/a.ts", "additions": 1, "deletions": 0}],
+        })
+    );
+}
+
 /// Crash recovery writes `interrupted_by_restart` error detail on orphaned in-flight nodes.
 #[test]
 fn fail_orphaned_node_runs_writes_interrupted_by_restart_error_detail() {
@@ -1699,6 +1865,26 @@ fn seed_run(
         ))
         .unwrap();
     run_id
+}
+
+/// Creates a workspace session owned by the given run's workspace so bind can succeed.
+fn create_run_workspace_session(pool: &RepositoryPool, run_id: &WorkflowRunId) -> SessionId {
+    let run = SqliteWorkflowRunRepository::new(pool.clone())
+        .find_run(run_id)
+        .unwrap()
+        .unwrap();
+    let session_id = SessionId::new("session-bind");
+    SqliteSessionRepository::new(pool.clone())
+        .create_session(Session::new(
+            session_id.clone(),
+            run.workspace_id,
+            AgentRef::parse("ora-space.opencode").unwrap(),
+            "provider-bind",
+            SessionStatus::Running,
+            AuditFields::new(20, 20, false),
+        ))
+        .unwrap();
+    session_id
 }
 
 /// Seeds a created-but-never-started Pending run for deletion-policy fixtures.

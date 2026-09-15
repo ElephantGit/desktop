@@ -37,22 +37,27 @@ pub(super) fn merge_payload_keys(
     Ok(serde_json::Value::Object(map).to_string())
 }
 
-/// Builds the node-run `payload` blob: the ACP stop reason and incremental file changes, when any.
-pub(super) fn complete_payload(
+/// Merges completion keys into an existing node-run payload without dropping checkpoint keys.
+///
+/// `stop_reason` is inserted only when `Some`; `file_changes` only when non-empty. When there is
+/// nothing to insert, the existing payload is returned unchanged so a success cannot turn a
+/// checkpoint blob into `NULL`.
+pub(super) fn merge_complete_payload(
+    existing: Option<String>,
     stop_reason: Option<String>,
     file_changes: Vec<FileChange>,
-) -> Option<String> {
-    let mut payload = serde_json::Map::new();
+) -> Result<Option<String>, crate::DatabaseError> {
+    let mut keys = Vec::new();
     if let Some(reason) = stop_reason {
-        payload.insert("stop_reason".to_string(), serde_json::json!(reason));
+        keys.push(("stop_reason", serde_json::json!(reason)));
     }
     if !file_changes.is_empty() {
-        payload.insert("file_changes".to_string(), file_changes_json(&file_changes));
+        keys.push(("file_changes", file_changes_json(&file_changes)));
     }
-    if payload.is_empty() {
-        return None;
+    if keys.is_empty() {
+        return Ok(existing);
     }
-    Some(serde_json::Value::Object(payload).to_string())
+    Ok(Some(merge_payload_keys(existing.as_deref(), keys)?))
 }
 
 /// Merges `payload.checkpoint` (and optional `checkpoint_error`) onto one node-run row.

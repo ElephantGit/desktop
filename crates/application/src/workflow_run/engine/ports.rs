@@ -127,9 +127,9 @@ pub enum ResumeWorkflowRunResult {
 /// Outcome of publishing a prepared workflow node session to observers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BindWorkflowNodeSessionResult {
-    /// The run and node are still running, and the session is now visible to observers.
+    /// The node run is still `Running`, and the session is now visible to observers.
     Bound,
-    /// Cancellation or another terminal transition won before the session could be published.
+    /// The node run is no longer `Running` (cancelled, succeeded, or failed).
     NotRunning,
     /// The node or its owning run no longer exists.
     NotFound,
@@ -172,7 +172,12 @@ pub trait WorkflowRunEngineRepository {
         node_id: &str,
     ) -> Result<Option<WorkflowNodeRun>, RepositoryError>;
 
-    /// Publishes a node's prepared Ora session only while both the node and run are still running.
+    /// Publishes a node's prepared Ora session while the node run is still `Running`.
+    ///
+    /// Design rule D2: a run that is already `Failed` still accepts bindings for its in-flight
+    /// nodes so they persist `Succeeded` or `Failed` on their own merits. Cancellation rejects
+    /// through the node-run status, because `cancel_run` marks every non-terminal node
+    /// `Cancelled` in the same transaction that cancels the run.
     ///
     /// The executor calls this after the initial prompt is accepted. Keeping `session_id` absent
     /// until then prevents a workflow transcript load from displacing that owning prompt, while
