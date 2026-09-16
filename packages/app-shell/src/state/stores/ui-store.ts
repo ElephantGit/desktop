@@ -39,6 +39,8 @@ export type PluginSettingsRequest =
   | { kind: "marketplaceSearch"; query: string }
   | { kind: "manage" }
   | { kind: "configure"; pluginId: string; displayName: string };
+
+/**
  * Sidebar workflow-run filter. `awaiting_input` is the Theater display spelling
  * so HITL rows match the status dots rather than the wire `awaitingInput` token.
  */
