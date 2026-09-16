@@ -3247,14 +3247,20 @@ dependencies = [
  "ora-backend",
  "ora-contracts",
  "ora-db",
+ "ora-domain",
  "ora-history",
  "ora-logging",
+ "ora-plugin-manager",
+ "ora-plugin-manifest",
  "ora-plugin-protocol",
+ "ora-plugin-registry",
+ "ora-utils",
  "pretty_assertions",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "zip 2.4.2",
 ]
 
 [[package]]
@@ -3440,6 +3446,7 @@ dependencies = [
 name = "ora-plugin-manifest"
 version = "0.0.0"
 dependencies = [
+ "ora-domain",
  "ora-utils",
  "pretty_assertions",
  "semver",

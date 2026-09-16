@@ -642,6 +642,52 @@ pub enum InstallOutcome {
     /// the same command alias. The colliding plugin identity is carried so a future consumer can
     /// refuse ambiguous PATH resolution instead of silently selecting the wrong Hook.
     InstalledWithCommandConflict { conflict_plugin_id: String },
+    /// The pack orchestration outcome: applicable members were installed in declaration order
+    /// through the ordinary single-plugin chain, already-installed members were skipped, and the
+    /// first member failure stopped the run without rolling back what had landed. A partial
+    /// outcome is still an `Ok` result — the caller needs to know which members are present to
+    /// decide between retrying and giving up (extension-pack decision D6/D7).
+    PackInstalled {
+        /// Applicable members that were installed by this operation, in declaration order.
+        members: Vec<PackInstalledMember>,
+        /// Applicable members that were already installed (any version) and therefore skipped;
+        /// their existing versions were left untouched.
+        skipped: Vec<String>,
+        /// The first member that failed, when one did; members after it were not attempted.
+        failed: Option<PackInstallFailure>,
+    },
+}
+
+/// One member installed by a pack installation, with its single-plugin outcome.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct PackInstalledMember {
+    pub plugin_id: String,
+    pub outcome: PackMemberInstallOutcome,
+}
+
+/// The closed set of single-plugin outcomes a pack member can report.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "state",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+#[ts(export_to = "plugin.ts")]
+pub enum PackMemberInstallOutcome {
+    Installed,
+    InstalledWithCommandConflict { conflict_plugin_id: String },
+}
+
+/// Identifies the first pack member whose installation failed and the classified reason.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "plugin.ts")]
+pub struct PackInstallFailure {
+    pub plugin_id: String,
+    /// The stable public error code the member's install failure classified as.
+    pub error_code: String,
 }
 
 /// Requests updating one installed marketplace plugin to the version its source publishes.
@@ -767,6 +813,9 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     InstalledPlugin::export(config)?;
     PluginHostCompatibility::export(config)?;
     AvailablePlugin::export(config)?;
+    PackInstalledMember::export(config)?;
+    PackMemberInstallOutcome::export(config)?;
+    PackInstallFailure::export(config)?;
     ListAvailablePluginsRequest::export(config)?;
     ListAvailablePluginsResponse::export(config)?;
     SyncAvailablePluginsRequest::export(config)?;

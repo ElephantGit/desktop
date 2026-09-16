@@ -5,6 +5,10 @@ export const requestIdSchema = z.string();
 
 export const emptyErrorParamsSchema = z.record(z.string(), z.never());
 
+export const packMemberParamsSchema = z.object({
+    pluginId: z.string()
+});
+
 export const marketplaceArtifactRetrievalFieldInvalidParamsSchema = z.object({
     field: z.string()
 });
@@ -83,6 +87,21 @@ export const contractErrorSchema = z.object({
     }), z.object({
         "code": z.literal("plugin_host_incompatible"),
         "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("pack_member_duplicate"),
+        "params": packMemberParamsSchema
+    }), z.object({
+        "code": z.literal("pack_self_reference"),
+        "params": packMemberParamsSchema
+    }), z.object({
+        "code": z.literal("pack_member_not_found"),
+        "params": packMemberParamsSchema
+    }), z.object({
+        "code": z.literal("pack_member_nested"),
+        "params": packMemberParamsSchema
+    }), z.object({
+        "code": z.literal("pack_no_applicable_members"),
+        "params": packMemberParamsSchema
     }), z.object({
         "code": z.literal("marketplace_s3_credentials_required"),
         "params": emptyErrorParamsSchema
@@ -412,6 +431,21 @@ export const publicErrorSchema = z.union([z.object({
     }), z.object({
         "code": z.literal("plugin_host_incompatible"),
         "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("pack_member_duplicate"),
+        "params": packMemberParamsSchema
+    }), z.object({
+        "code": z.literal("pack_self_reference"),
+        "params": packMemberParamsSchema
+    }), z.object({
+        "code": z.literal("pack_member_not_found"),
+        "params": packMemberParamsSchema
+    }), z.object({
+        "code": z.literal("pack_member_nested"),
+        "params": packMemberParamsSchema
+    }), z.object({
+        "code": z.literal("pack_no_applicable_members"),
+        "params": packMemberParamsSchema
     }), z.object({
         "code": z.literal("marketplace_s3_credentials_required"),
         "params": emptyErrorParamsSchema

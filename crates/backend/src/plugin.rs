@@ -2,6 +2,8 @@ mod listing;
 mod logo_roots;
 mod marketplace;
 mod operations;
+mod pack;
+mod pack_reconcile;
 mod registry_sync;
 pub use operations::{AdmittedSync, Plugins};
 
@@ -27,8 +29,8 @@ use ora_contracts::{
 };
 use ora_db::{
     PluginSkillProjection, RepositoryPool, SqliteEffectRepository,
-    SqlitePluginMarketplaceSourceRepository, SqlitePluginSourceNamespaceRepository,
-    SqliteSkillRepository, SqliteWorkspaceRepository,
+    SqlitePackInstallationRepository, SqlitePluginMarketplaceSourceRepository,
+    SqlitePluginSourceNamespaceRepository, SqliteSkillRepository, SqliteWorkspaceRepository,
 };
 use ora_domain::PluginId;
 use ora_effect::{ConsumerDeclaration, ConsumerIdentity, ConsumerKind, Digest};
@@ -173,8 +175,10 @@ pub(crate) struct PluginApi {
     notifications: BroadcastNotificationSink,
     pub(crate) configuration: ConfigurationService,
     skill_repository: SqliteSkillRepository,
-    pub(crate) effect_repository: SqliteEffectRepository,
+    effect_repository: SqliteEffectRepository,
     workspace_repository: SqliteWorkspaceRepository,
+    /// Durable pack → member relationships recorded by pack installations (D3-A).
+    pack_installations: SqlitePackInstallationRepository,
     agent_effect_declarations: Mutex<BTreeMap<PluginId, ConsumerDeclaration>>,
     /// Admits at most one marketplace index rebuild at a time.
     ///
@@ -245,7 +249,8 @@ impl PluginApi {
             configuration,
             skill_repository: SqliteSkillRepository::new(pool.clone()),
             effect_repository: SqliteEffectRepository::new(pool.clone()),
-            workspace_repository: SqliteWorkspaceRepository::new(pool),
+            workspace_repository: SqliteWorkspaceRepository::new(pool.clone()),
+            pack_installations: SqlitePackInstallationRepository::new(pool),
             agent_effect_declarations: Mutex::new(BTreeMap::new()),
             rebuilding: Mutex::new(()),
             effect_reconcile: OnceLock::new(),

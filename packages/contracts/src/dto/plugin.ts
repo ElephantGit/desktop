@@ -123,6 +123,21 @@ export type ImportPluginResponse = {
 export type InstallOutcome = { "state": "installed" } | {
   "state": "installed_with_command_conflict";
   conflictPluginId: string;
+} | {
+  "state": "pack_installed";
+  /**
+   * Applicable members that were installed by this operation, in declaration order.
+   */
+  members: Array<PackInstalledMember>;
+  /**
+   * Applicable members that were already installed (any version) and therefore skipped;
+   * their existing versions were left untouched.
+   */
+  skipped: Array<string>;
+  /**
+   * The first member that failed, when one did; members after it were not attempted.
+   */
+  failed: PackInstallFailure | null;
 };
 
 /**
@@ -321,6 +336,33 @@ export type MarketplaceSource = {
    * Release-artifact retrieval policy, with S3 credentials omitted.
    */
   artifactRetrieval: MarketplaceArtifactRetrieval;
+};
+
+/**
+ * Identifies the first pack member whose installation failed and the classified reason.
+ */
+export type PackInstallFailure = {
+  pluginId: string;
+  /**
+   * The stable public error code the member's install failure classified as.
+   */
+  errorCode: string;
+};
+
+/**
+ * One member installed by a pack installation, with its single-plugin outcome.
+ */
+export type PackInstalledMember = {
+  pluginId: string;
+  outcome: PackMemberInstallOutcome;
+};
+
+/**
+ * The closed set of single-plugin outcomes a pack member can report.
+ */
+export type PackMemberInstallOutcome = { "state": "installed" } | {
+  "state": "installed_with_command_conflict";
+  conflictPluginId: string;
 };
 
 /**

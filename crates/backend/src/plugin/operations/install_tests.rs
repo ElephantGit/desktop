@@ -5,15 +5,21 @@ use crate::agent_runtime::{AgentRuntimeManager, AgentRuntimeSetup};
 use crate::app_event::AppEventHub;
 use crate::clock::SystemClock;
 use crate::plugin::PluginApi;
+use crate::plugin::pack_reconcile::PackMemberReconciliation;
 use crate::settings::Settings;
-use ora_contracts::{ImportPluginRequest, InstallOutcome, ListInstalledPluginsRequest};
+use ora_contracts::{
+    ImportPluginRequest, InstallOutcome, ListInstalledPluginsRequest, PackInstalledMember,
+    PackMemberInstallOutcome, PluginDataDisposition, PublicError, UninstallPluginRequest,
+};
 use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
 use ora_logging::with_trace_logging;
+use ora_plugin_manager::{Installer, ResolvedReleaseSource};
+use ora_plugin_manifest::PluginManifest;
 use ora_scheduler::Scheduler;
 use pretty_assertions::assert_eq;
 use std::fs::File;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tempfile::TempDir;
 use zip::ZipWriter;
@@ -152,6 +158,932 @@ fn read_plugin_readme_resolves_from_the_marketplace_checkout() {
     });
 }
 
+/// Opens the plugin host directly so pack orchestration can inject a local-file installer.
+fn pack_test_host(root: &Path, pool: &RepositoryPool) -> Arc<PluginApi> {
+    Arc::new(
+        PluginApi::open(
+            pool.clone(),
+            root.to_path_buf(),
+            std::path::PathBuf::from("deno"),
+            SystemClock,
+            AppEventHub::new().publisher(),
+            Arc::new(Settings::new(pool.clone())),
+        )
+        .expect("open plugin host"),
+    )
+}
+
+/// Installs a tracing dispatcher for the duration of one async pack test.
+fn trace_guard() -> tracing::dispatcher::DefaultGuard {
+    use tracing_subscriber::layer::SubscriberExt;
+    let subscriber =
+        tracing_subscriber::registry().with(tracing_subscriber::filter::LevelFilter::TRACE);
+    tracing::dispatcher::set_default(&tracing::Dispatch::new(subscriber))
+}
+
+/// Writes one skill-member release archive and returns its lowercase hex SHA-256.
+fn write_skill_orax(path: &Path, identifier: &str) -> String {
+    let manifest = format!(
+        "resolver = 1\nidentifier = \"{identifier}\"\nkind = \"skill\"\nversion = \"1.0.0\"\ndescription = \"Pack member skill\"\n"
+    );
+    let mut writer = ZipWriter::new(File::create(path).unwrap());
+    let options = SimpleFileOptions::default();
+    writer.start_file("orax.toml", options).unwrap();
+    writer.write_all(manifest.as_bytes()).unwrap();
+    writer.start_file("assets/demo/SKILL.md", options).unwrap();
+    writer
+        .write_all(b"---\nname: demo\ndescription: Pack member skill\n---\n\nBody.\n")
+        .unwrap();
+    writer.finish().unwrap();
+    ora_utils::hash::sha256_file(path).expect("hash member artifact")
+}
+
+/// Writes one marketplace listing directory into the staged checkout.
+fn stage_listing(root: &Path, identifier: &str, listing: &str) {
+    let listing_dir = root
+        .join("registry")
+        .join(&identifier[0..1])
+        .join(identifier);
+    std::fs::create_dir_all(&listing_dir).expect("create listing dir");
+    std::fs::write(listing_dir.join("orax.toml"), listing).expect("write listing manifest");
+}
+
+/// Builds one skill-member listing whose release digest matches the staged artifact.
+fn skill_listing(identifier: &str, sha256: &str, marketplace_visible: bool) -> String {
+    let visibility = if marketplace_visible {
+        String::new()
+    } else {
+        "marketplace_visible = false\n".to_string()
+    };
+    format!(
+        "resolver = 1\nidentifier = \"{identifier}\"\nkind = \"skill\"\nversion = \"1.0.0\"\ndescription = \"Pack member skill\"\n{visibility}url = \"https://example.com/{identifier}.orax\"\nsha256 = \"{sha256}\"\n"
+    )
+}
+
+/// Builds one pack listing with the supplied `[[pack.members]]` tables.
+fn pack_listing(identifier: &str, members: &str) -> String {
+    format!(
+        "resolver = 1\nidentifier = \"{identifier}\"\ntitle = \"Python Extension Pack\"\nkind = \"pack\"\nversion = \"0.1.0\"\ndescription = \"Python development pack\"\n{members}"
+    )
+}
+
+fn member_table(identifier: &str) -> String {
+    format!("[[pack.members]]\nidentifier = \"{identifier}\"\n\n")
+}
+
+fn member_table_with_agents(identifier: &str, agents: &str) -> String {
+    format!("[[pack.members]]\nidentifier = \"{identifier}\"\nagents = [{agents}]\n\n")
+}
+
+const PACK_ID: &str = "official/ora-space.python-extension-pack";
+const PACK_IDENTIFIER: &str = "ora-space.python-extension-pack";
+
+/// Substitutes only the transfer leg: each member's HTTPS locator is replaced by its locally
+/// built artifact (the same substitution the RTK E2E uses), keeping digest verification on the
+/// production path.
+fn with_local_releases(
+    fixture: &PackFixture,
+    mut preflight: crate::plugin::pack::PackPreflight,
+) -> crate::plugin::pack::PackPreflight {
+    for member in preflight.applicable_mut() {
+        let artifact = fixture.member_artifacts[member.plugin_id.name()].clone();
+        let digest = *ora_plugin_manifest::Sha256Digest::parse(
+            &ora_utils::hash::sha256_file(&artifact).expect("hash artifact"),
+        )
+        .expect("digest")
+        .as_bytes();
+        member.release = ResolvedReleaseSource::universal(
+            ora_utils::http::DownloadSource::Local(artifact),
+            digest,
+        );
+    }
+    preflight
+}
+const HIDDEN_MEMBER: &str = "ora-space.python-core";
+const VISIBLE_MEMBER: &str = "ora-space.claude-python-tools";
+
+/// Builds one member release archive at an explicit version and returns its path.
+fn build_member_artifact(data_dir: &Path, identifier: &str, version: &str) -> PathBuf {
+    let artifacts = data_dir.join("artifacts");
+    std::fs::create_dir_all(&artifacts).expect("create artifacts dir");
+    let artifact = artifacts.join(format!("{identifier}-v{version}.orax"));
+    let mut writer = ZipWriter::new(File::create(&artifact).unwrap());
+    let options = SimpleFileOptions::default();
+    let manifest = format!(
+        "resolver = 1\nidentifier = \"{identifier}\"\nkind = \"skill\"\nversion = \"{version}\"\ndescription = \"Pack member skill\"\n"
+    );
+    writer.start_file("orax.toml", options).unwrap();
+    writer.write_all(manifest.as_bytes()).unwrap();
+    writer.start_file("assets/demo/SKILL.md", options).unwrap();
+    writer
+        .write_all(b"---\nname: demo\ndescription: Pack member skill\n---\n\nBody.\n")
+        .unwrap();
+    writer.finish().unwrap();
+    artifact
+}
+/// Installs one member package at an explicit version, the way an independent marketplace
+/// upgrade would, so reconciliation observes a version that the pack never recorded.
+async fn install_member_version(data_dir: &Path, identifier: &str, version: &str) {
+    let artifact = build_member_artifact(data_dir, identifier, version);
+    let listing = format!(
+        "resolver = 1\nidentifier = \"{identifier}\"\nkind = \"skill\"\nversion = \"{version}\"\ndescription = \"Pack member skill\"\nurl = \"https://example.com/{identifier}.orax\"\nsha256 = \"{}\"\n",
+        ora_utils::hash::sha256_file(&artifact).expect("hash artifact")
+    );
+    let release_manifest = PluginManifest::parse(&listing).expect("parse upgrade listing");
+    let digest = *ora_plugin_manifest::Sha256Digest::parse(
+        &ora_utils::hash::sha256_file(&artifact).expect("hash artifact"),
+    )
+    .expect("digest")
+    .as_bytes();
+    Installer::new(ora_utils::http::LocalFileDownloader)
+        .install(
+            &release_manifest,
+            &ora_domain::PluginNamespace::official(),
+            ResolvedReleaseSource::universal(
+                ora_utils::http::DownloadSource::Local(artifact),
+                digest,
+            ),
+            data_dir,
+        )
+        .await
+        .expect("install the member version");
+}
+
+/// Opens the Plugins wrapper together with its host so pack tests can drive both layers.
+fn pack_test_plugins(root: &Path, pool: &RepositoryPool) -> (Plugins, Arc<PluginApi>) {
+    let events = AppEventHub::new();
+    let host = Arc::new(
+        PluginApi::open(
+            pool.clone(),
+            root.to_path_buf(),
+            std::path::PathBuf::from("deno"),
+            SystemClock,
+            events.publisher(),
+            Arc::new(Settings::new(pool.clone())),
+        )
+        .expect("open plugin host"),
+    );
+    let runtime = Arc::new(
+        AgentRuntimeManager::new(AgentRuntimeSetup {
+            plugin_host: host.clone(),
+            pool: pool.clone(),
+            home_directory: root.to_path_buf(),
+            relative_path_base: root.to_path_buf(),
+            sessions_root: root.join("sessions"),
+            clock: SystemClock,
+            scheduler: Scheduler::new(chrono_tz::Asia::Shanghai),
+            app_events: events.publisher(),
+        })
+        .expect("agent runtime"),
+    );
+    (Plugins::new(host.clone(), runtime), host)
+}
+
+/// Asserts the installed state of one member package directory.
+fn member_installed(root: &Path, member: &str, version: &str) -> bool {
+    root.join("plugins")
+        .join("installed")
+        .join("official")
+        .join(member)
+        .join(version)
+        .is_dir()
+}
+
+/// Runs the pack orchestration over the standard fixture and records the ownership journal.
+async fn install_and_record_pack(
+    data_dir: &Path,
+    api: &Arc<PluginApi>,
+    pack_members: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = stage_pack_fixture(data_dir, pack_members);
+    let namespace = ora_domain::PluginNamespace::official();
+    let source = ora_plugin_registry::RegistrySource::new(
+        "https://github.com/ora-space/marketplace",
+        namespace.clone(),
+        gitlancer::BranchName::new("main"),
+        data_dir
+            .join("plugins")
+            .join("sources")
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace"),
+    );
+    let preflight = api
+        .preflight_pack(&fixture.pack_manifest, &namespace, &source)
+        .expect("pack preflight succeeds");
+    let installer = Installer::new(ora_utils::http::LocalFileDownloader);
+    let preflight = with_local_releases(&fixture, preflight);
+    let (_outcome, ledger) = api
+        .install_members(&namespace, preflight, &installer, /*progress*/ None)
+        .await
+        .expect("pack members install");
+    api.record_pack_run(
+        &ora_domain::PluginId::parse(PACK_ID).expect("pack id"),
+        "https://github.com/ora-space/marketplace",
+        &ledger,
+    )
+    .expect("record pack ownership");
+    Ok(())
+}
+
+/// Stages the pack fixture: the pack listing, one hidden member, and one visible member, each
+/// backed by a real release artifact, and returns the pack manifest plus the member artifacts.
+struct PackFixture {
+    pack_manifest: ora_plugin_manifest::PluginManifest,
+    member_artifacts: std::collections::BTreeMap<&'static str, std::path::PathBuf>,
+}
+
+fn stage_pack_fixture(root: &Path, pack_members: &str) -> PackFixture {
+    let checkout = root
+        .join("plugins")
+        .join("sources")
+        .join("github.com")
+        .join("ora-space")
+        .join("marketplace");
+    let artifacts = root.join("artifacts");
+    std::fs::create_dir_all(&artifacts).expect("create artifacts dir");
+
+    let hidden_sha = write_skill_orax(&artifacts.join("python-core.orax"), HIDDEN_MEMBER);
+    let visible_sha = write_skill_orax(&artifacts.join("claude-python-tools.orax"), VISIBLE_MEMBER);
+    stage_listing(
+        &checkout,
+        HIDDEN_MEMBER,
+        &skill_listing(
+            HIDDEN_MEMBER,
+            &hidden_sha,
+            /*marketplace_visible*/ false,
+        ),
+    );
+    stage_listing(
+        &checkout,
+        VISIBLE_MEMBER,
+        &skill_listing(VISIBLE_MEMBER, &visible_sha, true),
+    );
+    stage_listing(
+        &checkout,
+        PACK_IDENTIFIER,
+        &pack_listing(PACK_IDENTIFIER, pack_members),
+    );
+
+    let pack_listing_path = checkout
+        .join("registry")
+        .join("o")
+        .join("ora-space.python-extension-pack")
+        .join("orax.toml");
+    let pack_manifest = ora_plugin_manifest::PluginManifest::parse(
+        &std::fs::read_to_string(pack_listing_path).expect("read pack listing"),
+    )
+    .expect("parse pack listing");
+    PackFixture {
+        pack_manifest,
+        member_artifacts: std::collections::BTreeMap::from([
+            (HIDDEN_MEMBER, artifacts.join("python-core.orax")),
+            (VISIBLE_MEMBER, artifacts.join("claude-python-tools.orax")),
+        ]),
+    }
+}
+
+/// Two fresh members install in declaration order and report a clean pack outcome.
+#[tokio::test]
+async fn pack_install_installs_every_applicable_member_in_declaration_order() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let api = pack_test_host(data_dir.path(), &pool);
+    let fixture = stage_pack_fixture(
+        data_dir.path(),
+        &format!(
+            "{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(VISIBLE_MEMBER)
+        ),
+    );
+    let source = ora_plugin_registry::RegistrySource::new(
+        "https://github.com/ora-space/marketplace",
+        ora_domain::PluginNamespace::official(),
+        gitlancer::BranchName::new("main"),
+        data_dir
+            .path()
+            .join("plugins")
+            .join("sources")
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace"),
+    );
+
+    let preflight = api
+        .preflight_pack(
+            &fixture.pack_manifest,
+            &ora_domain::PluginNamespace::official(),
+            &source,
+        )
+        .expect("pack preflight succeeds");
+    assert_eq!(preflight.already_installed(), Vec::<String>::new());
+    assert_eq!(
+        preflight
+            .applicable()
+            .iter()
+            .map(|member| member.plugin_id.canonical())
+            .collect::<Vec<_>>(),
+        vec![
+            format!("official/{HIDDEN_MEMBER}"),
+            format!("official/{VISIBLE_MEMBER}"),
+        ]
+    );
+
+    let installer = Installer::new(ora_utils::http::LocalFileDownloader);
+    let preflight = with_local_releases(&fixture, preflight);
+    let (outcome, ledger) = api
+        .install_members(
+            &ora_domain::PluginNamespace::official(),
+            preflight,
+            &installer,
+            /*progress*/ None,
+        )
+        .await
+        .expect("pack members install");
+    assert_eq!(
+        outcome,
+        InstallOutcome::PackInstalled {
+            members: vec![
+                PackInstalledMember {
+                    plugin_id: format!("official/{HIDDEN_MEMBER}"),
+                    outcome: PackMemberInstallOutcome::Installed,
+                },
+                PackInstalledMember {
+                    plugin_id: format!("official/{VISIBLE_MEMBER}"),
+                    outcome: PackMemberInstallOutcome::Installed,
+                },
+            ],
+            skipped: Vec::new(),
+            failed: None,
+        }
+    );
+    // The hidden member installs even though discovery never listed it: visibility only affects
+    // discovery, never addressability.
+    assert!(
+        data_dir
+            .path()
+            .join("plugins")
+            .join("installed")
+            .join("official")
+            .join(HIDDEN_MEMBER)
+            .join("1.0.0")
+            .is_dir(),
+        "the hidden member is installed"
+    );
+
+    // The ownership journal records what the run did: both members were created by this run, so
+    // both are pack-managed at the version that landed.
+    api.record_pack_run(
+        &ora_domain::PluginId::parse(PACK_ID).expect("pack id"),
+        "https://github.com/ora-space/marketplace",
+        &ledger,
+    )
+    .expect("record pack ownership");
+    let record = api
+        .pack_installation(PACK_ID)
+        .expect("load pack installation")
+        .expect("the pack installation is recorded");
+    assert_eq!(record.pack_id, PACK_ID);
+    assert_eq!(
+        record.source_url,
+        "https://github.com/ora-space/marketplace"
+    );
+    assert_eq!(
+        record.members,
+        vec![
+            ora_db::PackInstallationMemberRecord {
+                member_id: format!("official/{VISIBLE_MEMBER}"),
+                version_at_install: "1.0.0".to_string(),
+                ownership: ora_db::PackMemberOwnership::ManagedByPack,
+            },
+            ora_db::PackInstallationMemberRecord {
+                member_id: format!("official/{HIDDEN_MEMBER}"),
+                version_at_install: "1.0.0".to_string(),
+                ownership: ora_db::PackMemberOwnership::ManagedByPack,
+            },
+        ]
+    );
+}
+
+/// A member that was already installed when the pack named it is recorded as pre-existing, while
+/// members the run created are recorded as pack-managed.
+#[tokio::test]
+async fn pack_install_records_created_members_as_managed_and_skips_as_pre_existing() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let api = pack_test_host(data_dir.path(), &pool);
+    let fixture = stage_pack_fixture(
+        data_dir.path(),
+        &format!(
+            "{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(VISIBLE_MEMBER)
+        ),
+    );
+    // Pre-install the visible member so the pack run skips it instead of creating it.
+    let visible_manifest = PluginManifest::parse(
+        &std::fs::read_to_string(
+            data_dir
+                .path()
+                .join("plugins")
+                .join("sources")
+                .join("github.com")
+                .join("ora-space")
+                .join("marketplace")
+                .join("registry")
+                .join("o")
+                .join(VISIBLE_MEMBER)
+                .join("orax.toml"),
+        )
+        .expect("read visible listing"),
+    )
+    .expect("parse visible listing");
+    let digest = *ora_plugin_manifest::Sha256Digest::parse(
+        &ora_utils::hash::sha256_file(fixture.member_artifacts[VISIBLE_MEMBER].as_path())
+            .expect("hash artifact"),
+    )
+    .expect("digest")
+    .as_bytes();
+    Installer::new(ora_utils::http::LocalFileDownloader)
+        .install(
+            &visible_manifest,
+            &ora_domain::PluginNamespace::official(),
+            ResolvedReleaseSource::universal(
+                ora_utils::http::DownloadSource::Local(
+                    fixture.member_artifacts[VISIBLE_MEMBER].clone(),
+                ),
+                digest,
+            ),
+            data_dir.path(),
+        )
+        .await
+        .expect("pre-install the visible member");
+
+    let namespace = ora_domain::PluginNamespace::official();
+    let source = ora_plugin_registry::RegistrySource::new(
+        "https://github.com/ora-space/marketplace",
+        namespace.clone(),
+        gitlancer::BranchName::new("main"),
+        data_dir
+            .path()
+            .join("plugins")
+            .join("sources")
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace"),
+    );
+    let preflight = api
+        .preflight_pack(&fixture.pack_manifest, &namespace, &source)
+        .expect("pack preflight succeeds");
+    let installer = Installer::new(ora_utils::http::LocalFileDownloader);
+    let preflight = with_local_releases(&fixture, preflight);
+    let (_outcome, ledger) = api
+        .install_members(&namespace, preflight, &installer, /*progress*/ None)
+        .await
+        .expect("pack members install");
+    api.record_pack_run(
+        &ora_domain::PluginId::parse(PACK_ID).expect("pack id"),
+        "https://github.com/ora-space/marketplace",
+        &ledger,
+    )
+    .expect("record pack ownership");
+    let record = api
+        .pack_installation(PACK_ID)
+        .expect("load pack installation")
+        .expect("the pack installation is recorded");
+    assert_eq!(
+        record.members,
+        vec![
+            ora_db::PackInstallationMemberRecord {
+                member_id: format!("official/{VISIBLE_MEMBER}"),
+                version_at_install: "1.0.0".to_string(),
+                ownership: ora_db::PackMemberOwnership::PreExisting,
+            },
+            ora_db::PackInstallationMemberRecord {
+                member_id: format!("official/{HIDDEN_MEMBER}"),
+                version_at_install: "1.0.0".to_string(),
+                ownership: ora_db::PackMemberOwnership::ManagedByPack,
+            },
+        ]
+    );
+}
+
+/// The ownership journal is durable: a fresh plugin host on the same database reads the same
+/// relationships without any re-install.
+#[tokio::test]
+async fn pack_ownership_survives_a_restart() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let api = pack_test_host(data_dir.path(), &pool);
+    let fixture = stage_pack_fixture(
+        data_dir.path(),
+        &format!(
+            "{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(VISIBLE_MEMBER)
+        ),
+    );
+    let namespace = ora_domain::PluginNamespace::official();
+    let source = ora_plugin_registry::RegistrySource::new(
+        "https://github.com/ora-space/marketplace",
+        namespace.clone(),
+        gitlancer::BranchName::new("main"),
+        data_dir
+            .path()
+            .join("plugins")
+            .join("sources")
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace"),
+    );
+    let preflight = api
+        .preflight_pack(&fixture.pack_manifest, &namespace, &source)
+        .expect("pack preflight succeeds");
+    let installer = Installer::new(ora_utils::http::LocalFileDownloader);
+    let preflight = with_local_releases(&fixture, preflight);
+    let (_outcome, ledger) = api
+        .install_members(&namespace, preflight, &installer, /*progress*/ None)
+        .await
+        .expect("pack members install");
+    api.record_pack_run(
+        &ora_domain::PluginId::parse(PACK_ID).expect("pack id"),
+        "https://github.com/ora-space/marketplace",
+        &ledger,
+    )
+    .expect("record pack ownership");
+    let before = api
+        .pack_installation(PACK_ID)
+        .expect("load pack installation")
+        .expect("the pack installation is recorded");
+
+    // Reopen the plugin host over the same database: the relationships persist unchanged.
+    drop(api);
+    drop(pool);
+    let restarted_pool = test_pool(data_dir.path());
+    let restarted = pack_test_host(data_dir.path(), &restarted_pool);
+    let after = restarted
+        .pack_installation(PACK_ID)
+        .expect("load pack installation after restart")
+        .expect("the pack installation survives the restart");
+    assert_eq!(after, before);
+}
+
+/// A member that is already installed is skipped without touching its version, while the rest
+/// of the pack still installs.
+#[tokio::test]
+async fn pack_install_skips_an_already_installed_member() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let api = pack_test_host(data_dir.path(), &pool);
+    let fixture = stage_pack_fixture(
+        data_dir.path(),
+        &format!(
+            "{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(VISIBLE_MEMBER)
+        ),
+    );
+    let namespace = ora_domain::PluginNamespace::official();
+    let source = ora_plugin_registry::RegistrySource::new(
+        "https://github.com/ora-space/marketplace",
+        namespace.clone(),
+        gitlancer::BranchName::new("main"),
+        data_dir
+            .path()
+            .join("plugins")
+            .join("sources")
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace"),
+    );
+    // Install the visible member first through the same chain, so the pack sees it installed.
+    let visible_manifest = PluginManifest::parse(
+        &std::fs::read_to_string(
+            data_dir
+                .path()
+                .join("plugins")
+                .join("sources")
+                .join("github.com")
+                .join("ora-space")
+                .join("marketplace")
+                .join("registry")
+                .join("o")
+                .join(VISIBLE_MEMBER)
+                .join("orax.toml"),
+        )
+        .expect("read visible listing"),
+    )
+    .expect("parse visible listing");
+    let digest = *ora_plugin_manifest::Sha256Digest::parse(
+        &ora_utils::hash::sha256_file(fixture.member_artifacts[VISIBLE_MEMBER].as_path())
+            .expect("hash artifact"),
+    )
+    .expect("digest")
+    .as_bytes();
+    Installer::new(ora_utils::http::LocalFileDownloader)
+        .install(
+            &visible_manifest,
+            &namespace,
+            ResolvedReleaseSource::universal(
+                ora_utils::http::DownloadSource::Local(
+                    fixture.member_artifacts[VISIBLE_MEMBER].clone(),
+                ),
+                digest,
+            ),
+            data_dir.path(),
+        )
+        .await
+        .expect("pre-install the visible member");
+
+    let preflight = api
+        .preflight_pack(&fixture.pack_manifest, &namespace, &source)
+        .expect("pack preflight succeeds");
+    assert_eq!(
+        preflight.already_installed(),
+        vec![format!("official/{VISIBLE_MEMBER}")]
+    );
+    let installer = Installer::new(ora_utils::http::LocalFileDownloader);
+    let preflight = with_local_releases(&fixture, preflight);
+    let (outcome, ledger) = api
+        .install_members(&namespace, preflight, &installer, /*progress*/ None)
+        .await
+        .expect("pack members install");
+    match outcome {
+        InstallOutcome::PackInstalled {
+            members,
+            skipped,
+            failed,
+        } => {
+            assert_eq!(
+                members
+                    .iter()
+                    .map(|member| member.plugin_id.as_str())
+                    .collect::<Vec<_>>(),
+                vec![format!("official/{HIDDEN_MEMBER}")],
+            );
+            assert_eq!(
+                skipped,
+                vec![format!("official/{VISIBLE_MEMBER}")],
+                "the installed member is skipped, not reinstalled or reported as failed"
+            );
+            assert_eq!(failed, None);
+        }
+        other => panic!("expected a pack outcome, got {other:?}"),
+    }
+}
+
+/// Every static pack problem fails preflight before any member downloads or lands on disk.
+#[tokio::test]
+async fn pack_preflight_failures_leave_the_installed_tree_untouched() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let api = pack_test_host(data_dir.path(), &pool);
+    let namespace = ora_domain::PluginNamespace::official();
+    let source = ora_plugin_registry::RegistrySource::new(
+        "https://github.com/ora-space/marketplace",
+        namespace.clone(),
+        gitlancer::BranchName::new("main"),
+        data_dir
+            .path()
+            .join("plugins")
+            .join("sources")
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace"),
+    );
+
+    // Duplicate member: the same identifier declared twice.
+    let fixture = stage_pack_fixture(
+        data_dir.path(),
+        &format!(
+            "{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(HIDDEN_MEMBER)
+        ),
+    );
+    let error = api
+        .preflight_pack(&fixture.pack_manifest, &namespace, &source)
+        .expect_err("duplicate member fails preflight");
+    assert!(matches!(
+        error.public_error(),
+        PublicError::PackMemberDuplicate(_)
+    ));
+
+    // Self-reference: a member that names the pack itself.
+    let fixture = stage_pack_fixture(
+        data_dir.path(),
+        &member_table("ora-space.python-extension-pack"),
+    );
+    let error = api
+        .preflight_pack(&fixture.pack_manifest, &namespace, &source)
+        .expect_err("self-reference fails preflight");
+    assert!(matches!(
+        error.public_error(),
+        PublicError::PackSelfReference(_)
+    ));
+
+    // Unresolved member: the identifier exists in no listing of the pack's source.
+    let fixture = stage_pack_fixture(data_dir.path(), &member_table("ora-space.missing"));
+    let error = api
+        .preflight_pack(&fixture.pack_manifest, &namespace, &source)
+        .expect_err("missing member fails preflight");
+    assert!(matches!(
+        error.public_error(),
+        PublicError::PackMemberNotFound(_)
+    ));
+
+    // Nested pack: a member that is itself a pack listing.
+    stage_listing(
+        &data_dir
+            .path()
+            .join("plugins")
+            .join("sources")
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace"),
+        "ora-space.nested-pack",
+        &pack_listing("ora-space.nested-pack", &member_table(HIDDEN_MEMBER)),
+    );
+    let fixture = stage_pack_fixture(data_dir.path(), &member_table("ora-space.nested-pack"));
+    let error = api
+        .preflight_pack(&fixture.pack_manifest, &namespace, &source)
+        .expect_err("nested pack fails preflight");
+    assert!(matches!(
+        error.public_error(),
+        PublicError::PackMemberNested(_)
+    ));
+
+    // No applicable member: the only member is agent-gated and no agent is installed.
+    let fixture = stage_pack_fixture(
+        data_dir.path(),
+        &member_table_with_agents(VISIBLE_MEMBER, "\"ora-space.codex\""),
+    );
+    let error = api
+        .preflight_pack(&fixture.pack_manifest, &namespace, &source)
+        .expect_err("an agent-gated member without a match fails preflight");
+    assert!(matches!(
+        error.public_error(),
+        PublicError::PackNoApplicableMembers(_)
+    ));
+
+    assert!(
+        !data_dir.path().join("plugins").join("installed").exists(),
+        "a failed preflight never touches the installed tree"
+    );
+}
+
+/// A member whose agent reference matches an installed agent plugin applies and installs.
+#[tokio::test]
+async fn pack_install_applies_an_agent_gated_member_whose_agent_is_installed() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let api = pack_test_host(data_dir.path(), &pool);
+    // The referenced agent is installed ahead of the pack: the matching rule reads the
+    // installed tree, not the marketplace.
+    let agent_root = data_dir
+        .path()
+        .join("plugins")
+        .join("installed")
+        .join("official")
+        .join("ora-space.codex")
+        .join("1.0.0");
+    std::fs::create_dir_all(&agent_root).expect("create agent package dir");
+    std::fs::write(
+        agent_root.join("orax.toml"),
+        "resolver = 1\nidentifier = \"ora-space.codex\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"Codex agent\"\n",
+    )
+    .expect("write agent manifest");
+    std::fs::write(agent_root.join("main.js"), "export {};\n").expect("write entrypoint");
+    let fixture = stage_pack_fixture(
+        data_dir.path(),
+        &member_table_with_agents(VISIBLE_MEMBER, "\"ora-space.codex\""),
+    );
+    let namespace = ora_domain::PluginNamespace::official();
+    let source = ora_plugin_registry::RegistrySource::new(
+        "https://github.com/ora-space/marketplace",
+        namespace.clone(),
+        gitlancer::BranchName::new("main"),
+        data_dir
+            .path()
+            .join("plugins")
+            .join("sources")
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace"),
+    );
+
+    let preflight = api
+        .preflight_pack(&fixture.pack_manifest, &namespace, &source)
+        .expect("the agent match admits the member");
+    assert_eq!(preflight.already_installed(), Vec::<String>::new());
+    let installer = Installer::new(ora_utils::http::LocalFileDownloader);
+    let preflight = with_local_releases(&fixture, preflight);
+    let (outcome, ledger) = api
+        .install_members(&namespace, preflight, &installer, /*progress*/ None)
+        .await
+        .expect("pack members install");
+    match outcome {
+        InstallOutcome::PackInstalled {
+            members,
+            skipped,
+            failed,
+        } => {
+            assert_eq!(members.len(), 1);
+            assert_eq!(members[0].plugin_id, format!("official/{VISIBLE_MEMBER}"));
+            assert!(skipped.is_empty());
+            assert_eq!(failed, None);
+        }
+        other => panic!("expected a pack outcome, got {other:?}"),
+    }
+}
+
+/// A member that fails mid-run stops the pack: completed members are kept and reported, the
+/// remaining members are not attempted, and the failure is identifiable inside an `Ok` outcome.
+#[tokio::test]
+async fn pack_install_stops_at_a_failing_member_without_rolling_back() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let api = pack_test_host(data_dir.path(), &pool);
+    let fixture = stage_pack_fixture(
+        data_dir.path(),
+        &format!(
+            "{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(VISIBLE_MEMBER)
+        ),
+    );
+    // Corrupt the second member's artifact after staging so its digest no longer matches the
+    // listing: the download fails during the run, after the first member has landed.
+    std::fs::write(
+        fixture.member_artifacts[VISIBLE_MEMBER].as_path(),
+        b"corrupted",
+    )
+    .expect("corrupt the second member artifact");
+    let namespace = ora_domain::PluginNamespace::official();
+    let source = ora_plugin_registry::RegistrySource::new(
+        "https://github.com/ora-space/marketplace",
+        namespace.clone(),
+        gitlancer::BranchName::new("main"),
+        data_dir
+            .path()
+            .join("plugins")
+            .join("sources")
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace"),
+    );
+
+    let preflight = api
+        .preflight_pack(&fixture.pack_manifest, &namespace, &source)
+        .expect("pack preflight succeeds");
+    let installer = Installer::new(ora_utils::http::LocalFileDownloader);
+    let preflight = with_local_releases(&fixture, preflight);
+    let (outcome, ledger) = api
+        .install_members(&namespace, preflight, &installer, /*progress*/ None)
+        .await
+        .expect("a member failure is reported inside a successful pack outcome");
+    match outcome {
+        InstallOutcome::PackInstalled {
+            members,
+            skipped,
+            failed,
+        } => {
+            assert_eq!(
+                members
+                    .iter()
+                    .map(|member| member.plugin_id.as_str())
+                    .collect::<Vec<_>>(),
+                vec![format!("official/{HIDDEN_MEMBER}")],
+                "the member that landed before the failure is kept and reported"
+            );
+            assert!(skipped.is_empty());
+            let failed = failed.expect("the failed member is identified");
+            assert_eq!(failed.plugin_id, format!("official/{VISIBLE_MEMBER}"));
+            assert!(!failed.error_code.is_empty());
+        }
+        other => panic!("expected a pack outcome, got {other:?}"),
+    }
+    assert!(
+        data_dir
+            .path()
+            .join("plugins")
+            .join("installed")
+            .join("official")
+            .join(HIDDEN_MEMBER)
+            .join("1.0.0")
+            .is_dir(),
+        "the completed member is not rolled back"
+    );
+}
+
 /// Two Hook packages that share a command alias both stay installed; the second import reports
 /// the colliding identity instead of claiming the new package was disabled.
 #[test]
@@ -215,4 +1147,537 @@ fn importing_a_second_hook_with_the_same_command_reports_a_conflict_without_disa
                 );
             });
     });
+}
+
+/// A fresh pack install reconciles every member as present at the recorded version.
+#[tokio::test]
+async fn reconcile_reports_expected_present_after_a_fresh_pack_install() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let api = pack_test_host(data_dir.path(), &pool);
+    install_and_record_pack(
+        data_dir.path(),
+        &api,
+        &format!(
+            "{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(VISIBLE_MEMBER)
+        ),
+    )
+    .await
+    .expect("install and record the pack");
+    let reconciliation = api
+        .reconcile_pack_installation(PACK_ID)
+        .expect("reconcile the recorded pack")
+        .expect("the recorded pack reconciles");
+    assert_eq!(reconciliation.pack_id(), PACK_ID);
+    assert_eq!(
+        reconciliation.members(),
+        vec![
+            PackMemberReconciliation::ExpectedAndPresent {
+                member_id: format!("official/{VISIBLE_MEMBER}"),
+                version_at_install: "1.0.0".to_string(),
+                ownership: ora_db::PackMemberOwnership::ManagedByPack,
+            },
+            PackMemberReconciliation::ExpectedAndPresent {
+                member_id: format!("official/{HIDDEN_MEMBER}"),
+                version_at_install: "1.0.0".to_string(),
+                ownership: ora_db::PackMemberOwnership::ManagedByPack,
+            },
+        ]
+    );
+}
+
+/// An externally deleted member reconciles as missing, with the journal untouched.
+#[tokio::test]
+async fn reconcile_identifies_a_missing_member_without_touching_the_ledger() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let api = pack_test_host(data_dir.path(), &pool);
+    install_and_record_pack(
+        data_dir.path(),
+        &api,
+        &format!(
+            "{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(VISIBLE_MEMBER)
+        ),
+    )
+    .await
+    .expect("install and record the pack");
+    std::fs::remove_dir_all(
+        data_dir
+            .path()
+            .join("plugins")
+            .join("installed")
+            .join("official")
+            .join(HIDDEN_MEMBER),
+    )
+    .expect("delete the member externally");
+    let reconciliation = api
+        .reconcile_pack_installation(PACK_ID)
+        .expect("reconcile the recorded pack")
+        .expect("the recorded pack reconciles");
+    assert_eq!(
+        reconciliation.members(),
+        vec![
+            PackMemberReconciliation::ExpectedAndPresent {
+                member_id: format!("official/{VISIBLE_MEMBER}"),
+                version_at_install: "1.0.0".to_string(),
+                ownership: ora_db::PackMemberOwnership::ManagedByPack,
+            },
+            PackMemberReconciliation::Missing {
+                member_id: format!("official/{HIDDEN_MEMBER}"),
+                version_at_install: "1.0.0".to_string(),
+                ownership: ora_db::PackMemberOwnership::ManagedByPack,
+            },
+        ]
+    );
+    let journal = api
+        .pack_installation(PACK_ID)
+        .expect("load the journal")
+        .expect("the journal survives reconciliation");
+    assert_eq!(journal.members.len(), 2);
+}
+
+/// An independently upgraded member reconciles as version-changed: the classification changes
+/// but the journal keeps the historical version and the original ownership for both ownership
+/// kinds.
+#[tokio::test]
+async fn reconcile_identifies_an_independently_upgraded_member_and_keeps_the_journal_facts() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let api = pack_test_host(data_dir.path(), &pool);
+    // The visible member is pre-installed, so the journal records it as pre-existing.
+    install_member_version(data_dir.path(), VISIBLE_MEMBER, "1.0.0").await;
+    install_and_record_pack(
+        data_dir.path(),
+        &api,
+        &format!(
+            "{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(VISIBLE_MEMBER)
+        ),
+    )
+    .await
+    .expect("install and record the pack");
+    // Both members are upgraded independently after the pack install.
+    install_member_version(data_dir.path(), HIDDEN_MEMBER, "2.0.0").await;
+    install_member_version(data_dir.path(), VISIBLE_MEMBER, "2.0.0").await;
+    let reconciliation = api
+        .reconcile_pack_installation(PACK_ID)
+        .expect("reconcile the recorded pack")
+        .expect("the recorded pack reconciles");
+    assert_eq!(
+        reconciliation.members(),
+        vec![
+            PackMemberReconciliation::VersionChanged {
+                member_id: format!("official/{VISIBLE_MEMBER}"),
+                version_at_install: "1.0.0".to_string(),
+                current_version: "2.0.0".to_string(),
+                ownership: ora_db::PackMemberOwnership::PreExisting,
+            },
+            PackMemberReconciliation::VersionChanged {
+                member_id: format!("official/{HIDDEN_MEMBER}"),
+                version_at_install: "1.0.0".to_string(),
+                current_version: "2.0.0".to_string(),
+                ownership: ora_db::PackMemberOwnership::ManagedByPack,
+            },
+        ]
+    );
+    // Reconciliation is read-only: the journal still records the historical facts.
+    let journal = api
+        .pack_installation(PACK_ID)
+        .expect("load the journal")
+        .expect("the journal survives reconciliation");
+    assert!(
+        journal
+            .members
+            .iter()
+            .all(|member| { member.version_at_install == "1.0.0" })
+    );
+}
+
+/// Reconciliation never invents a relationship for a pack that no install ever recorded.
+#[tokio::test]
+async fn reconcile_returns_none_for_an_unrecorded_pack() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let api = pack_test_host(data_dir.path(), &pool);
+    assert_eq!(
+        api.reconcile_pack_installation(PACK_ID).expect("reconcile"),
+        None
+    );
+}
+/// A fresh pack uninstall removes every member the pack created and clears the journal.
+#[tokio::test]
+async fn pack_uninstall_removes_every_managed_member_and_clears_the_journal() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    install_and_record_pack(
+        data_dir.path(),
+        &host,
+        &format!(
+            "{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(VISIBLE_MEMBER)
+        ),
+    )
+    .await
+    .expect("install and record the pack");
+
+    let response = plugins
+        .uninstall(UninstallPluginRequest {
+            plugin_id: PACK_ID.to_string(),
+            data_disposition: PluginDataDisposition::Delete,
+        })
+        .await
+        .expect("uninstall the pack");
+    assert_eq!(response.plugin_id, PACK_ID);
+    assert!(
+        !member_installed(data_dir.path(), HIDDEN_MEMBER, "1.0.0"),
+        "the managed member is removed"
+    );
+    assert!(
+        !member_installed(data_dir.path(), VISIBLE_MEMBER, "1.0.0"),
+        "the other managed member is removed"
+    );
+    assert!(
+        host.pack_installation(PACK_ID)
+            .expect("load the journal")
+            .is_none(),
+        "the journal is cleared once every relationship is released"
+    );
+}
+
+/// A pre-existing member survives the pack uninstall: the pack never created it, so it never
+/// touches it, and the relationship is simply released.
+#[tokio::test]
+async fn pack_uninstall_preserves_a_pre_existing_member() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    install_member_version(data_dir.path(), VISIBLE_MEMBER, "1.0.0").await;
+    install_and_record_pack(
+        data_dir.path(),
+        &host,
+        &format!(
+            "{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(VISIBLE_MEMBER)
+        ),
+    )
+    .await
+    .expect("install and record the pack");
+
+    plugins
+        .uninstall(UninstallPluginRequest {
+            plugin_id: PACK_ID.to_string(),
+            data_disposition: PluginDataDisposition::Delete,
+        })
+        .await
+        .expect("uninstall the pack");
+    assert!(
+        member_installed(data_dir.path(), VISIBLE_MEMBER, "1.0.0"),
+        "the pre-existing member survives the pack uninstall"
+    );
+    assert!(
+        !member_installed(data_dir.path(), HIDDEN_MEMBER, "1.0.0"),
+        "the managed member is removed"
+    );
+    assert!(
+        host.pack_installation(PACK_ID)
+            .expect("load the journal")
+            .is_none(),
+        "the released relationship leaves no journal"
+    );
+}
+
+/// A member the pack created but the user independently upgraded survives the pack uninstall.
+#[tokio::test]
+async fn pack_uninstall_preserves_an_independently_upgraded_member() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    install_and_record_pack(
+        data_dir.path(),
+        &host,
+        &format!(
+            "{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(VISIBLE_MEMBER)
+        ),
+    )
+    .await
+    .expect("install and record the pack");
+    install_member_version(data_dir.path(), HIDDEN_MEMBER, "2.0.0").await;
+
+    plugins
+        .uninstall(UninstallPluginRequest {
+            plugin_id: PACK_ID.to_string(),
+            data_disposition: PluginDataDisposition::Delete,
+        })
+        .await
+        .expect("uninstall the pack");
+    assert!(
+        member_installed(data_dir.path(), HIDDEN_MEMBER, "2.0.0"),
+        "the independently upgraded member is preserved"
+    );
+    assert!(
+        !member_installed(data_dir.path(), VISIBLE_MEMBER, "1.0.0"),
+        "the member that stayed at its recorded version is removed"
+    );
+    assert!(
+        host.pack_installation(PACK_ID)
+            .expect("load the journal")
+            .is_none(),
+        "the journal is cleared after the run"
+    );
+}
+
+/// A managed member that is already missing releases its relationship without filesystem work,
+/// and the pack uninstall still completes.
+#[tokio::test]
+async fn pack_uninstall_completes_when_a_managed_member_is_already_missing() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    install_and_record_pack(
+        data_dir.path(),
+        &host,
+        &format!(
+            "{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(VISIBLE_MEMBER)
+        ),
+    )
+    .await
+    .expect("install and record the pack");
+    std::fs::remove_dir_all(
+        data_dir
+            .path()
+            .join("plugins")
+            .join("installed")
+            .join("official")
+            .join(HIDDEN_MEMBER),
+    )
+    .expect("delete the member externally");
+
+    plugins
+        .uninstall(UninstallPluginRequest {
+            plugin_id: PACK_ID.to_string(),
+            data_disposition: PluginDataDisposition::Delete,
+        })
+        .await
+        .expect("the missing member does not fail the uninstall");
+    assert!(
+        !member_installed(data_dir.path(), VISIBLE_MEMBER, "1.0.0"),
+        "the remaining member is still removed"
+    );
+    assert!(
+        host.pack_installation(PACK_ID)
+            .expect("load the journal")
+            .is_none(),
+        "the journal is cleared"
+    );
+}
+
+/// A mixed pack removes only the eligible member: pre-existing and independently upgraded
+/// members are preserved, and the journal is cleared.
+#[tokio::test]
+async fn pack_uninstall_removes_only_the_eligible_member_in_a_mixed_pack() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    const THIRD_MEMBER: &str = "ora-space.third-tools";
+    // The visible member is pre-existing; the third member starts at 1.0.0 and is upgraded
+    // after the pack install, so every preserve reason is exercised at once.
+    install_member_version(data_dir.path(), VISIBLE_MEMBER, "1.0.0").await;
+    let third_artifact = build_member_artifact(data_dir.path(), THIRD_MEMBER, "1.0.0");
+    stage_listing(
+        &data_dir
+            .path()
+            .join("plugins")
+            .join("sources")
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace"),
+        THIRD_MEMBER,
+        &skill_listing(
+            THIRD_MEMBER,
+            &ora_utils::hash::sha256_file(&third_artifact).expect("hash the third artifact"),
+            true,
+        ),
+    );
+    let fixture = stage_pack_fixture(
+        data_dir.path(),
+        &format!(
+            "{}{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(VISIBLE_MEMBER),
+            member_table(THIRD_MEMBER)
+        ),
+    );
+    let namespace = ora_domain::PluginNamespace::official();
+    let source = ora_plugin_registry::RegistrySource::new(
+        "https://github.com/ora-space/marketplace",
+        namespace.clone(),
+        gitlancer::BranchName::new("main"),
+        data_dir
+            .path()
+            .join("plugins")
+            .join("sources")
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace"),
+    );
+    let mut preflight = host
+        .preflight_pack(&fixture.pack_manifest, &namespace, &source)
+        .expect("pack preflight succeeds");
+    let installer = Installer::new(ora_utils::http::LocalFileDownloader);
+    for member in preflight.applicable_mut() {
+        let artifact = match member.plugin_id.name() {
+            HIDDEN_MEMBER => fixture.member_artifacts[HIDDEN_MEMBER].clone(),
+            VISIBLE_MEMBER => fixture.member_artifacts[VISIBLE_MEMBER].clone(),
+            THIRD_MEMBER => third_artifact.clone(),
+            other => panic!("unexpected member {other}"),
+        };
+        let digest = *ora_plugin_manifest::Sha256Digest::parse(
+            &ora_utils::hash::sha256_file(&artifact).expect("hash artifact"),
+        )
+        .expect("digest")
+        .as_bytes();
+        member.release = ResolvedReleaseSource::universal(
+            ora_utils::http::DownloadSource::Local(artifact),
+            digest,
+        );
+    }
+    let (_outcome, ledger) = host
+        .install_members(&namespace, preflight, &installer, /*progress*/ None)
+        .await
+        .expect("pack members install");
+    host.record_pack_run(
+        &ora_domain::PluginId::parse(PACK_ID).expect("pack id"),
+        "https://github.com/ora-space/marketplace",
+        &ledger,
+    )
+    .expect("record pack ownership");
+    install_member_version(data_dir.path(), THIRD_MEMBER, "2.0.0").await;
+
+    plugins
+        .uninstall(UninstallPluginRequest {
+            plugin_id: PACK_ID.to_string(),
+            data_disposition: PluginDataDisposition::Delete,
+        })
+        .await
+        .expect("uninstall the pack");
+    assert!(
+        !member_installed(data_dir.path(), HIDDEN_MEMBER, "1.0.0"),
+        "the managed member at its recorded version is removed"
+    );
+    assert!(
+        member_installed(data_dir.path(), VISIBLE_MEMBER, "1.0.0"),
+        "the pre-existing member is preserved"
+    );
+    assert!(
+        member_installed(data_dir.path(), THIRD_MEMBER, "2.0.0"),
+        "the independently upgraded member is preserved"
+    );
+    assert!(
+        host.pack_installation(PACK_ID)
+            .expect("load the journal")
+            .is_none(),
+        "the journal is cleared"
+    );
+}
+
+/// A member uninstall that fails keeps its journal relationship so a retry can continue from
+/// exactly the member that failed.
+#[tokio::test]
+async fn a_failed_member_uninstall_keeps_the_journal_and_a_retry_completes() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    install_and_record_pack(
+        data_dir.path(),
+        &host,
+        &format!(
+            "{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(VISIBLE_MEMBER)
+        ),
+    )
+    .await
+    .expect("install and record the pack");
+
+    // Compute the plan while both members are healthy, then delete the second member's package
+    // so the stale plan's execution fails exactly on that member.
+    let plan = host
+        .pack_uninstall_plan(PACK_ID)
+        .expect("plan the pack uninstall")
+        .expect("the recorded pack plans");
+    assert_eq!(
+        plan.remove().to_vec(),
+        vec![
+            format!("official/{VISIBLE_MEMBER}"),
+            format!("official/{HIDDEN_MEMBER}"),
+        ]
+    );
+    std::fs::remove_dir_all(
+        data_dir
+            .path()
+            .join("plugins")
+            .join("installed")
+            .join("official")
+            .join(HIDDEN_MEMBER),
+    )
+    .expect("delete the second member externally");
+    let failed = host
+        .uninstall_pack(plan, PluginDataDisposition::Delete)
+        .await;
+    assert!(failed.is_err(), "the missing package fails its uninstall");
+    // The first member was removed before the failure; the failed member keeps its journal row.
+    assert!(
+        !member_installed(data_dir.path(), VISIBLE_MEMBER, "1.0.0"),
+        "the first member was removed before the failure"
+    );
+    let journal = host
+        .pack_installation(PACK_ID)
+        .expect("load the journal")
+        .expect("the journal survives the failure");
+    assert_eq!(
+        journal
+            .members
+            .iter()
+            .map(|member| member.member_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![format!("official/{HIDDEN_MEMBER}")],
+    );
+
+    // The retry re-plans from the surviving journal: the failed member is now missing, so the
+    // relationship is released and the pack record is cleared.
+    plugins
+        .uninstall(UninstallPluginRequest {
+            plugin_id: PACK_ID.to_string(),
+            data_disposition: PluginDataDisposition::Delete,
+        })
+        .await
+        .expect("the retry completes the uninstall");
+    assert!(
+        host.pack_installation(PACK_ID)
+            .expect("load the journal after retry")
+            .is_none(),
+        "the retry clears the journal"
+    );
 }

@@ -14,7 +14,7 @@ use ora_contracts::{
 use ora_domain::{PluginId, PluginNamespace};
 use ora_logging::ora_info;
 use ora_plugin_manager::{HostTarget, InstallError, Installer, UpdateError, select_release};
-use ora_plugin_manifest::PluginManifest;
+use ora_plugin_manifest::{PluginKind, PluginManifest};
 use ora_plugin_registry::RegistryIndex;
 use ora_utils::http::{
     ProgressCallback, ProxyConfig, ReqwestDownloader, S3AwareDownloader, S3Config,
@@ -51,6 +51,13 @@ impl PluginApi {
     ) -> Result<InstallPluginResponse, BackendError> {
         let (manifest, namespace, use_proxy, s3_config) =
             self.resolve_marketplace_release(&request.plugin_id).await?;
+        // A pack is an orchestration entry: it resolves like any listing but expands into member
+        // installs instead of a release download (extension-pack decision D5).
+        if matches!(manifest.kind(), PluginKind::Pack) {
+            return self
+                .install_pack(request, manifest, namespace, use_proxy, s3_config, progress)
+                .await;
+        }
         let release_source = self.select_marketplace_release(&manifest)?;
         match release_source.download() {
             ora_utils::http::DownloadSource::Url(url) => {
@@ -122,6 +129,15 @@ impl PluginApi {
     ) -> Result<UpdatePluginResponse, BackendError> {
         let (manifest, namespace, use_proxy, s3_config) =
             self.resolve_marketplace_release(&request.plugin_id).await?;
+        // A pack is never installed, so it has nothing to update; refreshing members means
+        // installing the pack again (extension-pack decision D7).
+        if matches!(manifest.kind(), PluginKind::Pack) {
+            return Err(BackendError::new(
+                ErrorClassification::InvalidRequest,
+                PublicError::InvalidRequest(EmptyErrorParams {}),
+                "a pack cannot be updated; install the pack again to refresh its members",
+            ));
+        }
         let release_source = self.select_marketplace_release(&manifest)?;
         match release_source.download() {
             ora_utils::http::DownloadSource::Url(url) => {
@@ -225,7 +241,11 @@ impl PluginApi {
     }
 
     /// Maps installer failures that describe host incompatibility onto the public contract error.
-    fn map_install_error(&self, context: &'static str, error: InstallError) -> BackendError {
+    pub(super) fn map_install_error(
+        &self,
+        context: &'static str,
+        error: InstallError,
+    ) -> BackendError {
         match error {
             InstallError::NoArtifactForTarget { .. }
             | InstallError::MissingRelease
@@ -262,7 +282,7 @@ impl PluginApi {
     }
 
     /// Builds a source-scoped downloader that signs only the configured S3 endpoint and bucket.
-    async fn marketplace_installer(
+    pub(super) async fn marketplace_installer(
         &self,
         use_proxy: bool,
         s3_config: Option<S3Config>,

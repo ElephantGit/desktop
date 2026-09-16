@@ -19,6 +19,7 @@ mod session_followers;
 mod start;
 mod stream;
 mod support;
+mod suspend;
 mod title_acquisition;
 mod tool_timing;
 
@@ -373,9 +374,8 @@ impl AgentRuntimeManager {
 
     /// Reconciles supervised agent connections with the currently installed plugin set.
     ///
-    /// Every plugin operation that changes which packages exist calls this, so a plugin installed
-    /// or removed while Ora runs is reflected in the agent picker and in session routing without a
-    /// restart.
+    /// Every plugin operation that changes which packages exist calls this, so installs and
+    /// uninstalls are reflected in the agent picker and in session routing without a restart.
     pub(crate) fn sync_plugin_agents(&self) {
         self.inner.connections.sync_plugin_agents();
     }

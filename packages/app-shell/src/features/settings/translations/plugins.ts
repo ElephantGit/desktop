@@ -3,6 +3,15 @@ export const pluginTranslations = {
   "zh-CN": {
     "errors.plugin_not_found": "未找到该插件。",
     "errors.plugin_host_incompatible": "当前主机不支持此插件的发布制品。",
+    "errors.pack_member_duplicate": "集合包重复声明了成员 {{pluginId}}。",
+    "errors.pack_self_reference":
+      "集合包不能把自身声明为成员（{{pluginId}}）。",
+    "errors.pack_member_not_found":
+      "集合包成员 {{pluginId}} 不在其所属插件源中。",
+    "errors.pack_member_nested":
+      "集合包成员 {{pluginId}} 自身也是一个集合包，暂不支持嵌套。",
+    "errors.pack_no_applicable_members":
+      "集合包 {{pluginId}} 没有适用于本次安装的成员。",
     "errors.marketplace_s3_credentials_required":
       "启用 S3 签名获取时，请填写 Access Key ID 和 Secret Access Key。",
     "errors.marketplace_artifact_retrieval_field_invalid":
@@ -271,6 +280,16 @@ export const pluginTranslations = {
     "errors.plugin_not_found": "The plugin was not found.",
     "errors.plugin_host_incompatible":
       "This plugin's release artifact is not supported on the current host.",
+    "errors.pack_member_duplicate":
+      "The pack declares member {{pluginId}} more than once.",
+    "errors.pack_self_reference":
+      "The pack cannot declare itself as a member ({{pluginId}}).",
+    "errors.pack_member_not_found":
+      "Pack member {{pluginId}} was not found in its marketplace source.",
+    "errors.pack_member_nested":
+      "Pack member {{pluginId}} is itself a pack, and nesting is not supported yet.",
+    "errors.pack_no_applicable_members":
+      "Pack {{pluginId}} has no member that applies to this installation.",
     "errors.marketplace_s3_credentials_required":
       "Enter an Access Key ID and Secret Access Key to enable S3 signed retrieval.",
     "errors.marketplace_artifact_retrieval_field_invalid":
