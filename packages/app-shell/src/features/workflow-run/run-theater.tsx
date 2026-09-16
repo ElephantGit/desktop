@@ -176,6 +176,8 @@ export function RunTheater({
   const primaryNode = primaryId === null ? undefined : nodeById.get(primaryId);
   const primaryState =
     primaryId !== null ? run.nodeStates[primaryId] : undefined;
+  const primaryRounds =
+    primaryId !== null ? (run.roundStates?.[primaryId] ?? []) : [];
   // A round selection only applies to the node it was made on; switching focus resets it.
   // Implemented as a render-time reset keyed on the focused node, mirroring the pending-draft
   // reset above, so no effect cascades renders.
@@ -184,6 +186,13 @@ export function RunTheater({
     setRoundNodeId(primaryId);
     setSelectedRound(null);
   }
+  // The stage and its session dock must use the same round selected in the inspector. Keep the
+  // latest node state as the fallback for outer nodes and while the focused node changes.
+  const selectedPrimaryRound =
+    roundNodeId === primaryId && selectedRound !== null
+      ? primaryRounds.find((round) => round.iteration === selectedRound)
+      : undefined;
+  const primaryDisplayState = selectedPrimaryRound ?? primaryState;
   // The Start input is editable whenever the run is not executing — a not-started pending
   // run or any terminal run — so the kickoff input can be changed before a restart re-runs it.
   const isEditableStart =
@@ -207,7 +216,7 @@ export function RunTheater({
         : filterArtifacts(artifacts, { type: "node", nodeId: primaryId }),
     [artifacts, primaryId],
   );
-  const primaryRealConversation = primaryState?.conversation;
+  const primaryRealConversation = primaryDisplayState?.conversation;
   const primaryConversation = useMemo(() => {
     // The real adapter projects the node's conversation from its run output; the mock
     // runtime provides it through the live snapshot instead.
@@ -526,7 +535,7 @@ export function RunTheater({
                     <div className="px-0.5">{hitlComposer}</div>
                   )}
                 </div>
-              ) : primaryNode && primaryState ? (
+              ) : primaryNode && primaryDisplayState ? (
                 <div
                   key={primaryNode.id}
                   className={cn(
@@ -537,10 +546,10 @@ export function RunTheater({
                 >
                   <RunTheaterActCard
                     data={primaryNode.data}
-                    state={primaryState}
+                    state={primaryDisplayState}
                     runId={run.id}
                     nodeId={primaryNode.id}
-                    live={isNodeWorking(primaryState.status)}
+                    live={isNodeWorking(primaryDisplayState.status)}
                     artifactCount={primaryArtifacts.length}
                     conversation={primaryConversation}
                     conversationEnabled={primaryNode.data.kind === "agent"}
@@ -669,7 +678,7 @@ export function RunTheater({
                 onRoundChange={setSelectedRound}
                 nodeId={primaryId}
                 data={primaryNode?.data ?? null}
-                state={primaryState ?? null}
+                state={primaryDisplayState ?? null}
                 artifacts={primaryArtifacts}
                 revealedArtifactId={revealedArtifactId}
                 editable={isEditableStart}

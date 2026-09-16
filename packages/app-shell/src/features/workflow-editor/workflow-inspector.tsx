@@ -38,6 +38,7 @@ import {
   type WorkflowCapabilities,
   type WorkflowOutputBinding,
   type WorkflowVariableCatalogEntry,
+  type WorkflowGlobalVariable,
   normalizeWorkflowAgentConfig,
 } from "@ora/workflow-mock";
 import type { Node } from "@xyflow/react";
@@ -79,6 +80,8 @@ interface WorkflowInspectorProps {
   onCloseNode: () => void;
   /** Whole-graph nodes, for detail panels whose configuration reads graph structure. */
   graphNodes?: Node<WorkflowNodeData, "workflow">[];
+  /** Workflow-wide declarations used by graph-aware detail panels. */
+  globalVariables?: WorkflowGlobalVariable[];
 }
 
 /** Right-rail editor for the selected workflow node (definition only). */
@@ -105,6 +108,7 @@ export function WorkflowInspector(props: WorkflowInspectorProps) {
       onDelete={props.onDelete}
       onClose={props.onCloseNode}
       graphNodes={props.graphNodes}
+      globalVariables={props.globalVariables}
     />
   );
 }
@@ -156,6 +160,7 @@ function WorkflowNodeInspector({
   onDelete,
   onClose,
   graphNodes,
+  globalVariables,
 }: {
   node: Node<WorkflowNodeData, "workflow">;
   capabilities: WorkflowCapabilities;
@@ -175,6 +180,7 @@ function WorkflowNodeInspector({
   onClose: () => void;
   /** Whole-graph nodes, for detail panels whose configuration reads graph structure. */
   graphNodes?: Node<WorkflowNodeData, "workflow">[];
+  globalVariables?: WorkflowGlobalVariable[];
 }) {
   const { t } = useTranslation();
   const nodeType = capabilities.nodeTypes.find(
@@ -387,6 +393,7 @@ function WorkflowNodeInspector({
           onUpdate={onUpdate}
           onClose={onClose}
           graphNodes={graphNodes}
+          globalVariables={globalVariables}
         />
       )}
       <div className="border-t border-border p-3">

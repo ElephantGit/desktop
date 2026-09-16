@@ -51,8 +51,10 @@ category.
   into the frame's region zone assigns React Flow `parentId` containment, the frame collapses to
   a compact member-count summary, and its inspector edits the iterator source, collect target,
   error strategy, and the iteration ceiling. Editor-side connection rules reject edges that
-  cross a region boundary in a direction the engine cannot honor; the authoritative validation
-  stays in the Rust graph parser.
+  cross a region boundary in a direction the engine cannot honor. While a contained node is being
+  dragged, the editor temporarily releases React Flow's parent extent constraint so it can be
+  moved out of the frame; drag-stop derives the final containment and restores the constraint when
+  the node remains inside. The authoritative validation stays in the Rust graph parser.
 - Collapsing the app sidebar hides the library in place; it does not remount
   the canvas, so in-memory draft edits survive.
 - Undo/redo history is scoped to the mounted draft session. Switching drafts,

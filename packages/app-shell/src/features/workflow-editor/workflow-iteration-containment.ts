@@ -115,6 +115,16 @@ export function applyIterationContainment(
         },
       };
     }
+    if (
+      inside !== undefined &&
+      inside.id === currentParent &&
+      node.extent !== "parent"
+    ) {
+      // Drag start temporarily removes the parent extent so a member can cross the frame
+      // boundary. Restore the persisted containment constraint when it is dropped back inside.
+      changed = true;
+      return { ...node, extent: "parent" as const };
+    }
     if (inside === undefined && currentParent !== null) {
       changed = true;
       return { ...withoutContainment(node), position: absolute };

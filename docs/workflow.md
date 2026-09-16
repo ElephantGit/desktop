@@ -137,6 +137,10 @@ node's own exposed results, while outer consumers see the three exposed variable
 round bindings. Run views group region states by `(node_id, iteration)`: the overview marks
 member nodes with their round badge, and Theater's act inspector offers a per-round strip for
 viewing each round's session and output.
+The production regression suite exercises the same boundaries through SQLite and the fake ACP
+provider: a second round receives a new session, round bindings are available while rendering its
+prompt, and synchronous failures settle under both `fail` and `continue` without leaving a run
+stuck.
 
 ### Entities and tables
 

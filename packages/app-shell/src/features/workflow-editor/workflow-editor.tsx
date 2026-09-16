@@ -1512,6 +1512,30 @@ function WorkflowEditorContent({
           : node.data.kind,
       },
     );
+    // React Flow's `extent: "parent"` clamps the pointer before drag-stop, making it impossible
+    // for the containment helper to observe a member outside its frame. Relax that transient
+    // constraint for the duration of this drag; stopNodeDrag restores it for an in-frame drop.
+    const constrainedMemberIds = new Set(
+      nodes
+        .filter(
+          (candidate) =>
+            candidate.parentId !== undefined && candidate.extent === "parent",
+        )
+        .map((candidate) => candidate.id),
+    );
+    if (constrainedMemberIds.size > 0) {
+      updateWorkflow(
+        (currentWorkflow) => ({
+          ...currentWorkflow,
+          nodes: currentWorkflow.nodes.map((candidate) =>
+            constrainedMemberIds.has(candidate.id)
+              ? { ...candidate, extent: undefined }
+              : candidate,
+          ),
+        }),
+        { persist: false },
+      );
+    }
   }
 
   /** Finishes a node drag transaction after React Flow has applied its final position.
@@ -1945,6 +1969,9 @@ function WorkflowEditorContent({
                 capabilities={capabilities}
                 variableCatalog={variableCatalog}
                 graphNodes={workflow?.nodes ?? []}
+                globalVariables={normalizeWorkflowGlobalVariables(
+                  workflow?.globalVariables,
+                )}
                 mcpCatalog={
                   capabilitiesOverride === undefined
                     ? {

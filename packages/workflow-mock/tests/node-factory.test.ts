@@ -97,6 +97,12 @@ describe("createMockWorkflowNode", () => {
           configFields: ["condition"],
         },
         {
+          kind: "iteration",
+          label: "迭代",
+          description: "对数组逐项执行区域内节点",
+          configFields: ["iteration"],
+        },
+        {
           kind: "output",
           label: "输出",
           description: "返回最终结果",

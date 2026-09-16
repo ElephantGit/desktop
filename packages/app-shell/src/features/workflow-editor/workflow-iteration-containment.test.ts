@@ -21,7 +21,7 @@ function workflowNode(
       title: id,
       description: "",
     },
-    ...(parentId === undefined ? {} : { parentId }),
+    ...(parentId === undefined ? {} : { parentId, extent: "parent" as const }),
   };
 }
 
@@ -69,6 +69,18 @@ describe("applyIterationContainment", () => {
     ]);
     const next = applyIterationContainment(workflow, [workflow.nodes[1]!]);
     expect(next).toBe(workflow);
+  });
+
+  it("restores the parent extent after a member is temporarily unconstrained", () => {
+    const workflow = workflowOf([
+      workflowNode("iter", "iteration", { x: 0, y: 0 }),
+      {
+        ...workflowNode("fix", "agent", { x: 60, y: 180 }, "iter"),
+        extent: undefined,
+      },
+    ]);
+    const next = applyIterationContainment(workflow, [workflow.nodes[1]!]);
+    expect(next.nodes.find((node) => node.id === "fix")?.extent).toBe("parent");
   });
 
   it("never adopts output or nested iteration nodes", () => {

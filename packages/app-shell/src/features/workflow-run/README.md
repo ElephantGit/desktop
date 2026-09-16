@@ -117,7 +117,9 @@ Keep these stacks separate — shared chrome only where noted.
   while `run.nodeStates` keeps each region node's latest round for existing
   consumers. Overview marks member nodes with a round badge (`R2`), and the
   Theater act inspector offers a per-round strip (with a per-round status dot)
-  to view each round's session output.
+  to view each round's session output. The stage card, conversation, live status, and inspector
+  all read the selected round's projection together, so switching rounds cannot leave one panel
+  showing a different session or status.
 - **Open location**: the run header reuses `LocationActionsButton`
   (File Manager / Terminal / VS Code / Copy Path). It resolves the run's
   Workspace location directly; non-local Workspace adapters remain responsible
