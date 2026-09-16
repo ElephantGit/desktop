@@ -16,6 +16,7 @@ pub enum NodeType {
     Condition,
     Tool,
     Output,
+    Loop,
 }
 
 /// Returned when a wire node-type string has no registered variant.
@@ -33,6 +34,7 @@ impl NodeType {
             Self::Condition => "condition",
             Self::Tool => "tool",
             Self::Output => "output",
+            Self::Loop => "loop",
         }
     }
 
@@ -59,6 +61,7 @@ impl FromStr for NodeType {
             "condition" => Ok(Self::Condition),
             "tool" => Ok(Self::Tool),
             "output" => Ok(Self::Output),
+            "loop" => Ok(Self::Loop),
             _ => Err(UnknownNodeType(value.to_string())),
         }
     }

@@ -568,7 +568,11 @@ fn node_input(node: &WorkflowGraphNode, context: &ExecutionContext) -> Option<St
             .agent_config
             .as_ref()
             .map(|config| config.prompt.clone()),
-        NodeType::Output | NodeType::Prompt | NodeType::Condition | NodeType::Tool => None,
+        NodeType::Output
+        | NodeType::Prompt
+        | NodeType::Condition
+        | NodeType::Tool
+        | NodeType::Loop => None,
     }
 }
 

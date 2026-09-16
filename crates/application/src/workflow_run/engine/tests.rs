@@ -870,6 +870,7 @@ fn node_type_round_trips_all_variants() {
         ("condition", NodeType::Condition),
         ("tool", NodeType::Tool),
         ("output", NodeType::Output),
+        ("loop", NodeType::Loop),
     ] {
         let parsed = NodeType::from_str(value).unwrap();
         assert_eq!(parsed, expected);
@@ -894,6 +895,7 @@ fn node_type_reports_the_v1_supported_set() {
         NodeType::Condition,
         NodeType::Tool,
         NodeType::Output,
+        NodeType::Loop,
     ]
     .iter()
     .filter(|node_type| node_type.supported())

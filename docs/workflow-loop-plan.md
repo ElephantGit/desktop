@@ -1,7 +1,10 @@
 # Workflow Loop Implementation Plan
+
 English | [中文](workflow-loop-plan.zh.md)
 
-Status: proposed; implementation has not started. Date: 2026-09-15.
+Status: implementation in progress (P1); Loop execution remains disabled until durable scheduling is implemented. Updated: 2026-09-16.
+
+Progress: the container decoder, typed configuration, explicit binding visibility checks, and parser regression tests are implemented. Formatting passes. Rust test execution is blocked on the local Windows host by the missing MSVC `link.exe`; installing the C++ Build Tools has not yet produced an available toolchain. P1 is not marked complete, and storage, scheduling, contracts delivery, and editor integration remain pending.
 
 ## Goal and design baseline
 
@@ -24,20 +27,20 @@ Follow the [feature change guide](feature-change-guide.md), [workflow ownership]
 
 These are implementation defaults to review with the plan, not existing behavior.
 
-| Concern | Proposed behavior |
-| --- | --- |
-| Shape | One level of Loop containers; sequential rounds; ordinary branching and joins inside a round |
-| Entry | Explicit container ownership and one synthetic child entry; execute at least one round |
-| State | Typed initial carried variables, initialized from constants or visible upstream selectors |
-| Feedback | Explicit mapping from this round's values to the next round's carried variables |
-| Termination | Evaluate a typed `until` condition after the active child graph drains; reuse Condition evaluation |
-| Limit | Required positive maximum round count; proposed default 5 and ceiling 100, validated on both sides |
-| Ordering | Resolve feedback values, evaluate termination against the completed round, then atomically exit or advance; all feedback assignments read the same pre-assignment pool |
-| Limit reached | If termination is still false, fail with a typed limit error and preserve the last round for inspection |
-| Outputs | Export explicitly named Loop outputs on success; external nodes see these outputs only after Loop completion |
-| Agent execution | A new NodeRun and Session per node per round; preserve existing model, Skill, MCP, and output-contract behavior |
-| Human feedback | Support existing interactive Agent nodes inside the Loop, including waiting, follow-up turns, and manual completion |
-| Workspace | Reuse the run's selected Workspace; file edits accumulate across rounds |
+| Concern         | Proposed behavior                                                                                                                                                      |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Shape           | One level of Loop containers; sequential rounds; ordinary branching and joins inside a round                                                                           |
+| Entry           | Explicit container ownership and one synthetic child entry; execute at least one round                                                                                 |
+| State           | Typed initial carried variables, initialized from constants or visible upstream selectors                                                                              |
+| Feedback        | Explicit mapping from this round's values to the next round's carried variables                                                                                        |
+| Termination     | Evaluate a typed `until` condition after the active child graph drains; reuse Condition evaluation                                                                     |
+| Limit           | Required positive maximum round count; proposed default 5 and ceiling 100, validated on both sides                                                                     |
+| Ordering        | Resolve feedback values, evaluate termination against the completed round, then atomically exit or advance; all feedback assignments read the same pre-assignment pool |
+| Limit reached   | If termination is still false, fail with a typed limit error and preserve the last round for inspection                                                                |
+| Outputs         | Export explicitly named Loop outputs on success; external nodes see these outputs only after Loop completion                                                           |
+| Agent execution | A new NodeRun and Session per node per round; preserve existing model, Skill, MCP, and output-contract behavior                                                        |
+| Human feedback  | Support existing interactive Agent nodes inside the Loop, including waiting, follow-up turns, and manual completion                                                    |
+| Workspace       | Reuse the run's selected Workspace; file edits accumulate across rounds                                                                                                |
 
 The first delivery excludes arbitrary back edges, nested Loops, array Iteration, automatic retry, same-session reuse across rounds, and a separate mid-round Break node. The model must reject unsupported forms explicitly. A reviewer can represent approval through structured output consumed by the Loop's `until` condition.
 
@@ -54,6 +57,16 @@ Each round has a fresh variable value set and private Condition decisions. Read-
 At round completion, resolve all configured feedback and output selectors with explicit missing-value errors. Inactive branch values cannot be read accidentally; users must bind values available on the selected path. Each output name is unique within its container boundary. Child graph completion uses a container result boundary rather than completing the top-level Run through an Output node.
 
 ## Durable execution model
+
+### Graph format being implemented
+
+Container snapshots use `schemaVersion: 2`. A Loop is a root node with `data.kind: "loop"` and `data.loopConfig`. Each child declares `data.containerId` referencing that Loop; an optional renderer `parentId` must match. Both the root graph and each body require one Start node and full reachability. Nested containers and cross-scope edges are rejected. Existing flat snapshots retain their original decoder behavior.
+
+`loopConfig` contains `maxIterations`, `variables`, `until`, and `outputs`. Each variable has `name`, `valueType`, `initial`, and `feedback`. Initial values are tagged as `{ "kind": "constant", "value": ... }` or `{ "kind": "variable", "selector": ["node", "variable"] }`. Feedback is a selector array. `until` uses the existing Condition `logic` and `conditions` syntax. Outputs use `{ "name": "result", "variableSelector": ["child", "output"] }`.
+
+Initializers can reference globals and upstream outer nodes. Feedback, termination, and exports can reference the completed body, carried values, globals, and upstream outer values. Outer nodes must read the Loop's exported results rather than child nodes. This parser boundary does not replace runtime checks for declared variables, value types, missing values, or inactive branches; those checks must be completed before execution is enabled.
+
+### Persistence work remaining
 
 Introduce domain-owned execution scopes and Loop progress; final Rust names are chosen during implementation. A root scope represents today's flat execution. A round scope records its parent Loop NodeRun and round index. NodeRuns reference their scope while retaining their unique execution IDs and definition node IDs.
 
@@ -100,14 +113,14 @@ In Theater/Overview, show Loop progress and termination reason, allow selecting 
 
 ## Verification matrix
 
-| Boundary | Required behavior evidence |
-| --- | --- |
-| Parser and variables | Old flat graphs, invalid ownership/cycles, cross-scope selectors, required initial values, feedback type errors, inactive branches, simultaneous feedback assignment |
-| Scheduler | First-round success, several feedback rounds, exact limit, early termination, branching/join, multiple independent Loops, no premature Run/Output completion |
-| Repository | Migration up/down/re-upgrade, historical preservation, transaction rollback, duplicate callbacks, stale-generation callbacks, concurrent cancel/advance |
-| Backend | Per-round Sessions, frozen Skill/MCP selection, structured-output failure with raw text, manual completion/follow-up race, sibling cleanup, waiting-node delete protection |
-| Recovery and isolation | Scheduling-gap recovery, interrupted execution, valid waits, no duplicate round/session dispatch, cross-Run isolation, baseline cleanup, preserved Workspace files |
-| Frontend and Desktop | Editor round-trip/history, real typed handlers, round selection/cache isolation, request cancellation, permissions, active/finished/waiting presentation |
+| Boundary               | Required behavior evidence                                                                                                                                                 |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Parser and variables   | Old flat graphs, invalid ownership/cycles, cross-scope selectors, required initial values, feedback type errors, inactive branches, simultaneous feedback assignment       |
+| Scheduler              | First-round success, several feedback rounds, exact limit, early termination, branching/join, multiple independent Loops, no premature Run/Output completion               |
+| Repository             | Migration up/down/re-upgrade, historical preservation, transaction rollback, duplicate callbacks, stale-generation callbacks, concurrent cancel/advance                    |
+| Backend                | Per-round Sessions, frozen Skill/MCP selection, structured-output failure with raw text, manual completion/follow-up race, sibling cleanup, waiting-node delete protection |
+| Recovery and isolation | Scheduling-gap recovery, interrupted execution, valid waits, no duplicate round/session dispatch, cross-Run isolation, baseline cleanup, preserved Workspace files         |
+| Frontend and Desktop   | Editor round-trip/history, real typed handlers, round selection/cache isolation, request cancellation, permissions, active/finished/waiting presentation                   |
 
 Use the smallest relevant tasks during implementation and inspect `task --list` for authoritative commands. Run `task format`, `task export-contracts`, `task check:contracts`, frontend/Rust lint and tests, and `task test:tauri` for Desktop changes; finish this cross-layer feature with `task test`. Generated-artifact checks supplement behavioral tests.
 

@@ -13,6 +13,9 @@ mod condition;
 mod engine;
 mod graph;
 mod handlers;
+mod loop_bindings;
+mod loop_config;
+mod loop_graph;
 mod node_type;
 mod ports;
 mod skill_delivery;
@@ -30,6 +33,7 @@ pub use graph::{
     StructuredTextExposure, WorkflowGraph, WorkflowGraphNode,
 };
 pub use handlers::WorkflowRunControlHandler;
+pub use loop_config::{LoopConfig, LoopInitialValue, LoopVariable};
 pub use node_type::{NodeType, UnknownNodeType};
 pub use ports::{
     AdvanceWorkflowRunResult, BindWorkflowNodeSessionResult, CancelWorkflowRunResult,

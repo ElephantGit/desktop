@@ -39,6 +39,8 @@ pub struct WorkflowGraph {
     /// Rank of each node in the unique `toposort` order, used to order transitive closures.
     topo_rank: HashMap<NodeIndex, usize>,
     global_variables: Vec<WorkflowGlobalVariable>,
+    /// Containers own child graphs; ordinary topology queries stay within this scope.
+    pub(super) loops: HashMap<String, (super::loop_config::LoopConfig, WorkflowGraph)>,
 }
 
 /// One node in a parsed workflow graph.
@@ -559,6 +561,11 @@ impl WireAgentSkill {
 impl WorkflowGraph {
     /// Parses a frozen React Flow graph JSON into a validated DAG.
     pub fn parse(source: &str) -> Result<Self, GraphError> {
+        super::loop_graph::parse_scoped_graph(source)
+    }
+
+    /// Parses one scope after container membership and cross-scope edges have been validated.
+    pub(super) fn parse_flat(source: &str) -> Result<Self, GraphError> {
         let envelope: ReactFlowEnvelope =
             serde_json::from_str(source).map_err(|_| GraphError::InvalidJson)?;
         let wire_nodes = envelope.nodes.ok_or(GraphError::MissingNodes)?;
@@ -692,6 +699,7 @@ impl WorkflowGraph {
             index_by_id,
             topo_rank,
             global_variables,
+            loops: HashMap::new(),
         })
     }
 
@@ -703,6 +711,11 @@ impl WorkflowGraph {
     /// Returns the node with the given id, if present.
     pub fn node(&self, id: &str) -> Option<&WorkflowGraphNode> {
         self.index_by_id.get(id).map(|&index| &self.graph[index])
+    }
+
+    /// Returns a container's frozen configuration and its single-round DAG.
+    pub fn loop_body(&self, id: &str) -> Option<(&super::loop_config::LoopConfig, &Self)> {
+        self.loops.get(id).map(|(config, graph)| (config, graph))
     }
 
     /// Iterates over every node in node-index (insertion) order.
