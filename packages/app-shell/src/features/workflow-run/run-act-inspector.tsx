@@ -18,10 +18,12 @@ import { RunActAgentConfig } from "./run-act-agent-config";
 import { RunActArtifacts } from "./run-act-artifacts";
 import { RunActFileChanges } from "./run-act-file-changes";
 import { RunBriefPopover } from "./run-brief-popover";
+import { RunLoopRoundHistory } from "./run-loop-round-history";
 import { RunStatusBadge } from "./run-status-mark";
 import { shouldPreviewBrief } from "./should-preview-brief";
 import type {
   GraphWorkflowNodeState,
+  GraphWorkflowRound,
   GraphWorkflowSnapshotNodePatch,
   WorkflowArtifact,
   WorkflowNodeData,
@@ -35,6 +37,8 @@ interface RunActInspectorProps {
   state: GraphWorkflowNodeState | null;
   artifacts: WorkflowArtifact[];
   revealedArtifactId: string | null;
+  loopRounds?: GraphWorkflowRound[];
+  loopChildTitles?: Record<string, string>;
   /**
    * When true, description and a human-approval prompt are editable for this run only
    * (`pending` overrides on the frozen snapshot).
@@ -107,6 +111,8 @@ export function RunActInspector({
   state,
   artifacts,
   revealedArtifactId,
+  loopRounds = [],
+  loopChildTitles = {},
   editable = false,
   onPatchNode,
   instructionDraft,
@@ -155,6 +161,8 @@ export function RunActInspector({
       state={state}
       artifacts={artifacts}
       revealedArtifactId={revealedArtifactId}
+      loopRounds={loopRounds}
+      loopChildTitles={loopChildTitles}
       editable={editable}
       onPatchNode={onPatchNode}
       instructionDraft={instructionDraft}
@@ -176,6 +184,8 @@ function RunActInspectorPanel({
   state,
   artifacts,
   revealedArtifactId,
+  loopRounds,
+  loopChildTitles,
   editable,
   onPatchNode,
   instructionDraft,
@@ -193,6 +203,8 @@ function RunActInspectorPanel({
   state: GraphWorkflowNodeState;
   artifacts: WorkflowArtifact[];
   revealedArtifactId: string | null;
+  loopRounds: GraphWorkflowRound[];
+  loopChildTitles: Record<string, string>;
   editable: boolean;
   onPatchNode?: (patch: GraphWorkflowSnapshotNodePatch) => void;
   instructionDraft?: string | null;
@@ -479,6 +491,15 @@ function RunActInspectorPanel({
             </p>
           )}
         </InspectorSection>
+
+        {data.kind === "loop" && (
+          <InspectorSection title={t("workflowRun.loopRounds.title")}>
+            <RunLoopRoundHistory
+              rounds={loopRounds}
+              nodeTitles={loopChildTitles}
+            />
+          </InspectorSection>
+        )}
 
         <InspectorSection title={t("workflowRun.artifacts.title")}>
           {fileChanges.length > 0 ? (

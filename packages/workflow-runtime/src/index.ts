@@ -2,6 +2,7 @@ export type {
   GraphWorkflowNodeIo,
   GraphWorkflowNodeState,
   GraphWorkflowNodeStatus,
+  GraphWorkflowRound,
   GraphWorkflowRun,
   GraphWorkflowRunStatus,
   GraphWorkflowSnapshotNodePatch,

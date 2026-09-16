@@ -659,6 +659,24 @@ export function RunTheater({
                 state={primaryState ?? null}
                 artifacts={primaryArtifacts}
                 revealedArtifactId={revealedArtifactId}
+                loopRounds={
+                  primaryNode?.data.kind === "loop"
+                    ? (run.rounds ?? []).filter(
+                        (round) => round.parentLoopNodeId === primaryNode.id,
+                      )
+                    : undefined
+                }
+                loopChildTitles={
+                  primaryNode?.data.kind === "loop"
+                    ? Object.fromEntries(
+                        run.definitionSnapshot.nodes
+                          .filter(
+                            (node) => node.data.containerId === primaryNode.id,
+                          )
+                          .map((node) => [node.id, node.data.title]),
+                      )
+                    : undefined
+                }
                 editable={isEditableStart}
                 onPatchNode={
                   isEditableStart
