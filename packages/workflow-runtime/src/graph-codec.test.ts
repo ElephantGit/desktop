@@ -143,6 +143,72 @@ describe("graph envelope codec", () => {
       expect.objectContaining({ kind: "agent", title: "总结" }),
     ]);
   });
+
+  it("writes schema v2 and preserves executable Loop container metadata", () => {
+    const loop: WorkflowDefinitionNode = {
+      id: "loop-1",
+      type: "workflow",
+      position: { x: 200, y: 0 },
+      data: {
+        kind: "loop",
+        title: "Refine",
+        description: "",
+        loopConfig: {
+          maxIterations: 3,
+          variables: [
+            {
+              name: "draft",
+              valueType: "string",
+              initial: { kind: "constant", value: "seed" },
+              feedback: ["refine-agent", "output"],
+            },
+          ],
+          until: {
+            logic: "and",
+            conditions: [
+              {
+                variableSelector: ["refine-agent", "output"],
+                operator: "not_empty",
+              },
+            ],
+          },
+          outputs: [
+            {
+              name: "result",
+              variableSelector: ["refine-agent", "output"],
+            },
+          ],
+        },
+      },
+    };
+    const child: WorkflowDefinitionNode = {
+      id: "refine-agent",
+      type: "workflow",
+      parentId: loop.id,
+      position: { x: 80, y: 100 },
+      data: {
+        kind: "agent",
+        title: "Refine draft",
+        description: "",
+        containerId: loop.id,
+      },
+    };
+    const input = {
+      nodes: [node, loop, child],
+      edges: [edge],
+      viewport: { x: 0, y: 0, zoom: 1 },
+      annotations: [],
+      globalVariables: [],
+    };
+
+    const graph = serializeWorkflowGraph(input);
+
+    expect(JSON.parse(graph)).toHaveProperty("schemaVersion", 2);
+    expect(parseWorkflowGraph(graph)).toEqual({
+      schemaVersion: 2,
+      ...input,
+    });
+  });
 });
 
 describe("workflow timestamp projection", () => {

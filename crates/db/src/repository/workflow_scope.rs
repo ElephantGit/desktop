@@ -6,7 +6,7 @@ use ora_domain::{
 use rusqlite::{Row, Transaction, params};
 
 /// Reconstructs one persisted Loop round from its typed storage columns.
-fn map_round(row: &Row<'_>) -> Result<WorkflowExecutionScope, crate::DatabaseError> {
+pub(super) fn map_round(row: &Row<'_>) -> Result<WorkflowExecutionScope, crate::DatabaseError> {
     let round_index = row.get::<_, i64>("round_index")?;
     Ok(WorkflowExecutionScope {
         id: WorkflowScopeId::new(row.get::<_, String>("id")?),
@@ -21,6 +21,25 @@ fn map_round(row: &Row<'_>) -> Result<WorkflowExecutionScope, crate::DatabaseErr
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
     })
+}
+
+/// Lists every Loop round of one run in parent and round order for history projection.
+pub(super) fn list_rounds(
+    connection: &rusqlite::Connection,
+    run_id: &WorkflowRunId,
+) -> Result<Vec<WorkflowExecutionScope>, crate::DatabaseError> {
+    let mut statement = connection.prepare(
+        "SELECT id, run_id, parent_loop_node_run_id, round_index, status, state, created_at, updated_at
+         FROM workflow_execution_scopes
+         WHERE run_id = ?1 AND parent_loop_node_run_id IS NOT NULL
+         ORDER BY parent_loop_node_run_id, round_index",
+    )?;
+    let mut rows = statement.query(params![run_id.as_ref()])?;
+    let mut scopes = Vec::new();
+    while let Some(row) = rows.next()? {
+        scopes.push(map_round(row)?);
+    }
+    Ok(scopes)
 }
 
 /// Loads the active round guarded by the migration's single-active-round constraint.

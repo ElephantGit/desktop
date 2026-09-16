@@ -7,6 +7,7 @@ import type {
 
 /** The persisted graph envelope: editor geometry plus optional metadata. */
 export interface WorkflowGraphEnvelope {
+  schemaVersion?: number;
   nodes: WorkflowDefinitionNode[];
   edges: WorkflowDefinitionEdge[];
   viewport: WorkflowViewport;
@@ -52,7 +53,11 @@ export function serializeWorkflowGraph(input: {
   globalVariables?: readonly WorkflowGlobalVariable[];
   description?: string;
 }): string {
+  const usesLoopContainers = input.nodes.some(
+    (node) => node.data.kind === "loop" || node.data.containerId !== undefined,
+  );
   return JSON.stringify({
+    ...(usesLoopContainers ? { schemaVersion: 2 } : {}),
     nodes: input.nodes,
     edges: input.edges,
     viewport: input.viewport,

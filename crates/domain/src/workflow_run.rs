@@ -294,4 +294,5 @@ pub struct WorkflowRunDetail {
     /// The project owning the workspace, mirroring the summary's `project_id`.
     pub project_id: ProjectId,
     pub nodes: Vec<WorkflowNodeRun>,
+    pub scopes: Vec<WorkflowExecutionScope>,
 }

@@ -304,7 +304,17 @@ export function buildDisplayRun(
     projectId: string;
     variables: Array<{ selector: string[]; value?: unknown }>;
     conditionDecisions: Record<string, string>;
+    scopes?: Array<{
+      id: string;
+      parentLoopNodeRunId: string;
+      roundIndex: number;
+      status: "pending" | "running" | "succeeded" | "failed" | "cancelled";
+      createdAt: bigint;
+      updatedAt: bigint;
+    }>;
     nodes: Array<{
+      id?: string;
+      scopeId?: string;
       nodeId: string;
       status: string;
       startedAt: bigint | null;
@@ -362,53 +372,24 @@ export function buildDisplayRun(
     nodes,
     edges: envelope.edges,
   };
+  const rootScopeId = `root:${detail.run.id}`;
   const nodeRunByNodeId = new Map(
-    detail.nodes.map((node) => [node.nodeId, node]),
+    detail.nodes
+      // Older adapters omitted scopeId. Keep those records readable while ensuring repeated
+      // Loop children never replace the root canvas state for the same definition node.
+      .filter(
+        (node) => node.scopeId === undefined || node.scopeId === rootScopeId,
+      )
+      .map((node) => [node.nodeId, node]),
   );
   const nodeStates: Record<string, GraphWorkflowNodeState> = {};
   for (const node of definitionSnapshot.nodes) {
     const nodeRun = nodeRunByNodeId.get(node.id) ?? null;
-    const payload =
-      nodeRun?.payload != null ? parseNodePayload(nodeRun.payload) : null;
-    const conversation =
-      node.data.kind === "agent" && nodeRun?.output != null
-        ? conversationFromNodeOutput(
-            nodeRun.output,
-            detail.run.id,
-            node.id,
-            nodeRun.sessionId ?? undefined,
-            nodeRun.startedAt != null ? Number(nodeRun.startedAt) : undefined,
-          )
-        : undefined;
-    nodeStates[node.id] = {
-      status: projectNodeStatus(
-        nodeRun as {
-          status: "pending" | "running" | "succeeded" | "failed" | "cancelled";
-        } | null,
-      ),
-      ...(nodeRun?.sessionId != null && nodeRun.sessionId !== ""
-        ? { sessionId: nodeRun.sessionId }
-        : {}),
-      ...(nodeRun?.startedAt != null
-        ? { startedAt: toIso(nodeRun.startedAt) }
-        : {}),
-      ...(nodeRun?.finishedAt != null
-        ? { finishedAt: toIso(nodeRun.finishedAt) }
-        : {}),
-      ...(nodeRun?.error != null ? { errorMessage: nodeRun.error } : {}),
-      ...(payload?.stop_reason != null
-        ? { stopReason: payload.stop_reason }
-        : {}),
-      ...(payload?.file_changes != null && payload.file_changes.length > 0
-        ? { fileChanges: payload.file_changes }
-        : {}),
-      ...(nodeRun?.output != null
-        ? { output: { summary: nodeRun.output } }
-        : {}),
-      ...(conversation != null && conversation.length > 0
-        ? { conversation }
-        : {}),
-    };
+    nodeStates[node.id] = projectPersistedNodeState(
+      node.data.kind,
+      nodeRun,
+      detail.run.id,
+    );
   }
   // A node behind a lost condition branch has no node-run and never will; mark it inactive so the
   // overview distinguishes it from a node still waiting on the active path.
@@ -442,11 +423,94 @@ export function buildDisplayRun(
     ),
     kickoffInput: kickoffInput ?? undefined,
     nodeStates,
+    rounds: (detail.scopes ?? []).map((scope) => {
+      const parentRun = detail.nodes.find(
+        (node) => node.id === scope.parentLoopNodeRunId,
+      );
+      const scopedRuns = detail.nodes.filter(
+        (node) => node.scopeId === scope.id,
+      );
+      return {
+        id: scope.id,
+        parentLoopNodeRunId: scope.parentLoopNodeRunId,
+        parentLoopNodeId: parentRun?.nodeId ?? "",
+        roundIndex: scope.roundIndex,
+        status: scope.status,
+        nodeStates: Object.fromEntries(
+          scopedRuns.map((nodeRun) => {
+            const definitionNode = definitionSnapshot.nodes.find(
+              (node) => node.id === nodeRun.nodeId,
+            );
+            return [
+              nodeRun.nodeId,
+              projectPersistedNodeState(
+                definitionNode?.data.kind,
+                nodeRun,
+                detail.run.id,
+              ),
+            ];
+          }),
+        ),
+        createdAt: toIso(scope.createdAt),
+        updatedAt: toIso(scope.updatedAt),
+      };
+    }),
     openHitls: [],
     createdAt: toIso(detail.run.createdAt),
     updatedAt: toIso(detail.run.updatedAt),
     ...(detail.run.finishedAt != null
       ? { finishedAt: toIso(detail.run.finishedAt) }
+      : {}),
+  };
+}
+
+type PersistedNodeRunProjection = Parameters<
+  typeof buildDisplayRun
+>[0]["nodes"][number];
+
+/** Maps one execution instance without mixing it with another Loop round sharing the node id. */
+function projectPersistedNodeState(
+  nodeKind: string | undefined,
+  nodeRun: PersistedNodeRunProjection | null,
+  runId: string,
+): GraphWorkflowNodeState {
+  const payload =
+    nodeRun?.payload != null ? parseNodePayload(nodeRun.payload) : null;
+  const conversation =
+    nodeKind === "agent" && nodeRun?.output != null
+      ? conversationFromNodeOutput(
+          nodeRun.output,
+          runId,
+          nodeRun.nodeId,
+          nodeRun.sessionId ?? undefined,
+          nodeRun.startedAt != null ? Number(nodeRun.startedAt) : undefined,
+        )
+      : undefined;
+  return {
+    status: projectNodeStatus(
+      nodeRun as {
+        status: "pending" | "running" | "succeeded" | "failed" | "cancelled";
+      } | null,
+    ),
+    ...(nodeRun?.sessionId != null && nodeRun.sessionId !== ""
+      ? { sessionId: nodeRun.sessionId }
+      : {}),
+    ...(nodeRun?.startedAt != null
+      ? { startedAt: toIso(nodeRun.startedAt) }
+      : {}),
+    ...(nodeRun?.finishedAt != null
+      ? { finishedAt: toIso(nodeRun.finishedAt) }
+      : {}),
+    ...(nodeRun?.error != null ? { errorMessage: nodeRun.error } : {}),
+    ...(payload?.stop_reason != null
+      ? { stopReason: payload.stop_reason }
+      : {}),
+    ...(payload?.file_changes != null && payload.file_changes.length > 0
+      ? { fileChanges: payload.file_changes }
+      : {}),
+    ...(nodeRun?.output != null ? { output: { summary: nodeRun.output } } : {}),
+    ...(conversation != null && conversation.length > 0
+      ? { conversation }
       : {}),
   };
 }

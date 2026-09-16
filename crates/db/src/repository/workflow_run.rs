@@ -103,6 +103,7 @@ impl WorkflowRunRepository for SqliteWorkflowRunRepository {
                     workspace_id: run.workspace_id.clone(),
                     project_id: ProjectId::new(project_id),
                     nodes: list_node_runs(connection, run_id)?,
+                    scopes: super::workflow_scope::list_rounds(connection, run_id)?,
                     run,
                 }))
             })
