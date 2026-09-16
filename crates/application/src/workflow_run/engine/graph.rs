@@ -559,11 +559,6 @@ impl WireAgentSkill {
 }
 
 impl WorkflowGraph {
-    /// Parses a frozen React Flow graph JSON into a validated DAG.
-    pub fn parse(source: &str) -> Result<Self, GraphError> {
-        super::loop_graph::parse_scoped_graph(source)
-    }
-
     /// Parses one scope after container membership and cross-scope edges have been validated.
     pub(super) fn parse_flat(source: &str) -> Result<Self, GraphError> {
         let envelope: ReactFlowEnvelope =
@@ -713,31 +708,6 @@ impl WorkflowGraph {
         self.index_by_id.get(id).map(|&index| &self.graph[index])
     }
 
-    /// Finds a node in the root graph or any container body.
-    pub fn execution_node(&self, id: &str) -> Option<&WorkflowGraphNode> {
-        self.node(id).or_else(|| {
-            self.nodes()
-                .filter_map(|node| self.loops.get(&node.id).map(|(_, body)| body))
-                .find_map(|body| body.execution_node(id))
-        })
-    }
-
-    /// Returns a container's frozen configuration and its single-round DAG.
-    pub fn loop_body(&self, id: &str) -> Option<(&super::loop_config::LoopConfig, &Self)> {
-        self.loops.get(id).map(|(config, graph)| (config, graph))
-    }
-
-    /// Returns this graph followed by each container body in deterministic outer-node order.
-    pub fn execution_scopes(&self) -> Vec<&Self> {
-        let mut scopes = vec![self];
-        for node in self.nodes() {
-            if let Some((_, body)) = self.loops.get(&node.id) {
-                scopes.extend(body.execution_scopes());
-            }
-        }
-        scopes
-    }
-
     /// Iterates over every node in node-index (insertion) order.
     pub fn nodes(&self) -> impl Iterator<Item = &WorkflowGraphNode> {
         self.graph.node_weights()
@@ -864,16 +834,6 @@ impl WorkflowGraph {
                     .all(|predecessor| completed.contains(predecessor.id.as_str()))
             })
             .collect()
-    }
-
-    /// Returns the first unsupported root or container node in deterministic graph order.
-    pub fn first_unsupported_node(&self) -> Option<&WorkflowGraphNode> {
-        if let Some(node) = self.nodes().find(|node| !node.node_type.supported()) {
-            return Some(node);
-        }
-        self.nodes()
-            .filter_map(|node| self.loops.get(&node.id).map(|(_, body)| body))
-            .find_map(Self::first_unsupported_node)
     }
 
     /// Returns the ids of nodes not reachable from the unique start node via directed edges.

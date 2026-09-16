@@ -6,6 +6,48 @@ use super::node_type::NodeType;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 
+impl WorkflowGraph {
+    /// Parses a frozen React Flow graph JSON into a validated, scope-aware DAG.
+    pub fn parse(source: &str) -> Result<Self, GraphError> {
+        parse_scoped_graph(source)
+    }
+
+    /// Finds a node in the root graph or any container body.
+    pub fn execution_node(&self, id: &str) -> Option<&super::graph::WorkflowGraphNode> {
+        self.node(id).or_else(|| {
+            self.nodes()
+                .filter_map(|node| self.loops.get(&node.id).map(|(_, body)| body))
+                .find_map(|body| body.execution_node(id))
+        })
+    }
+
+    /// Returns a container's frozen configuration and its single-round DAG.
+    pub fn loop_body(&self, id: &str) -> Option<(&LoopConfig, &Self)> {
+        self.loops.get(id).map(|(config, graph)| (config, graph))
+    }
+
+    /// Returns this graph followed by each container body in deterministic outer-node order.
+    pub fn execution_scopes(&self) -> Vec<&Self> {
+        let mut scopes = vec![self];
+        for node in self.nodes() {
+            if let Some((_, body)) = self.loops.get(&node.id) {
+                scopes.extend(body.execution_scopes());
+            }
+        }
+        scopes
+    }
+
+    /// Returns the first unsupported root or container node in deterministic graph order.
+    pub fn first_unsupported_node(&self) -> Option<&super::graph::WorkflowGraphNode> {
+        if let Some(node) = self.nodes().find(|node| !node.node_type.supported()) {
+            return Some(node);
+        }
+        self.nodes()
+            .filter_map(|node| self.loops.get(&node.id).map(|(_, body)| body))
+            .find_map(Self::first_unsupported_node)
+    }
+}
+
 /// Decodes flat snapshots unchanged and validates explicit ownership for version-two graphs.
 pub(super) fn parse_scoped_graph(source: &str) -> Result<WorkflowGraph, GraphError> {
     let envelope: Value = serde_json::from_str(source).map_err(|_| GraphError::InvalidJson)?;
