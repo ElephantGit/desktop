@@ -253,7 +253,9 @@ it("opens a deep-linked plugin configuration inside plugin management", async ()
   expect(useUiStore.getState().pluginSettingsRequest).toBeNull();
 
   // Leaving the editor returns to plugin management, not the marketplace grid.
-  await user.click(screen.getByRole("button", { name: /返回|Back/ }));
+  await user.click(
+    screen.getByRole("button", { name: /管理插件|Manage plugins/ }),
+  );
   expect(
     await screen.findByRole("button", { name: /配置|Configure/ }),
   ).toBeInTheDocument();

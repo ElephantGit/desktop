@@ -1279,7 +1279,8 @@ describe("WorkflowEditor", () => {
 
     await screen.findByText("代码审查工作流");
     await screen.findByLabelText("工作流画布");
-    await user.click(screen.getByRole("button", { name: "新建或导入工作流" }));
+    // Match the row-menu helper: open the Base UI menu with a single click event.
+    fireEvent.click(screen.getByRole("button", { name: "新建或导入工作流" }));
     await user.click(
       await screen.findByRole("menuitem", { name: /新建工作流/ }),
     );
@@ -1338,7 +1339,8 @@ describe("WorkflowEditor", () => {
       screen.queryByRole("button", { name: "错开并行演示" }),
     ).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "新建或导入工作流" }));
+    // Match the row-menu helper: open the Base UI menu with a single click event.
+    fireEvent.click(screen.getByRole("button", { name: "新建或导入工作流" }));
     await user.click(
       await screen.findByRole("menuitem", { name: /新建工作流/ }),
     );
@@ -1372,7 +1374,8 @@ describe("WorkflowEditor", () => {
     });
 
     await screen.findByText("代码审查工作流");
-    await user.click(screen.getByRole("button", { name: "新建或导入工作流" }));
+    // Match the row-menu helper: open the Base UI menu with a single click event.
+    fireEvent.click(screen.getByRole("button", { name: "新建或导入工作流" }));
     await user.click(
       await screen.findByRole("menuitem", { name: /新建工作流/ }),
     );
@@ -1686,7 +1689,8 @@ describe("WorkflowEditor", () => {
       skills: [{ skillId: "openspec-explore", enabled: true }],
     };
 
-    await user.click(screen.getByRole("button", { name: "新建或导入工作流" }));
+    // Match the row-menu helper: open the Base UI menu with a single click event.
+    fireEvent.click(screen.getByRole("button", { name: "新建或导入工作流" }));
     await user.click(
       await screen.findByRole("menuitem", { name: "导入工作流…" }),
     );
@@ -1764,7 +1768,8 @@ describe("WorkflowEditor", () => {
     await screen.findByLabelText("工作流画布");
     const workflowCount = state.workflows.length;
 
-    await user.click(screen.getByRole("button", { name: "新建或导入工作流" }));
+    // Match the row-menu helper: open the Base UI menu with a single click event.
+    fireEvent.click(screen.getByRole("button", { name: "新建或导入工作流" }));
     await user.click(
       await screen.findByRole("menuitem", { name: "导入工作流…" }),
     );
