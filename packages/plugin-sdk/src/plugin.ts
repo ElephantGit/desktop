@@ -20,6 +20,7 @@ import {
 import {
   createLogger,
   createStderrLogSink,
+  type PluginConsole,
   type PluginLogger,
   type PluginLogSink,
   redirectConsoleToLogger,
@@ -103,6 +104,11 @@ interface PendingHostRequest {
 export interface PluginOptions {
   /** Where log records go; defaults to stderr, which the host persists per plugin. */
   logSink?: PluginLogSink;
+  /**
+   * The console object `run()` takes over when the transport asks for it; defaults to the
+   * global `console`. Tests hand in their own object so takeovers stay isolated.
+   */
+  console?: PluginConsole;
 }
 
 /** Stores a plugin's immutable capability registry and serves host traffic. */
@@ -115,6 +121,7 @@ export class Plugin {
    * plugin id, or correlation field: those belong to the host.
    */
   readonly logger: PluginLogger;
+  readonly #console: PluginConsole;
   readonly #methods = new Map<string, MethodHandler>();
   readonly #emits = new Set<string>();
   readonly #effectResources: EffectResourceDeclaration[] = [];
@@ -126,6 +133,7 @@ export class Plugin {
 
   constructor(options: PluginOptions = {}) {
     this.logger = createLogger(options.logSink ?? createStderrLogSink());
+    this.#console = options.console ?? console;
   }
 
   /** Registers one uniquely named method before the plugin starts serving. */
@@ -254,10 +262,13 @@ export class Plugin {
     if (this.#state !== "registering") {
       throw new Error("A plugin can only run once");
     }
-    this.#state = "running";
+    // The takeover comes before any state change and before the first protocol frame: output
+    // from here on must never reach stdout, and a console that cannot be taken over must leave
+    // the plugin never having entered protocol operation at all.
     if (transport.redirectConsole) {
-      redirectConsoleToLogger(this.logger);
+      redirectConsoleToLogger(this.logger, this.#console);
     }
+    this.#state = "running";
 
     const writer = new FrameWriter(transport.writable);
     this.#writer = writer;

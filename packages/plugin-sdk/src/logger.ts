@@ -83,15 +83,29 @@ export function createLogger(
   };
 }
 
-/** Writes each record synchronously to stderr so ordering matches the plugin's own timeline. */
-export function createStderrLogSink(): PluginLogSink {
+/** The synchronous byte writer a stderr sink needs; `Deno.stderr` in production. */
+export interface SyncByteWriter {
+  writeSync(bytes: Uint8Array): number;
+}
+
+/**
+ * Writes each record synchronously to `writer` (stderr by default) so ordering matches the
+ * plugin's own timeline and two records from this process never interleave: the write finishes
+ * before the call returns, and a short write is continued until the whole envelope is out.
+ */
+export function createStderrLogSink(
+  writer: SyncByteWriter = Deno.stderr,
+): PluginLogSink {
   const encoder = new TextEncoder();
   return {
     write(line) {
       let bytes = encoder.encode(line);
       // `writeSync` may write fewer bytes than offered; looping keeps one record contiguous.
       while (bytes.byteLength > 0) {
-        const written = Deno.stderr.writeSync(bytes);
+        const written = writer.writeSync(bytes);
+        if (written <= 0) {
+          throw new Error("stderr accepted no bytes");
+        }
         bytes = bytes.subarray(written);
       }
     },
@@ -258,30 +272,48 @@ function byteLength(text: string): number {
   return new TextEncoder().encode(text).byteLength;
 }
 
-let consoleRedirected = false;
+/** The five console methods the SDK takes over; every other member of `console` is untouched. */
+export type PluginConsole = Pick<
+  Console,
+  "debug" | "info" | "log" | "warn" | "error"
+>;
+
+const redirectedConsoles = new WeakSet<object>();
 
 /**
- * Routes every standard console method through `logger` so multi-line output stays one record
- * and nothing reaches stdout. Installed once per process, at the plugin run entrypoint.
+ * Routes the five standard console methods of `target` through `logger` so multi-line output
+ * stays one record and nothing reaches stdout.
+ *
+ * Installed once per console object, at the plugin run entrypoint, before any protocol frame is
+ * written; it is never uninstalled, so it outlives initialization failures, `stop`, and the end
+ * of every business callback. Later callers of the *global* methods — third-party dependencies
+ * included — go through the logger too; a method cached before the takeover, another worker or
+ * process, and other console methods are outside its reach. A console whose methods cannot be
+ * replaced makes this throw, and the caller must then stay out of protocol operation.
  */
-export function redirectConsoleToLogger(logger: PluginLogger): void {
-  if (consoleRedirected) {
+export function redirectConsoleToLogger(
+  logger: PluginLogger,
+  target: PluginConsole = console,
+): void {
+  if (redirectedConsoles.has(target)) {
     return;
   }
-  consoleRedirected = true;
   const render = (values: unknown[]) =>
     values
       .map((value) => (typeof value === "string" ? value : describe(value)))
       .join(" ");
-  const target = "console";
-  console.debug = (...values: unknown[]) =>
-    logger.debug(render(values), { target });
-  console.info = (...values: unknown[]) =>
-    logger.info(render(values), { target });
-  console.log = (...values: unknown[]) =>
-    logger.info(render(values), { target });
-  console.warn = (...values: unknown[]) =>
-    logger.warn(render(values), { target });
-  console.error = (...values: unknown[]) =>
-    logger.error(render(values), { target });
+  const consoleTarget = "console";
+  target.debug = (...values: unknown[]) =>
+    logger.debug(render(values), { target: consoleTarget });
+  target.info = (...values: unknown[]) =>
+    logger.info(render(values), { target: consoleTarget });
+  target.log = (...values: unknown[]) =>
+    logger.info(render(values), { target: consoleTarget });
+  target.warn = (...values: unknown[]) =>
+    logger.warn(render(values), { target: consoleTarget });
+  target.error = (...values: unknown[]) =>
+    logger.error(render(values), { target: consoleTarget });
+  // Marked only once every method is in place, so a partially failed install is retried, not
+  // mistaken for a complete one.
+  redirectedConsoles.add(target);
 }

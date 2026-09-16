@@ -18,10 +18,13 @@ export {
 export type { EffectResourceDeclaration } from "./plugin.ts";
 export {
   createLogger,
+  createStderrLogSink,
+  type PluginConsole,
   type PluginLogFields,
   type PluginLogger,
   type PluginLoggerDefaults,
   type PluginLogSink,
+  type SyncByteWriter,
 } from "./logger.ts";
 export {
   createHostProcesses,

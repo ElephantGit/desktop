@@ -1,4 +1,10 @@
-import { createLogger, createPlugin, type PluginLogSink } from "../src/mod.ts";
+import {
+  createLogger,
+  createPlugin,
+  createStderrLogSink,
+  type PluginConsole,
+  type PluginLogSink,
+} from "../src/mod.ts";
 import {
   decodeFrames,
   encodeFrame,
@@ -238,6 +244,139 @@ Deno.test(
         ["ERROR", "e"],
         ["INFO", "direct"],
       ],
+    );
+  },
+);
+
+/** A console object a test owns, so a takeover never touches the global one. */
+function fakeConsole(): {
+  target: PluginConsole;
+  originals: PluginConsole;
+} {
+  const originals: PluginConsole = {
+    debug: () => {},
+    info: () => {},
+    log: () => {},
+    warn: () => {},
+    error: () => {},
+  };
+  return { target: { ...originals }, originals };
+}
+
+/** Stands in for a dependency that captured nothing and calls the shared console at call time. */
+function thirdPartyDependency(target: PluginConsole, detail: string): void {
+  target.warn("dependency says", detail);
+}
+
+Deno.test(
+  "the console takeover is installed before the first protocol frame and never removed",
+  async () => {
+    const { sink, lines } = captureSink();
+    const { target } = fakeConsole();
+    const plugin = createPlugin({ logSink: sink, console: target });
+    // Output before run() is the runtime's own business: the takeover is not in place yet.
+    const beforeRun = target.log;
+    plugin.registerMethod("example.echo", (input) => input);
+    const harness = createTransportHarness();
+    const run = plugin.run(harness.transport);
+    await harness.responses.next();
+    // The first frame is out; from here every one of the five methods is the logger.
+    const afterRegister = target.log;
+    thirdPartyDependency(target, "while running");
+    await harness.send({ jsonrpc: "2.0", method: "ora/shutdown" });
+    await run;
+    // Stop does not restore the console: a late line still becomes a record, not stdout.
+    target.log("after stop");
+    thirdPartyDependency(target, "after stop");
+
+    assertEquals(
+      [
+        beforeRun === afterRegister,
+        lines.map(payloadOf).map((payload) => [payload.level, payload.message]),
+      ],
+      [
+        false,
+        [
+          ["WARN", "dependency says while running"],
+          ["INFO", "after stop"],
+          ["WARN", "dependency says after stop"],
+        ],
+      ],
+    );
+  },
+);
+
+Deno.test(
+  "a console that cannot be taken over keeps the plugin out of protocol operation",
+  async () => {
+    const { sink, lines } = captureSink();
+    const { target } = fakeConsole();
+    Object.freeze(target);
+    const plugin = createPlugin({ logSink: sink, console: target });
+    const harness = createTransportHarness();
+
+    let failure: unknown;
+    try {
+      await plugin.run(harness.transport);
+    } catch (error) {
+      failure = error;
+    }
+    const firstFrame = await Promise.race([
+      harness.responses.next().then((result) => result.value),
+      new Promise((resolve) => setTimeout(() => resolve("no frame"), 50)),
+    ]);
+    let hostRequest: unknown;
+    try {
+      await plugin.request("ora/anything", null);
+    } catch (error) {
+      hostRequest = error instanceof Error ? error.message : error;
+    }
+
+    assertEquals(
+      [
+        failure instanceof TypeError,
+        firstFrame,
+        hostRequest,
+        lines,
+      ],
+      [
+        true,
+        "no frame",
+        "A plugin can only call the host while running",
+        [],
+      ],
+    );
+  },
+);
+
+Deno.test(
+  "the stderr sink continues short writes until the whole envelope is out",
+  () => {
+    const chunks: Uint8Array[] = [];
+    const sink = createStderrLogSink({
+      writeSync(bytes) {
+        // Accept at most three bytes per call, the way a nearly full pipe would.
+        const taken = bytes.subarray(0, Math.min(3, bytes.byteLength));
+        chunks.push(Uint8Array.from(taken));
+        return taken.byteLength;
+      },
+    });
+    const logger = createLogger(sink);
+
+    logger.info("first record");
+    logger.warn("second record");
+
+    const decoder = new TextDecoder();
+    const output = decoder.decode(
+      Uint8Array.from(chunks.flatMap((chunk) => [...chunk])),
+    );
+    const envelopes = output.split("\n").filter((line) => line.length > 0);
+    assertEquals(
+      [
+        chunks.every((chunk) => chunk.byteLength <= 3),
+        envelopes.map((line) => payloadOf(`${line}\n`).message),
+      ],
+      [true, ["first record", "second record"]],
     );
   },
 );
