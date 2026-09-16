@@ -121,7 +121,8 @@ fn rejects_invalid_ownership_and_cross_scope_edges() {
         ("/nodes/3/data/kind", json!("output")),
     ] {
         let mut value = snapshot();
-        *value.pointer_mut(pointer).unwrap() = replacement;
+        let (parent, field) = pointer.rsplit_once('/').unwrap();
+        value.pointer_mut(parent).unwrap()[field] = replacement;
         assert!(
             WorkflowGraph::parse(&value.to_string()).is_err(),
             "accepted {pointer}: {value}"
