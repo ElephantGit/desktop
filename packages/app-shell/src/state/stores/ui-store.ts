@@ -39,6 +39,27 @@ export type PluginSettingsRequest =
   | { kind: "marketplaceSearch"; query: string }
   | { kind: "manage" }
   | { kind: "configure"; pluginId: string; displayName: string };
+ * Sidebar workflow-run filter. `awaiting_input` is the Theater display spelling
+ * so HITL rows match the status dots rather than the wire `awaitingInput` token.
+ */
+export type SidebarWorkflowRunStatusFilter =
+  | "all"
+  | "pending"
+  | "running"
+  | "awaiting_input"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+const SIDEBAR_WORKFLOW_RUN_STATUS_FILTERS = new Set<string>([
+  "all",
+  "pending",
+  "running",
+  "awaiting_input",
+  "succeeded",
+  "failed",
+  "cancelled",
+]);
 
 /** The settings categories the dialog can be asked to open on. */
 export type SettingsCategory =
@@ -80,6 +101,14 @@ interface UiState {
    * Returning sessions must trust the persisted expand sets verbatim.
    */
   treeExpansionBootstrapped: boolean;
+  /**
+   * Per-project workflow status filter. Missing keys mean All. Survives restart
+   * so a HITL-focused project does not reset every launch.
+   */
+  workflowRunStatusFilterByProjectId: Record<
+    string,
+    SidebarWorkflowRunStatusFilter
+  >;
   dialog: DialogState | null;
   deleteTarget: DeleteTarget | null;
   setSidebarCollapsed: (collapsed: boolean) => void;
@@ -107,6 +136,11 @@ interface UiState {
     projectIds: readonly string[],
     taskIds: readonly string[],
   ) => void;
+  /** Persists the sidebar workflow status filter for one project. `all` drops the key. */
+  setWorkflowRunStatusFilter: (
+    projectId: string,
+    filter: SidebarWorkflowRunStatusFilter,
+  ) => void;
   setDialog: (dialog: DialogState | null) => void;
   setDeleteTarget: (target: DeleteTarget | null) => void;
 }
@@ -117,6 +151,7 @@ interface UiPersistSlice {
   expandedProjects?: unknown;
   expandedTasks?: unknown;
   treeExpansionBootstrapped?: unknown;
+  workflowRunStatusFilterByProjectId?: unknown;
 }
 
 /** Layout fields restored from disk (or defaults when missing/corrupt). */
@@ -125,6 +160,30 @@ export interface UiPersistFields {
   expandedProjects: Set<string>;
   expandedTasks: Set<string>;
   treeExpansionBootstrapped: boolean;
+  workflowRunStatusFilterByProjectId: Record<
+    string,
+    SidebarWorkflowRunStatusFilter
+  >;
+}
+
+/** Drops corrupt project ids and unknown status tokens from a persist payload. */
+function sanitizeStatusFilterMap(
+  value: unknown,
+): Record<string, SidebarWorkflowRunStatusFilter> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return {};
+  }
+  const next: Record<string, SidebarWorkflowRunStatusFilter> = {};
+  for (const [projectId, filter] of Object.entries(value)) {
+    if (projectId.length === 0) continue;
+    if (
+      typeof filter === "string" &&
+      SIDEBAR_WORKFLOW_RUN_STATUS_FILTERS.has(filter)
+    ) {
+      next[projectId] = filter as SidebarWorkflowRunStatusFilter;
+    }
+  }
+  return next;
 }
 
 /** Keeps only non-empty string ids so corrupt disk payloads cannot poison the tree. */
@@ -145,6 +204,7 @@ export function sanitizeUiPersistSlice(
       expandedProjects: new Set(),
       expandedTasks: new Set(),
       treeExpansionBootstrapped: false,
+      workflowRunStatusFilterByProjectId: {},
     };
   }
   return {
@@ -152,6 +212,9 @@ export function sanitizeUiPersistSlice(
     expandedProjects: sanitizeIdSet(slice.expandedProjects),
     expandedTasks: sanitizeIdSet(slice.expandedTasks),
     treeExpansionBootstrapped: slice.treeExpansionBootstrapped === true,
+    workflowRunStatusFilterByProjectId: sanitizeStatusFilterMap(
+      slice.workflowRunStatusFilterByProjectId,
+    ),
   };
 }
 
@@ -193,6 +256,8 @@ export const useUiStore = create<UiState>()(
       expandedProjects: initialPersist.expandedProjects,
       expandedTasks: initialPersist.expandedTasks,
       treeExpansionBootstrapped: initialPersist.treeExpansionBootstrapped,
+      workflowRunStatusFilterByProjectId:
+        initialPersist.workflowRunStatusFilterByProjectId,
       dialog: null,
       deleteTarget: null,
       setSidebarCollapsed: (sidebarCollapsed) => set({ sidebarCollapsed }),
@@ -261,13 +326,34 @@ export const useUiStore = create<UiState>()(
           const expandedTasks = new Set(
             [...state.expandedTasks].filter((id) => liveTasks.has(id)),
           );
+          const workflowRunStatusFilterByProjectId = Object.fromEntries(
+            Object.entries(state.workflowRunStatusFilterByProjectId).filter(
+              ([id]) => liveProjects.has(id),
+            ),
+          );
           if (
             expandedProjects.size === state.expandedProjects.size &&
-            expandedTasks.size === state.expandedTasks.size
+            expandedTasks.size === state.expandedTasks.size &&
+            Object.keys(workflowRunStatusFilterByProjectId).length ===
+              Object.keys(state.workflowRunStatusFilterByProjectId).length
           ) {
             return state;
           }
-          return { expandedProjects, expandedTasks };
+          return {
+            expandedProjects,
+            expandedTasks,
+            workflowRunStatusFilterByProjectId,
+          };
+        }),
+      setWorkflowRunStatusFilter: (projectId, filter) =>
+        set((state) => {
+          const current =
+            state.workflowRunStatusFilterByProjectId[projectId] ?? "all";
+          if (current === filter) return state;
+          const next = { ...state.workflowRunStatusFilterByProjectId };
+          if (filter === "all") delete next[projectId];
+          else next[projectId] = filter;
+          return { workflowRunStatusFilterByProjectId: next };
         }),
       setDialog: (dialog) => set({ dialog }),
       setDeleteTarget: (deleteTarget) => set({ deleteTarget }),
@@ -280,6 +366,8 @@ export const useUiStore = create<UiState>()(
         expandedProjects: [...state.expandedProjects],
         expandedTasks: [...state.expandedTasks],
         treeExpansionBootstrapped: state.treeExpansionBootstrapped,
+        workflowRunStatusFilterByProjectId:
+          state.workflowRunStatusFilterByProjectId,
       }),
       merge: (persisted, current) => {
         const slice =
@@ -303,6 +391,11 @@ export const useUiStore = create<UiState>()(
             current.sidebarCollapsed !== initialPersist.sidebarCollapsed
               ? current.sidebarCollapsed
               : restored.sidebarCollapsed,
+          workflowRunStatusFilterByProjectId:
+            Object.keys(current.workflowRunStatusFilterByProjectId ?? {})
+              .length > 0
+              ? current.workflowRunStatusFilterByProjectId
+              : restored.workflowRunStatusFilterByProjectId,
         };
       },
     },
