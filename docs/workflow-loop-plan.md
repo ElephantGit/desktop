@@ -6,6 +6,8 @@ Status: implementation in progress (P1); Loop execution remains disabled until d
 
 Progress: the container decoder, typed configuration, explicit binding visibility checks, and parser regression tests are implemented. Formatting passes. Rust test execution is blocked on the local Windows host by the missing MSVC `link.exe`; installing the C++ Build Tools has not yet produced an available toolchain. P1 is not marked complete, and storage, scheduling, contracts delivery, and editor integration remain pending.
 
+Round computation is also implemented as a pure operation: initial carried values, simultaneous typed feedback, termination before limit failure, and named exports. Fresh round pools import only globals and upstream outer values, retain inherited writer ownership, and omit previous child outputs. Regression tests cover swaps, limits, missing/type-invalid values, successful exit, and pool isolation. These operations are not yet connected to durable execution; their tests remain blocked by the same missing linker.
+
 ## Goal and design baseline
 
 Support a bounded feedback workflow such as generate → review → revise → review inside Desktop. A Loop owns an executable child graph, typed carried variables, a termination condition, and final outputs. The outer graph and each single-round child graph remain DAGs.

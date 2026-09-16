@@ -16,6 +16,7 @@ mod handlers;
 mod loop_bindings;
 mod loop_config;
 mod loop_graph;
+mod loop_round;
 mod node_type;
 mod ports;
 mod skill_delivery;
@@ -34,6 +35,7 @@ pub use graph::{
 };
 pub use handlers::WorkflowRunControlHandler;
 pub use loop_config::{LoopConfig, LoopInitialValue, LoopVariable};
+pub use loop_round::{LoopRoundDecision, LoopRoundError};
 pub use node_type::{NodeType, UnknownNodeType};
 pub use ports::{
     AdvanceWorkflowRunResult, BindWorkflowNodeSessionResult, CancelWorkflowRunResult,
