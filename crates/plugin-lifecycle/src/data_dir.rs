@@ -96,6 +96,17 @@ impl PluginLogDirectories {
         &self.root
     }
 
+    /// Proves no writer — of any generation, in any host — currently holds the plugin's log.
+    ///
+    /// The caller must hold the plugin's operation lock so no new generation can start between
+    /// this probe and the directory move it guards.
+    pub fn confirm_writer_released(
+        &self,
+        plugin_id: &PluginId,
+    ) -> Result<(), ora_plugin_runtime::PluginLogSinkError> {
+        ora_plugin_runtime::confirm_plugin_log_writer_released(&self.path_for(plugin_id))
+    }
+
     /// Removes the plugin's log directory if it exists; a missing directory is not an error.
     pub fn remove(&self, plugin_id: &PluginId) -> io::Result<()> {
         match std::fs::remove_dir_all(self.path_for(plugin_id)) {

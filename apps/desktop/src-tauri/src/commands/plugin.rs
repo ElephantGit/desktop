@@ -165,7 +165,7 @@ backend_command!(
     plugins.get_log_level,
     "Reads one plugin's host-owned log level."
 );
-backend_command!(
+async_backend_command!(
     set_plugin_log_level,
     SetPluginLogLevelRequest,
     PluginLogLevelResponse,

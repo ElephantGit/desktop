@@ -4,7 +4,10 @@
 //! `message`, optional `method`/`context`/`error`) so the same tooling can read both, but the
 //! trusted fields are always written here by the host: the plugin may describe itself in
 //! `context`, and it may even name `plugin_id`, yet what lands on disk is the identity the
-//! process was launched under.
+//! process was launched under, the host session it ran in, and the generation it was.
+//! Reserved keys the plugin supplies — identity, correlation, and the host's own decoding
+//! markers — are removed before the host writes its own, so a record can never carry a forged
+//! host fact.
 
 use ora_logging::LogLevel;
 use ora_utils::text::{ByteRendering, LineFrame, render_bytes_lossless};
@@ -20,10 +23,32 @@ pub const DEFAULT_PLUGIN_TARGET: &str = "plugin";
 /// Target of every raw record: unstructured bytes the plugin or its dependencies wrote.
 pub const RAW_STDERR_TARGET: &str = "plugin.stderr";
 
+/// Context keys only the host may write.
+///
+/// Identity and generation are stamped on every record; the correlation keys stay empty until a
+/// host ↔ plugin correlation contract exists; the last three are the decoding markers the raw
+/// path adds. A plugin supplying any of them is stripped, never trusted.
+pub const RESERVED_CONTEXT_KEYS: [&str; 9] = [
+    "plugin_id",
+    "generation",
+    "host_session_id",
+    "request_id",
+    "trace_id",
+    "span",
+    "encoding",
+    "fragment",
+    "format_failure",
+];
+
 /// Identity the host binds to every record of one process generation.
+///
+/// `host_session_id` is minted once per host start and never reused, and `generation` counts
+/// launches of this plugin within that session; together they tell two records apart even when
+/// a restarted host counts generations from one again.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordOrigin {
     pub plugin_id: String,
+    pub host_session_id: String,
     pub generation: u64,
 }
 
@@ -112,6 +137,9 @@ fn decode_line(bytes: &[u8], origin: &RecordOrigin, now: OffsetDateTime) -> Deco
         Ok(text) => match parse_envelope(text) {
             Ok(payload) => {
                 let mut context = payload.context;
+                for key in RESERVED_CONTEXT_KEYS {
+                    context.remove(key);
+                }
                 stamp_origin(&mut context, origin);
                 return DecodedRecord {
                     record: PluginLogRecord {
@@ -175,6 +203,10 @@ fn stamp_origin(context: &mut Map<String, Value>, origin: &RecordOrigin) {
         "plugin_id".to_string(),
         Value::String(origin.plugin_id.clone()),
     );
+    context.insert(
+        "host_session_id".to_string(),
+        Value::String(origin.host_session_id.clone()),
+    );
     context.insert("generation".to_string(), json!(origin.generation));
 }
 
@@ -192,33 +224,40 @@ mod tests {
     use ora_logging::LogLevel;
     use ora_utils::text::LineFrame;
     use pretty_assertions::assert_eq;
-    use serde_json::{Map, json};
+    use serde_json::{Map, Value, json};
     use time::macros::datetime;
 
     fn origin() -> RecordOrigin {
         RecordOrigin {
             plugin_id: "official/example".to_string(),
+            host_session_id: "session-a".to_string(),
             generation: 3,
         }
     }
 
+    /// The host identity every record of `origin()` carries.
+    fn host_context() -> Map<String, Value> {
+        let mut context = Map::new();
+        context.insert("plugin_id".to_string(), json!("official/example"));
+        context.insert("host_session_id".to_string(), json!("session-a"));
+        context.insert("generation".to_string(), json!(3));
+        context
+    }
+
     const NOW: time::OffsetDateTime = datetime!(2026-09-14 10:00:00 +08:00);
 
-    /// Host identity overwrites whatever the payload claimed, and reserved keys stay in
-    /// `context` instead of being promoted to trusted top-level fields.
+    /// Host identity overwrites whatever the payload claimed; forged correlation keys and
+    /// decoding markers are stripped from `context` rather than kept or promoted; ordinary
+    /// context survives as the plugin's own statement.
     #[test]
     fn structured_records_carry_host_identity_and_never_promote_reserved_keys() {
         let frame = LineFrame::Line(
-            br#"@ora/plugin-log/v1 {"level":"ERROR","message":"boom","context":{"plugin_id":"evil/other","generation":99,"request_id":"r1","trace_id":"t1","span":"s"},"error":{"name":"E"}}"#
+            br#"@ora/plugin-log/v1 {"level":"ERROR","message":"boom","context":{"plugin_id":"evil/other","generation":99,"host_session_id":"forged","request_id":"r1","trace_id":"t1","span":"s","encoding":"utf8","fragment":{"sequence":0},"format_failure":"none","user":"kept"},"error":{"name":"E"}}"#
                 .to_vec(),
         );
         let decoded = decode_frame(frame, &origin(), NOW);
-        let mut context = Map::new();
-        context.insert("plugin_id".to_string(), json!("official/example"));
-        context.insert("generation".to_string(), json!(3));
-        context.insert("request_id".to_string(), json!("r1"));
-        context.insert("trace_id".to_string(), json!("t1"));
-        context.insert("span".to_string(), json!("s"));
+        let mut context = host_context();
+        context.insert("user".to_string(), json!("kept"));
         let mut error = Map::new();
         error.insert("name".to_string(), json!("E"));
         assert_eq!(
@@ -258,6 +297,35 @@ mod tests {
         );
     }
 
+    /// Two hosts (or one host restarted) that both count generations from the same number still
+    /// produce distinguishable records, because the session id differs.
+    #[test]
+    fn host_sessions_keep_equal_generations_apart() {
+        let frame = || LineFrame::Line(b"same bytes".to_vec());
+        let first = decode_frame(frame(), &origin(), NOW).record;
+        let restarted = RecordOrigin {
+            host_session_id: "session-b".to_string(),
+            ..origin()
+        };
+        let second = decode_frame(frame(), &restarted, NOW).record;
+        assert_eq!(
+            (
+                first.context["generation"].clone(),
+                second.context["generation"].clone(),
+                first.context["host_session_id"].clone(),
+                second.context["host_session_id"].clone(),
+                first == second,
+            ),
+            (
+                json!(3),
+                json!(3),
+                json!("session-a"),
+                json!("session-b"),
+                false
+            )
+        );
+    }
+
     /// Legacy SDK prefixes, invalid envelopes, and CRLF text all become raw `INFO` records under
     /// `plugin.stderr`, with invalid envelopes naming their failure class.
     #[test]
@@ -279,12 +347,10 @@ mod tests {
         ];
         for ((bytes, failure), message) in cases.iter().zip(expected_messages) {
             let decoded = decode_frame(LineFrame::Line(bytes.to_vec()), &origin(), NOW);
-            let mut context = Map::new();
+            let mut context = host_context();
             if let Some(failure) = failure {
                 context.insert("format_failure".to_string(), json!(failure));
             }
-            context.insert("plugin_id".to_string(), json!("official/example"));
-            context.insert("generation".to_string(), json!(3));
             assert_eq!(
                 decoded,
                 DecodedRecord {
@@ -316,10 +382,8 @@ mod tests {
             &origin(),
             NOW,
         );
-        let mut context = Map::new();
+        let mut context = host_context();
         context.insert("encoding".to_string(), json!("escaped-bytes"));
-        context.insert("plugin_id".to_string(), json!("official/example"));
-        context.insert("generation".to_string(), json!(3));
         context.insert(
             "fragment".to_string(),
             json!({ "sequence": 7, "index": 2, "last": true }),

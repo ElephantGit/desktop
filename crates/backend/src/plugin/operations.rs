@@ -234,15 +234,17 @@ impl Plugins {
     /// Persists a plugin's log level and applies it to its running generation, if any.
     ///
     /// The lifecycle persists before it applies, so a returned error means nothing changed and
-    /// the frontend must not show the requested level as current.
-    pub fn set_log_level(
+    /// the frontend must not show the requested level as current. The call is ordered against
+    /// uninstalls of the same plugin by the lifecycle's per-plugin operation lock.
+    pub async fn set_log_level(
         &self,
         request: SetPluginLogLevelRequest,
     ) -> Result<PluginLogLevelResponse, BackendError> {
         let state = self
             .host
             .lifecycle
-            .set_plugin_log_level(&request.plugin_id, internal_log_level(request.level))?;
+            .set_plugin_log_level(&request.plugin_id, internal_log_level(request.level))
+            .await?;
         Ok(plugin_log_level_response(request.plugin_id, state))
     }
 

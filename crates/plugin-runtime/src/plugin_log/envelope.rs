@@ -17,6 +17,14 @@ const PLUGIN_LOG_ENVELOPE_FAMILY: &str = "@ora/plugin-log/";
 /// Upper bound on `target` and `method` so a payload cannot smuggle a record-sized identifier.
 pub const MAX_IDENTIFIER_BYTES: usize = 256;
 
+/// Deepest nesting accepted inside `context` and `error`.
+///
+/// The record size bound already caps the bytes; this caps the *shape*, so that rendering,
+/// storing, and later displaying a record never recurse further than a fixed depth however the
+/// bytes are arranged. The SDK renders at most 8 levels of context, so honest payloads stay well
+/// inside it.
+pub const MAX_NESTING_DEPTH: usize = 16;
+
 /// The validated content of one v1 envelope; every field is still an untrusted plugin statement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructuredPayload {
@@ -77,12 +85,12 @@ pub fn parse_envelope(record: &str) -> Result<StructuredPayload, EnvelopeRejecti
     let target = optional_identifier(fields.remove("target"))?;
     let method = optional_identifier(fields.remove("method"))?;
     let context = match fields.remove("context") {
-        Some(Value::Object(context)) => context,
+        Some(Value::Object(context)) if within_depth(&context) => context,
         None | Some(Value::Null) => Map::new(),
         Some(_) => return Err(EnvelopeRejection::InvalidPayload),
     };
     let error = match fields.remove("error") {
-        Some(Value::Object(error)) => Some(error),
+        Some(Value::Object(error)) if within_depth(&error) => Some(error),
         None | Some(Value::Null) => None,
         Some(_) => return Err(EnvelopeRejection::InvalidPayload),
     };
@@ -106,6 +114,18 @@ fn parse_level(level: &str) -> Result<LogLevel, EnvelopeRejection> {
         "ERROR" => Ok(LogLevel::Error),
         _ => Err(EnvelopeRejection::InvalidPayload),
     }
+}
+
+/// Reports whether every value inside `object` sits within [`MAX_NESTING_DEPTH`] levels.
+fn within_depth(object: &Map<String, Value>) -> bool {
+    fn depth(value: &Value) -> usize {
+        match value {
+            Value::Object(fields) => 1 + fields.values().map(depth).max().unwrap_or(0),
+            Value::Array(items) => 1 + items.iter().map(depth).max().unwrap_or(0),
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => 0,
+        }
+    }
+    object.values().map(depth).max().unwrap_or(0) < MAX_NESTING_DEPTH
 }
 
 /// Validates an optional identifier field: absent or null is fine, anything else must be a
@@ -210,6 +230,43 @@ mod tests {
             .collect::<Vec<_>>();
         expected.push(EnvelopeRejection::InvalidPayload);
         assert_eq!(observed, expected);
+    }
+
+    /// Nesting deeper than the bound is rejected as an invalid payload, in `context` and in
+    /// `error` alike, while the bound itself is still accepted.
+    #[test]
+    fn rejects_context_and_error_nested_past_the_depth_bound() {
+        let nest = |levels: usize| {
+            let mut value = "1".to_string();
+            for _ in 0..levels {
+                value = format!("{{\"k\":{value}}}");
+            }
+            value
+        };
+        let at_bound = format!(
+            r#"@ora/plugin-log/v1 {{"level":"INFO","message":"x","context":{}}}"#,
+            nest(super::MAX_NESTING_DEPTH)
+        );
+        let past_bound_context = format!(
+            r#"@ora/plugin-log/v1 {{"level":"INFO","message":"x","context":{}}}"#,
+            nest(super::MAX_NESTING_DEPTH + 1)
+        );
+        let past_bound_error = format!(
+            r#"@ora/plugin-log/v1 {{"level":"INFO","message":"x","error":{}}}"#,
+            nest(super::MAX_NESTING_DEPTH + 1)
+        );
+        assert_eq!(
+            (
+                parse_envelope(&at_bound).is_ok(),
+                parse_envelope(&past_bound_context),
+                parse_envelope(&past_bound_error),
+            ),
+            (
+                true,
+                Err(EnvelopeRejection::InvalidPayload),
+                Err(EnvelopeRejection::InvalidPayload),
+            )
+        );
     }
 
     /// Optional fields may be absent or null; unknown keys are ignored rather than rejected.

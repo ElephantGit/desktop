@@ -511,6 +511,7 @@ fn closed_stderr_pipeline(directory: &std::path::Path) -> crate::plugin_log::Plu
         crate::PluginLogSetup {
             root: directory.join("logs"),
             directory: directory.join("logs").join("official").join("example"),
+            host_session_id: "session".to_string(),
             generation: 1,
             level,
         },
@@ -713,6 +714,7 @@ async fn launch_applies_permissions_and_cwd_to_the_process_spec() {
                 .join("logs")
                 .join("official")
                 .join("example"),
+            host_session_id: "session".to_string(),
             generation: 1,
             level,
         },
