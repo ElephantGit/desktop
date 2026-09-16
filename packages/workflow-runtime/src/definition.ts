@@ -22,6 +22,7 @@ export interface WorkflowDefinitionInputNode {
   type?: string;
   position: WorkflowPosition;
   data: WorkflowNodeData;
+  parentId?: string;
   deletable?: boolean;
   initialWidth?: number;
   initialHeight?: number;
@@ -68,6 +69,7 @@ export function normalizeWorkflowDefinition(
       type: "workflow",
       position: { ...node.position },
       data: normalizeWorkflowNodeData(node.data),
+      ...(node.parentId === undefined ? {} : { parentId: node.parentId }),
       ...(node.deletable === undefined ? {} : { deletable: node.deletable }),
       ...(node.initialWidth === undefined
         ? {}

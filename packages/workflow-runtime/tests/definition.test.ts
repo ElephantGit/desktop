@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createMockWorkflow } from "@ora/workflow-mock";
+import {
+  createMockWorkflow,
+  createMockWorkflowLoopGroup,
+} from "@ora/workflow-mock";
 import {
   normalizeWorkflowDefinition,
   validateWorkflowDefinition,
@@ -30,6 +33,36 @@ describe("workflow definition validation", () => {
 
     expect(normalizedStart?.data.input).toBe("Legacy kickoff");
     expect(normalizedStart?.data.instruction).toBeUndefined();
+  });
+
+  it("preserves Loop parentage through import normalization", () => {
+    const workflow = createMockWorkflow("en-US");
+    const group = createMockWorkflowLoopGroup({
+      sequence: 1,
+      position: { x: 360, y: 120 },
+      locale: "en-US",
+    });
+    workflow.nodes.push(...group.nodes);
+    workflow.edges.push(
+      {
+        id: "e-start-loop-1",
+        source: "start",
+        target: "loop-1",
+        type: "workflow",
+      },
+      ...group.edges,
+    );
+
+    const definition = normalizeWorkflowDefinition(workflow);
+
+    expect(
+      definition.nodes
+        .filter((node) => node.data.containerId === "loop-1")
+        .map((node) => ({ id: node.id, parentId: node.parentId })),
+    ).toEqual([
+      { id: "loop-1-start", parentId: "loop-1" },
+      { id: "loop-1-agent", parentId: "loop-1" },
+    ]);
   });
 
   it("preserves condition source handles and executable cases through normalization", () => {
