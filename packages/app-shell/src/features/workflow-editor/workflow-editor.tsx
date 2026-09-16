@@ -55,6 +55,7 @@ import {
   deriveWorkflowVariableCatalog,
   normalizeWorkflowGlobalVariables,
   normalizeWorkflowNodeAgentConfigs,
+  supportsWorkflowNodeScope,
   type DemoWorkflow,
   type MockWorkflowVersion,
   type WorkflowCapabilities,
@@ -81,7 +82,13 @@ import { WorkflowCanvas } from "./workflow-canvas";
 import { organizeWorkflowNodes } from "./workflow-flow/layout";
 import type { WorkflowCanvasNode } from "./workflow-flow/types";
 import { WorkflowInspector } from "./workflow-inspector";
-import { applyIterationContainment } from "./workflow-iteration-containment";
+import { applyIterationDragRules } from "./workflow-iteration-containment";
+import {
+  insertIterationMember,
+  repairIterationGraphAfterNodeDeletion,
+  resolveIterationDeletionCascade,
+  type IterationInsertion,
+} from "./workflow-iteration-graph";
 import { WorkflowGlobalVariablesDialog } from "./workflow-global-variables-dialog";
 import { workflowMcpChoices } from "./mcp-catalog";
 import { useInstalledPlugins } from "../../state/hooks/use-installed-plugins";
@@ -131,6 +138,11 @@ interface WorkflowMutationOptions {
     meta?: WorkflowHistoryMeta;
     group?: string;
   };
+}
+
+interface PendingIterationDeleteConfirmation {
+  memberCount: number;
+  resolve: (confirmed: boolean) => void;
 }
 
 export interface WorkflowEditorProps {
@@ -198,10 +210,12 @@ function workflowFromCanvasSnapshot(
   );
   return {
     ...workflow,
-    nodes: graph.nodes.filter(
-      (node): node is Node<WorkflowNodeData, "workflow"> =>
-        !isWorkflowAnnotationNode(node),
-    ),
+    nodes: graph.nodes
+      .filter(
+        (node): node is Node<WorkflowNodeData, "workflow"> =>
+          !isWorkflowAnnotationNode(node),
+      )
+      .map(stripDerivedWorkflowNodeFields),
     annotations: graph.nodes
       .filter(isWorkflowAnnotationNode)
       .map((annotation) => ({
@@ -213,6 +227,20 @@ function workflowFromCanvasSnapshot(
     edges: graph.edges,
     viewport: graph.viewport,
   };
+}
+
+/** Removes render-only React Flow fields before a graph is saved or exported. */
+function stripDerivedWorkflowNodeFields(
+  node: Node<WorkflowNodeData, "workflow">,
+): Node<WorkflowNodeData, "workflow"> {
+  const persisted = { ...node };
+  delete persisted.extent;
+  delete persisted.expandParent;
+  delete persisted.hidden;
+  delete persisted.zIndex;
+  const data = { ...node.data };
+  delete data.regionMemberCount;
+  return { ...persisted, data };
 }
 
 /** Produces a portable filename while retaining the workflow name for the save dialog. */
@@ -385,6 +413,7 @@ function WorkflowEditorContent({
   /** Bumps on every persistable edit so in-flight writes can detect they are stale. */
   const editGenerationRef = useRef(0);
   const workflowRef = useRef<DemoWorkflow | null>(null);
+  const dragStartWorkflowRef = useRef<DemoWorkflow | null>(null);
   const previewedVersionRef = useRef<MockWorkflowVersion | null>(null);
   /** Last name known to be persisted, so autosave skips no-op renames. */
   const persistedNameRef = useRef<string | null>(null);
@@ -394,6 +423,8 @@ function WorkflowEditorContent({
   const inspectorCurrentWidthRef = useRef(0);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
   const [inspectorVisualWidth, setInspectorVisualWidth] = useState(0);
+  const [iterationDeleteConfirmation, setIterationDeleteConfirmation] =
+    useState<PendingIterationDeleteConfirmation | null>(null);
 
   const restoreHistorySnapshot = useCallback(
     (snapshot: Parameters<typeof restoreWorkflowHistorySnapshot>[1]): void => {
@@ -1292,6 +1323,102 @@ function WorkflowEditorContent({
     expandInspector();
   }
 
+  /** Adds one capability-approved member through an explicit iteration graph seam. */
+  function insertIterationNode(
+    kind: WorkflowNodeKind,
+    insertion: IterationInsertion,
+  ): void {
+    const currentWorkflow = workflowRef.current ?? workflow;
+    const nodeType = capabilities.nodeTypes.find(
+      (candidate) => candidate.kind === kind,
+    );
+    if (
+      currentWorkflow === null ||
+      nodeType === undefined ||
+      !supportsWorkflowNodeScope(nodeType, "iteration")
+    ) {
+      return;
+    }
+    const { sequence } = uniqueGraphId(kind, [
+      ...currentWorkflow.nodes.map((node) => node.id),
+      ...(currentWorkflow.annotations ?? []).map((node) => node.id),
+      ...currentWorkflow.edges.map((edge) => edge.id),
+    ]);
+    const node = {
+      ...createMockWorkflowNode({
+        kind,
+        sequence,
+        position: { x: 0, y: 0 },
+        locale,
+        agentConfig:
+          kind === "agent" ? capabilities.defaultAgentConfig : undefined,
+      }),
+      selected: true,
+    };
+    updateWorkflow(
+      (current) =>
+        insertIterationMember(
+          {
+            ...current,
+            nodes: current.nodes.map((candidate) => ({
+              ...candidate,
+              selected: false,
+            })),
+          },
+          insertion,
+          node,
+        ),
+      {
+        history: {
+          event: "node.add",
+          meta: {
+            nodeIds: [node.id],
+            subject: node.data.title,
+            nodeTitle: node.data.title,
+            nodeKind: kind,
+          },
+        },
+      },
+    );
+    expandInspector();
+  }
+
+  /** Persists only the presentation collapse flag; expanded geometry remains unchanged. */
+  function toggleIterationCollapsed(iterationId: string): void {
+    const current = workflowRef.current ?? workflow;
+    const iteration = current?.nodes.find((node) => node.id === iterationId);
+    if (iteration === undefined || iteration.data.kind !== "iteration") {
+      return;
+    }
+    updateWorkflow(
+      (workflow) => ({
+        ...workflow,
+        nodes: workflow.nodes.map((node) =>
+          node.id === iterationId
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  collapsed: node.data.collapsed !== true,
+                },
+              }
+            : node,
+        ),
+      }),
+      {
+        history: {
+          event: "node.edit",
+          meta: {
+            nodeIds: [iterationId],
+            subject: iteration.data.title,
+            nodeTitle: iteration.data.title,
+            nodeKind: "iteration",
+          },
+        },
+      },
+    );
+  }
+
   /** Creates a selected editor note at the canvas-provided position. */
   function addAnnotation(position: XYPosition): void {
     const currentWorkflow = workflowRef.current ?? workflow;
@@ -1490,6 +1617,7 @@ function WorkflowEditorContent({
     if (current === null || previewedVersion !== null) {
       return;
     }
+    dragStartWorkflowRef.current = structuredClone(current);
     workflowHistory.beginTransaction(
       captureWorkflowHistorySnapshot(current),
       "node.move",
@@ -1512,39 +1640,9 @@ function WorkflowEditorContent({
           : node.data.kind,
       },
     );
-    // React Flow's `extent: "parent"` clamps the pointer before drag-stop, making it impossible
-    // for the containment helper to observe a member outside its frame. Relax that transient
-    // constraint for the duration of this drag; stopNodeDrag restores it for an in-frame drop.
-    const constrainedMemberIds = new Set(
-      nodes
-        .filter(
-          (candidate) =>
-            candidate.parentId !== undefined && candidate.extent === "parent",
-        )
-        .map((candidate) => candidate.id),
-    );
-    if (constrainedMemberIds.size > 0) {
-      updateWorkflow(
-        (currentWorkflow) => ({
-          ...currentWorkflow,
-          nodes: currentWorkflow.nodes.map((candidate) =>
-            constrainedMemberIds.has(candidate.id)
-              ? { ...candidate, extent: undefined }
-              : candidate,
-          ),
-        }),
-        { persist: false },
-      );
-    }
   }
 
-  /** Finishes a node drag transaction after React Flow has applied its final position.
-   *
-   * Iteration containment is derived from the final drop position: a workflow node whose
-   * center lands inside an iteration frame's region zone becomes that iteration's member
-   * (`parentId`), and a member dragged out of its frame returns to the outer canvas.
-   * Containment commits with the drag transaction as one undo step.
-   */
+  /** Finishes a drag without ever changing authored iteration membership. */
   function stopNodeDrag(
     _event: MouseEvent | TouchEvent,
     _dragged: WorkflowCanvasNode,
@@ -1553,26 +1651,34 @@ function WorkflowEditorContent({
     const current = workflowRef.current ?? workflow;
     if (current === null || previewedVersion !== null) {
       workflowHistory.cancelTransaction();
+      dragStartWorkflowRef.current = null;
       return;
     }
     const draggedWorkflowNodes = draggedNodes.filter(
       (candidate): candidate is Node<WorkflowNodeData, "workflow"> =>
         !isWorkflowAnnotationNode(candidate),
     );
-    const withContainment = applyIterationContainment(
+    const result = applyIterationDragRules(
       current,
-      draggedWorkflowNodes,
+      dragStartWorkflowRef.current ?? current,
+      draggedWorkflowNodes.map((node) => node.id),
     );
-    if (withContainment !== current) {
-      updateWorkflow(() => withContainment as typeof current, {
+    dragStartWorkflowRef.current = null;
+    if (result.workflow !== current) {
+      updateWorkflow(() => result.workflow as typeof current, {
         persist: true,
       });
       workflowHistory.commitTransaction(
-        captureWorkflowHistorySnapshot(withContainment as typeof current),
+        captureWorkflowHistorySnapshot(result.workflow as typeof current),
       );
-      return;
+    } else {
+      workflowHistory.commitTransaction(
+        captureWorkflowHistorySnapshot(current),
+      );
     }
-    workflowHistory.commitTransaction(captureWorkflowHistorySnapshot(current));
+    if (result.rejectedNodeIds.length > 0) {
+      toast.message(t("settings.workflow.iteration.useInternalAdd"));
+    }
   }
 
   /** Captures the elements React Flow is about to remove for one delete history step. */
@@ -1582,35 +1688,79 @@ function WorkflowEditorContent({
   }: {
     nodes: WorkflowCanvasNode[];
     edges: Edge[];
-  }): Promise<boolean> {
+  }): Promise<boolean | { nodes: WorkflowCanvasNode[]; edges: Edge[] }> {
     const current = workflowRef.current ?? workflow;
     if (current === null || previewedVersion !== null) {
       return false;
     }
-    const firstNode = nodes[0];
+    const requestedNodeIds = new Set(nodes.map((node) => node.id));
+    const cascade = resolveIterationDeletionCascade(
+      current,
+      new Set(
+        nodes
+          .filter(
+            (node): node is Node<WorkflowNodeData, "workflow"> =>
+              !isWorkflowAnnotationNode(node),
+          )
+          .map((node) => node.id),
+      ),
+    );
+    const cascadingMembers = current.nodes.filter(
+      (node) => cascade.nodeIds.has(node.id) && !requestedNodeIds.has(node.id),
+    );
+    if (cascade.memberCount > 0) {
+      const confirmed = await new Promise<boolean>((resolve) => {
+        setIterationDeleteConfirmation({
+          memberCount: cascade.memberCount,
+          resolve,
+        });
+      });
+      if (!confirmed) {
+        return false;
+      }
+    }
+    for (const member of cascadingMembers) {
+      requestedNodeIds.add(member.id);
+    }
+    const cascadeEdges = current.edges.filter((edge) =>
+      cascade.edgeIds.has(edge.id),
+    );
+    const edgeById = new Map(
+      [...edges, ...cascadeEdges].map((edge) => [edge.id, edge]),
+    );
+    const deletingNodes = [
+      ...nodes,
+      ...cascadingMembers.filter(
+        (member) => !nodes.some((node) => node.id === member.id),
+      ),
+    ];
+    const firstNode = deletingNodes[0];
     const nodeTitle =
       firstNode !== undefined && !isWorkflowAnnotationNode(firstNode)
         ? firstNode.data.title
         : undefined;
     const subject =
-      nodes.length > 0
-        ? historySubjectForNodes(nodes)
-        : edges
+      deletingNodes.length > 0
+        ? historySubjectForNodes(deletingNodes)
+        : [...edgeById.values()]
             .map((edge) =>
               historySubjectForEdge(current, edge.source, edge.target),
             )
             .join("、");
     workflowHistory.beginTransaction(
       captureWorkflowHistorySnapshot(current),
-      nodes.length > 0 ? "node.delete" : "edge.delete",
+      deletingNodes.length > 0 ? "node.delete" : "edge.delete",
       {
-        nodeIds: nodes.map((node) => node.id),
-        edgeIds: edges.map((edge) => edge.id),
+        nodeIds: deletingNodes.map((node) => node.id),
+        edgeIds: [...edgeById.keys()],
         subject,
         nodeTitle,
       },
     );
-    return true;
+    return {
+      nodes: deletingNodes,
+      edges: [...edgeById.values()],
+    };
   }
 
   /** Commits the delete transaction once React Flow has removed its elements. */
@@ -1628,13 +1778,19 @@ function WorkflowEditorContent({
     const persistable = changes.some(
       (change) => change.type !== "select" && change.type !== "dimensions",
     );
+    const removedNodeIds = new Set(
+      changes
+        .filter((change) => change.type === "remove")
+        .map((change) => change.id),
+    );
+    let clearedCollectSelectorIterationIds: string[] = [];
     updateWorkflow(
       (current) => {
         const nextNodes = applyNodeChanges<WorkflowCanvasNode>(changes, [
           ...current.nodes,
           ...(current.annotations ?? []),
         ]);
-        return {
+        const nextWorkflow = {
           ...current,
           nodes: nextNodes.filter(
             (node): node is Node<WorkflowNodeData, "workflow"> =>
@@ -1642,9 +1798,26 @@ function WorkflowEditorContent({
           ),
           annotations: nextNodes.filter(isWorkflowAnnotationNode),
         };
+        if (removedNodeIds.size === 0) {
+          return nextWorkflow;
+        }
+        const repaired = repairIterationGraphAfterNodeDeletion(
+          nextWorkflow,
+          removedNodeIds,
+        );
+        clearedCollectSelectorIterationIds =
+          repaired.clearedCollectSelectorIterationIds;
+        return repaired.graph;
       },
       { persist: persistable },
     );
+    if (clearedCollectSelectorIterationIds.length > 0) {
+      toast.warning(
+        t("settings.workflow.iteration.collectTargetDeleted", {
+          count: clearedCollectSelectorIterationIds.length,
+        }),
+      );
+    }
   }
 
   /** Applies React Flow edge changes directly to the active graph. */
@@ -1848,6 +2021,8 @@ function WorkflowEditorContent({
                 onNodesChange={changeNodes}
                 onEdgesChange={changeEdges}
                 onAddNode={addNode}
+                onInsertIterationNode={insertIterationNode}
+                onToggleIterationCollapsed={toggleIterationCollapsed}
                 onAddAnnotation={addAnnotation}
                 onUpdateAnnotation={updateAnnotation}
                 onOrganize={organizeNodes}
@@ -2043,6 +2218,39 @@ function WorkflowEditorContent({
           }
         />
       )}
+      <AlertDialog
+        open={iterationDeleteConfirmation !== null}
+        onOpenChange={(open) => {
+          if (!open && iterationDeleteConfirmation !== null) {
+            iterationDeleteConfirmation.resolve(false);
+            setIterationDeleteConfirmation(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("settings.workflow.iteration.deleteTitle")}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("settings.workflow.iteration.deleteDescription", {
+                count: iterationDeleteConfirmation?.memberCount ?? 0,
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                iterationDeleteConfirmation?.resolve(true);
+                setIterationDeleteConfirmation(null);
+              }}
+            >
+              {t("settings.workflow.deleteNode")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <AlertDialog open={publishDialogOpen} onOpenChange={setPublishDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>

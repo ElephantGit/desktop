@@ -129,14 +129,30 @@ reading the previous round's stale pool value. The node's own failures always pr
 failure; only region-internal failures can be absorbed, and Condition decisions inside a region
 are recorded per round so a later round can never overwrite an earlier round's branch.
 
-The editor renders the iteration node as an embedded container frame on the same canvas:
-dragging a node into the frame's region zone makes it a member, the frame collapses to a
-compact summary, and the inspector edits the four config fields. The variable catalog follows
-region scope — members see `item`/`index` plus their in-region upstream products but never the
-node's own exposed results, while outer consumers see the three exposed variables but never the
-round bindings. Run views group region states by `(node_id, iteration)`: the overview marks
-member nodes with their round badge, and Theater's act inspector offers a per-round strip for
-viewing each round's session and output.
+The editor renders the iteration node as an embedded composite region on the same canvas.
+Membership is explicit rather than geometric: authors add Agent or Condition nodes from the
+decorative internal start, insert them on an internal edge, or append them to an unconnected
+output (including a specific Condition branch). Each insertion creates or rewires its edges in
+the same undo/autosave operation. Dragging never changes `parentId`: members stay inside their
+owner, and an outer node dropped over a region returns to its original position with guidance to
+use the internal add entry. React Flow parent constraints are derived while rendering and are not
+persisted.
+
+Expanded frames keep a 560×340 minimum and persist fitted `initialWidth` / `initialHeight` values.
+They grow when members are inserted or moved, compact after deletion or automatic layout, and
+restore the same expanded size after collapse. Automatic layout arranges every region DAG
+independently before laying out the outer graph with the fitted container dimensions. Deleting a
+non-empty frame confirms its member count, then removes the frame, members, and incident edges as
+one undoable edit. Deleting the current `collectSelector` target clears that selector and asks the
+author to configure a replacement. Region Agent nodes default to `interactive: false`; legacy
+interactive members remain visible with a direct repair action because the runtime still rejects
+them.
+
+The variable catalog follows region scope — members see `item`/`index` plus their in-region
+upstream products but never the node's own exposed results, while outer consumers see the three
+exposed variables but never the round bindings. Run views group region states by
+`(node_id, iteration)`: the overview marks member nodes with their round badge, and Theater's act
+inspector offers a per-round strip for viewing each round's session and output.
 The production regression suite exercises the same boundaries through SQLite and the fake ACP
 provider: a second round receives a new session, round bindings are available while rendering its
 prompt, and synchronous failures settle under both `fail` and `continue` without leaving a run

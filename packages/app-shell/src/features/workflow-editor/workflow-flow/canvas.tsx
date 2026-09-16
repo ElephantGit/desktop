@@ -22,7 +22,11 @@ import {
   type Viewport,
   type XYPosition,
 } from "@xyflow/react";
-import type { WorkflowNodeKind } from "@ora/workflow-mock";
+import {
+  WORKFLOW_ITERATION_CARD_WIDTH,
+  type WorkflowNodeKind,
+} from "@ora/workflow-mock";
+import { toast } from "@ora/ui";
 import { WorkflowNodeCatalog } from "../workflow-node-catalog";
 import {
   DEFAULT_WORKFLOW_PAN,
@@ -54,6 +58,8 @@ import { WorkflowCanvasTools, type CanvasInteractionMode } from "./tools";
 import { WorkflowHistoryControls } from "./history-controls";
 import type { WorkflowCanvasNode, WorkflowCanvasProps } from "./types";
 import { WorkflowVersionHistory } from "./version-history";
+import { iterationExpandedSize } from "../workflow-iteration-graph";
+import { WorkflowIterationActionsProvider } from "./iteration-actions";
 import "@xyflow/react/dist/style.css";
 import "./workflow-flow.css";
 
@@ -179,6 +185,8 @@ function WorkflowCanvasInner({
   onNodesChange,
   onEdgesChange,
   onAddNode,
+  onInsertIterationNode,
+  onToggleIterationCollapsed,
   onAddAnnotation,
   onOrganize,
   onConnect,
@@ -246,35 +254,44 @@ function WorkflowCanvasInner({
     }
     return counts;
   }, [nodes]);
-  const canvasNodes = useMemo<WorkflowCanvasNode[]>(
-    () => [
+  const canvasNodes = useMemo<WorkflowCanvasNode[]>(() => {
+    const iterationIds = new Set(
+      nodes
+        .filter((node) => node.data.kind === "iteration")
+        .map((node) => node.id),
+    );
+    const executableNodes = nodes.map((node) => ({
+      ...node,
+      // parentId is persisted graph structure; React Flow constraints are presentation only.
+      ...(node.parentId !== undefined && iterationIds.has(node.parentId)
+        ? { extent: "parent" as const, expandParent: true }
+        : { extent: undefined, expandParent: undefined }),
+      // Notes reserve the bottom layer, while selected executable nodes keep
+      // React Flow's usual elevation over their executable peers.
+      zIndex: node.selected
+        ? WORKFLOW_SELECTED_NODE_Z_INDEX
+        : WORKFLOW_NODE_Z_INDEX,
+      ...(node.parentId !== undefined && collapsedIterations.has(node.parentId)
+        ? { hidden: true }
+        : {}),
+      ...(node.data.kind === "iteration"
+        ? {
+            data: {
+              ...node.data,
+              regionMemberCount: memberCountByIteration.get(node.id) ?? 0,
+            },
+          }
+        : {}),
+    }));
+    return [
       ...annotations.map((annotation) => ({
         ...annotation,
         zIndex: WORKFLOW_ANNOTATION_Z_INDEX,
       })),
-      ...nodes.map((node) => ({
-        ...node,
-        // Notes reserve the bottom layer, while selected executable nodes keep
-        // React Flow's usual elevation over their executable peers.
-        zIndex: node.selected
-          ? WORKFLOW_SELECTED_NODE_Z_INDEX
-          : WORKFLOW_NODE_Z_INDEX,
-        ...(node.parentId !== undefined &&
-        collapsedIterations.has(node.parentId)
-          ? { hidden: true }
-          : {}),
-        ...(node.data.kind === "iteration"
-          ? {
-              data: {
-                ...node.data,
-                regionMemberCount: memberCountByIteration.get(node.id) ?? 0,
-              },
-            }
-          : {}),
-      })),
-    ],
-    [annotations, nodes, collapsedIterations, memberCountByIteration],
-  );
+      ...executableNodes.filter((node) => node.parentId === undefined),
+      ...executableNodes.filter((node) => node.parentId !== undefined),
+    ];
+  }, [annotations, nodes, collapsedIterations, memberCountByIteration]);
   const reconnectingEdgeIdRef = useRef<string | null>(null);
   const edgeIdByDirectedPair = useMemo(() => {
     const pairs = new Map<string, string>();
@@ -539,20 +556,32 @@ function WorkflowCanvasInner({
     ) {
       return;
     }
-    onAddNode(
-      kind,
-      snapNodePosition(
-        nodePositionAt(
-          screenToFlowPosition(
-            {
-              x: position.x,
-              y: position.y,
-            },
-            { snapToGrid: false },
-          ),
-        ),
-      ),
+    const flowPoint = screenToFlowPosition(
+      { x: position.x, y: position.y },
+      { snapToGrid: false },
     );
+    const droppedOverIteration = nodes.some((node) => {
+      if (node.data.kind !== "iteration") {
+        return false;
+      }
+      const size = iterationExpandedSize(node);
+      const width =
+        node.data.collapsed === true
+          ? WORKFLOW_ITERATION_CARD_WIDTH + 16
+          : size.width;
+      const height = node.data.collapsed === true ? 112 : size.height;
+      return (
+        flowPoint.x >= node.position.x &&
+        flowPoint.x <= node.position.x + width &&
+        flowPoint.y >= node.position.y &&
+        flowPoint.y <= node.position.y + height
+      );
+    });
+    if (droppedOverIteration) {
+      toast.message(t("settings.workflow.iteration.useInternalAdd"));
+      return;
+    }
+    onAddNode(kind, snapNodePosition(nodePositionAt(flowPoint)));
   }
 
   /**
@@ -584,91 +613,100 @@ function WorkflowCanvasInner({
         onPointerMoveCapture={updateConnectionCandidate}
       >
         <WorkflowConnectionStateProvider value={connectionState}>
-          <ReactFlow
-            className="workflow-flow bg-muted/25"
-            data-interaction-mode={interactionMode}
-            nodes={canvasNodes}
+          <WorkflowIterationActionsProvider
+            capabilities={capabilities}
+            nodes={nodes}
             edges={edges}
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            defaultViewport={initialViewport}
-            minZoom={MIN_WORKFLOW_ZOOM}
-            maxZoom={MAX_WORKFLOW_ZOOM}
-            proOptions={{ hideAttribution: true }}
-            nodesFocusable
-            edgesFocusable
-            nodesDraggable={!readOnly}
-            nodesConnectable={!readOnly}
-            elementsSelectable={!readOnly}
-            elevateNodesOnSelect={false}
-            edgesReconnectable={!readOnly}
-            reconnectRadius={28}
-            connectionRadius={24}
-            deleteKeyCode={readOnly ? [] : ["Backspace", "Delete"]}
-            multiSelectionKeyCode={null}
-            snapGrid={WORKFLOW_SNAP_GRID}
-            snapToGrid
-            panOnScroll={false}
-            zoomOnScroll
-            zoomOnPinch
-            // Left-drag box-selects multiple nodes; middle-drag keeps panning.
-            panOnDrag={interactionMode === "hand" ? [0, 1] : [1]}
-            selectionOnDrag={!readOnly && interactionMode === "pointer"}
-            selectNodesOnDrag={false}
-            isValidConnection={isValidConnection}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onBeforeDelete={onBeforeDelete}
-            onDelete={onDelete}
-            onNodeDragStart={onNodeDragStart}
-            onNodeDragStop={onNodeDragStop}
-            onNodeClick={(_event, node) => {
-              // Selection alone cannot reopen the rail: drag-collapse keeps the
-              // node selected, so a same-node click is a no-op for React Flow.
-              if (
-                node.type === WORKFLOW_FLOW_NODE_TYPE &&
-                inspectorCollapsed &&
-                inspectorAvailable
-              ) {
-                onExpandInspector();
-              }
-            }}
-            onConnectStart={(_event, params) => {
-              startConnection(params);
-            }}
-            onConnect={onConnect}
-            onConnectEnd={finishNewConnection}
-            onReconnectStart={(_event, edge, handleType) => {
-              reconnectingEdgeIdRef.current = edge.id;
-              setConnectionDraft({
-                kind: "reconnect",
-                edgeId: edge.id,
-                // React Flow reports the fixed opposite handle here: dragging
-                // the visible source endpoint therefore reports "target".
-                endpoint: handleType === "target" ? "source" : "target",
-                source: edge.source,
-                target: edge.target,
-              });
-            }}
-            onReconnect={onReconnect}
-            onReconnectEnd={finishReconnect}
-            onEdgeDoubleClick={(_event, edge) => {
-              void deleteElements({ edges: [edge] });
-            }}
-            connectionLineComponent={WorkflowConnectionLine}
-            elevateEdgesOnSelect
-            defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
-            connectionLineStyle={CONNECTION_LINE_STYLE}
+            readOnly={readOnly}
+            onInsert={onInsertIterationNode}
+            onToggleCollapsed={onToggleIterationCollapsed}
           >
-            <Background
-              id="workflow-dots"
-              variant={BackgroundVariant.Dots}
-              gap={20}
-              size={1}
-              color="color-mix(in oklch, var(--foreground) 18%, transparent)"
-            />
-            <WorkflowFlowOverview nodeCount={nodes.length} />
-          </ReactFlow>
+            <ReactFlow
+              className="workflow-flow bg-muted/25"
+              data-interaction-mode={interactionMode}
+              nodes={canvasNodes}
+              edges={edges}
+              nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
+              defaultViewport={initialViewport}
+              minZoom={MIN_WORKFLOW_ZOOM}
+              maxZoom={MAX_WORKFLOW_ZOOM}
+              proOptions={{ hideAttribution: true }}
+              nodesFocusable
+              edgesFocusable
+              nodesDraggable={!readOnly}
+              nodesConnectable={!readOnly}
+              elementsSelectable={!readOnly}
+              elevateNodesOnSelect={false}
+              edgesReconnectable={!readOnly}
+              reconnectRadius={28}
+              connectionRadius={24}
+              deleteKeyCode={readOnly ? [] : ["Backspace", "Delete"]}
+              multiSelectionKeyCode={null}
+              snapGrid={WORKFLOW_SNAP_GRID}
+              snapToGrid
+              panOnScroll={false}
+              zoomOnScroll
+              zoomOnPinch
+              // Left-drag box-selects multiple nodes; middle-drag keeps panning.
+              panOnDrag={interactionMode === "hand" ? [0, 1] : [1]}
+              selectionOnDrag={!readOnly && interactionMode === "pointer"}
+              selectNodesOnDrag={false}
+              isValidConnection={isValidConnection}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onBeforeDelete={onBeforeDelete}
+              onDelete={onDelete}
+              onNodeDragStart={onNodeDragStart}
+              onNodeDragStop={onNodeDragStop}
+              onNodeClick={(_event, node) => {
+                // Selection alone cannot reopen the rail: drag-collapse keeps the
+                // node selected, so a same-node click is a no-op for React Flow.
+                if (
+                  node.type === WORKFLOW_FLOW_NODE_TYPE &&
+                  inspectorCollapsed &&
+                  inspectorAvailable
+                ) {
+                  onExpandInspector();
+                }
+              }}
+              onConnectStart={(_event, params) => {
+                startConnection(params);
+              }}
+              onConnect={onConnect}
+              onConnectEnd={finishNewConnection}
+              onReconnectStart={(_event, edge, handleType) => {
+                reconnectingEdgeIdRef.current = edge.id;
+                setConnectionDraft({
+                  kind: "reconnect",
+                  edgeId: edge.id,
+                  // React Flow reports the fixed opposite handle here: dragging
+                  // the visible source endpoint therefore reports "target".
+                  endpoint: handleType === "target" ? "source" : "target",
+                  source: edge.source,
+                  target: edge.target,
+                });
+              }}
+              onReconnect={onReconnect}
+              onReconnectEnd={finishReconnect}
+              onEdgeDoubleClick={(_event, edge) => {
+                void deleteElements({ edges: [edge] });
+              }}
+              connectionLineComponent={WorkflowConnectionLine}
+              elevateEdgesOnSelect
+              defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
+              connectionLineStyle={CONNECTION_LINE_STYLE}
+            >
+              <Background
+                id="workflow-dots"
+                variant={BackgroundVariant.Dots}
+                gap={20}
+                size={1}
+                color="color-mix(in oklch, var(--foreground) 18%, transparent)"
+              />
+              <WorkflowFlowOverview nodeCount={nodes.length} />
+            </ReactFlow>
+          </WorkflowIterationActionsProvider>
         </WorkflowConnectionStateProvider>
 
         {/* History caption sits in the same row as zoom so it cannot overlap the toolbar. */}

@@ -47,14 +47,17 @@ category.
 - The node catalog advertises only the runtime-backed Start, Agent, Condition, Iteration, and
   Output nodes. Prototype metadata for other node kinds remains available so each kind can be
   exposed when its runtime support is implemented.
-- The iteration node renders as an embedded container frame on the same canvas: dragging a node
-  into the frame's region zone assigns React Flow `parentId` containment, the frame collapses to
-  a compact member-count summary, and its inspector edits the iterator source, collect target,
-  error strategy, and the iteration ceiling. Editor-side connection rules reject edges that
-  cross a region boundary in a direction the engine cannot honor. While a contained node is being
-  dragged, the editor temporarily releases React Flow's parent extent constraint so it can be
-  moved out of the frame; drag-stop derives the final containment and restores the constraint when
-  the node remains inside. The authoritative validation stays in the Rust graph parser.
+- The iteration node is an embedded composite region on the same canvas. Membership is authored
+  only through its internal start, internal-edge insertion, and unconnected-output append menus;
+  geometry never changes `parentId`. Agent and Condition declare iteration support through
+  `supportedScopes`; outer drops over a region are rejected, and existing members cannot leave it.
+  A pure graph transform owns node creation, edge rewiring, branch-handle preservation, and frame
+  fitting so each insertion is one history/autosave operation. React Flow `extent` / `expandParent`
+  are derived from persisted `parentId` only at render time. Expanded dimensions persist through
+  `initialWidth` / `initialHeight`, default to 560×340 for old snapshots, grow with authored
+  members, compact after deletion or organize, and survive collapse/expand. Deleting a non-empty
+  frame confirms the member count and cascades through members and incident edges as one undoable
+  edit. The authoritative execution validation remains in the Rust graph parser.
 - Collapsing the app sidebar hides the library in place; it does not remount
   the canvas, so in-memory draft edits survive.
 - Undo/redo history is scoped to the mounted draft session. Switching drafts,

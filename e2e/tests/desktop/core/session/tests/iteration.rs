@@ -15,26 +15,45 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 /// Keeps the production graph fixed while varying the prompt and iteration failure policy.
 fn graph(prompt: &str, strategy: &str, ceiling: u32) -> Value {
     json!({"nodes": [
-        {"id":"start","data":{"kind":"start","inputVariables":[
+        {"id":"start","type":"workflow","position":{"x":0,"y":0},"data":{"kind":"start","inputVariables":[
             {"name":"items","valueType":"array[string]"},
             {"name":"unset","valueType":"string"}
         ]}},
-        {"id":"iter","data":{"kind":"iteration","iterationConfig":{
+        {"id":"iter","type":"workflow","position":{"x":360,"y":0},"initialWidth":760,"initialHeight":420,"data":{"kind":"iteration","iterationConfig":{
             "iteratorSelector":["start","items"],"collectSelector":["body","output"],
             "errorStrategy":strategy,"maxIterations":ceiling
         }}},
-        {"id":"body","parentId":"iter","data":{"kind":"agent","agentConfig":{
+        {"id":"body","type":"workflow","parentId":"iter","position":{"x":420,"y":160},"data":{"kind":"agent","agentConfig":{
             "executor":{"agentCli":"official/ora-space.opencode","modelId":"anthropic/claude-sonnet-4"},
             "prompt":prompt,"interactive":false
         }}},
-        {"id":"out","data":{"kind":"output","outputs":[
+        {"id":"out","type":"workflow","position":{"x":1240,"y":0},"data":{"kind":"output","outputs":[
             {"name":"collected","variableSelector":["iter","output"]}
         ]}}
     ],"edges":[
         {"source":"start","target":"iter"},
-        {"source":"iter","target":"body"},
+        {"source":"iter","sourceHandle":"iteration-entry","target":"body"},
         {"source":"iter","target":"out"}
     ]})
+}
+
+/// Builds the editor-authored multi-node region shape: entry → Condition branch → Agent.
+fn multi_node_region_graph() -> Value {
+    let mut graph = graph("item={{#iter.item#}} index={{#iter.index#}}", "fail", 10);
+    let nodes = graph_array(&mut graph, "nodes");
+    nodes.push(json!({
+        "id":"gate","type":"workflow","parentId":"iter","position":{"x":96,"y":160},
+        "data":{"kind":"condition","cases":[
+            {"id":"non-empty","logic":"and","conditions":[
+                {"variableSelector":["iter","item"],"operator":"not_empty"}
+            ]}
+        ]}
+    }));
+    graph["edges"][1]["target"] = json!("gate");
+    graph_array(&mut graph, "edges").push(json!({
+        "source":"gate","sourceHandle":"non-empty","target":"body"
+    }));
+    graph
 }
 
 /// Adds a condition whose comparison reads a declared but unassigned Start value.
@@ -70,6 +89,7 @@ fn run_case(
     expected: WorkflowRunStatus,
     sessions: usize,
     expected_output_fragment: Option<&str>,
+    expected_collected_items: Option<usize>,
 ) -> TestResult {
     ora_logging::with_trace_logging(|| {
         current_thread_runtime()?.block_on(async {
@@ -155,6 +175,18 @@ fn run_case(
                     "no node output contained {fragment:?}; ACP journal: {journal}",
                 );
             }
+            if let Some(expected_items) = expected_collected_items {
+                let run_output = observed
+                    .run
+                    .output
+                    .as_deref()
+                    .ok_or("successful iteration run must expose output")?;
+                let collected = serde_json::from_str::<Value>(run_output)?["collected"]
+                    .as_array()
+                    .ok_or("iteration output must contain a collected array")?
+                    .len();
+                assert_eq!(collected, expected_items);
+            }
             Ok(())
         })
     })
@@ -169,6 +201,7 @@ fn second_round_really_dispatches() -> TestResult {
         WorkflowRunStatus::Succeeded,
         2,
         None,
+        None,
     )
 }
 
@@ -181,6 +214,7 @@ fn round_prompt_reads_item_and_index() -> TestResult {
         WorkflowRunStatus::Succeeded,
         1,
         Some("item=a index=0"),
+        None,
     )
 }
 
@@ -192,6 +226,7 @@ fn failed_condition_fails_the_iteration() -> TestResult {
         json!(["a"]),
         WorkflowRunStatus::Failed,
         0,
+        None,
         None,
     )
 }
@@ -205,5 +240,20 @@ fn failed_condition_continue_completes_the_iteration() -> TestResult {
         WorkflowRunStatus::Succeeded,
         0,
         None,
+        None,
+    )
+}
+
+/// A graph saved with editor geometry and the decorative entry handle publishes and executes all
+/// three rounds through Condition → Agent, then exposes a three-item aggregate.
+#[test]
+fn editor_authored_multi_node_region_executes_three_rounds() -> TestResult {
+    run_case(
+        multi_node_region_graph(),
+        json!(["a", "b", "c"]),
+        WorkflowRunStatus::Succeeded,
+        3,
+        Some("item=c index=2"),
+        Some(3),
     )
 }

@@ -242,6 +242,7 @@ function WorkflowNodeInspector({
                   catalogsLoading={agentCatalogsLoading}
                   catalogsError={agentCatalogsError}
                   onRetryCatalogs={onRetryAgentCatalogs}
+                  iterationMember={node.parentId !== undefined}
                   onChange={(config) =>
                     onUpdate({
                       ...node,
@@ -426,6 +427,7 @@ function AgentConfigurationFields({
   catalogsLoading,
   catalogsError,
   onRetryCatalogs,
+  iterationMember,
   onChange,
 }: {
   config: WorkflowAgentConfig;
@@ -441,6 +443,7 @@ function AgentConfigurationFields({
   catalogsLoading: boolean;
   catalogsError: boolean;
   onRetryCatalogs?: () => void;
+  iterationMember: boolean;
   onChange: (config: WorkflowAgentConfig) => void;
 }) {
   const { t } = useTranslation();
@@ -930,18 +933,42 @@ function AgentConfigurationFields({
         label={t("settings.workflow.field.interactive")}
         htmlFor="workflow-agent-interactive"
       >
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-xs text-muted-foreground">
-            {t("settings.workflow.field.interactiveDescription")}
-          </p>
-          <Switch
-            id="workflow-agent-interactive"
-            className="shrink-0 data-checked:bg-blue-600 hover:data-checked:bg-blue-700"
-            checked={config.interactive ?? false}
-            onCheckedChange={(interactive) =>
-              onChange({ ...config, interactive })
-            }
-          />
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs text-muted-foreground">
+              {t(
+                iterationMember
+                  ? "settings.workflow.iteration.interactiveUnavailable"
+                  : "settings.workflow.field.interactiveDescription",
+              )}
+            </p>
+            <Switch
+              id="workflow-agent-interactive"
+              className="shrink-0 data-checked:bg-blue-600 hover:data-checked:bg-blue-700"
+              checked={config.interactive ?? false}
+              disabled={iterationMember}
+              onCheckedChange={(interactive) =>
+                onChange({ ...config, interactive })
+              }
+            />
+          </div>
+          {iterationMember && config.interactive === true && (
+            <div
+              role="alert"
+              className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive"
+            >
+              <p>{t("settings.workflow.iteration.interactiveRepairHint")}</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-2 h-7"
+                onClick={() => onChange({ ...config, interactive: false })}
+              >
+                {t("settings.workflow.iteration.disableInteractive")}
+              </Button>
+            </div>
+          )}
         </div>
       </InspectorField>
       <div className="min-w-0 space-y-1.5">

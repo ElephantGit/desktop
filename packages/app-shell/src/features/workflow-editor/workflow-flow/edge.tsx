@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { useTranslation } from "react-i18next";
 import {
   BaseEdge,
   EdgeLabelRenderer,
@@ -6,10 +7,14 @@ import {
   type EdgeProps,
 } from "@xyflow/react";
 import { cn } from "@ora/ui";
+import { IterationInsertMenu } from "./iteration-actions";
+import { useWorkflowIterationActions } from "./iteration-actions-context";
 
 /** Draws a selectable workflow edge with an accessible hit target and optional branch label. */
 export const WorkflowFlowEdgeView = memo(function WorkflowFlowEdgeView({
   id,
+  source,
+  target,
   sourceX,
   sourceY,
   sourcePosition,
@@ -22,6 +27,9 @@ export const WorkflowFlowEdgeView = memo(function WorkflowFlowEdgeView({
   style,
   interactionWidth,
 }: EdgeProps) {
+  const { t } = useTranslation();
+  const { insertionForEdge } = useWorkflowIterationActions();
+  const insertion = insertionForEdge({ id, source, target });
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
@@ -73,6 +81,21 @@ export const WorkflowFlowEdgeView = memo(function WorkflowFlowEdgeView({
         </g>
       )}
       <EdgeLabelRenderer>
+        {insertion !== null && (
+          <div
+            className="nodrag nopan pointer-events-auto absolute"
+            style={{
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+            }}
+          >
+            <IterationInsertMenu
+              insertion={insertion}
+              label={t("settings.workflow.iteration.insertOnEdge")}
+              side="top"
+              className="size-5 border-violet-500/40 text-violet-700 dark:text-violet-300"
+            />
+          </div>
+        )}
         {label !== undefined && label !== null && label !== "" && (
           <div
             className={cn(

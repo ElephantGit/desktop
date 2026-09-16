@@ -29,6 +29,9 @@ import {
 } from "../../workflow-node-chrome";
 import { useWorkflowConnectionState } from "./use-connection-state";
 import { WorkflowNodeParameterSummary } from "./node-parameter-summary";
+import { IterationInsertMenu } from "./iteration-actions";
+import { useWorkflowIterationActions } from "./iteration-actions-context";
+import type { IterationInsertion } from "../workflow-iteration-graph";
 
 const CONDITION_NODE_WIDTH = 320;
 const CONDITION_FIRST_HANDLE_Y = 82;
@@ -43,6 +46,7 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
   data,
   deletable,
   selected,
+  parentId,
   positionAbsoluteX,
   positionAbsoluteY,
 }: NodeProps<Node<WorkflowNodeData, "workflow">>) {
@@ -60,6 +64,7 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
     isConnectionCandidate && connectionCandidateEndpoint === "source";
   const conditionCases =
     data.kind === "condition" ? resolveConditionCases(data) : [];
+  const iterationActions = useWorkflowIterationActions();
 
   if (data.kind === "iteration") {
     return (
@@ -144,21 +149,32 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
         data.kind === "condition" ? (
           <>
             {conditionCases.map((conditionCase, index) => (
-              <Handle
-                key={conditionCase.id}
-                id={conditionCase.id}
-                type="source"
-                position={Position.Right}
-                data-workflow-output={id}
-                aria-label={`${t("settings.workflow.connectFrom", { name: data.title })} · ${conditionCase.id}`}
-                className={cn(
-                  "workflow-port workflow-port-output !size-2.5 !border-0 !bg-transparent",
-                  isOutputCandidate && "workflow-port-candidate",
-                )}
-                style={{
-                  top: conditionHandleTop(conditionCases, index),
-                }}
-              />
+              <Fragment key={conditionCase.id}>
+                <Handle
+                  id={conditionCase.id}
+                  type="source"
+                  position={Position.Right}
+                  data-workflow-output={id}
+                  aria-label={`${t("settings.workflow.connectFrom", { name: data.title })} · ${conditionCase.id}`}
+                  className={cn(
+                    "workflow-port workflow-port-output !size-2.5 !border-0 !bg-transparent",
+                    isOutputCandidate && "workflow-port-candidate",
+                  )}
+                  style={{
+                    top: conditionHandleTop(conditionCases, index),
+                  }}
+                />
+                <IterationOutputInsertButton
+                  insertion={iterationActions.outputInsertion(
+                    id,
+                    conditionCase.id,
+                  )}
+                  top={conditionHandleTop(conditionCases, index)}
+                  label={t("settings.workflow.iteration.appendBranch", {
+                    branch: conditionCase.id,
+                  })}
+                />
+              </Fragment>
             ))}
             <Handle
               id="else"
@@ -174,21 +190,39 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
                 top: conditionHandleTop(conditionCases, conditionCases.length),
               }}
             />
+            <IterationOutputInsertButton
+              insertion={iterationActions.outputInsertion(id, "else")}
+              top={conditionHandleTop(conditionCases, conditionCases.length)}
+              label={t("settings.workflow.iteration.appendBranch", {
+                branch: "ELSE",
+              })}
+            />
           </>
         ) : (
-          <Handle
-            type="source"
-            position={Position.Right}
-            data-workflow-output={id}
-            aria-label={t("settings.workflow.connectFrom", {
-              name: data.title,
-            })}
-            className={cn(
-              "workflow-port workflow-port-output !size-2.5 !border-0 !bg-transparent",
-              isOutputCandidate && "workflow-port-candidate",
+          <>
+            <Handle
+              type="source"
+              position={Position.Right}
+              data-workflow-output={id}
+              aria-label={t("settings.workflow.connectFrom", {
+                name: data.title,
+              })}
+              className={cn(
+                "workflow-port workflow-port-output !size-2.5 !border-0 !bg-transparent",
+                isOutputCandidate && "workflow-port-candidate",
+              )}
+              style={{ top: WORKFLOW_NODE_ANCHOR_Y }}
+            />
+            {parentId !== undefined && (
+              <IterationOutputInsertButton
+                insertion={iterationActions.outputInsertion(id)}
+                top={WORKFLOW_NODE_ANCHOR_Y}
+                label={t("settings.workflow.iteration.appendOutput", {
+                  name: data.title,
+                })}
+              />
             )}
-            style={{ top: WORKFLOW_NODE_ANCHOR_Y }}
-          />
+          </>
         )
       }
     />
@@ -306,11 +340,21 @@ function IterationNodeFrame({
   nodeKindLabel: string;
 }) {
   const { t } = useTranslation();
-  const { deleteElements, updateNodeData } =
+  const { deleteElements, getNode } =
     useReactFlow<Node<WorkflowNodeData, "workflow">>();
+  const iterationActions = useWorkflowIterationActions();
   const collapsed = data.collapsed === true;
   const memberCount =
     typeof data.regionMemberCount === "number" ? data.regionMemberCount : 0;
+  const frame = getNode(id);
+  const expandedWidth = Math.max(
+    WORKFLOW_ITERATION_NODE_WIDTH,
+    frame?.initialWidth ?? WORKFLOW_ITERATION_NODE_WIDTH,
+  );
+  const expandedHeight = Math.max(
+    WORKFLOW_ITERATION_NODE_HEIGHT,
+    frame?.initialHeight ?? WORKFLOW_ITERATION_NODE_HEIGHT,
+  );
   return (
     <div
       data-workflow-node=""
@@ -326,8 +370,8 @@ function IterationNodeFrame({
           : "border-violet-500/40 bg-violet-500/5",
       )}
       style={{
-        width: WORKFLOW_ITERATION_NODE_WIDTH,
-        height: collapsed ? 112 : WORKFLOW_ITERATION_NODE_HEIGHT,
+        width: collapsed ? WORKFLOW_ITERATION_CARD_WIDTH + 16 : expandedWidth,
+        height: collapsed ? 112 : expandedHeight,
       }}
     >
       <Handle
@@ -382,9 +426,7 @@ function IterationNodeFrame({
                     : "settings.workflow.iteration.collapse",
                 )}
                 onClick={() => {
-                  // Collapse is presentation-only state on the node data: it hides
-                  // region members without touching the graph structure.
-                  updateNodeData(id, { collapsed: !collapsed });
+                  iterationActions.toggleCollapsed(id);
                 }}
               >
                 {collapsed ? (
@@ -411,31 +453,75 @@ function IterationNodeFrame({
           }
         />
       </div>
+      {collapsed ? (
+        <span className="pointer-events-none absolute bottom-1.5 right-3 text-[10px] text-muted-foreground">
+          {t("settings.workflow.iteration.regionSummary", {
+            total: memberCount,
+          })}
+        </span>
+      ) : undefined}
       {!collapsed && (
-        <div
-          className="pointer-events-none absolute inset-x-3 bottom-3 top-[116px] rounded-xl border border-dashed border-violet-500/30"
-          aria-hidden
-        >
-          <span className="absolute left-3 top-2 text-[11px] text-muted-foreground">
+        <div className="absolute inset-x-3 bottom-3 top-[116px] rounded-xl border border-dashed border-violet-500/30">
+          <div className="pointer-events-none absolute left-3 top-2 text-[11px] text-muted-foreground">
             {memberCount > 0
               ? t("settings.workflow.iteration.regionSummary", {
                   total: memberCount,
                 })
-              : t("settings.workflow.iteration.dropHint")}
-          </span>
+              : t("settings.workflow.iteration.emptyHint")}
+          </div>
+          <div className="absolute left-3 top-9 flex items-center gap-2">
+            <span
+              className="pointer-events-none flex size-5 items-center justify-center rounded-full border border-violet-500/40 bg-violet-500/10 text-[9px] font-semibold text-violet-700 dark:text-violet-300"
+              aria-hidden
+            >
+              ▶
+            </span>
+            <span className="pointer-events-none text-[10px] font-medium text-violet-700 dark:text-violet-300">
+              {t("settings.workflow.iteration.internalStart")}
+            </span>
+            <IterationInsertMenu
+              insertion={{ type: "entry", iterationId: id }}
+              label={t("settings.workflow.iteration.addNode")}
+            />
+          </div>
         </div>
       )}
-      <Handle
-        id="iteration-entry"
-        type="source"
-        position={Position.Left}
-        data-workflow-iteration-entry={id}
-        aria-label={t("settings.workflow.iteration.entryHandle", {
-          name: data.title,
-        })}
-        className="workflow-port workflow-port-output !size-2.5 !border-0 !bg-transparent"
-        style={{ top: WORKFLOW_ITERATION_ENTRY_HANDLE_Y, left: 14 }}
-      />
+      {!collapsed ? (
+        <Handle
+          id="iteration-entry"
+          type="source"
+          position={Position.Left}
+          data-workflow-iteration-entry={id}
+          aria-label={t("settings.workflow.iteration.entryHandle", {
+            name: data.title,
+          })}
+          className="workflow-port workflow-port-output !size-2.5 !border-0 !bg-transparent"
+          style={{ top: WORKFLOW_ITERATION_ENTRY_HANDLE_Y, left: 14 }}
+        />
+      ) : undefined}
+    </div>
+  );
+}
+
+/** Shows an append affordance only for an unconnected region output. */
+function IterationOutputInsertButton({
+  insertion,
+  top,
+  label,
+}: {
+  insertion: IterationInsertion | null;
+  top: number;
+  label: string;
+}) {
+  if (insertion === null) {
+    return null;
+  }
+  return (
+    <div
+      className="absolute z-10"
+      style={{ right: -34, top, transform: "translateY(-50%)" }}
+    >
+      <IterationInsertMenu insertion={insertion} label={label} side="right" />
     </div>
   );
 }

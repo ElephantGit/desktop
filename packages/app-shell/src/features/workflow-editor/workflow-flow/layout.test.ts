@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Edge, Node } from "@xyflow/react";
-import { WORKFLOW_NODE_WIDTH, type WorkflowNodeData } from "@ora/workflow-mock";
+import {
+  WORKFLOW_ITERATION_NODE_WIDTH,
+  WORKFLOW_NODE_WIDTH,
+  type WorkflowNodeData,
+} from "@ora/workflow-mock";
 import {
   nodePositionAt,
   organizeWorkflowNodes,
@@ -56,5 +60,51 @@ describe("workflow-flow layout", () => {
     expect(positions.top!.x).toBe(positions.bottom!.x);
     expect(positions.top!.y).toBeLessThan(positions.bottom!.y);
     expect(positions.bottom!.x).toBeLessThan(positions.output!.x);
+  });
+
+  it("lays out an iteration DAG independently and reserves its fitted outer width", () => {
+    const iteration = {
+      ...workflowNode("iter", 400, 200),
+      data: {
+        kind: "iteration" as const,
+        title: "iter",
+        description: "",
+      },
+    };
+    const first = {
+      ...workflowNode("first", 0, 0),
+      parentId: "iter",
+      data: { kind: "agent" as const, title: "first", description: "" },
+    };
+    const second = {
+      ...workflowNode("second", 0, 0),
+      parentId: "iter",
+      data: { kind: "agent" as const, title: "second", description: "" },
+    };
+    const output = workflowNode("output", 0, 0);
+    const organized = organizeWorkflowNodes(
+      [iteration, first, second, output],
+      [
+        {
+          id: "entry",
+          source: "iter",
+          sourceHandle: "iteration-entry",
+          target: "first",
+        },
+        { id: "internal", source: "first", target: "second" },
+        { id: "exit", source: "iter", target: "output" },
+      ],
+    );
+    const byId = new Map(organized.map((node) => [node.id, node]));
+
+    expect(byId.get("first")?.position.x).toBeLessThan(
+      byId.get("second")!.position.x,
+    );
+    expect(byId.get("iter")?.initialWidth).toBeGreaterThanOrEqual(
+      WORKFLOW_ITERATION_NODE_WIDTH,
+    );
+    expect(byId.get("output")!.position.x).toBeGreaterThanOrEqual(
+      byId.get("iter")!.position.x + byId.get("iter")!.initialWidth!,
+    );
   });
 });
