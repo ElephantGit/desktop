@@ -873,6 +873,31 @@ describe("WorkspaceSidebar", () => {
     ).not.toBeNull();
   });
 
+  it("uses the Theater HITL colour for an awaiting workflow run", async () => {
+    const state = workspaceWithOneSession();
+    state.workflowRuns = [
+      {
+        id: "run1",
+        projectId: PROJECT.id,
+        workflowId: "wf1",
+        snapshotId: "snap1",
+        version: "v3",
+        name: "Review bot",
+        status: "awaitingInput",
+        workspaceId: "workspace-p1",
+        createdAt: 0n,
+        updatedAt: 0n,
+      },
+    ];
+    renderSidebar(state);
+
+    await waitFor(() => expect(treeRow("Review bot")).not.toBeNull());
+    const mark = within(treeRow("Review bot")!).getByLabelText(
+      /等待参与|Awaiting input/,
+    );
+    expect(mark.className).toContain("bg-amber-500");
+  });
+
   it("places task workflow runs under the owning task", async () => {
     const state = workspaceWithOneSession();
     state.workflowRuns = [
@@ -1578,6 +1603,26 @@ describe("WorkspaceSidebar", () => {
 
     await waitFor(() => expect(treeRow("Review auth flow")).not.toBeNull());
     expect(treeRow("Stale chat metadata")).toBeNull();
+  });
+
+  it("reveals the full session title in a right-side tooltip on hover", async () => {
+    const user = userEvent.setup();
+    const title = "文件树右键菜单以及一段足够长会被侧栏截断的会话标题内容";
+    const state = workspaceWithOneSession();
+    state.sessions = [{ ...SESSION, title }];
+    renderSidebar(state);
+
+    const row = await waitFor(() => {
+      const found = treeRow(title);
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(screen.queryByRole("tooltip", { hidden: true })).toBeNull();
+
+    await user.hover(row);
+    expect(
+      await screen.findByRole("tooltip", { hidden: true }),
+    ).toHaveTextContent(title);
   });
 
   it("searches persisted titles but not agent labels or the localized fallback", async () => {

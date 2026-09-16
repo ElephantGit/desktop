@@ -25,11 +25,13 @@ import {
   IconRoute,
   IconTrash,
 } from "@tabler/icons-react";
-import type { GraphWorkflowRunStatus } from "@ora/workflow-runtime";
+import { toDisplayRunStatus } from "@ora/workflow-runtime";
 import {
   useRenameWorkflowRun,
   useWorkflowRunsByProject,
 } from "../../state/data/workflow-runs";
+import { runStatusTone } from "../workflow-run/run-status-style";
+import { TreeRowOverflowTooltip } from "./tree-row-overflow-tooltip";
 import { useInlineTreeRename } from "./use-inline-tree-rename";
 
 /**
@@ -206,45 +208,47 @@ export function TreeRow({
               />
             </div>
           ) : (
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={onClick}
-              onDoubleClick={onDoubleClick}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter" && event.key !== " ") return;
-                event.preventDefault();
-                onClick();
-              }}
-              aria-expanded={expanded}
-              className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md text-left text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              style={{ paddingLeft: `${8 + depth * 18}px` }}
-            >
-              <span className="relative flex size-[18px] shrink-0 items-center justify-center">
-                <span
-                  className={`flex items-center justify-center transition-opacity duration-100 ${expanded === undefined ? "" : "group-hover/tree:opacity-0"}`}
-                >
-                  {icon}
+            <TreeRowOverflowTooltip text={label}>
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={onClick}
+                onDoubleClick={onDoubleClick}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  onClick();
+                }}
+                aria-expanded={expanded}
+                className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md text-left text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                style={{ paddingLeft: `${8 + depth * 18}px` }}
+              >
+                <span className="relative flex size-[18px] shrink-0 items-center justify-center">
+                  <span
+                    className={`flex items-center justify-center transition-opacity duration-100 ${expanded === undefined ? "" : "group-hover/tree:opacity-0"}`}
+                  >
+                    {icon}
+                  </span>
+                  {expanded !== undefined &&
+                    (expanded ? (
+                      <IconChevronDown className="absolute size-4 opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100" />
+                    ) : (
+                      <IconChevronRight className="absolute size-4 opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100" />
+                    ))}
                 </span>
-                {expanded !== undefined &&
-                  (expanded ? (
-                    <IconChevronDown className="absolute size-4 opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100" />
-                  ) : (
-                    <IconChevronRight className="absolute size-4 opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100" />
-                  ))}
-              </span>
-              <span className="min-w-0 flex-1 truncate font-medium">
-                {label}
-              </span>
-              {meta && (
-                <span
-                  title={meta}
-                  className={`min-w-0 max-w-28 shrink truncate text-[11px] opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100 group-focus-within/tree:opacity-100 ${active ? "text-sidebar-accent-foreground/80" : "text-muted-foreground"}`}
-                >
-                  {meta}
+                <span className="min-w-0 flex-1 truncate font-medium">
+                  {label}
                 </span>
-              )}
-            </div>
+                {meta && (
+                  <span
+                    title={meta}
+                    className={`min-w-0 max-w-28 shrink truncate text-[11px] opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100 group-focus-within/tree:opacity-100 ${active ? "text-sidebar-accent-foreground/80" : "text-muted-foreground"}`}
+                  >
+                    {meta}
+                  </span>
+                )}
+              </div>
+            </TreeRowOverflowTooltip>
           )}
         </ContextMenuTrigger>
         {/* Rename suppresses restore so the editor keeps focus; other actions still return it. */}
@@ -301,24 +305,6 @@ function ArchiveButton() {
   );
 }
 
-/** Status dot color for sidebar GraphWorkflowRun rows. */
-function runStatusClass(status: GraphWorkflowRunStatus): string {
-  switch (status) {
-    case "running":
-      return "bg-sky-500";
-    case "awaiting_input":
-      return "bg-amber-500";
-    case "succeeded":
-      return "bg-emerald-500";
-    case "failed":
-      return "bg-rose-500";
-    case "cancelled":
-      return "bg-zinc-400";
-    case "pending":
-      return "bg-amber-400";
-  }
-}
-
 /** Renders workflow runs belonging to one workspace within a project run query. */
 export const ProjectWorkflowRunRows = memo(function ProjectWorkflowRunRows({
   projectId,
@@ -349,10 +335,8 @@ export const ProjectWorkflowRunRows = memo(function ProjectWorkflowRunRows({
   return (
     <>
       {runs.map((run) => {
-        // The backend derives `awaitingInput` on the wire while the display model spells it
-        // `awaiting_input`; normalize so the sidebar dot and label match the run detail.
-        const displayStatus: GraphWorkflowRunStatus =
-          run.status === "awaitingInput" ? "awaiting_input" : run.status;
+        // List/wire `awaitingInput` is the same HITL pause Theater spells `awaiting_input`.
+        const displayStatus = toDisplayRunStatus(run.status);
         return (
           <TreeRow
             key={run.id}
@@ -365,7 +349,7 @@ export const ProjectWorkflowRunRows = memo(function ProjectWorkflowRunRows({
                   aria-hidden
                 />
                 <span
-                  className={`absolute -right-0.5 -top-0.5 size-1.5 rounded-full ${runStatusClass(displayStatus)}`}
+                  className={`absolute -right-0.5 -top-0.5 size-1.5 rounded-full ${runStatusTone(displayStatus).dot}`}
                   aria-label={t(`workflowRun.status.${displayStatus}`)}
                 />
               </span>

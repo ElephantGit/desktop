@@ -23,6 +23,7 @@ Backend 启动时，会为每个已安装的 [Agent 插件](../crates/backend/sr
 
 - 连接丢失会失败该 Agent 的进行中操作，只把已注册 Session 标为 Stopped，先让插件生命周期停止旧进程，再启动 replacement。Session 仅按需重新 load，prompt 永不自动重放。
 - `initialize` 会声明 session config-option 能力。模型选择依赖这一能力；Ora 当前不声明布尔配置选项，因为 UI 只渲染带 id 的 selector。
+- 思考强度（thought level / reasoning effort）选择器只读取 provider session 上报的 `thought_level` 配置项，来源与模型配置项相同：`session/new` 响应、`session/load` 回放以及 `session/set_config_option` 的应答。Ora 不维护会话前的思考强度目录——它随 Agent 不同而不同，部分 Agent 还随模型变化——因此尚未开始的对话不显示该控件；在已有 provider 的会话上选择会立即通过 `setSessionConfig` 应用。
 
 ### 首个 Session 标题
 
@@ -37,7 +38,7 @@ actor scheduler 只保留弱 command sender，因此 manager 关闭、删除或�
 
 ## 延迟创建 Session 与模型发现
 
-打开或切换聊天界面不会创建后端 Session。前端先在本地创建 optimistic 首个 turn，`startSession` 完成握手和持久化后再接管返回的 Ora session id，并发送 prompt。Workflow node 使用同一路径，但在 node-run binding 提交前保持未发布状态。
+打开或切换聊天界面不会创建后端 Session。前端先在本地创建 optimistic 首个 turn，`startSession` 完成握手和持久化后再接管返回的 Ora session id，并发送 prompt。首次发送和 Agent handoff 期间，界面将 Session 建立显示为独立的临时阶段并单独计时；时钟只在阶段结束后出现，并表示完成时刻。建立成功后，response turn 才开始自己的计时，且使用相同的完成时刻语义。连接阶段展示按 Session 缓存到当前 renderer 结束，因此切走再返回仍会保留；重启 Ora 或在新 renderer 中回放历史不会重建。Workflow node 使用同一路径，但在 node-run binding 提交前保持未发布状态。
 
 Session 创建前的模型来自按需调用的 `agent/list_models`，输入为 Workspace 的真实 cwd。Ora 不缓存，也不会在共享 ACP 连接启动时读取。模型发现拥有独立 60 秒预算，失败只影响该请求。Session 创建前选择的模型是本地 intent，只有新 Session 握手确实报告相同值时才应用；已存在 Session 始终使用自身配置。
 
