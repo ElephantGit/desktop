@@ -2,11 +2,13 @@
 
 English | [中文](workflow-loop-plan.zh.md)
 
-Status: implementation in progress (P1); Loop execution remains disabled until durable scheduling is implemented. Updated: 2026-09-16.
+Status: implementation in progress (P1/P2); Loop execution remains disabled until durable scheduling is implemented. Updated: 2026-09-16.
 
-Progress: the container decoder, typed configuration, explicit binding visibility checks, and parser regression tests are implemented. Formatting passes. Rust test execution is blocked on the local Windows host by the missing MSVC `link.exe`; installing the C++ Build Tools has not yet produced an available toolchain. P1 is not marked complete, and storage, scheduling, contracts delivery, and editor integration remain pending.
+Progress: the container decoder, typed configuration, explicit binding visibility checks, and parser regression tests are implemented. The MSVC toolchain is available, and all 125 application workflow tests pass. A malformed negative-test fixture was corrected after the first executable test run. Scheduling, contracts delivery, and editor integration remain pending.
 
-Round computation is also implemented as a pure operation: initial carried values, simultaneous typed feedback, termination before limit failure, and named exports. Fresh round pools import only globals and upstream outer values, retain inherited writer ownership, and omit previous child outputs. Regression tests cover swaps, limits, missing/type-invalid values, successful exit, and pool isolation. These operations are not yet connected to durable execution; their tests remain blocked by the same missing linker.
+Round computation is also implemented as a pure operation: initial carried values, simultaneous typed feedback, termination before limit failure, and named exports. Fresh round pools import only globals and upstream outer values, retain inherited writer ownership, and omit previous child outputs. Passing regression tests cover swaps, limits, missing/type-invalid values, successful exit, and pool isolation. These operations are not yet connected to durable execution.
+
+Migration `0011` introduces root/round identities, scope membership, and duplicate-dispatch constraints. Restart creates a fresh root in the existing repository transaction. Downgrade archives scope and node evidence, settles active Loop runs, and hides child instances from old flat readers; re-upgrade retains the archive without resuming old rounds. See [execution scope storage](workflow-execution-scopes.md). P2 remains incomplete until typed scope operations and atomic round advancement are wired into the repository and engine.
 
 ## Goal and design baseline
 

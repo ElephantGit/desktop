@@ -7,10 +7,11 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
 - `MigrationCatalog` requires unique, strictly increasing versions.
 - The active target must be a prefix of the complete catalog. This makes controlled rollback deterministic and rejects branch-shaped histories.
 - Every migration contains ordered up and down statements. Their trimmed, joined SQL is the stable executable snapshot used for comparison and rollback.
-- The default catalog contains ten dependency-ordered modules: workspace core and application
+- The default catalog contains eleven dependency-ordered modules: workspace core and application
   configuration, Agent/Skill catalog, workflows, Git lifecycle bookkeeping, marketplace source
   configuration, Generic Effect persistence, immutable marketplace-source namespace bindings,
-  marketplace enabled flags, artifact retrieval configuration, and independent Effect audit time.
+  marketplace enabled flags, artifact retrieval configuration, independent Effect audit time,
+  and workflow execution scopes.
 - Skills, configurable agents, and workflows use `(namespace, name)` as their case-insensitive
   visible identity. Soft-deleted rows do not reserve that identity, and local resources use the
   `local` namespace.
@@ -41,6 +42,9 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
   Rollback restores recovery detection to the old column and reinstalls the Workspace trigger.
 - Target requests use pending, claimed, blocked, and retry-scheduled states. Generation and fencing
   establish authority; audit time never grants a claim or changes retry eligibility.
+- Migration `0011` adds workflow root/round identities and scoped node uniqueness. Its downgrade
+  preserves scope/node evidence in an append-only archive while terminalizing active Loop runs;
+  the archive survives re-upgrade. See [execution scope storage](../../../../docs/workflow-execution-scopes.md).
 - Every Workspace has one Scope. Publishing a new Skill Source seeds existing Scopes; creating a
   Workspace seeds its new Scope from published Sources in the same transaction.
 
