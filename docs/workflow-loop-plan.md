@@ -2,13 +2,15 @@
 
 English | [中文](workflow-loop-plan.zh.md)
 
-Status: implementation in progress (P1/P2); Loop execution remains disabled until durable scheduling is implemented. Updated: 2026-09-16.
+Status: complete (P1–P5). Updated: 2026-09-16.
 
-Progress: the container decoder, typed configuration, explicit binding visibility checks, and parser regression tests are implemented. The MSVC toolchain is available, and all 125 application workflow tests pass. A malformed negative-test fixture was corrected after the first executable test run. Scheduling, contracts delivery, and editor integration remain pending.
+Progress: schema-v2 containers, typed feedback, migration `0011`, durable scope scheduling, backend Session execution, generated contracts, editor authoring, isolated history projection, and Theater round inspection are implemented. The Loop scheduler now lives in its own private module; the main engine remains below the repository's production-code size target.
 
-Round computation is also implemented as a pure operation: initial carried values, simultaneous typed feedback, termination before limit failure, and named exports. Fresh round pools import only globals and upstream outer values, retain inherited writer ownership, and omit previous child outputs. Passing regression tests cover swaps, limits, missing/type-invalid values, successful exit, and pool isolation. These operations are not yet connected to durable execution.
+Acceptance evidence: parser and round-operation tests cover scoped ownership, cycles, visibility, type errors, simultaneous feedback, early termination, and exact limits. Real-SQLite repository and backend suites cover atomic round advancement, history, restart generations, cancellation/failure settlement, recovery, and Session lifecycle. Frontend suites cover codec round trips, atomic Loop-group authoring/deletion, and scope-isolated history selection. The final `task test` run on 2026-09-16 passed contract and feature checks, all lint and architecture gates, all frontend suites (including 1,422 app-shell and 62 workflow-runtime tests), the Rust workspace, 83 Tauri tests with one intentional subprocess-only ignore, and 12 desktop integration tests.
 
-Migration `0011` introduces root/round identities, scope membership, and duplicate-dispatch constraints. Restart creates a fresh root in the existing repository transaction. Downgrade archives scope and node evidence, settles active Loop runs, and hides child instances from old flat readers; re-upgrade retains the archive without resuming old rounds. See [execution scope storage](workflow-execution-scopes.md). P2 remains incomplete until typed scope operations and atomic round advancement are wired into the repository and engine.
+Round computation remains a pure operation: initial carried values, simultaneous typed feedback, termination before limit failure, and named exports. Fresh round pools import only globals and upstream outer values, retain inherited writer ownership, and omit previous child outputs. The durable scheduler consumes these operations and commits each next-round or parent-completion transition atomically.
+
+Migration `0011` introduces root/round identities, scope membership, and duplicate-dispatch constraints. Restart creates a fresh root in the existing repository transaction. Downgrade archives scope and node evidence, settles active Loop runs, and hides child instances from old flat readers; re-upgrade retains the archive without resuming old rounds. Typed repository operations now create, advance, settle, list, and recover these scopes. See [execution scope storage](workflow-execution-scopes.md).
 
 ## Goal and design baseline
 
@@ -20,18 +22,18 @@ Follow the [feature change guide](feature-change-guide.md), [workflow ownership]
 
 ## Current implementation constraints
 
-- `WorkflowGraph::parse` in `crates/application/src/workflow_run/engine/graph.rs` rejects cycles. `node_type.rs` currently executes Start, Agent, Condition, and Output.
+- `WorkflowGraph::parse` in `crates/application/src/workflow_run/engine/graph.rs` rejects cycles within each scope. `node_type.rs` executes Start, Agent, Condition, Loop, and Output.
 - `engine/branch_projection.rs` projects state by node ID. `engine/variable_pool.rs` and persisted Condition decisions currently use run-level node selectors. Repeating a definition node requires an execution scope in all three owners.
 - `engine/engine.rs` completes the whole run when scheduling drains and checks repeated successful Output nodes across run history. Child completion must gain a separate boundary.
 - `crates/db/src/repository/workflow_run_engine.rs` owns transactional completion, cancellation, and restart. `crates/backend/src/workflow/run/` owns sessions, interactive completion, prerequisite preparation, and boot recovery.
 - `packages/workflow-runtime/src/types.ts` already lists `loop` as a frontend kind. This is not evidence of production execution support; audit its codec, editor catalog, fixtures, and validation before extending it.
 - The real run view uses contracts queries and polling; some artifacts/HITL facilities still use the memory runtime. Loop execution and history must use the real contracts path and explicit test adapters.
 
-## Proposed first-delivery semantics
+## Delivered first-version semantics
 
-These are implementation defaults to review with the plan, not existing behavior.
+These defaults are implemented by the current editor, parser, scheduler, and repository.
 
-| Concern         | Proposed behavior                                                                                                                                                      |
+| Concern         | Delivered behavior                                                                                                                                                     |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Shape           | One level of Loop containers; sequential rounds; ordinary branching and joins inside a round                                                                           |
 | Entry           | Explicit container ownership and one synthetic child entry; execute at least one round                                                                                 |
@@ -62,7 +64,7 @@ At round completion, resolve all configured feedback and output selectors with e
 
 ## Durable execution model
 
-### Graph format being implemented
+### Implemented graph format
 
 Container snapshots use `schemaVersion: 2`. A Loop is a root node with `data.kind: "loop"` and `data.loopConfig`. Each child declares `data.containerId` referencing that Loop; an optional renderer `parentId` must match. Both the root graph and each body require one Start node and full reachability. Nested containers and cross-scope edges are rejected. Existing flat snapshots retain their original decoder behavior.
 
@@ -70,7 +72,7 @@ Container snapshots use `schemaVersion: 2`. A Loop is a root node with `data.kin
 
 Initializers can reference globals and upstream outer nodes. Feedback, termination, and exports can reference the completed body, carried values, globals, and upstream outer values. Outer nodes must read the Loop's exported results rather than child nodes. This parser boundary does not replace runtime checks for declared variables, value types, missing values, or inactive branches; those checks must be completed before execution is enabled.
 
-### Persistence work remaining
+### Persistence implementation
 
 Introduce domain-owned execution scopes and Loop progress; final Rust names are chosen during implementation. A root scope represents today's flat execution. A round scope records its parent Loop NodeRun and round index. NodeRuns reference their scope while retaining their unique execution IDs and definition node IDs.
 
@@ -109,11 +111,11 @@ In Theater/Overview, show Loop progress and termination reason, allow selecting 
 
 ## Implementation sequence and exit criteria
 
-- [ ] **P1 — Contracts and graph design:** settle schema, explicit first-release policies, validation fixtures, scoped variable visibility, and downgrade strategy. Exit: examples for one-round success, feedback, and human review have unambiguous inputs and outputs.
-- [ ] **P2 — Storage and execution identity:** add domain scope/progress types, migration, repository ports, unique constraints, and transactional transitions. Exit: old-data upgrade, duplicate advancement, rollback, and downgrade/re-upgrade integration tests pass.
-- [ ] **P3 — Engine and backend:** implement scoped DAG scheduling and Loop control; thread scope through prerequisites, prompts, Sessions, interactive completion, cancellation, restart, deletion, and recovery. Exit: production backend interfaces execute multi-round flows using real SQLite and controlled Agent adapters.
-- [ ] **P4 — Contracts delivery and frontend:** regenerate SDK/bindings, implement editor/codec support and real round history/projection. Exit: a saved and published Loop can be deployed and observed through Desktop interfaces without depending on mock execution.
-- [ ] **P5 — End-to-end verification and documentation:** cover the matrix below, finish full checks, and update both workflow language versions plus owner READMEs. Exit: acceptance evidence is recorded and every unchecked scope item is either delivered or explicitly moved to a follow-up.
+- [x] **P1 — Contracts and graph design:** schema, first-release policies, validation fixtures, scoped variable visibility, and downgrade strategy are fixed and tested.
+- [x] **P2 — Storage and execution identity:** domain scopes, migration, repository ports, uniqueness, restart generation, atomic transitions, and downgrade/re-upgrade coverage are delivered.
+- [x] **P3 — Engine and backend:** scoped DAG scheduling, prerequisites, prompts, per-round Sessions, cancellation, restart, failure settlement, and scheduling-gap recovery run through production interfaces and real SQLite.
+- [x] **P4 — Contracts delivery and frontend:** generated DTOs expose scope identities; the editor authors executable containers; codec v2 round-trips them; run history and Theater round selection remain isolated by scope.
+- [x] **P5 — End-to-end verification and documentation:** the matrix is covered by focused production-interface suites; bilingual workflow docs and the engine owner README are updated; the full repository check passes.
 
 ## Verification matrix
 

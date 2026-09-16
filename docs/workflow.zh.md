@@ -2,7 +2,7 @@
 
 [English](workflow.md) | 中文
 
-计划扩展：[工作流循环节点实现计划](workflow-loop-plan.zh.md)。
+已交付扩展：[工作流循环节点实现计划与证据](workflow-loop-plan.zh.md)。
 
 `ora-application` 负责工作流定义用例，`ora-db` 负责持久化，`ora-contracts` 定义公共契约。工作流管理可编辑的 Agent 编排图，以草稿作为编辑工作区，以不可变发布快照作为运行版本。
 
@@ -36,6 +36,25 @@
 ## 图存储
 
 `graph` 字段保存完整 React Flow JSON。工作流定义 CRUD 将其视为不透明字符串；[工作流运行引擎](../crates/application/src/workflow_run/engine/README.md)在启动时解析和校验冻结快照。
+
+## Loop 容器
+
+可执行 Loop 图使用 `schemaVersion: 2`。根 Loop 持有 `data.loopConfig`；每个子节点通过
+React Flow `parentId` 与 `data.containerId` 指向同一个 Loop。编辑器一次创建包含唯一子
+Start、子 Agent 和内部边的合法容器组。根图与子图禁止跨作用域连线；删除 Loop 会原子
+删除后代及相关边；根图自动布局保留子节点的相对位置。
+
+`loopConfig` 定义 1–100 的轮次上限、有类型跨轮变量、同时反馈选择器、有类型 `until`
+条件及命名输出。每个 Loop 体是独立 DAG，必须有且仅有一个可达 Start。嵌套 Loop、归属
+不一致、跨作用域边或选择器、类型错误及不可达子节点都会在创建 Session 前被拒绝。编辑器
+默认组把子 Agent 输出反馈为下一轮 `value`，输出非空时结束并导出为 `result`；作者可设置
+初始值与最大轮次。
+
+每次迭代拥有持久化 `WorkflowExecutionScope`。子 NodeRun 与 Session 归属于该作用域，重复的
+定义节点 ID 不会覆盖其他轮次。轮次完成后，从已完成变量池解析反馈和终止条件，并在同一
+仓储事务中创建下一作用域或完成父 Loop。取消与子节点失败会同时收束活跃作用域和父节点。
+重跑会轮换根执行身份，保留旧历史并使迟到回调失效。真实运行契约返回有序作用域身份，
+Theater 的 Loop 详情可切换轮次，查看各轮子节点状态与 Session ID。
 
 ## Agent 节点 MCP 绑定
 
@@ -84,12 +103,13 @@ Start 表单控件与变量类型分离：文本、段落、选择框、数字�
 
 ### 实体与状态
 
-| 领域类型          | 数据表               |
-| ----------------- | -------------------- |
-| `WorkflowRun`     | `workflow_runs`      |
-| `WorkflowNodeRun` | `workflow_node_runs` |
+| 领域类型                 | 数据表                      |
+| ------------------------ | --------------------------- |
+| `WorkflowRun`            | `workflow_runs`             |
+| `WorkflowNodeRun`        | `workflow_node_runs`        |
+| `WorkflowExecutionScope` | `workflow_execution_scopes` |
 
-`WorkflowRun` 固定引用发布版本的 `snapshot_id`，保存运行名称与工作区。`WorkflowNodeRun` 只为实际开始的节点创建记录，未开始状态由前端对比图与记录推导。
+`WorkflowRun` 固定引用发布版本的 `snapshot_id`，保存运行名称与工作区。`WorkflowNodeRun` 只为实际开始的节点创建记录并保存作用域归属，未开始状态由前端对比图与记录推导。`WorkflowExecutionScope` 保存 Loop 父执行、轮次索引、生命周期与私有轮次状态。
 
 运行与节点均使用 `Pending | Running | Succeeded | Failed | Cancelled`。交互节点等待后续输入时持久化为 `Pending`；公共契约将存在等待节点的运行投影为 `AwaitingInput`。终态节点会话只读，后端拒绝新提示词。节点会话可按 ID 读取，但不会出现在普通聊天列表中。
 

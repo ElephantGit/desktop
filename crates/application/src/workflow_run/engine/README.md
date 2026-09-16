@@ -10,6 +10,9 @@ real Ora session.
   document into a validated `petgraph` DAG, validate structural invariants, and answer topology
   queries (full topological order, successors/predecessors, transitive closures, ready set,
   reachability).
+- **Loop graph and round model** (`loop_graph.rs`, `loop_config.rs`, `loop_round.rs`): partition
+  one-level container bodies, validate scoped bindings, and compute typed feedback, termination,
+  and exports without mutating the completed round pool.
 - **Engine persistence port** (`ports.rs`): the `WorkflowRunEngineRepository` trait that the run
   engine uses, implemented in `ora-db`.
 - **Worktree initializer port** (`ports.rs`): the `WorkflowRunWorktreeInitializer` trait that the
@@ -22,6 +25,8 @@ real Ora session.
 - **Run engine** (`engine.rs`): `start`/`cancel`/`restart` use cases, reactive DAG scheduling under
   a per-run serial executor, and the `NodeExecutor` port. `ora-backend` implements that port as
   `WorkflowRunNodeExecutor` and wires it in `Backend::open`.
+- **Loop scheduler** (`engine/loop_scheduler.rs`): create or resume one durable round scope,
+  dispatch its ready Agent nodes, and atomically advance or complete the parent Loop.
 
 ## Non-responsibilities
 
@@ -53,6 +58,11 @@ test-only stub.
 - `WorkflowGraph` is immutable after `parse`; every topology query is deterministic.
 - The graph is acyclic (validated by `petgraph::algo::toposort`), has unique node ids, and at most
   one start node; all three are rejected at parse time with a `GraphError` variant.
+- A schema-v2 Loop and each child body are separate DAGs. Children declare one matching container
+  owner, bodies have exactly one reachable Start, and nested Loops or cross-scope edges fail before
+  execution.
+- Every Loop round owns a fresh variable pool and node-run scope. Feedback assignments read the
+  same completed pool, and the repository commits the next scope or parent completion atomically.
 - Rust identifiers use `node_type` (aligned with `workflow_node_runs.node_type`); the wire source
   is React Flow's `data.kind`, read through a serde rename.
 - Full-graph order and transitive closures use the same topological rank (upstream first), giving

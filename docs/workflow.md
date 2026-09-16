@@ -2,7 +2,7 @@
 
 English | [中文](workflow.zh.md)
 
-Planned extension: [Workflow Loop implementation plan](workflow-loop-plan.md).
+Delivered extension: [Workflow Loop implementation plan and evidence](workflow-loop-plan.md).
 
 `ora-application` owns the workflow definition use cases, with persistence in `ora-db` and public contracts in `ora-contracts`. Workflows manage editable agent orchestration graphs with draft-as-workspace semantics and immutable published snapshots.
 
@@ -38,6 +38,29 @@ Snapshot versions are strings. The draft is identified by the reserved string `"
 ## Graph storage
 
 The `graph` column stores the complete React Flow JSON document. Workflow definition CRUD treats it as an opaque string. The [workflow run engine](../crates/application/src/workflow_run/engine/README.md) parses and validates the frozen snapshot when a run starts.
+
+## Loop containers
+
+Executable Loop graphs use `schemaVersion: 2`. A root Loop owns `data.loopConfig`; every child
+declares the same Loop through both React Flow `parentId` and `data.containerId`. The editor creates
+a valid container group with one child Start, one child Agent, and their internal edge. Root and
+child connections cannot cross scope boundaries, deleting a Loop removes its descendants and
+incident edges atomically, and root auto-layout preserves child-relative positions.
+
+`loopConfig` defines a 1–100 round bound, typed carried variables, simultaneous feedback selectors,
+a typed `until` condition, and named exports. Each Loop body is a separate DAG with exactly one
+reachable Start. Nested Loops, ownership mismatches, cross-scope edges and selectors, invalid
+types, and unreachable children are rejected before sessions start. The default editor group feeds
+the child Agent output into the next round's `value`, stops on a non-empty output, and exports it as
+`result`; authors can set the initial value and maximum rounds.
+
+Each iteration has a durable `WorkflowExecutionScope`. Child NodeRuns and Sessions belong to that
+scope, so repeated definition node IDs do not overwrite another round. Completion resolves feedback
+and termination from the completed pool, then commits either the next scope or the parent Loop
+result in one repository transaction. Cancellation and child failure settle the active scope and
+parent together. Restart rotates the root execution identity, preserving old history while making
+late callbacks harmless. The real run contract returns ordered scope identities, and the Theater
+Loop inspector lets users switch rounds and inspect each round's child status and session ID.
 
 ## Agent-node MCP bindings
 
@@ -97,12 +120,13 @@ Start inputs keep their form control separate from their variable-pool type. The
 
 ### Entities and tables
 
-| Domain type       | Backing table        |
-| ----------------- | -------------------- |
-| `WorkflowRun`     | `workflow_runs`      |
-| `WorkflowNodeRun` | `workflow_node_runs` |
+| Domain type              | Backing table               |
+| ------------------------ | --------------------------- |
+| `WorkflowRun`            | `workflow_runs`             |
+| `WorkflowNodeRun`        | `workflow_node_runs`        |
+| `WorkflowExecutionScope` | `workflow_execution_scopes` |
 
-`WorkflowRun` pins `snapshot_id` to the user-released version it was created against and stores its own display name and `workspace_id`. `WorkflowNodeRun` records one executed node; nodes that never started have no row, and the frontend derives "not started" by comparing graph nodes against recorded node runs. Run and node status share the same five-value enums (`Pending | Running | Succeeded | Failed | Cancelled`). An interactive node parked awaiting follow-up input is persisted as `Pending`; the public contract derives a `Running` run with an awaiting node as `AwaitingInput` so the sidebar can surface that human action is needed. A session bound to a terminal node is read-only: the backend rejects new prompts against it.
+`WorkflowRun` pins `snapshot_id` to the user-released version it was created against and stores its own display name and `workspace_id`. `WorkflowNodeRun` records one executed node and its scope; nodes that never started have no row, and the frontend derives "not started" by comparing graph nodes against recorded node runs. `WorkflowExecutionScope` records a Loop parent, round index, lifecycle, and private round state. Run and node status share the same five-value enums (`Pending | Running | Succeeded | Failed | Cancelled`). An interactive node parked awaiting follow-up input is persisted as `Pending`; the public contract derives a `Running` run with an awaiting node as `AwaitingInput` so the sidebar can surface that human action is needed. A session bound to a terminal node is read-only: the backend rejects new prompts against it.
 
 ### Creation and snapshot pinning
 
