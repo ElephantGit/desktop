@@ -1,7 +1,21 @@
 //! Transactional scope identity owned by the workflow execution repository.
 
-use ora_domain::WorkflowRunId;
+use ora_domain::{WorkflowRunId, WorkflowScopeId};
 use rusqlite::{Transaction, params};
+
+/// Resolves the authoritative root so prepared dispatches retain their execution generation.
+pub(super) fn current_root_scope(
+    connection: &rusqlite::Connection,
+    run_id: &WorkflowRunId,
+) -> Result<WorkflowScopeId, crate::DatabaseError> {
+    Ok(connection
+        .query_row(
+            "SELECT scope_id FROM workflow_run_root_scopes WHERE run_id = ?1",
+            params![run_id.as_ref()],
+            |row| row.get::<_, String>(0),
+        )
+        .map(WorkflowScopeId::new)?)
+}
 
 /// A restart gets a fresh root identity while historical node bindings remain immutable.
 pub(super) fn restart_root_scope(

@@ -273,6 +273,7 @@ mod tests {
         WorkflowNodeRun::new(
             WorkflowNodeRunId::new("node-1"),
             WorkflowRunId::new("run-1"),
+            ora_domain::WorkflowScopeId::new("root:run-1"),
             "a",
             "agent",
             session_id.map(SessionId::new),

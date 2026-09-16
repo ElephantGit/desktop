@@ -30,7 +30,8 @@ pub use git_cleanup::{
 };
 pub use ids::{
     AgentDefinitionId, GitCleanupJobId, ProjectId, SessionId, SkillId, TaskId, WorkflowId,
-    WorkflowNodeRunId, WorkflowRunId, WorkflowSnapshotId, WorkspaceId, WorktreeProvisioningLeaseId,
+    WorkflowNodeRunId, WorkflowRunId, WorkflowScopeId, WorkflowSnapshotId, WorkspaceId,
+    WorktreeProvisioningLeaseId,
 };
 pub use namespace::Namespace;
 pub use plugin_id::{PluginId, PluginIdError, PluginIdSegment};

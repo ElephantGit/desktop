@@ -1,6 +1,6 @@
 use crate::{
     AuditFields, DomainModelError, ProjectId, SessionId, WorkflowId, WorkflowNodeRunId,
-    WorkflowRunId, WorkflowSnapshotId, WorkspaceId,
+    WorkflowRunId, WorkflowScopeId, WorkflowSnapshotId, WorkspaceId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -165,6 +165,7 @@ impl WorkflowRun {
 pub struct WorkflowNodeRun {
     pub id: WorkflowNodeRunId,
     pub run_id: WorkflowRunId,
+    pub scope_id: WorkflowScopeId,
     pub node_id: String,
     pub node_type: String,
     pub session_id: Option<SessionId>,
@@ -184,6 +185,7 @@ impl WorkflowNodeRun {
     pub fn new(
         id: WorkflowNodeRunId,
         run_id: WorkflowRunId,
+        scope_id: WorkflowScopeId,
         node_id: impl Into<String>,
         node_type: impl Into<String>,
         session_id: Option<SessionId>,
@@ -199,6 +201,7 @@ impl WorkflowNodeRun {
         Self {
             id,
             run_id,
+            scope_id,
             node_id: node_id.into(),
             node_type: node_type.into(),
             session_id,

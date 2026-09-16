@@ -54,13 +54,38 @@ fn restart_rotates_root_and_preserves_node_history() {
         assert_ne!(root, "root:run");
         let start = NodeRunToStart {
             id: WorkflowNodeRunId::new("new-start"),
+            scope_id: ora_domain::WorkflowScopeId::new(root.clone()),
             node_id: "start".into(),
             node_type: "start".into(),
             input: None,
         };
+        let stale = NodeRunToStart {
+            id: WorkflowNodeRunId::new("stale-start"),
+            scope_id: ora_domain::WorkflowScopeId::new("root:run"),
+            ..start.clone()
+        };
+        assert!(repository.start_run(&run_id, &stale, /*now*/ 4).is_err());
+        assert_eq!(repository.find_node_run_by_id(&stale.id).unwrap(), None);
         assert_eq!(
             repository.start_run(&run_id, &start, /*now*/ 4).unwrap(),
             StartWorkflowRunResult::Started
+        );
+        assert_eq!(
+            repository
+                .find_node_run_by_id(&start.id)
+                .unwrap()
+                .unwrap()
+                .scope_id,
+            start.scope_id
+        );
+        assert_eq!(
+            repository
+                .list_node_runs(&run_id)
+                .unwrap()
+                .iter()
+                .map(|node| (&node.id, &node.scope_id))
+                .collect::<Vec<_>>(),
+            vec![(&start.id, &start.scope_id)]
         );
         let nodes = pool
             .with_connection(|connection| {

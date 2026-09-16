@@ -350,6 +350,7 @@ pub(super) fn map_node_run_row(row: &Row<'_>) -> Result<WorkflowNodeRun, crate::
     Ok(WorkflowNodeRun::new(
         WorkflowNodeRunId::new(row.get::<_, String>("id")?),
         WorkflowRunId::new(row.get::<_, String>("run_id")?),
+        ora_domain::WorkflowScopeId::new(row.get::<_, String>("scope_id")?),
         row.get::<_, String>("node_id")?,
         row.get::<_, String>("node_type")?,
         row.get::<_, Option<String>>("session_id")?
@@ -375,7 +376,7 @@ pub(super) fn list_node_runs(
     run_id: &WorkflowRunId,
 ) -> Result<Vec<WorkflowNodeRun>, crate::DatabaseError> {
     let mut statement = connection.prepare(
-        "SELECT id, run_id, node_id, node_type, session_id, status, input, output, error, payload,
+        "SELECT id, run_id, scope_id, node_id, node_type, session_id, status, input, output, error, payload,
                 started_at, finished_at, created_at, updated_at, is_deleted
          FROM workflow_node_runs
          WHERE run_id = ?1 AND is_deleted = 0

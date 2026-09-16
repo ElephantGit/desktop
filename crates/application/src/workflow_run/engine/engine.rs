@@ -158,6 +158,7 @@ where
         validate_start_inputs(start_node, context.run.payload.as_deref())?;
         let start_node_run = NodeRunToStart {
             id: self.node_run_id_generator.generate_node_run_id(),
+            scope_id: context.root_scope_id.clone(),
             node_id: start_node.id.clone(),
             node_type: start_node.node_type.as_str().to_string(),
             input: context.run.input,
@@ -385,6 +386,7 @@ where
                 .iter()
                 .map(|node| NodeRunToStart {
                     id: self.node_run_id_generator.generate_node_run_id(),
+                    scope_id: context.root_scope_id.clone(),
                     node_id: node.id.clone(),
                     node_type: node.node_type.as_str().to_string(),
                     input: node_input(node, &context),
@@ -607,6 +609,7 @@ mod tests {
     /// Builds a run context whose run input is fixed; workspace and graph are unused by the test.
     fn context() -> ExecutionContext {
         ExecutionContext {
+            root_scope_id: ora_domain::WorkflowScopeId::new("root:run-1"),
             run: WorkflowRun::new(
                 WorkflowRunId::new("run-1"),
                 WorkspaceId::new("workspace-1"),

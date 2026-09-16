@@ -343,6 +343,7 @@ fn standalone_session_list_excludes_workflow_node_sessions() {
                 &run_id,
                 &NodeRunToStart {
                     id: node_run_id.clone(),
+                    scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                     node_id: "agent-1".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
@@ -701,6 +702,7 @@ fn running_run_cannot_be_deleted() {
                 &run_id,
                 &NodeRunToStart {
                     id: WorkflowNodeRunId::new("node-run-1"),
+                    scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                     node_id: "agent-1".to_string(),
                     node_type: "agent".to_string(),
                     input: None,

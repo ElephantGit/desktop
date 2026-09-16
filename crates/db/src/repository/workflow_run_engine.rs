@@ -72,6 +72,7 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                     )?
                 };
                 Ok(Some(ExecutionContext {
+                    root_scope_id: super::workflow_scope::current_root_scope(connection, &run.id)?,
                     run,
                     workspace,
                     graph_json,
@@ -151,7 +152,7 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
         self.pool
             .with_connection(|connection| {
                 let mut statement = connection.prepare(
-                    "SELECT id, run_id, node_id, node_type, session_id, status, input, output, error, payload, started_at, finished_at, created_at, updated_at, is_deleted
+                    "SELECT id, run_id, scope_id, node_id, node_type, session_id, status, input, output, error, payload, started_at, finished_at, created_at, updated_at, is_deleted
                      FROM workflow_node_runs
                      WHERE session_id = ?1 AND is_deleted = 0
                      LIMIT 1",
@@ -172,7 +173,7 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
         self.pool
             .with_connection(|connection| {
                 let mut statement = connection.prepare(
-                    "SELECT id, run_id, node_id, node_type, session_id, status, input, output, error, payload, started_at, finished_at, created_at, updated_at, is_deleted
+                    "SELECT id, run_id, scope_id, node_id, node_type, session_id, status, input, output, error, payload, started_at, finished_at, created_at, updated_at, is_deleted
                      FROM workflow_node_runs
                      WHERE id = ?1 AND is_deleted = 0",
                 )?;
@@ -1055,8 +1056,8 @@ fn insert_node_run(
     now: i64,
 ) -> Result<(), rusqlite::Error> {
     transaction.execute(
-        "INSERT INTO workflow_node_runs (id, run_id, node_id, node_type, session_id, status, input, output, error, payload, started_at, finished_at, created_at, updated_at, is_deleted)
-         VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, NULL, NULL, NULL, ?7, NULL, ?7, ?7, 0)",
+        "INSERT INTO workflow_node_runs (id, run_id, node_id, node_type, session_id, status, input, output, error, payload, started_at, finished_at, created_at, updated_at, is_deleted, scope_id)
+         VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, NULL, NULL, NULL, ?7, NULL, ?7, ?7, 0, ?8)",
         params![
             node_run.id.as_ref(),
             run_id.as_ref(),
@@ -1065,6 +1066,7 @@ fn insert_node_run(
             WorkflowNodeStatus::Running.database_value(),
             node_run.input.as_deref(),
             now,
+            node_run.scope_id.as_ref(),
         ],
     )?;
     Ok(())

@@ -3,7 +3,7 @@ use crate::RepositoryError;
 use crate::workflow_run::engine::graph::WorkflowGraph;
 use ora_domain::{
     SessionId, WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRun, WorkflowRunId,
-    Workspace,
+    WorkflowScopeId, Workspace,
 };
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -16,6 +16,7 @@ use thiserror::Error;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeRunToStart {
     pub id: WorkflowNodeRunId,
+    pub scope_id: WorkflowScopeId,
     pub node_id: String,
     pub node_type: String,
     pub input: Option<String>,
@@ -38,6 +39,7 @@ pub struct FileChange {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionContext {
     pub run: WorkflowRun,
+    pub root_scope_id: WorkflowScopeId,
     pub workspace: Workspace,
     pub graph_json: String,
 }
