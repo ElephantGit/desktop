@@ -192,9 +192,9 @@ fn rejects_missing_and_unknown_config_fields() {
     assert!(WorkflowGraph::parse(&value.to_string()).is_err());
 }
 
-/// Both bounds are inclusive, and parsing must not accidentally enable unfinished execution.
+/// Both bounds are inclusive and remain executable after graph partitioning.
 #[test]
-fn accepts_iteration_bounds_without_enabling_execution() {
+fn accepts_executable_iteration_bounds() {
     for limit in [1, 100] {
         let mut value = snapshot();
         value["nodes"][1]["data"]["loopConfig"]["maxIterations"] = json!(limit);
