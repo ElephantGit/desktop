@@ -384,6 +384,22 @@ function RunActInspectorPanel({
                 mono
               />
             )}
+          {nodeType.configFields.includes("maxIterations") &&
+            data.loopConfig !== undefined && (
+              <ReadOnlyField
+                label={t("settings.workflow.field.maxIterations")}
+                value={String(data.loopConfig.maxIterations)}
+                mono
+              />
+            )}
+          {nodeType.configFields.includes("loopInitialValue") &&
+            data.loopConfig?.variables[0]?.initial.kind === "constant" && (
+              <ReadOnlyField
+                label={t("settings.workflow.field.loopInitialValue")}
+                value={String(data.loopConfig.variables[0].initial.value ?? "")}
+                mono
+              />
+            )}
           {promptLabel !== null &&
             (canEdit ? (
               <div className="space-y-1.5">

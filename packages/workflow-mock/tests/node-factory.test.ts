@@ -178,7 +178,7 @@ describe("createMockWorkflowNode", () => {
           kind: "loop",
           label: "循环",
           description: "重复执行直到满足条件",
-          configFields: ["maxAttempts", "exitCondition"],
+          configFields: ["maxIterations", "loopInitialValue"],
         },
         {
           kind: "output",

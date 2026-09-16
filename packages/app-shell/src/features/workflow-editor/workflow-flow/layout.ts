@@ -34,9 +34,14 @@ export function organizeWorkflowNodes(
   nodes: readonly Node<WorkflowNodeData, "workflow">[],
   edges: readonly Edge[],
 ): Node<WorkflowNodeData, "workflow">[] {
-  const nodeById = new Map(nodes.map((node) => [node.id, node]));
-  const outgoing = new Map(nodes.map((node) => [node.id, [] as string[]]));
-  const indegree = new Map(nodes.map((node) => [node.id, 0]));
+  const layoutNodes = nodes.filter(
+    (node) => node.data.containerId === undefined,
+  );
+  const nodeById = new Map(layoutNodes.map((node) => [node.id, node]));
+  const outgoing = new Map(
+    layoutNodes.map((node) => [node.id, [] as string[]]),
+  );
+  const indegree = new Map(layoutNodes.map((node) => [node.id, 0]));
   for (const edge of edges) {
     if (!nodeById.has(edge.source) || !nodeById.has(edge.target)) {
       continue;
@@ -45,13 +50,13 @@ export function organizeWorkflowNodes(
     indegree.set(edge.target, (indegree.get(edge.target) ?? 0) + 1);
   }
 
-  const rank = new Map(nodes.map((node) => [node.id, 0]));
+  const rank = new Map(layoutNodes.map((node) => [node.id, 0]));
   const compareNodes = (leftId: string, rightId: string): number => {
     const left = nodeById.get(leftId)!;
     const right = nodeById.get(rightId)!;
     return left.position.y - right.position.y || leftId.localeCompare(rightId);
   };
-  const queue = nodes
+  const queue = layoutNodes
     .filter((node) => indegree.get(node.id) === 0)
     .map((node) => node.id)
     .sort(compareNodes);
@@ -75,14 +80,14 @@ export function organizeWorkflowNodes(
 
   // Invalid cyclic imports still receive a deterministic final column instead of blocking layout.
   const finalRank = Math.max(0, ...rank.values()) + 1;
-  for (const node of nodes) {
+  for (const node of layoutNodes) {
     if (!visited.has(node.id)) {
       rank.set(node.id, finalRank);
     }
   }
 
   const columns = new Map<number, Node<WorkflowNodeData, "workflow">[]>();
-  for (const node of nodes) {
+  for (const node of layoutNodes) {
     const column = rank.get(node.id) ?? 0;
     columns.set(column, [...(columns.get(column) ?? []), node]);
   }
@@ -112,5 +117,8 @@ export function organizeWorkflowNodes(
     }
   }
 
-  return nodes.map((node) => ({ ...node, position: positions.get(node.id)! }));
+  return nodes.map((node) => {
+    const position = positions.get(node.id);
+    return position === undefined ? node : { ...node, position };
+  });
 }

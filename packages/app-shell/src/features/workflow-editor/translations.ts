@@ -198,6 +198,8 @@ export const workflowEditorTranslations = {
     "settings.workflow.field.waitCount": "完成数量",
     "settings.workflow.field.maxAttempts": "最大次数",
     "settings.workflow.field.exitCondition": "退出条件",
+    "settings.workflow.field.maxIterations": "最大轮次",
+    "settings.workflow.field.loopInitialValue": "初始值",
     "settings.workflow.field.approvalPrompt": "审批说明",
     "settings.workflow.junction.waitAll": "全部分支完成",
     "settings.workflow.junction.waitAny": "任一分支完成",
@@ -206,6 +208,10 @@ export const workflowEditorTranslations = {
     "settings.workflow.junction.collectResults": "收集结果继续",
     "settings.workflow.loop.exitConditionPlaceholder":
       "如 verification.status == passed",
+    "settings.workflow.loop.defaultBehavior":
+      "每轮将 Agent 输出反馈为下一轮的 value；输出非空时结束，并导出为 result。",
+    "settings.workflow.loop.legacyUnsupported":
+      "此旧循环节点缺少可执行配置，请删除后重新添加。",
     "settings.workflow.subflow.hint":
       "子流程用于封装可复用的复杂业务步骤。执行引擎接入后生效。",
     "settings.workflow.field.name": "名称",
@@ -566,6 +572,8 @@ export const workflowEditorTranslations = {
     "settings.workflow.field.waitCount": "Completion count",
     "settings.workflow.field.maxAttempts": "Max attempts",
     "settings.workflow.field.exitCondition": "Exit condition",
+    "settings.workflow.field.maxIterations": "Maximum rounds",
+    "settings.workflow.field.loopInitialValue": "Initial value",
     "settings.workflow.field.approvalPrompt": "Approval prompt",
     "settings.workflow.junction.waitAll": "All branches complete",
     "settings.workflow.junction.waitAny": "Any branch completes",
@@ -574,6 +582,10 @@ export const workflowEditorTranslations = {
     "settings.workflow.junction.collectResults": "Collect results and continue",
     "settings.workflow.loop.exitConditionPlaceholder":
       "e.g. verification.status == passed",
+    "settings.workflow.loop.defaultBehavior":
+      "Each Agent output feeds the next round as value; a non-empty output stops the Loop and is exported as result.",
+    "settings.workflow.loop.legacyUnsupported":
+      "This legacy Loop lacks executable configuration. Delete it and add a new Loop.",
     "settings.workflow.subflow.hint":
       "Subflows encapsulate reusable complex business steps. Effective once the execution engine lands.",
     "settings.workflow.field.name": "Name",

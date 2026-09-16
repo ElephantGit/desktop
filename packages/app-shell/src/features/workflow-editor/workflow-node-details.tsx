@@ -1066,7 +1066,7 @@ function HumanNodeDetails({
   );
 }
 
-/** Loop panel: max attempts plus the exit condition that ends the loop early. */
+/** Loop panel: bounded execution and the carried value fed back between rounds. */
 function LoopNodeDetails({
   node,
   nodeType,
@@ -1074,6 +1074,12 @@ function LoopNodeDetails({
   onClose,
 }: Omit<WorkflowNodeDetailsLayoutProps, "capabilities">) {
   const { t } = useTranslation();
+  const loopConfig = node.data.loopConfig;
+  const carriedVariable = loopConfig?.variables[0];
+  const initialValue =
+    carriedVariable?.initial.kind === "constant"
+      ? String(carriedVariable.initial.value ?? "")
+      : "";
   return (
     <>
       <WorkflowNodeDetailsHeader
@@ -1084,45 +1090,76 @@ function LoopNodeDetails({
       />
       <WorkflowNodeBody>
         <InspectorField
-          label={t("settings.workflow.field.maxAttempts")}
-          htmlFor="workflow-node-max-attempts"
+          label={t("settings.workflow.field.maxIterations")}
+          htmlFor="workflow-node-max-iterations"
         >
           <Input
-            id="workflow-node-max-attempts"
+            id="workflow-node-max-iterations"
             type="number"
             min={1}
-            value={node.data.maxAttempts ?? 3}
+            max={100}
+            value={loopConfig?.maxIterations ?? 3}
+            disabled={loopConfig === undefined}
             onChange={(event) => {
               const parsed = Number(event.target.value);
+              if (loopConfig === undefined || !Number.isFinite(parsed)) {
+                return;
+              }
               onUpdate({
                 ...node,
                 data: {
                   ...node.data,
-                  maxAttempts:
-                    event.target.value !== "" && Number.isFinite(parsed)
-                      ? parsed
-                      : undefined,
+                  loopConfig: {
+                    ...loopConfig,
+                    maxIterations: Math.min(
+                      100,
+                      Math.max(1, Math.trunc(parsed)),
+                    ),
+                  },
                 },
               });
             }}
           />
         </InspectorField>
         <InspectorField
-          label={t("settings.workflow.field.exitCondition")}
-          htmlFor="workflow-node-exit-condition"
+          label={t("settings.workflow.field.loopInitialValue")}
+          htmlFor="workflow-node-loop-initial-value"
         >
           <Input
-            id="workflow-node-exit-condition"
-            value={node.data.exitCondition ?? ""}
-            placeholder={t("settings.workflow.loop.exitConditionPlaceholder")}
-            onChange={(event) =>
+            id="workflow-node-loop-initial-value"
+            value={initialValue}
+            disabled={loopConfig === undefined || carriedVariable === undefined}
+            onChange={(event) => {
+              if (loopConfig === undefined || carriedVariable === undefined) {
+                return;
+              }
               onUpdate({
                 ...node,
-                data: { ...node.data, exitCondition: event.target.value },
-              })
-            }
+                data: {
+                  ...node.data,
+                  loopConfig: {
+                    ...loopConfig,
+                    variables: [
+                      {
+                        ...carriedVariable,
+                        initial: {
+                          kind: "constant",
+                          value: event.target.value,
+                        },
+                      },
+                      ...loopConfig.variables.slice(1),
+                    ],
+                  },
+                },
+              });
+            }}
           />
         </InspectorField>
+        <p className="rounded-lg border border-border bg-muted/25 px-3 py-2 text-[11px] leading-5 text-muted-foreground">
+          {loopConfig === undefined
+            ? t("settings.workflow.loop.legacyUnsupported")
+            : t("settings.workflow.loop.defaultBehavior")}
+        </p>
       </WorkflowNodeBody>
     </>
   );

@@ -51,6 +51,7 @@ import { WindowControls } from "../../components/window-controls";
 import { useUiStore } from "../../state/stores/ui-store";
 import {
   createMockWorkflowCapabilities,
+  createMockWorkflowLoopGroup,
   createMockWorkflowNode,
   deriveWorkflowVariableCatalog,
   normalizeWorkflowGlobalVariables,
@@ -1257,6 +1258,45 @@ function WorkflowEditorContent({
       ...(currentWorkflow.annotations ?? []).map((node) => node.id),
       ...currentWorkflow.edges.map((edge) => edge.id),
     ]);
+    if (kind === "loop") {
+      const group = createMockWorkflowLoopGroup({
+        sequence,
+        position,
+        locale,
+        agentConfig: capabilities.defaultAgentConfig,
+      });
+      const loop = group.nodes[0]!;
+      updateWorkflow(
+        (current) => ({
+          ...current,
+          nodes: [
+            ...current.nodes.map((candidate) => ({
+              ...candidate,
+              selected: false,
+            })),
+            ...group.nodes.map((candidate) => ({
+              ...candidate,
+              selected: candidate.id === loop.id,
+            })),
+          ],
+          edges: [...current.edges, ...group.edges],
+        }),
+        {
+          history: {
+            event: "node.add",
+            meta: {
+              nodeIds: group.nodes.map((candidate) => candidate.id),
+              edgeIds: group.edges.map((edge) => edge.id),
+              subject: loop.data.title,
+              nodeTitle: loop.data.title,
+              nodeKind: kind,
+            },
+          },
+        },
+      );
+      expandInspector();
+      return;
+    }
     const node = createMockWorkflowNode({
       kind,
       sequence,
@@ -1530,35 +1570,67 @@ function WorkflowEditorContent({
   }: {
     nodes: WorkflowCanvasNode[];
     edges: Edge[];
-  }): Promise<boolean> {
+  }): Promise<boolean | { nodes: WorkflowCanvasNode[]; edges: Edge[] }> {
     const current = workflowRef.current ?? workflow;
     if (current === null || previewedVersion !== null) {
       return false;
     }
-    const firstNode = nodes[0];
+    const deletedNodeIds = new Set(nodes.map((node) => node.id));
+    let discoveredDescendant = true;
+    while (discoveredDescendant) {
+      discoveredDescendant = false;
+      for (const node of current.nodes) {
+        if (
+          node.parentId !== undefined &&
+          deletedNodeIds.has(node.parentId) &&
+          !deletedNodeIds.has(node.id)
+        ) {
+          deletedNodeIds.add(node.id);
+          discoveredDescendant = true;
+        }
+      }
+    }
+    const expandedNodes = [
+      ...nodes,
+      ...current.nodes.filter(
+        (node) =>
+          deletedNodeIds.has(node.id) &&
+          !nodes.some((candidate) => candidate.id === node.id),
+      ),
+    ];
+    const expandedEdges = [
+      ...edges,
+      ...current.edges.filter(
+        (edge) =>
+          (deletedNodeIds.has(edge.source) ||
+            deletedNodeIds.has(edge.target)) &&
+          !edges.some((candidate) => candidate.id === edge.id),
+      ),
+    ];
+    const firstNode = expandedNodes[0];
     const nodeTitle =
       firstNode !== undefined && !isWorkflowAnnotationNode(firstNode)
         ? firstNode.data.title
         : undefined;
     const subject =
-      nodes.length > 0
-        ? historySubjectForNodes(nodes)
-        : edges
+      expandedNodes.length > 0
+        ? historySubjectForNodes(expandedNodes)
+        : expandedEdges
             .map((edge) =>
               historySubjectForEdge(current, edge.source, edge.target),
             )
             .join("、");
     workflowHistory.beginTransaction(
       captureWorkflowHistorySnapshot(current),
-      nodes.length > 0 ? "node.delete" : "edge.delete",
+      expandedNodes.length > 0 ? "node.delete" : "edge.delete",
       {
-        nodeIds: nodes.map((node) => node.id),
-        edgeIds: edges.map((edge) => edge.id),
+        nodeIds: expandedNodes.map((node) => node.id),
+        edgeIds: expandedEdges.map((edge) => edge.id),
         subject,
         nodeTitle,
       },
     );
-    return true;
+    return { nodes: expandedNodes, edges: expandedEdges };
   }
 
   /** Commits the delete transaction once React Flow has removed its elements. */

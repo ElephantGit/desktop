@@ -737,6 +737,46 @@ describe("WorkflowEditor", () => {
     });
   });
 
+  it("adds, configures, and deletes an executable Loop container as one group", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(await screen.findByRole("button", { name: "循环" }));
+
+    const loop = screen.getByLabelText("循环节点: 循环 1");
+    expect(loop).toBeInTheDocument();
+    expect(screen.getByLabelText("开始节点: 轮次开始")).toBeInTheDocument();
+    expect(screen.getByLabelText("Agent节点: 循环 Agent")).toBeInTheDocument();
+    expect(screen.getByLabelText("工作流画布")).toHaveAttribute(
+      "data-workflow-edge-count",
+      "7",
+    );
+
+    const maximumRounds = screen.getByLabelText("最大轮次");
+    expect(maximumRounds).toHaveValue(3);
+    fireEvent.change(maximumRounds, { target: { value: "5" } });
+    expect(screen.getByLabelText("最大轮次")).toHaveValue(5);
+    fireEvent.change(screen.getByLabelText("初始值"), {
+      target: { value: "draft" },
+    });
+    expect(screen.getByLabelText("初始值")).toHaveValue("draft");
+
+    await user.click(loop.closest(".react-flow__node") ?? loop);
+    await user.click(screen.getByRole("button", { name: "删除循环 1" }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByLabelText("循环节点: 循环 1"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByLabelText("开始节点: 轮次开始"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByLabelText("Agent节点: 循环 Agent"),
+      ).not.toBeInTheDocument();
+    });
+  });
+
   it("drags a node type from the dock to the chosen canvas position", async () => {
     renderEditor();
     const canvas = await screen.findByLabelText("工作流画布");

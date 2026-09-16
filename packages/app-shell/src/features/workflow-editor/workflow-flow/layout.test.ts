@@ -57,4 +57,32 @@ describe("workflow-flow layout", () => {
     expect(positions.top!.y).toBeLessThan(positions.bottom!.y);
     expect(positions.bottom!.x).toBeLessThan(positions.output!.x);
   });
+
+  it("preserves Loop child positions while organizing the root graph", () => {
+    const loop = workflowNode("loop", 900, 300);
+    loop.data = { ...loop.data, kind: "loop" };
+    const childStart = workflowNode("child-start", 40, 145);
+    childStart.parentId = loop.id;
+    childStart.data = {
+      ...childStart.data,
+      kind: "start",
+      containerId: loop.id,
+    };
+    const childAgent = workflowNode("child-agent", 350, 145);
+    childAgent.parentId = loop.id;
+    childAgent.data = {
+      ...childAgent.data,
+      kind: "agent",
+      containerId: loop.id,
+    };
+    const nodes = [workflowNode("start", 500, 0), loop, childStart, childAgent];
+
+    const organized = organizeWorkflowNodes(nodes, [
+      { id: "root", source: "start", target: "loop" },
+      { id: "child", source: "child-start", target: "child-agent" },
+    ]);
+
+    expect(organized.slice(2)).toEqual([childStart, childAgent]);
+    expect(organized[0]!.position.x).toBeLessThan(organized[1]!.position.x);
+  });
 });

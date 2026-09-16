@@ -250,13 +250,23 @@ function WorkflowCanvasInner({
     }
     return pairs;
   }, [edges]);
+  const nodeContainerById = useMemo(
+    () => new Map(nodes.map((node) => [node.id, node.data.containerId])),
+    [nodes],
+  );
 
-  /** Rejects self-loops and duplicate directed edges during connect and reconnect. */
+  /** Rejects self-loops, duplicate edges, and connections that cross Loop scope boundaries. */
   function isValidConnection(connection: Connection | Edge): boolean {
     if (
       connection.source === null ||
       connection.target === null ||
       connection.source === connection.target
+    ) {
+      return false;
+    }
+    if (
+      nodeContainerById.get(connection.source) !==
+      nodeContainerById.get(connection.target)
     ) {
       return false;
     }

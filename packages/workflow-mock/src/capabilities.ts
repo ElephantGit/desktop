@@ -23,7 +23,9 @@ export type WorkflowConfigField =
   | "waitStrategy"
   | "failureStrategy"
   | "maxAttempts"
-  | "exitCondition";
+  | "exitCondition"
+  | "maxIterations"
+  | "loopInitialValue";
 
 export interface WorkflowAgentModel {
   agentCli: string;
@@ -287,7 +289,7 @@ export function createMockWorkflowNodeType(
           locale === "zh-CN"
             ? "重复执行直到满足条件"
             : "Repeat until the exit condition is met",
-        configFields: ["maxAttempts", "exitCondition"],
+        configFields: ["maxIterations", "loopInitialValue"],
       };
     case "subflow":
       return {

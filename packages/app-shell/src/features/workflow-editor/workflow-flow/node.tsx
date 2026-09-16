@@ -14,6 +14,8 @@ import {
   createMockWorkflowNodeType,
   isWorkflowConditionComparisonComplete,
   resolveConditionCases,
+  WORKFLOW_LOOP_NODE_HEIGHT,
+  WORKFLOW_LOOP_NODE_WIDTH,
   WORKFLOW_NODE_ANCHOR_Y,
   WORKFLOW_NODE_WIDTH,
   type WorkflowNodeData,
@@ -69,7 +71,16 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
       density="editor"
       selected={selected}
       width={
-        data.kind === "condition" ? CONDITION_NODE_WIDTH : WORKFLOW_NODE_WIDTH
+        data.kind === "loop"
+          ? WORKFLOW_LOOP_NODE_WIDTH
+          : data.kind === "condition"
+            ? CONDITION_NODE_WIDTH
+            : WORKFLOW_NODE_WIDTH
+      }
+      style={
+        data.kind === "loop"
+          ? { minHeight: WORKFLOW_LOOP_NODE_HEIGHT }
+          : undefined
       }
       titleAccessory={
         data.kind === "agent" ? (
