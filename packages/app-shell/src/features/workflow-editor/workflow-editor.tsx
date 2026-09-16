@@ -84,6 +84,7 @@ import type { WorkflowCanvasNode } from "./workflow-flow/types";
 import { WorkflowInspector } from "./workflow-inspector";
 import { applyIterationDragRules } from "./workflow-iteration-containment";
 import {
+  expandIterationFrames,
   insertIterationMember,
   repairIterationGraphAfterNodeDeletion,
   resolveIterationDeletionCascade,
@@ -1778,6 +1779,11 @@ function WorkflowEditorContent({
     const persistable = changes.some(
       (change) => change.type !== "select" && change.type !== "dimensions",
     );
+    // Real card sizes arrive only after render, so the insert-time frame estimate can
+    // undershoot a tall member. React Flow's parent extent then clamps that member up
+    // over the region's internal affordances. Re-fitting frames whenever measurements
+    // arrive releases the clamp without persisting a no-edit workflow open.
+    const measured = changes.some((change) => change.type === "dimensions");
     const removedNodeIds = new Set(
       changes
         .filter((change) => change.type === "remove")
@@ -1790,7 +1796,7 @@ function WorkflowEditorContent({
           ...current.nodes,
           ...(current.annotations ?? []),
         ]);
-        const nextWorkflow = {
+        let nextWorkflow = {
           ...current,
           nodes: nextNodes.filter(
             (node): node is Node<WorkflowNodeData, "workflow"> =>
@@ -1798,6 +1804,9 @@ function WorkflowEditorContent({
           ),
           annotations: nextNodes.filter(isWorkflowAnnotationNode),
         };
+        if (measured) {
+          nextWorkflow = expandIterationFrames(nextWorkflow);
+        }
         if (removedNodeIds.size === 0) {
           return nextWorkflow;
         }

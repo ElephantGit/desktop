@@ -60,6 +60,11 @@ import type { WorkflowCanvasNode, WorkflowCanvasProps } from "./types";
 import { WorkflowVersionHistory } from "./version-history";
 import { iterationExpandedSize } from "../workflow-iteration-graph";
 import { WorkflowIterationActionsProvider } from "./iteration-actions";
+import {
+  WORKFLOW_ANNOTATION_Z_INDEX,
+  WORKFLOW_NODE_Z_INDEX,
+  WORKFLOW_SELECTED_NODE_Z_INDEX,
+} from "./z-index";
 import "@xyflow/react/dist/style.css";
 import "./workflow-flow.css";
 
@@ -96,9 +101,6 @@ const CONNECTION_LINE_STYLE = {
 } satisfies CSSProperties;
 const WORKFLOW_ANNOTATION_WIDTH = 240;
 const WORKFLOW_ANNOTATION_HEIGHT = 140;
-const WORKFLOW_ANNOTATION_Z_INDEX = 0;
-const WORKFLOW_NODE_Z_INDEX = 1;
-const WORKFLOW_SELECTED_NODE_Z_INDEX = 1_000;
 
 type ConnectionDraft =
   | {

@@ -33,13 +33,24 @@ export interface IterationDeletionCascade {
   memberCount: number;
 }
 
-const ITERATION_MEMBER_LEFT = 96;
-const ITERATION_MEMBER_TOP = 160;
 const ITERATION_MEMBER_COLUMN_GAP = 100;
 const ITERATION_MEMBER_ROW_GAP = 52;
 const ITERATION_FRAME_RIGHT_PADDING = 48;
 const ITERATION_FRAME_BOTTOM_PADDING = 40;
 const CONDITION_NODE_WIDTH = 320;
+
+/** Default horizontal inset of iteration members inside their container frame. */
+export const ITERATION_MEMBER_LEFT = 96;
+/**
+ * Default vertical inset of iteration members inside their container frame.
+ *
+ * The container renders its internal-start affordance row (node-relative y 152–176)
+ * inside the region body, and React Flow stacks member nodes above their parent
+ * container, so a member placed higher would cover that row and make the entry
+ * insert button unreachable. New members and auto-organized members therefore
+ * start below it.
+ */
+export const ITERATION_MEMBER_TOP = 190;
 
 /** Inserts one iteration member and rewires the selected insertion point atomically. */
 export function insertIterationMember<TGraph extends IterationGraph>(
@@ -57,7 +68,7 @@ export function insertIterationMember<TGraph extends IterationGraph>(
   const node = prepareIterationMember(
     inputNode,
     insertion.iterationId,
-    insertionPosition(graph, insertion),
+    insertionPosition(graph, insertion, inputNode),
   );
   const occupiedIds = [
     ...graph.nodes.map((candidate) => candidate.id),
@@ -246,22 +257,26 @@ function prepareIterationMember(
 function insertionPosition(
   graph: IterationGraph,
   insertion: IterationInsertion,
+  inputNode: Node<WorkflowNodeData, "workflow">,
 ): XYPosition {
   const members = graph.nodes.filter(
     (node) => node.parentId === insertion.iterationId,
   );
+  // The seam-derived point only approximates free space: midpoints can land on an
+  // existing member (an entry seam's virtual source sits exactly on the first member's
+  // row), so every placement is finally nudged below whatever it would overlap.
+  const clearOfMembers = (position: XYPosition): XYPosition =>
+    avoidMemberOverlap(
+      members,
+      position,
+      nodeWidth(inputNode),
+      nodeHeight(inputNode),
+    );
   if (insertion.type === "entry") {
-    const entryCount = graph.edges.filter(
-      (edge) =>
-        edge.source === insertion.iterationId &&
-        edge.sourceHandle === "iteration-entry",
-    ).length;
-    return {
+    return clearOfMembers({
       x: ITERATION_MEMBER_LEFT,
-      y:
-        ITERATION_MEMBER_TOP +
-        entryCount * (WORKFLOW_NODE_INITIAL_HEIGHT + ITERATION_MEMBER_ROW_GAP),
-    };
+      y: stackedMemberTop(members, ITERATION_MEMBER_TOP),
+    });
   }
   if (insertion.type === "edge") {
     const edge = graph.edges.find(
@@ -275,7 +290,7 @@ function insertionPosition(
           source.id === insertion.iterationId
             ? { x: 0, y: ITERATION_MEMBER_TOP }
             : source.position;
-        return {
+        return clearOfMembers({
           x: Math.max(
             ITERATION_MEMBER_LEFT,
             Math.round((sourcePosition.x + target.position.x) / 2),
@@ -284,34 +299,92 @@ function insertionPosition(
             ITERATION_MEMBER_TOP,
             Math.round((sourcePosition.y + target.position.y) / 2),
           ),
-        };
+        });
       }
     }
   }
   if (insertion.type === "output") {
     const source = graph.nodes.find((node) => node.id === insertion.sourceId);
     if (source !== undefined) {
-      const siblingOutputs = graph.edges.filter(
-        (edge) =>
-          edge.source === insertion.sourceId &&
-          edge.sourceHandle === insertion.sourceHandle,
-      ).length;
-      return {
+      const siblingTargets = graph.edges
+        .filter(
+          (edge) =>
+            edge.source === insertion.sourceId &&
+            edge.sourceHandle === insertion.sourceHandle,
+        )
+        .map((edge) => graph.nodes.find((node) => node.id === edge.target))
+        .filter(
+          (target): target is Node<WorkflowNodeData, "workflow"> =>
+            target !== undefined,
+        );
+      return clearOfMembers({
         x: source.position.x + nodeWidth(source) + ITERATION_MEMBER_COLUMN_GAP,
-        y:
-          source.position.y +
-          siblingOutputs *
-            (WORKFLOW_NODE_INITIAL_HEIGHT + ITERATION_MEMBER_ROW_GAP),
-      };
+        y: stackedMemberTop(siblingTargets, source.position.y),
+      });
     }
   }
-  return {
+  return clearOfMembers({
     x: ITERATION_MEMBER_LEFT,
-    y:
-      ITERATION_MEMBER_TOP +
-      members.length *
-        (WORKFLOW_NODE_INITIAL_HEIGHT + ITERATION_MEMBER_ROW_GAP),
-  };
+    y: stackedMemberTop(members, ITERATION_MEMBER_TOP),
+  });
+}
+
+/**
+ * Moves an insertion point below any member box it would overlap.
+ *
+ * Seam-derived coordinates only approximate free space — an entry seam's virtual
+ * source position, for example, sits on the first member's row, so its midpoint
+ * can land exactly on an existing card. Pushing the placement below every
+ * overlapped member (and re-checking, since the move itself can hit another
+ * member) keeps the new card visible and clickable; the loop terminates because
+ * each pass strictly increases the y coordinate.
+ */
+function avoidMemberOverlap(
+  members: Node<WorkflowNodeData, "workflow">[],
+  position: XYPosition,
+  width: number,
+  height: number,
+): XYPosition {
+  const { x } = position;
+  let y = position.y;
+  let moved = true;
+  while (moved) {
+    moved = false;
+    for (const member of members) {
+      const overlaps =
+        x < member.position.x + nodeWidth(member) &&
+        x + width > member.position.x &&
+        y < member.position.y + nodeHeight(member) &&
+        y + height > member.position.y;
+      if (overlaps) {
+        y = member.position.y + nodeHeight(member) + ITERATION_MEMBER_ROW_GAP;
+        moved = true;
+      }
+    }
+  }
+  return { x, y };
+}
+
+/**
+ * Stacks one new member below the real bottom of the anchor members.
+ *
+ * Card heights vary by kind and content far beyond the fixed placeholder, and a
+ * freshly inserted card only gets measured after it renders, so counting
+ * anchors with the placeholder height lets a tall rendered card overlap the
+ * next placement. Using each anchor's measured-or-estimated bottom keeps
+ * consecutive inserts clear of each other; with placeholder-sized anchors the
+ * result matches the classic fixed-row stacking.
+ */
+function stackedMemberTop(
+  anchors: Node<WorkflowNodeData, "workflow">[],
+  baseTop: number,
+): number {
+  const lowestBottom = anchors.reduce(
+    (bottom, anchor) =>
+      Math.max(bottom, anchor.position.y + nodeHeight(anchor)),
+    baseTop - ITERATION_MEMBER_ROW_GAP,
+  );
+  return Math.max(baseTop, lowestBottom + ITERATION_MEMBER_ROW_GAP);
 }
 
 /** Applies either monotonic expansion or compact fitting to selected iteration frames. */

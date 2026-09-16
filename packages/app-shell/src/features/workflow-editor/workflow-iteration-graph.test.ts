@@ -80,8 +80,57 @@ describe("iteration graph transforms", () => {
       inserted.nodes.find((candidate) => candidate.id === "agent-1"),
     ).toMatchObject({
       parentId: "iter",
-      position: { x: 96, y: 160 },
+      position: { x: 96, y: 190 },
       data: { agentConfig: { interactive: false } },
+    });
+  });
+
+  it("stacks a second entry member below a measured tall member", () => {
+    const tallMember = {
+      ...node("agent-1", "agent", { x: 96, y: 190 }, "iter"),
+      measured: { width: 230, height: 177 },
+    };
+    const inserted = insertIterationMember(
+      graph([node("iter", "iteration"), tallMember]),
+      { type: "entry", iterationId: "iter" },
+      node("condition-1", "condition"),
+    );
+
+    expect(
+      inserted.nodes.find((candidate) => candidate.id === "condition-1"),
+    ).toMatchObject({
+      parentId: "iter",
+      position: { x: 96, y: 190 + 177 + 52 },
+    });
+  });
+
+  it("clears an entry-edge insertion off the first member's row", () => {
+    const first = {
+      ...node("agent-1", "agent", { x: 96, y: 190 }, "iter"),
+      measured: { width: 230, height: 177 },
+    };
+    const inserted = insertIterationMember(
+      graph(
+        [node("iter", "iteration"), first],
+        [
+          {
+            id: "entry",
+            source: "iter",
+            sourceHandle: "iteration-entry",
+            target: "agent-1",
+            type: "workflow",
+          },
+        ],
+      ),
+      { type: "edge", iterationId: "iter", edgeId: "entry" },
+      node("agent-2", "agent"),
+    );
+
+    expect(
+      inserted.nodes.find((candidate) => candidate.id === "agent-2"),
+    ).toMatchObject({
+      parentId: "iter",
+      position: { x: 96, y: 190 + 177 + 52 },
     });
   });
 
@@ -151,6 +200,42 @@ describe("iteration graph transforms", () => {
         type: "workflow",
       },
     ]);
+  });
+
+  it("stacks a second branch append below a measured sibling", () => {
+    const source = node("condition", "condition", { x: 80, y: 160 }, "iter");
+    const firstAppend = {
+      ...node("agent-1", "agent", { x: 426, y: 160 }, "iter"),
+      measured: { width: 230, height: 161 },
+    };
+    const inserted = insertIterationMember(
+      graph(
+        [node("iter", "iteration"), source, firstAppend],
+        [
+          {
+            id: "branch-a",
+            source: "condition",
+            sourceHandle: "else",
+            target: "agent-1",
+            type: "workflow",
+          },
+        ],
+      ),
+      {
+        type: "output",
+        iterationId: "iter",
+        sourceId: "condition",
+        sourceHandle: "else",
+      },
+      node("agent-2", "agent"),
+    );
+
+    expect(
+      inserted.nodes.find((candidate) => candidate.id === "agent-2"),
+    ).toMatchObject({
+      parentId: "iter",
+      position: { x: 80 + 320 + 100, y: 160 + 161 + 52 },
+    });
   });
 
   it("expands for far members and compacts back to the minimum", () => {

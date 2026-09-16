@@ -140,7 +140,11 @@ persisted.
 
 Expanded frames keep a 560×340 minimum and persist fitted `initialWidth` / `initialHeight` values.
 They grow when members are inserted or moved, compact after deletion or automatic layout, and
-restore the same expanded size after collapse. Automatic layout arranges every region DAG
+restore the same expanded size after collapse. Because a freshly inserted card is only measured
+after it renders, the insertion-time fit re-runs when real measurements arrive, so React Flow's
+parent extent never clamps a tall member back over the region's internal affordances. New members
+stack below the measured bottom of existing members and are nudged below any card they would
+overlap, because card heights vary by kind and content. Automatic layout arranges every region DAG
 independently before laying out the outer graph with the fitted container dimensions. Deleting a
 non-empty frame confirms its member count, then removes the frame, members, and incident edges as
 one undoable edit. Deleting the current `collectSelector` target clears that selector and asks the

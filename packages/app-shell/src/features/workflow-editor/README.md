@@ -55,9 +55,13 @@ category.
   fitting so each insertion is one history/autosave operation. React Flow `extent` / `expandParent`
   are derived from persisted `parentId` only at render time. Expanded dimensions persist through
   `initialWidth` / `initialHeight`, default to 560×340 for old snapshots, grow with authored
-  members, compact after deletion or organize, and survive collapse/expand. Deleting a non-empty
-  frame confirms the member count and cascades through members and incident edges as one undoable
-  edit. The authoritative execution validation remains in the Rust graph parser.
+  members, compact after deletion or organize, and survive collapse/expand. Placements stack below
+  the measured bottom of existing members and are nudged off any card they would overlap; frames
+  re-fit when real card measurements arrive so the render-time parent extent never clamps a member
+  over the region's internal affordances. Internal-edge insert controls render above every node and
+  edge elevation React Flow computes, otherwise the edge hit target swallows their clicks. Deleting
+  a non-empty frame confirms the member count and cascades through members and incident edges as
+  one undoable edit. The authoritative execution validation remains in the Rust graph parser.
 - Collapsing the app sidebar hides the library in place; it does not remount
   the canvas, so in-memory draft edits survive.
 - Undo/redo history is scoped to the mounted draft session. Switching drafts,

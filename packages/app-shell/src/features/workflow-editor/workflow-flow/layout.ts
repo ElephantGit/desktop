@@ -6,6 +6,8 @@ import {
   type WorkflowNodeData,
 } from "@ora/workflow-mock";
 import {
+  ITERATION_MEMBER_LEFT,
+  ITERATION_MEMBER_TOP,
   compactIterationFrames,
   iterationExpandedSize,
 } from "../workflow-iteration-graph";
@@ -32,8 +34,6 @@ export function snapNodePosition(position: XYPosition): XYPosition {
 
 const WORKFLOW_LAYOUT_COLUMN_GAP = 120;
 const WORKFLOW_LAYOUT_ROW_GAP = 80;
-const ITERATION_LAYOUT_LEFT = 96;
-const ITERATION_LAYOUT_TOP = 160;
 const CONDITION_NODE_WIDTH = 320;
 
 /** Arranges each iteration DAG first, then the outer DAG using fitted container dimensions. */
@@ -54,8 +54,8 @@ export function organizeWorkflowNodes(
       (edge) => memberIds.has(edge.source) && memberIds.has(edge.target),
     );
     const positions = layoutDag(members, internalEdges, {
-      x: ITERATION_LAYOUT_LEFT,
-      y: ITERATION_LAYOUT_TOP,
+      x: ITERATION_MEMBER_LEFT,
+      y: ITERATION_MEMBER_TOP,
       centerRows: false,
     });
     arranged = arranged.map((node) =>

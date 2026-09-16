@@ -9,6 +9,7 @@ import {
 import { cn } from "@ora/ui";
 import { IterationInsertMenu } from "./iteration-actions";
 import { useWorkflowIterationActions } from "./iteration-actions-context";
+import { WORKFLOW_EDGE_CONTROL_Z_INDEX } from "./z-index";
 
 /** Draws a selectable workflow edge with an accessible hit target and optional branch label. */
 export const WorkflowFlowEdgeView = memo(function WorkflowFlowEdgeView({
@@ -86,6 +87,10 @@ export const WorkflowFlowEdgeView = memo(function WorkflowFlowEdgeView({
             className="nodrag nopan pointer-events-auto absolute"
             style={{
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+              // Edges that touch a parented member render above the node layer, so
+              // the insert control must explicitly stack above every edge and node
+              // elevation or the edge hit target swallows its clicks.
+              zIndex: WORKFLOW_EDGE_CONTROL_Z_INDEX,
             }}
           >
             <IterationInsertMenu
