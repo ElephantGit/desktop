@@ -63,6 +63,54 @@ pub enum WorkflowNodeStatus {
     Cancelled,
 }
 
+/// Lifecycle of one durable Loop round scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WorkflowScopeStatus {
+    Pending,
+    Running,
+    Succeeded,
+    Failed,
+    Cancelled,
+}
+
+impl WorkflowScopeStatus {
+    /// Returns the integer code shared with workflow node lifecycle persistence.
+    pub fn database_value(self) -> i64 {
+        match self {
+            Self::Pending => 0,
+            Self::Running => 1,
+            Self::Succeeded => 2,
+            Self::Failed => 3,
+            Self::Cancelled => 4,
+        }
+    }
+
+    /// Converts a persisted integer into a strongly typed scope status.
+    pub fn from_database_value(value: i64) -> Result<Self, DomainModelError> {
+        match value {
+            0 => Ok(Self::Pending),
+            1 => Ok(Self::Running),
+            2 => Ok(Self::Succeeded),
+            3 => Ok(Self::Failed),
+            4 => Ok(Self::Cancelled),
+            _ => Err(DomainModelError::InvalidWorkflowScopeStatus(value)),
+        }
+    }
+}
+
+/// One durable Loop round and the opaque state owned by the workflow engine.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowExecutionScope {
+    pub id: WorkflowScopeId,
+    pub run_id: WorkflowRunId,
+    pub parent_loop_node_run_id: WorkflowNodeRunId,
+    pub round_index: u32,
+    pub status: WorkflowScopeStatus,
+    pub state: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 impl WorkflowNodeStatus {
     /// Returns the integer code used by persistence adapters for this node status.
     pub fn database_value(self) -> i64 {

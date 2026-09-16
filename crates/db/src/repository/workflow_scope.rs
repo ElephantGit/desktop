@@ -1,7 +1,41 @@
 //! Transactional scope identity owned by the workflow execution repository.
 
-use ora_domain::{WorkflowRunId, WorkflowScopeId};
-use rusqlite::{Transaction, params};
+use ora_domain::{
+    WorkflowExecutionScope, WorkflowNodeRunId, WorkflowRunId, WorkflowScopeId, WorkflowScopeStatus,
+};
+use rusqlite::{Row, Transaction, params};
+
+/// Reconstructs one persisted Loop round from its typed storage columns.
+fn map_round(row: &Row<'_>) -> Result<WorkflowExecutionScope, crate::DatabaseError> {
+    let round_index = row.get::<_, i64>("round_index")?;
+    Ok(WorkflowExecutionScope {
+        id: WorkflowScopeId::new(row.get::<_, String>("id")?),
+        run_id: WorkflowRunId::new(row.get::<_, String>("run_id")?),
+        parent_loop_node_run_id: WorkflowNodeRunId::new(
+            row.get::<_, String>("parent_loop_node_run_id")?,
+        ),
+        round_index: u32::try_from(round_index)
+            .map_err(|_| crate::DatabaseError::CorruptWorkflowScopeRound(round_index))?,
+        status: WorkflowScopeStatus::from_database_value(row.get("status")?)?,
+        state: row.get("state")?,
+        created_at: row.get("created_at")?,
+        updated_at: row.get("updated_at")?,
+    })
+}
+
+/// Loads the active round guarded by the migration's single-active-round constraint.
+pub(super) fn find_active_round(
+    connection: &rusqlite::Connection,
+    parent_loop_node_run_id: &WorkflowNodeRunId,
+) -> Result<Option<WorkflowExecutionScope>, crate::DatabaseError> {
+    let mut statement = connection.prepare(
+        "SELECT id, run_id, parent_loop_node_run_id, round_index, status, state, created_at, updated_at
+         FROM workflow_execution_scopes
+         WHERE parent_loop_node_run_id = ?1 AND status IN (0, 1)",
+    )?;
+    let mut rows = statement.query(params![parent_loop_node_run_id.as_ref()])?;
+    rows.next()?.map(map_round).transpose()
+}
 
 /// Resolves the authoritative root so prepared dispatches retain their execution generation.
 pub(super) fn current_root_scope(

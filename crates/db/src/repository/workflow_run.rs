@@ -390,6 +390,26 @@ pub(super) fn list_node_runs(
     Ok(node_runs)
 }
 
+/// Lists node instances within one execution scope in stable creation order.
+pub(super) fn list_node_runs_in_scope(
+    connection: &rusqlite::Connection,
+    scope_id: &ora_domain::WorkflowScopeId,
+) -> Result<Vec<WorkflowNodeRun>, crate::DatabaseError> {
+    let mut statement = connection.prepare(
+        "SELECT id, run_id, scope_id, node_id, node_type, session_id, status, input, output, error, payload,
+                started_at, finished_at, created_at, updated_at, is_deleted
+         FROM workflow_node_runs
+         WHERE scope_id = ?1 AND is_deleted = 0
+         ORDER BY created_at, id",
+    )?;
+    let mut rows = statement.query(params![scope_id.as_ref()])?;
+    let mut node_runs = Vec::new();
+    while let Some(row) = rows.next()? {
+        node_runs.push(map_node_run_row(row)?);
+    }
+    Ok(node_runs)
+}
+
 /// Converts database failures into application-port errors.
 fn workflow_run_repository_error_from_database(error: crate::DatabaseError) -> RepositoryError {
     RepositoryError::new(error)

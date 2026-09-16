@@ -48,8 +48,8 @@ pub use workflow::{
     CreatedWorkflow, Workflow, WorkflowDetail, WorkflowSnapshot, WorkflowSummary, WorkflowVersion,
 };
 pub use workflow_run::{
-    WorkflowNodeRun, WorkflowNodeStatus, WorkflowRun, WorkflowRunDetail, WorkflowRunStatus,
-    WorkflowRunSummary,
+    WorkflowExecutionScope, WorkflowNodeRun, WorkflowNodeStatus, WorkflowRun, WorkflowRunDetail,
+    WorkflowRunStatus, WorkflowRunSummary, WorkflowScopeStatus,
 };
 pub use workspace::{
     Workspace, WorkspaceKind, WorkspaceLifecycle, WorkspaceLocation, WorkspaceProvisionerKind,

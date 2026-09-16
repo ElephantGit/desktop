@@ -35,13 +35,14 @@ pub use graph::{
 };
 pub use handlers::WorkflowRunControlHandler;
 pub use loop_config::{LoopConfig, LoopInitialValue, LoopVariable};
-pub use loop_round::{LoopRoundDecision, LoopRoundError};
+pub use loop_round::{LoopRoundDecision, LoopRoundError, LoopRoundExecutionState};
 pub use node_type::{NodeType, UnknownNodeType};
 pub use ports::{
     AdvanceWorkflowRunResult, BindWorkflowNodeSessionResult, CancelWorkflowRunResult,
-    ExecutionContext, FileChange, NodeRunToStart, RestartWorkflowRunResult,
-    StartPrerequisitesError, StartWorkflowRunResult, UpdateWorkflowRunInputResult,
-    WorkflowNodeRunIdGenerator, WorkflowRunEngineRepository, WorkflowRunWorkspaceInitializer,
+    ExecutionContext, FileChange, LoopRoundAdvance, LoopRoundToStart, NodeRunToStart,
+    RestartWorkflowRunResult, StartPrerequisitesError, StartWorkflowRunResult,
+    UpdateWorkflowRunInputResult, WorkflowNodeRunIdGenerator, WorkflowRunEngineRepository,
+    WorkflowRunWorkspaceInitializer,
 };
 pub use skill_delivery::{
     AgentSkillDelivery, AgentSkillDeliveryError, AgentSkillDeliveryProvider,

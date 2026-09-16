@@ -5,6 +5,7 @@ use super::graph::WorkflowGraph;
 use super::loop_config::{LoopConfig, LoopInitialValue};
 use super::variable_pool::{VariableSelector, WorkflowVariablePool, WorkflowVariablePoolError};
 use super::variable_value::normalize_workflow_value;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use thiserror::Error;
@@ -14,6 +15,14 @@ use thiserror::Error;
 pub enum LoopRoundDecision {
     Continue { carried: BTreeMap<String, Value> },
     Succeeded { outputs: BTreeMap<String, Value> },
+}
+
+/// Durable execution data private to one round scope.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoopRoundExecutionState {
+    pub variable_pool: WorkflowVariablePool,
+    pub condition_decisions: BTreeMap<String, String>,
 }
 
 /// Failures which must abort advancement without publishing a partially updated variable set.
