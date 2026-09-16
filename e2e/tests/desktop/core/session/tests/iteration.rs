@@ -40,7 +40,8 @@ fn graph(prompt: &str, strategy: &str, ceiling: u32) -> Value {
 /// Adds a condition whose comparison reads a declared but unassigned Start value.
 fn failing_condition_graph(strategy: &str) -> Value {
     let mut graph = graph("hello", strategy, 10);
-    graph["nodes"].as_array_mut().unwrap().push(json!({
+    let nodes = graph_array(&mut graph, "nodes");
+    nodes.push(json!({
         "id":"gate","parentId":"iter","data":{"kind":"condition","cases":[
             {"id":"yes","logic":"and","conditions":[
                 {"variableSelector":["start","unset"],"operator":"equals","value":"x"}
@@ -48,10 +49,18 @@ fn failing_condition_graph(strategy: &str) -> Value {
         ]}
     }));
     graph["edges"][1]["target"] = json!("gate");
-    graph["edges"].as_array_mut().unwrap().push(json!({
+    graph_array(&mut graph, "edges").push(json!({
         "source":"gate","sourceHandle":"yes","target":"body"
     }));
     graph
+}
+
+/// Returns a required graph array while preserving a useful fixture failure message.
+fn graph_array<'a>(graph: &'a mut Value, field: &str) -> &'a mut Vec<Value> {
+    let Some(array) = graph.get_mut(field).and_then(Value::as_array_mut) else {
+        panic!("iteration fixture graph field `{field}` must be an array");
+    };
+    array
 }
 
 /// Runs one graph through the real Backend and fake ACP plugin, then checks its terminal state.
