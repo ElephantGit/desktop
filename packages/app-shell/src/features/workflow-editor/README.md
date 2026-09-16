@@ -47,6 +47,22 @@ category.
   can be exposed when its runtime support is implemented.
 - Collapsing the app sidebar hides the library in place; it does not remount
   the canvas, so in-memory draft edits survive.
+- The + beside the library title opens a menu with New workflow (Ctrl/Cmd+N still opens it
+  directly) and Import workflow; an empty library offers both actions inline.
+- Import runs in one dialog with three steps: a drop zone / file picker, a preview, or a
+  failure explanation (invalid JSON with line and column, missing name or graph, unknown
+  node kind, or a file larger than 5 MB). Nothing is persisted before confirmation. The
+  preview resolves MCP/Skill references against the installed catalogs; missing or
+  unavailable plugins warn but never block. Install on a missing MCP or Skill opens the plugin
+  marketplace with its identity searched; an MCP with incomplete or unreadable
+  configuration opens its configuration editor under Manage plugins, an MCP with an invalid
+  declaration opens Manage plugins, and an unusable Skill opens the Skills page. Users may create a draft
+  only or publish with an editable version, and the new row is marked for the session.
+- Export offers the live draft or any published version, lists each recorded plugin
+  reference with its enabled state, and previews the exact file content. Files record
+  plugin identities and enabled flags only, never packages, secrets, or plugin
+  configuration. A published version is embedded in the default filename so re-import
+  proposes it again.
 - Undo/redo history is scoped to the mounted draft session. Switching drafts,
   activating a version, or leaving the editor clears it; autosave and published
   version history are independent.

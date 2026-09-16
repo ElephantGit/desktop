@@ -31,6 +31,15 @@ export type DeleteTarget =
 
 export const UI_STORAGE_KEY = "ora.ui.v1";
 
+/**
+ * A one-shot destination inside the plugins pane requested by another surface: a
+ * marketplace search, the installed-plugin manager, or one plugin's configuration editor.
+ */
+export type PluginSettingsRequest =
+  | { kind: "marketplaceSearch"; query: string }
+  | { kind: "manage" }
+  | { kind: "configure"; pluginId: string; displayName: string };
+
 /** The settings categories the dialog can be asked to open on. */
 export type SettingsCategory =
   | "appearance"
@@ -54,6 +63,14 @@ interface UiState {
   setSettingsCategory(category: SettingsCategory): void;
   /** Requests the category the settings dialog should open on, and opens it. */
   openSettingsAt(category: SettingsCategory): void;
+  /**
+   * Pending deep link into the plugins pane (for example from a workflow dependency).
+   * The pane adopts it on mount and clears it, so later visits start from the default view.
+   */
+  pluginSettingsRequest: PluginSettingsRequest | null;
+  /** Opens Settings on the plugins pane at the requested destination. */
+  openPluginSettings(request: PluginSettingsRequest): void;
+  clearPluginSettingsRequest(): void;
   /** First-class workflow definition editor; session-only, not persisted. */
   workflowEditorOpen: boolean;
   expandedProjects: Set<string>;
@@ -171,6 +188,7 @@ export const useUiStore = create<UiState>()(
       sidebarCollapsed: initialPersist.sidebarCollapsed,
       settingsOpen: false,
       settingsCategory: "appearance",
+      pluginSettingsRequest: null,
       workflowEditorOpen: false,
       expandedProjects: initialPersist.expandedProjects,
       expandedTasks: initialPersist.expandedTasks,
@@ -182,6 +200,13 @@ export const useUiStore = create<UiState>()(
       setSettingsCategory: (settingsCategory) => set({ settingsCategory }),
       openSettingsAt: (settingsCategory) =>
         set({ settingsOpen: true, settingsCategory }),
+      openPluginSettings: (pluginSettingsRequest) =>
+        set({
+          settingsOpen: true,
+          settingsCategory: "plugins",
+          pluginSettingsRequest,
+        }),
+      clearPluginSettingsRequest: () => set({ pluginSettingsRequest: null }),
       setWorkflowEditorOpen: (workflowEditorOpen) =>
         set({ workflowEditorOpen }),
       toggleProjectExpand: (projectId) =>
