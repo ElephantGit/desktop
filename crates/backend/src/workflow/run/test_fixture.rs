@@ -3,10 +3,12 @@
 use super::interactive::CompletingNodeRuns;
 use crate::git_cleanup::KeyedResourceLocks;
 use ora_application::{
-    Clock, ExecutionContext, NodeExecutor, ProjectRepository, SessionRepository, WorkflowGraphNode,
-    WorkflowNodeRunIdGenerator, WorkflowRepository, WorkflowRunEngine, WorkflowRunEngineRepository,
-    WorkflowRunRepository,
+    Clock, ExecutionContext, NodeExecutor, ProjectRepository, SessionRepository,
+    SkillMaterializationReceipt, WorkflowGraph, WorkflowGraphNode, WorkflowNodeRunIdGenerator,
+    WorkflowRepository, WorkflowRunEngine, WorkflowRunEngineRepository, WorkflowRunPayload,
+    WorkflowRunRepository, WorkflowVariablePool,
 };
+use ora_contracts::WorkflowRunLocale;
 use ora_db::{
     DatabaseBootstrapper, DatabaseLocation, SqliteProjectRepository, SqliteSessionRepository,
     SqliteWorkflowRepository, SqliteWorkflowRunRepository, SqliteWorkspaceRepository,
@@ -42,7 +44,10 @@ impl NodeExecutor for NoopExecutor {
         &self,
         _node_run_id: &WorkflowNodeRunId,
         _node: &WorkflowGraphNode,
+        _graph: &WorkflowGraph,
         _context: &ExecutionContext,
+        _scope_id: &ora_domain::WorkflowScopeId,
+        _variable_pool: &ora_application::WorkflowVariablePool,
     ) {
     }
 }
@@ -155,6 +160,13 @@ pub(crate) fn started_run(
         ))
         .unwrap();
     let run_id = WorkflowRunId::new("run-1");
+    let parsed_graph = WorkflowGraph::parse(graph).unwrap();
+    let payload = WorkflowRunPayload::with_variable_pool(
+        WorkflowRunLocale::EnUs,
+        SkillMaterializationReceipt::default(),
+        parsed_graph.start_node().map(|node| node.id.clone()),
+        WorkflowVariablePool::from_graph(&parsed_graph),
+    );
     let run = WorkflowRun::new(
         run_id.clone(),
         workspace.id,
@@ -166,7 +178,7 @@ pub(crate) fn started_run(
         Some("kickoff".to_string()),
         None,
         None,
-        None,
+        Some(serde_json::to_string(&payload).unwrap()),
         None,
         None,
         AuditFields::new(30, 30, false),

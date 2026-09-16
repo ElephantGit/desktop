@@ -887,7 +887,7 @@ fn node_type_rejects_unknown_values() {
 }
 
 #[test]
-fn node_type_reports_the_v1_supported_set() {
+fn node_type_reports_the_supported_set() {
     let supported: Vec<&str> = [
         NodeType::Start,
         NodeType::Agent,
@@ -901,5 +901,8 @@ fn node_type_reports_the_v1_supported_set() {
     .filter(|node_type| node_type.supported())
     .map(|node_type| node_type.as_str())
     .collect();
-    assert_eq!(supported, vec!["start", "agent", "condition", "output"]);
+    assert_eq!(
+        supported,
+        vec!["start", "agent", "condition", "output", "loop"]
+    );
 }

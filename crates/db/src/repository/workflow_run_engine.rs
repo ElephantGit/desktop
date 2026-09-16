@@ -456,19 +456,10 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                     params![scope_id.as_ref()],
                     |row| row.get::<_, bool>(0),
                 )?;
-                if active_children {
+                if active_children && !matches!(advance, LoopRoundAdvance::Fail { .. }) {
                     return Ok(AdvanceWorkflowRunResult::NotRunning);
                 }
 
-                transaction.execute(
-                    "UPDATE workflow_execution_scopes SET status = ?2, updated_at = ?3
-                     WHERE id = ?1 AND status = 1",
-                    params![
-                        scope_id.as_ref(),
-                        WorkflowScopeStatus::Succeeded.database_value(),
-                        now,
-                    ],
-                )?;
                 match advance {
                     LoopRoundAdvance::Continue { next } => {
                         if next.parent_loop_node_run_id.as_ref() != parent_run_id
@@ -476,6 +467,12 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                         {
                             return Err(crate::DatabaseError::IncompleteWorkflowRunContext);
                         }
+                        settle_loop_scope(
+                            &transaction,
+                            scope_id,
+                            WorkflowScopeStatus::Succeeded,
+                            now,
+                        )?;
                         transaction.execute(
                             "INSERT INTO workflow_execution_scopes
                              (id, run_id, parent_loop_node_run_id, round_index, status, state, created_at, updated_at)
@@ -498,6 +495,12 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                         )?;
                     }
                     LoopRoundAdvance::Succeed { outputs } => {
+                        settle_loop_scope(
+                            &transaction,
+                            scope_id,
+                            WorkflowScopeStatus::Succeeded,
+                            now,
+                        )?;
                         let mut payload = run_payload
                             .as_deref()
                             .map(serde_json::from_str::<WorkflowRunPayload>)
@@ -533,6 +536,47 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                             &WorkflowRunId::new(run_id),
                             now,
                             |current_nodes| current_nodes.retain(|id| id != &parent_node_id),
+                        )?;
+                    }
+                    LoopRoundAdvance::Fail { error } => {
+                        transaction.execute(
+                            "UPDATE workflow_node_runs SET status = ?2, error = ?3,
+                                    finished_at = ?4, updated_at = ?4
+                             WHERE scope_id = ?1 AND status IN (0, 1) AND is_deleted = 0",
+                            params![
+                                scope_id.as_ref(),
+                                WorkflowNodeStatus::Failed.database_value(),
+                                error,
+                                now,
+                            ],
+                        )?;
+                        settle_loop_scope(
+                            &transaction,
+                            scope_id,
+                            WorkflowScopeStatus::Failed,
+                            now,
+                        )?;
+                        transaction.execute(
+                            "UPDATE workflow_node_runs SET status = ?2, error = ?3,
+                                    finished_at = ?4, updated_at = ?4
+                             WHERE id = ?1 AND status = 1 AND is_deleted = 0",
+                            params![
+                                &parent_run_id,
+                                WorkflowNodeStatus::Failed.database_value(),
+                                error,
+                                now,
+                            ],
+                        )?;
+                        transaction.execute(
+                            "UPDATE workflow_runs SET run_status = ?2, error = ?3,
+                                    finished_at = ?4, updated_at = ?4
+                             WHERE id = ?1 AND run_status = 1 AND is_deleted = 0",
+                            params![
+                                &run_id,
+                                WorkflowRunStatus::Failed.database_value(),
+                                error,
+                                now,
+                            ],
                         )?;
                     }
                 }
@@ -804,6 +848,16 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                      WHERE run_id = ?1 AND status IN (0, 1) AND is_deleted = 0",
                     params![run_id.as_ref(), WorkflowNodeStatus::Cancelled.database_value(), now],
                 )?;
+                transaction.execute(
+                    "UPDATE workflow_execution_scopes SET status = ?2, updated_at = ?3
+                     WHERE run_id = ?1 AND parent_loop_node_run_id IS NOT NULL
+                       AND status IN (0, 1)",
+                    params![
+                        run_id.as_ref(),
+                        WorkflowScopeStatus::Cancelled.database_value(),
+                        now,
+                    ],
+                )?;
                 let state = current_nodes_to_state(&[])?;
                 transaction.execute(
                     "UPDATE workflow_runs SET run_status = ?2, finished_at = ?3, updated_at = ?3, state = ?4
@@ -989,6 +1043,16 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                             run_id.as_ref(),
                             WorkflowNodeStatus::Failed.database_value(),
                             INTERRUPTED_BY_RESTART,
+                            now,
+                        ],
+                    )?;
+                    transaction.execute(
+                        "UPDATE workflow_execution_scopes SET status = ?2, updated_at = ?3
+                         WHERE run_id = ?1 AND parent_loop_node_run_id IS NOT NULL
+                           AND status IN (0, 1)",
+                        params![
+                            run_id.as_ref(),
+                            WorkflowScopeStatus::Failed.database_value(),
                             now,
                         ],
                     )?;
@@ -1411,6 +1475,21 @@ fn rewrite_current_nodes(
             current_nodes_to_state(&current_nodes)?,
             now
         ],
+    )?;
+    Ok(())
+}
+
+/// Moves one active Loop scope to its terminal status within a larger advancement transaction.
+fn settle_loop_scope(
+    transaction: &Transaction<'_>,
+    scope_id: &WorkflowScopeId,
+    status: WorkflowScopeStatus,
+    now: i64,
+) -> Result<(), rusqlite::Error> {
+    transaction.execute(
+        "UPDATE workflow_execution_scopes SET status = ?2, updated_at = ?3
+         WHERE id = ?1 AND status = 1",
+        params![scope_id.as_ref(), status.database_value(), now],
     )?;
     Ok(())
 }

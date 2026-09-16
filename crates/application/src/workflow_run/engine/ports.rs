@@ -63,12 +63,19 @@ pub enum LoopRoundAdvance {
     Succeed {
         outputs: BTreeMap<String, serde_json::Value>,
     },
+    /// Terminates the current round, parent Loop, and root run with one durable error.
+    Fail { error: String },
 }
 
 /// Supplies new node-run identifiers for the engine's scheduling waves.
 pub trait WorkflowNodeRunIdGenerator {
     /// Produces the identifier for a newly created node run.
     fn generate_node_run_id(&self) -> WorkflowNodeRunId;
+
+    /// Produces a distinct identity for a newly-created execution scope.
+    fn generate_scope_id(&self) -> WorkflowScopeId {
+        WorkflowScopeId::new(format!("scope:{}", self.generate_node_run_id()))
+    }
 }
 
 /// Failures raised while setting up a run workspace's initial state at deploy time.

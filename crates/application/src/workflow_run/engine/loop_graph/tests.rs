@@ -43,6 +43,10 @@ fn partitions_round_topology() {
     );
     assert_eq!(graph.node("writer"), None);
     assert_eq!(
+        graph.execution_node("writer").map(|node| node.id.as_str()),
+        Some("writer")
+    );
+    assert_eq!(
         body.start_node().map(|node| node.id.as_str()),
         Some("entry")
     );
@@ -196,9 +200,6 @@ fn accepts_iteration_bounds_without_enabling_execution() {
         value["nodes"][1]["data"]["loopConfig"]["maxIterations"] = json!(limit);
         let graph = WorkflowGraph::parse(&value.to_string()).unwrap();
         assert_eq!(graph.loop_body("loop").unwrap().0.max_iterations, limit);
-        assert_eq!(
-            graph.first_unsupported_node().map(|node| node.node_type),
-            Some(NodeType::Loop)
-        );
+        assert_eq!(graph.first_unsupported_node(), None);
     }
 }

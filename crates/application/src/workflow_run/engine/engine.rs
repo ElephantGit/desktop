@@ -6,12 +6,16 @@ use crate::workflow_run::engine::graph::{GraphError, WorkflowGraph, WorkflowGrap
 use crate::workflow_run::engine::node_type::NodeType;
 use crate::workflow_run::engine::ports::{
     AdvanceWorkflowRunResult, CancelWorkflowRunResult, ExecutionContext, FileChange,
-    NodeRunToStart, RestartWorkflowRunResult, StartWorkflowRunResult, UpdateWorkflowRunInputResult,
-    WorkflowNodeRunIdGenerator, WorkflowRunEngineRepository,
+    LoopRoundAdvance, LoopRoundToStart, NodeRunToStart, RestartWorkflowRunResult,
+    StartWorkflowRunResult, UpdateWorkflowRunInputResult, WorkflowNodeRunIdGenerator,
+    WorkflowRunEngineRepository,
 };
 use crate::workflow_run::engine::skill_delivery::WorkflowRunPayload;
 use crate::workflow_run::engine::variable_pool::WorkflowVariablePool;
-use ora_domain::{WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunId};
+use crate::workflow_run::engine::{LoopRoundDecision, LoopRoundExecutionState};
+use ora_domain::{
+    WorkflowExecutionScope, WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunId,
+};
 use std::collections::HashSet;
 use thiserror::Error;
 
@@ -26,7 +30,10 @@ pub trait NodeExecutor {
         &self,
         node_run_id: &WorkflowNodeRunId,
         node: &WorkflowGraphNode,
+        graph: &WorkflowGraph,
         context: &ExecutionContext,
+        scope_id: &ora_domain::WorkflowScopeId,
+        variable_pool: &WorkflowVariablePool,
     );
 }
 
@@ -57,6 +64,12 @@ pub trait WorkflowRunCallback: Send + Sync {
         error: String,
         output: Option<String>,
     );
+}
+
+/// Result of one scheduling pass inside a running Loop container.
+enum LoopScheduleOutcome {
+    Progressed,
+    Waiting,
 }
 
 /// Structural validation failures raised when starting a workflow run.
@@ -96,6 +109,8 @@ pub enum EngineError {
     Validation(#[from] WorkflowValidationError),
     #[error("workflow run repository operation failed")]
     Repository(#[from] RepositoryError),
+    #[error("workflow Loop state cannot be serialized: {message}")]
+    LoopState { message: String },
 }
 
 /// Drives one workflow run through start/cancel/restart and the reactive DAG scheduler.
@@ -359,6 +374,12 @@ where
                             }
                         }
                     }
+                    NodeType::Loop => match self
+                        .run_loop_schedule(run_id, &context, &graph, node_run, &pool, now)?
+                    {
+                        LoopScheduleOutcome::Progressed => completed_control = true,
+                        LoopScheduleOutcome::Waiting => {}
+                    },
                     _ => {}
                 }
             }
@@ -398,10 +419,253 @@ where
             // Control nodes complete on the next loop iteration; agent nodes dispatch now.
             for (node, node_run) in ready.iter().zip(ready_runs.iter()) {
                 if node.node_type == NodeType::Agent {
-                    self.node_executor.dispatch(&node_run.id, node, &context);
+                    self.node_executor.dispatch(
+                        &node_run.id,
+                        node,
+                        &graph,
+                        &context,
+                        &context.root_scope_id,
+                        &pool,
+                    );
                 }
             }
         }
+    }
+
+    /// Runs one isolated scheduling pass for a Loop parent and its active round.
+    fn run_loop_schedule(
+        &self,
+        run_id: &WorkflowRunId,
+        context: &ExecutionContext,
+        graph: &WorkflowGraph,
+        loop_node_run: &WorkflowNodeRun,
+        outer_pool: &WorkflowVariablePool,
+        now: i64,
+    ) -> Result<LoopScheduleOutcome, EngineError> {
+        let Some((config, body)) = graph.loop_body(&loop_node_run.node_id) else {
+            self.repository.fail_node(
+                &loop_node_run.id,
+                format!("Loop {} has no executable body", loop_node_run.node_id),
+                None,
+                now,
+            )?;
+            return Ok(LoopScheduleOutcome::Progressed);
+        };
+        let Some(scope) = self.repository.find_active_loop_round(&loop_node_run.id)? else {
+            let carried = match config.initialize_carried(outer_pool) {
+                Ok(carried) => carried,
+                Err(error) => {
+                    self.repository
+                        .fail_node(&loop_node_run.id, error.to_string(), None, now)?;
+                    return Ok(LoopScheduleOutcome::Progressed);
+                }
+            };
+            let round_pool =
+                match graph.loop_round_pool(&loop_node_run.node_id, outer_pool, &carried) {
+                    Ok(pool) => pool,
+                    Err(error) => {
+                        self.repository.fail_node(
+                            &loop_node_run.id,
+                            error.to_string(),
+                            None,
+                            now,
+                        )?;
+                        return Ok(LoopScheduleOutcome::Progressed);
+                    }
+                };
+            let round = self.prepare_loop_round(loop_node_run, body, 1, round_pool)?;
+            self.repository.start_loop_round(run_id, &round, now)?;
+            return Ok(LoopScheduleOutcome::Progressed);
+        };
+
+        let state = match serde_json::from_str::<LoopRoundExecutionState>(&scope.state) {
+            Ok(state) => state,
+            Err(error) => {
+                self.repository.advance_loop_round(
+                    &scope.id,
+                    &LoopRoundAdvance::Fail {
+                        error: format!("Loop round state is invalid: {error}"),
+                    },
+                    now,
+                )?;
+                return Ok(LoopScheduleOutcome::Progressed);
+            }
+        };
+        let node_runs = self.repository.list_node_runs_in_scope(&scope.id)?;
+        if self.complete_loop_controls(&scope, body, context, &state, &node_runs, now)? {
+            return Ok(LoopScheduleOutcome::Progressed);
+        }
+
+        let node_runs = self.repository.list_node_runs_in_scope(&scope.id)?;
+        let projection = BranchProjection::new(body, &node_runs, &state.condition_decisions);
+        let ready = projection.ready_nodes();
+        if !ready.is_empty() {
+            let ready_runs: Vec<NodeRunToStart> = ready
+                .iter()
+                .map(|node| NodeRunToStart {
+                    id: self.node_run_id_generator.generate_node_run_id(),
+                    scope_id: scope.id.clone(),
+                    node_id: node.id.clone(),
+                    node_type: node.node_type.as_str().to_string(),
+                    input: None,
+                })
+                .collect();
+            self.repository
+                .start_scope_ready_nodes(&scope.id, &ready_runs, now)?;
+            for (node, node_run) in ready.iter().zip(&ready_runs) {
+                if node.node_type == NodeType::Agent {
+                    self.node_executor.dispatch(
+                        &node_run.id,
+                        node,
+                        body,
+                        context,
+                        &scope.id,
+                        &state.variable_pool,
+                    );
+                }
+            }
+            return Ok(LoopScheduleOutcome::Progressed);
+        }
+        if projection.has_in_flight() {
+            return Ok(LoopScheduleOutcome::Waiting);
+        }
+
+        let advance = match config.complete_round(scope.round_index, &state.variable_pool) {
+            Ok(LoopRoundDecision::Continue { carried }) => {
+                let next_pool =
+                    match graph.loop_round_pool(&loop_node_run.node_id, outer_pool, &carried) {
+                        Ok(pool) => pool,
+                        Err(error) => {
+                            return self.fail_loop_round(&scope, error.to_string(), now);
+                        }
+                    };
+                LoopRoundAdvance::Continue {
+                    next: self.prepare_loop_round(
+                        loop_node_run,
+                        body,
+                        scope.round_index + 1,
+                        next_pool,
+                    )?,
+                }
+            }
+            Ok(LoopRoundDecision::Succeeded { outputs }) => LoopRoundAdvance::Succeed { outputs },
+            Err(error) => return self.fail_loop_round(&scope, error.to_string(), now),
+        };
+        self.repository
+            .advance_loop_round(&scope.id, &advance, now)?;
+        Ok(LoopScheduleOutcome::Progressed)
+    }
+
+    /// Constructs the durable round state and child Start node for one new iteration.
+    fn prepare_loop_round(
+        &self,
+        loop_node_run: &WorkflowNodeRun,
+        body: &WorkflowGraph,
+        round_index: u32,
+        variable_pool: WorkflowVariablePool,
+    ) -> Result<LoopRoundToStart, EngineError> {
+        let start = body
+            .start_node()
+            .ok_or(WorkflowValidationError::MissingStartNode)?;
+        let scope_id = self.node_run_id_generator.generate_scope_id();
+        let state = serde_json::to_string(&LoopRoundExecutionState {
+            variable_pool,
+            condition_decisions: Default::default(),
+        })
+        .map_err(|error| EngineError::LoopState {
+            message: error.to_string(),
+        })?;
+        Ok(LoopRoundToStart {
+            id: scope_id.clone(),
+            parent_loop_node_run_id: loop_node_run.id.clone(),
+            round_index,
+            state,
+            start_node_run: NodeRunToStart {
+                id: self.node_run_id_generator.generate_node_run_id(),
+                scope_id,
+                node_id: start.id.clone(),
+                node_type: start.node_type.as_str().to_string(),
+                input: None,
+            },
+        })
+    }
+
+    /// Completes child control nodes against the current round pool before branch projection.
+    fn complete_loop_controls(
+        &self,
+        scope: &WorkflowExecutionScope,
+        body: &WorkflowGraph,
+        context: &ExecutionContext,
+        state: &LoopRoundExecutionState,
+        node_runs: &[WorkflowNodeRun],
+        now: i64,
+    ) -> Result<bool, EngineError> {
+        let mut progressed = false;
+        for node_run in node_runs
+            .iter()
+            .filter(|node_run| node_run.status == WorkflowNodeStatus::Running)
+        {
+            let Some(node) = body.node(&node_run.node_id) else {
+                continue;
+            };
+            let outcome = match node.node_type {
+                NodeType::Start => Some(Ok(String::new())),
+                NodeType::Output => {
+                    let duplicate = node_runs.iter().find(|candidate| {
+                        candidate.id != node_run.id
+                            && candidate.node_type == "output"
+                            && candidate.status == WorkflowNodeStatus::Succeeded
+                    });
+                    if let Some(previous) = duplicate {
+                        Some(Err(format!(
+                            "multiple active output nodes in Loop round {}: {} and {}",
+                            scope.round_index, previous.node_id, node.id
+                        )))
+                    } else {
+                        Some(control_node_output(node, context, &state.variable_pool))
+                    }
+                }
+                NodeType::Condition => Some(
+                    node.condition_config
+                        .as_ref()
+                        .map(|config| evaluate_condition(config, &state.variable_pool))
+                        .unwrap_or_else(|| Err(ConditionError::MissingConfig))
+                        .map_err(|error| error.to_string()),
+                ),
+                NodeType::Agent | NodeType::Prompt | NodeType::Tool | NodeType::Loop => None,
+            };
+            match outcome {
+                Some(Ok(output)) => {
+                    self.repository.complete_node(
+                        &node_run.id,
+                        Some(output),
+                        None,
+                        None,
+                        Vec::new(),
+                        now,
+                    )?;
+                    progressed = true;
+                }
+                Some(Err(error)) => {
+                    self.repository.fail_node(&node_run.id, error, None, now)?;
+                    return Ok(true);
+                }
+                None => {}
+            }
+        }
+        Ok(progressed)
+    }
+
+    /// Persists a drained round decision failure without leaving its parent Loop active.
+    fn fail_loop_round(
+        &self,
+        scope: &WorkflowExecutionScope,
+        error: String,
+        now: i64,
+    ) -> Result<LoopScheduleOutcome, EngineError> {
+        self.repository
+            .advance_loop_round(&scope.id, &LoopRoundAdvance::Fail { error }, now)?;
+        Ok(LoopScheduleOutcome::Progressed)
     }
 
     /// Loads the execution context or reports the run as missing.
@@ -533,6 +797,11 @@ fn validate_executable_graph(graph: &WorkflowGraph) -> Result<(), WorkflowValida
                             });
                         }
                     }
+                }
+            }
+            NodeType::Loop => {
+                if let Some((_, body)) = graph.loop_body(&node.id) {
+                    validate_executable_graph(body)?;
                 }
             }
             _ => {}
