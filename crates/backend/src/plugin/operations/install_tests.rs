@@ -8,8 +8,9 @@ use crate::plugin::PluginApi;
 use crate::plugin::pack_reconcile::PackMemberReconciliation;
 use crate::settings::Settings;
 use ora_contracts::{
-    ImportPluginRequest, InstallOutcome, ListInstalledPluginsRequest, PackInstalledMember,
-    PackMemberInstallOutcome, PluginDataDisposition, PublicError, UninstallPluginRequest,
+    ImportPluginRequest, InstallOutcome, ListInstalledPluginsRequest, PackInstallFailure,
+    PackInstalledMember, PackMemberInstallOutcome, PluginDataDisposition, PublicError,
+    UninstallPluginRequest,
 };
 use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
 use ora_logging::with_trace_logging;
@@ -20,6 +21,7 @@ use pretty_assertions::assert_eq;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use tempfile::TempDir;
 use zip::ZipWriter;
@@ -240,20 +242,23 @@ const PACK_IDENTIFIER: &str = "ora-space.python-extension-pack";
 
 /// Substitutes only the transfer leg: each member's HTTPS locator is replaced by its locally
 /// built artifact (the same substitution the RTK E2E uses), keeping digest verification on the
-/// production path.
+/// production path. Members without a staged artifact keep their marketplace release, which
+/// fails at download under the local downloader — exactly the failure shape some tests need.
 fn with_local_releases(
     fixture: &PackFixture,
     mut preflight: crate::plugin::pack::PackPreflight,
 ) -> crate::plugin::pack::PackPreflight {
     for member in preflight.applicable_mut() {
-        let artifact = fixture.member_artifacts[member.plugin_id.name()].clone();
+        let Some(artifact) = fixture.member_artifacts.get(member.plugin_id.name()) else {
+            continue;
+        };
         let digest = *ora_plugin_manifest::Sha256Digest::parse(
-            &ora_utils::hash::sha256_file(&artifact).expect("hash artifact"),
+            &ora_utils::hash::sha256_file(artifact).expect("hash artifact"),
         )
         .expect("digest")
         .as_bytes();
         member.release = ResolvedReleaseSource::universal(
-            ora_utils::http::DownloadSource::Local(artifact),
+            ora_utils::http::DownloadSource::Local(artifact.clone()),
             digest,
         );
     }
@@ -1004,10 +1009,49 @@ async fn pack_install_applies_an_agent_gated_member_whose_agent_is_installed() {
     }
 }
 
-/// A member that fails mid-run stops the pack: completed members are kept and reported, the
-/// remaining members are not attempted, and the failure is identifiable inside an `Ok` outcome.
+/// Holds one data directory open from a background process so directory replacement fails on
+/// Windows, and terminates the whole process tree on drop or explicit release.
+struct DirectoryHolder {
+    child: std::process::Child,
+}
+
+impl DirectoryHolder {
+    /// Spawns a background process whose working directory pins `directory`.
+    fn spawn_holding(directory: &Path) -> Self {
+        let child = Command::new("cmd")
+            .args(["/c", "ping", "-n", "30", "127.0.0.1"])
+            .current_dir(directory)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn the directory holder");
+        Self { child }
+    }
+
+    /// Terminates the holding process tree so the pinned directory becomes replaceable.
+    fn release(&mut self) {
+        let _ = Command::new("taskkill")
+            .args(["/F", "/T", "/PID", &self.child.id().to_string()])
+            .output();
+        let _ = self.child.wait();
+    }
+}
+
+impl Drop for DirectoryHolder {
+    fn drop(&mut self) {
+        let _ = Command::new("taskkill")
+            .args(["/F", "/T", "/PID", &self.child.id().to_string()])
+            .output();
+        let _ = self.child.wait();
+    }
+}
+
+/// A member that fails mid-run stops the pack and triggers the transactional rollback (D3-D):
+/// the members created before the failure are removed in reverse order, the failed member never
+/// lands, and the journal restores to its pre-run facts. This test pins the two-member shape of
+/// that behavior; the deep rollback coverage lives in the D3-D tests below.
 #[tokio::test]
-async fn pack_install_stops_at_a_failing_member_without_rolling_back() {
+async fn pack_install_stops_at_a_failing_member_and_rolls_back_created_members() {
     let _trace = trace_guard();
     let data_dir = TempDir::new().expect("data dir");
     let pool = test_pool(data_dir.path());
@@ -1056,23 +1100,23 @@ async fn pack_install_stops_at_a_failing_member_without_rolling_back() {
             skipped,
             failed,
         } => {
-            assert_eq!(
-                members
-                    .iter()
-                    .map(|member| member.plugin_id.as_str())
-                    .collect::<Vec<_>>(),
-                vec![format!("official/{HIDDEN_MEMBER}")],
-                "the member that landed before the failure is kept and reported"
+            assert!(
+                members.is_empty(),
+                "the member that landed before the failure is rolled back"
             );
             assert!(skipped.is_empty());
             let failed = failed.expect("the failed member is identified");
             assert_eq!(failed.plugin_id, format!("official/{VISIBLE_MEMBER}"));
             assert!(!failed.error_code.is_empty());
+            assert!(
+                failed.rollback_failures.is_empty(),
+                "the rollback of a single created member succeeds"
+            );
         }
         other => panic!("expected a pack outcome, got {other:?}"),
     }
     assert!(
-        data_dir
+        !data_dir
             .path()
             .join("plugins")
             .join("installed")
@@ -1080,8 +1124,10 @@ async fn pack_install_stops_at_a_failing_member_without_rolling_back() {
             .join(HIDDEN_MEMBER)
             .join("1.0.0")
             .is_dir(),
-        "the completed member is not rolled back"
+        "the completed member is rolled back (D3-D transactional semantics)"
     );
+    assert_eq!(ledger.rollback_failed(), Vec::<String>::new());
+    assert_eq!(ledger.installed(), &[]);
 }
 
 /// Two Hook packages that share a command alias both stay installed; the second import reports
@@ -1679,5 +1725,968 @@ async fn a_failed_member_uninstall_keeps_the_journal_and_a_retry_completes() {
             .expect("load the journal after retry")
             .is_none(),
         "the retry clears the journal"
+    );
+}
+/// A member that fails after earlier members landed is rolled back: the created member is
+/// removed, the failed member never landed, and the journal restores to its pre-run facts.
+#[tokio::test]
+async fn rollback_removes_created_members_when_a_later_member_fails() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let host = pack_test_host(data_dir.path(), &pool);
+    let fixture = stage_pack_fixture(
+        data_dir.path(),
+        &format!(
+            "{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(VISIBLE_MEMBER)
+        ),
+    );
+    // Corrupt the second member's archive so its extraction fails after the first member has
+    // already landed.
+    std::fs::write(
+        fixture.member_artifacts[VISIBLE_MEMBER].as_path(),
+        b"corrupted bytes",
+    )
+    .expect("corrupt the visible artifact");
+    let namespace = ora_domain::PluginNamespace::official();
+    let source = ora_plugin_registry::RegistrySource::new(
+        "https://github.com/ora-space/marketplace",
+        namespace.clone(),
+        gitlancer::BranchName::new("main"),
+        data_dir
+            .path()
+            .join("plugins")
+            .join("sources")
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace"),
+    );
+    let preflight = host
+        .preflight_pack(&fixture.pack_manifest, &namespace, &source)
+        .expect("pack preflight succeeds");
+    let installer = Installer::new(ora_utils::http::LocalFileDownloader);
+    let preflight = with_local_releases(&fixture, preflight);
+    let (outcome, ledger) = host
+        .install_members(&namespace, preflight, &installer, /*progress*/ None)
+        .await
+        .expect("the failure is reported inside the pack outcome");
+
+    assert_eq!(
+        outcome,
+        InstallOutcome::PackInstalled {
+            members: Vec::new(),
+            skipped: Vec::new(),
+            failed: Some(PackInstallFailure {
+                plugin_id: format!("official/{VISIBLE_MEMBER}"),
+                error_code: "internal_error".to_string(),
+                rollback_failures: Vec::new(),
+            }),
+        }
+    );
+    assert!(
+        !member_installed(data_dir.path(), HIDDEN_MEMBER, "1.0.0"),
+        "the created member is rolled back"
+    );
+    assert!(
+        !member_installed(data_dir.path(), VISIBLE_MEMBER, "1.0.0"),
+        "the failed member never landed"
+    );
+    // A fully rolled-back run restores the journal to its pre-run facts: nothing is recorded.
+    assert!(
+        host.pack_installation(PACK_ID)
+            .expect("load the journal")
+            .is_none(),
+        "the journal stays empty after a complete rollback"
+    );
+    assert_eq!(ledger.rollback_failed(), Vec::<String>::new());
+}
+
+/// The rollback never touches pre-existing members: only members created by the failed run are
+/// removed, and the journal gains no phantom pre-existing relationships.
+#[tokio::test]
+async fn rollback_never_touches_pre_existing_members() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let host = pack_test_host(data_dir.path(), &pool);
+    const THIRD_MEMBER: &str = "ora-space.third-tools";
+    // The visible member is pre-existing; the third member's archive is corrupted so its
+    // install fails after the hidden member has landed.
+    install_member_version(data_dir.path(), VISIBLE_MEMBER, "1.0.0").await;
+    let fixture = stage_pack_fixture(
+        data_dir.path(),
+        &format!(
+            "{}{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(VISIBLE_MEMBER),
+            member_table(THIRD_MEMBER)
+        ),
+    );
+    stage_listing(
+        &data_dir
+            .path()
+            .join("plugins")
+            .join("sources")
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace"),
+        THIRD_MEMBER,
+        &skill_listing(THIRD_MEMBER, "cd".repeat(32).as_str(), true),
+    );
+    std::fs::write(
+        data_dir
+            .path()
+            .join("artifacts")
+            .join(format!("{THIRD_MEMBER}-v1.0.0.orax")),
+        b"corrupted bytes",
+    )
+    .expect("corrupt the third artifact");
+    let namespace = ora_domain::PluginNamespace::official();
+    let source = ora_plugin_registry::RegistrySource::new(
+        "https://github.com/ora-space/marketplace",
+        namespace.clone(),
+        gitlancer::BranchName::new("main"),
+        data_dir
+            .path()
+            .join("plugins")
+            .join("sources")
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace"),
+    );
+    let preflight = host
+        .preflight_pack(&fixture.pack_manifest, &namespace, &source)
+        .expect("pack preflight succeeds");
+    let installer = Installer::new(ora_utils::http::LocalFileDownloader);
+    let preflight = with_local_releases(&fixture, preflight);
+    let (outcome, _ledger) = host
+        .install_members(&namespace, preflight, &installer, /*progress*/ None)
+        .await
+        .expect("the failure is reported inside the pack outcome");
+
+    assert!(
+        !member_installed(data_dir.path(), HIDDEN_MEMBER, "1.0.0"),
+        "the created member is rolled back"
+    );
+    assert!(
+        member_installed(data_dir.path(), VISIBLE_MEMBER, "1.0.0"),
+        "the pre-existing member is never touched by the rollback"
+    );
+    assert!(
+        !member_installed(data_dir.path(), THIRD_MEMBER, "1.0.0"),
+        "the failed member never landed"
+    );
+    // The journal stays at its pre-run state: no phantom pre-existing relationship is minted
+    // for the skipped member by a run that did not complete.
+    assert!(
+        host.pack_installation(PACK_ID)
+            .expect("load the journal")
+            .is_none(),
+        "a failed and fully rolled-back run leaves the journal untouched"
+    );
+    let _ = outcome;
+}
+
+/// Three members install in declaration order and the third fails: the rollback runs in
+/// reverse creation order (B then A) and clears every created member.
+#[tokio::test]
+async fn rollback_runs_in_reverse_order_and_clears_every_created_member() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let host = pack_test_host(data_dir.path(), &pool);
+    const THIRD_MEMBER: &str = "ora-space.third-tools";
+    let fixture = stage_pack_fixture(
+        data_dir.path(),
+        &format!(
+            "{}{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(VISIBLE_MEMBER),
+            member_table(THIRD_MEMBER)
+        ),
+    );
+    stage_listing(
+        &data_dir
+            .path()
+            .join("plugins")
+            .join("sources")
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace"),
+        THIRD_MEMBER,
+        &skill_listing(THIRD_MEMBER, "cd".repeat(32).as_str(), true),
+    );
+    std::fs::write(
+        data_dir
+            .path()
+            .join("artifacts")
+            .join(format!("{THIRD_MEMBER}-v1.0.0.orax")),
+        b"corrupted bytes",
+    )
+    .expect("corrupt the third artifact");
+    let namespace = ora_domain::PluginNamespace::official();
+    let source = ora_plugin_registry::RegistrySource::new(
+        "https://github.com/ora-space/marketplace",
+        namespace.clone(),
+        gitlancer::BranchName::new("main"),
+        data_dir
+            .path()
+            .join("plugins")
+            .join("sources")
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace"),
+    );
+    let preflight = host
+        .preflight_pack(&fixture.pack_manifest, &namespace, &source)
+        .expect("pack preflight succeeds");
+    let installer = Installer::new(ora_utils::http::LocalFileDownloader);
+    let preflight = with_local_releases(&fixture, preflight);
+    let (outcome, _ledger) = host
+        .install_members(&namespace, preflight, &installer, /*progress*/ None)
+        .await
+        .expect("the failure is reported inside the pack outcome");
+
+    match outcome {
+        InstallOutcome::PackInstalled {
+            members, failed, ..
+        } => {
+            assert!(members.is_empty(), "both created members are rolled back");
+            let failed = failed.expect("the third member failed");
+            assert_eq!(failed.plugin_id, format!("official/{THIRD_MEMBER}"));
+            assert!(
+                failed.rollback_failures.is_empty(),
+                "both rollbacks succeeded"
+            );
+        }
+        other => panic!("expected a pack outcome, got {other:?}"),
+    }
+    assert!(
+        !member_installed(data_dir.path(), VISIBLE_MEMBER, "1.0.0"),
+        "the second-created member is rolled back first"
+    );
+    assert!(
+        !member_installed(data_dir.path(), HIDDEN_MEMBER, "1.0.0"),
+        "the first-created member is rolled back last"
+    );
+}
+
+/// A rollback that fails leaves the residual member installed, journals it as pack-managed,
+/// and surfaces the rollback failure next to the original install failure.
+#[tokio::test]
+async fn a_failed_rollback_keeps_residual_members_and_journals_them() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    const THIRD_MEMBER: &str = "ora-space.third-tools";
+    let fixture = stage_pack_fixture(
+        data_dir.path(),
+        &format!(
+            "{}{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(VISIBLE_MEMBER),
+            member_table(THIRD_MEMBER)
+        ),
+    );
+    stage_listing(
+        &data_dir
+            .path()
+            .join("plugins")
+            .join("sources")
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace"),
+        THIRD_MEMBER,
+        &skill_listing(THIRD_MEMBER, "cd".repeat(32).as_str(), true),
+    );
+    std::fs::write(
+        data_dir
+            .path()
+            .join("artifacts")
+            .join(format!("{THIRD_MEMBER}-v1.0.0.orax")),
+        b"corrupted bytes",
+    )
+    .expect("corrupt the third artifact");
+    // The hidden member's data directory is held open by a child process whose working
+    // directory is that directory: on Windows a directory in use cannot be renamed, which
+    // deterministically fails the hidden member's rollback while the earlier member's
+    // rollback succeeds.
+    let hidden_data_dir = data_dir
+        .path()
+        .join("plugins")
+        .join("data")
+        .join("official")
+        .join(HIDDEN_MEMBER);
+    std::fs::create_dir_all(&hidden_data_dir).expect("create held data dir");
+    let mut holder = DirectoryHolder::spawn_holding(&hidden_data_dir);
+    let namespace = ora_domain::PluginNamespace::official();
+    let source = ora_plugin_registry::RegistrySource::new(
+        "https://github.com/ora-space/marketplace",
+        namespace.clone(),
+        gitlancer::BranchName::new("main"),
+        data_dir
+            .path()
+            .join("plugins")
+            .join("sources")
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace"),
+    );
+    let preflight = host
+        .preflight_pack(&fixture.pack_manifest, &namespace, &source)
+        .expect("pack preflight succeeds");
+    let installer = Installer::new(ora_utils::http::LocalFileDownloader);
+    let preflight = with_local_releases(&fixture, preflight);
+    let (outcome, ledger) = host
+        .install_members(&namespace, preflight, &installer, /*progress*/ None)
+        .await
+        .expect("the failure is reported inside the pack outcome");
+    eprintln!("DEBUG outcome {outcome:?}");
+    eprintln!(
+        "DEBUG visible dir: {}",
+        member_installed(data_dir.path(), VISIBLE_MEMBER, "1.0.0")
+    );
+    eprintln!(
+        "DEBUG hidden dir: {}",
+        member_installed(data_dir.path(), HIDDEN_MEMBER, "1.0.0")
+    );
+
+    // The visible member rolled back; the hidden member's rollback failed, so it remains
+    // installed as the residual evidence.
+    assert!(
+        !member_installed(data_dir.path(), VISIBLE_MEMBER, "1.0.0"),
+        "the earlier rollback succeeded"
+    );
+    assert!(
+        member_installed(data_dir.path(), HIDDEN_MEMBER, "1.0.0"),
+        "the rollback failure leaves the residual member installed"
+    );
+    match outcome {
+        InstallOutcome::PackInstalled {
+            members,
+            failed,
+            skipped: _,
+        } => {
+            assert_eq!(
+                members
+                    .iter()
+                    .map(|member| member.plugin_id.as_str())
+                    .collect::<Vec<_>>(),
+                vec![format!("official/{HIDDEN_MEMBER}")],
+                "the residual member is reported as installed"
+            );
+            let failed = failed.expect("the third member failed");
+            assert_eq!(failed.plugin_id, format!("official/{THIRD_MEMBER}"));
+            assert_eq!(
+                failed
+                    .rollback_failures
+                    .iter()
+                    .map(|failure| failure.plugin_id.as_str())
+                    .collect::<Vec<_>>(),
+                vec![format!("official/{HIDDEN_MEMBER}")],
+                "the rollback failure is diagnosed without replacing the primary failure"
+            );
+        }
+        other => panic!("expected a pack outcome, got {other:?}"),
+    }
+    // The residual evidence is durable: the journal records the residual member as
+    // pack-managed while the rolled-back member and the failed member are absent.
+    host.record_pack_run(
+        &ora_domain::PluginId::parse(PACK_ID).expect("pack id"),
+        "https://github.com/ora-space/marketplace",
+        &ledger,
+    )
+    .expect("record the residual evidence");
+    let journal = host
+        .pack_installation(PACK_ID)
+        .expect("load the journal")
+        .expect("the residual run is journaled");
+    assert_eq!(
+        journal
+            .members
+            .iter()
+            .map(|member| (member.member_id.as_str(), member.ownership,))
+            .collect::<Vec<_>>(),
+        vec![(
+            format!("official/{HIDDEN_MEMBER}").as_str(),
+            ora_db::PackMemberOwnership::ManagedByPack,
+        )],
+    );
+    let _ = ledger;
+    let _ = plugins;
+    holder.release();
+}
+
+/// After a complete rollback a retry installs the pack normally, with no phantom ownership.
+#[tokio::test]
+async fn retry_after_a_complete_rollback_installs_normally() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let host = pack_test_host(data_dir.path(), &pool);
+    let fixture = stage_pack_fixture(
+        data_dir.path(),
+        &format!(
+            "{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(VISIBLE_MEMBER)
+        ),
+    );
+    let namespace = ora_domain::PluginNamespace::official();
+    let source = ora_plugin_registry::RegistrySource::new(
+        "https://github.com/ora-space/marketplace",
+        namespace.clone(),
+        gitlancer::BranchName::new("main"),
+        data_dir
+            .path()
+            .join("plugins")
+            .join("sources")
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace"),
+    );
+    // First attempt: the visible artifact is corrupted, so the run fails and rolls back.
+    std::fs::write(
+        fixture.member_artifacts[VISIBLE_MEMBER].as_path(),
+        b"corrupted bytes",
+    )
+    .expect("corrupt the visible artifact");
+    let preflight = host
+        .preflight_pack(&fixture.pack_manifest, &namespace, &source)
+        .expect("pack preflight succeeds");
+    let installer = Installer::new(ora_utils::http::LocalFileDownloader);
+    let preflight = with_local_releases(&fixture, preflight);
+    let (failed_outcome, _ledger) = host
+        .install_members(&namespace, preflight, &installer, /*progress*/ None)
+        .await
+        .expect("the failure is reported inside the pack outcome");
+    assert!(
+        matches!(
+            failed_outcome,
+            InstallOutcome::PackInstalled {
+                failed: Some(_),
+                ..
+            }
+        ),
+        "the first attempt fails and rolls back"
+    );
+
+    // Retry: the artifact is rebuilt at the exact path the fixture registered, so the transfer
+    // substitution picks up the valid archive, and both members install.
+    write_skill_orax(
+        fixture.member_artifacts[VISIBLE_MEMBER].as_path(),
+        VISIBLE_MEMBER,
+    );
+    let preflight = host
+        .preflight_pack(&fixture.pack_manifest, &namespace, &source)
+        .expect("pack preflight succeeds on retry");
+    let preflight = with_local_releases(&fixture, preflight);
+    let (outcome, ledger) = host
+        .install_members(&namespace, preflight, &installer, /*progress*/ None)
+        .await
+        .expect("the retry installs the pack");
+    assert!(matches!(
+        outcome,
+        InstallOutcome::PackInstalled { failed: None, .. }
+    ));
+    host.record_pack_run(
+        &ora_domain::PluginId::parse(PACK_ID).expect("pack id"),
+        "https://github.com/ora-space/marketplace",
+        &ledger,
+    )
+    .expect("record pack ownership");
+    let journal = host
+        .pack_installation(PACK_ID)
+        .expect("load the journal")
+        .expect("the retry records ownership");
+    assert_eq!(journal.members.len(), 2);
+    assert!(
+        journal
+            .members
+            .iter()
+            .all(|member| member.ownership == ora_db::PackMemberOwnership::ManagedByPack),
+        "the retry records plain pack-managed ownership with no phantom facts"
+    );
+}
+
+/// A partially rolled-back failure is honestly reconciled after a restart, and the residual
+/// member can still be removed by a pack uninstall.
+#[tokio::test]
+async fn partial_rollback_residual_is_reconciled_after_a_restart() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    const THIRD_MEMBER: &str = "ora-space.third-tools";
+    let fixture = stage_pack_fixture(
+        data_dir.path(),
+        &format!(
+            "{}{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(VISIBLE_MEMBER),
+            member_table(THIRD_MEMBER)
+        ),
+    );
+    stage_listing(
+        &data_dir
+            .path()
+            .join("plugins")
+            .join("sources")
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace"),
+        THIRD_MEMBER,
+        &skill_listing(THIRD_MEMBER, "cd".repeat(32).as_str(), true),
+    );
+    std::fs::write(
+        data_dir
+            .path()
+            .join("artifacts")
+            .join(format!("{THIRD_MEMBER}-v1.0.0.orax")),
+        b"corrupted bytes",
+    )
+    .expect("corrupt the third artifact");
+    let hidden_data_dir = data_dir
+        .path()
+        .join("plugins")
+        .join("data")
+        .join("official")
+        .join(HIDDEN_MEMBER);
+    std::fs::create_dir_all(&hidden_data_dir).expect("create held data dir");
+    let mut holder = DirectoryHolder::spawn_holding(&hidden_data_dir);
+    let namespace = ora_domain::PluginNamespace::official();
+    let source = ora_plugin_registry::RegistrySource::new(
+        "https://github.com/ora-space/marketplace",
+        namespace.clone(),
+        gitlancer::BranchName::new("main"),
+        data_dir
+            .path()
+            .join("plugins")
+            .join("sources")
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace"),
+    );
+    let preflight = host
+        .preflight_pack(&fixture.pack_manifest, &namespace, &source)
+        .expect("pack preflight succeeds");
+    let installer = Installer::new(ora_utils::http::LocalFileDownloader);
+    let preflight = with_local_releases(&fixture, preflight);
+    let (_outcome, ledger) = host
+        .install_members(&namespace, preflight, &installer, /*progress*/ None)
+        .await
+        .expect("the failure is reported inside the pack outcome");
+    // The rollback failure journaled the residual member as the durable evidence.
+    host.record_pack_run(
+        &ora_domain::PluginId::parse(PACK_ID).expect("pack id"),
+        "https://github.com/ora-space/marketplace",
+        &ledger,
+    )
+    .expect("record the residual evidence");
+
+    // Restart: a fresh host reconciles the residual member honestly.
+    drop(plugins);
+    drop(host);
+    drop(pool);
+    let restarted_pool = test_pool(data_dir.path());
+    let (restarted_plugins, restarted_host) = pack_test_plugins(data_dir.path(), &restarted_pool);
+    let reconciliation = restarted_host
+        .reconcile_pack_installation(PACK_ID)
+        .expect("reconcile after restart")
+        .expect("the residual journal reconciles");
+    assert_eq!(
+        reconciliation.members(),
+        &[PackMemberReconciliation::ExpectedAndPresent {
+            member_id: format!("official/{HIDDEN_MEMBER}"),
+            version_at_install: "1.0.0".to_string(),
+            ownership: ora_db::PackMemberOwnership::ManagedByPack,
+        }],
+        "the residual member is honestly visible after the restart"
+    );
+
+    // The residual member is still pack-owned and at its recorded version, so a pack
+    // uninstall removes it and clears the journal. The directory holder from the failed
+    // rollback is terminated first — on Windows its working-directory handle would block the
+    // member's package removal — and the uninstall is retried briefly, exercising the exact
+    // resume-after-transient-blockage behavior the journal was designed for.
+    holder.release();
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let mut uninstalled = None;
+    for attempt in 0..5 {
+        match restarted_plugins
+            .uninstall(UninstallPluginRequest {
+                plugin_id: PACK_ID.to_string(),
+                data_disposition: PluginDataDisposition::Delete,
+            })
+            .await
+        {
+            Ok(response) => {
+                uninstalled = Some(response);
+                break;
+            }
+            Err(error) if attempt < 4 => {
+                eprintln!("   uninstall retry ({attempt}): {error}");
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            }
+            Err(error) => panic!("uninstall the residual pack: {error}"),
+        }
+    }
+    let response = uninstalled.expect("uninstall eventually succeeds");
+    assert_eq!(response.plugin_id, PACK_ID);
+    assert!(
+        !member_installed(data_dir.path(), HIDDEN_MEMBER, "1.0.0"),
+        "the residual member is removed by the pack uninstall"
+    );
+    assert!(
+        restarted_host
+            .pack_installation(PACK_ID)
+            .expect("load the journal after uninstall")
+            .is_none(),
+        "the journal is cleared"
+    );
+}
+
+/// A failed rollback never deletes ownership relationships that existed before the run.
+#[tokio::test]
+async fn a_failed_rollback_never_deletes_prior_journal_relations() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let host = pack_test_host(data_dir.path(), &pool);
+    const THIRD_MEMBER: &str = "ora-space.third-tools";
+    // Run 1 installs both members and records their relationships.
+    install_and_record_pack(
+        data_dir.path(),
+        &host,
+        &format!(
+            "{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(VISIBLE_MEMBER)
+        ),
+    )
+    .await
+    .expect("run 1 records the pack");
+    let before = host
+        .pack_installation(PACK_ID)
+        .expect("load the journal before run 2")
+        .expect("the journal holds run 1 relationships");
+
+    // The hidden member's package is deleted externally; its journal row remains.
+    std::fs::remove_dir_all(
+        data_dir
+            .path()
+            .join("plugins")
+            .join("installed")
+            .join("official")
+            .join(HIDDEN_MEMBER),
+    )
+    .expect("delete the hidden member externally");
+
+    // Run 2 re-creates the hidden member and fails on the corrupted third member; the
+    // rollback removes the re-created hidden member. The journal must keep both run 1
+    // relationships untouched.
+    let fixture = stage_pack_fixture(
+        data_dir.path(),
+        &format!(
+            "{}{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(VISIBLE_MEMBER),
+            member_table(THIRD_MEMBER)
+        ),
+    );
+    stage_listing(
+        &data_dir
+            .path()
+            .join("plugins")
+            .join("sources")
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace"),
+        THIRD_MEMBER,
+        &skill_listing(THIRD_MEMBER, "cd".repeat(32).as_str(), true),
+    );
+    std::fs::write(
+        data_dir
+            .path()
+            .join("artifacts")
+            .join(format!("{THIRD_MEMBER}-v1.0.0.orax")),
+        b"corrupted bytes",
+    )
+    .expect("corrupt the third artifact");
+    let namespace = ora_domain::PluginNamespace::official();
+    let source = ora_plugin_registry::RegistrySource::new(
+        "https://github.com/ora-space/marketplace",
+        namespace.clone(),
+        gitlancer::BranchName::new("main"),
+        data_dir
+            .path()
+            .join("plugins")
+            .join("sources")
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace"),
+    );
+    let preflight = host
+        .preflight_pack(&fixture.pack_manifest, &namespace, &source)
+        .expect("pack preflight succeeds");
+    let installer = Installer::new(ora_utils::http::LocalFileDownloader);
+    let preflight = with_local_releases(&fixture, preflight);
+    let (_outcome, _ledger) = host
+        .install_members(&namespace, preflight, &installer, /*progress*/ None)
+        .await
+        .expect("the failure is reported inside the pack outcome");
+
+    assert!(
+        !member_installed(data_dir.path(), HIDDEN_MEMBER, "1.0.0"),
+        "the re-created member is rolled back"
+    );
+    let after = host
+        .pack_installation(PACK_ID)
+        .expect("load the journal after run 2")
+        .expect("the prior journal survives the failed run 2");
+    assert_eq!(after, before, "the prior journal relations are untouched");
+}
+/// Reads the member id off any reconciliation classification.
+fn member_member_id(member: &PackMemberReconciliation) -> &str {
+    match member {
+        PackMemberReconciliation::ExpectedAndPresent { member_id, .. }
+        | PackMemberReconciliation::VersionChanged { member_id, .. }
+        | PackMemberReconciliation::Missing { member_id, .. } => member_id,
+    }
+}
+
+/// Lifecycle Path A: sync → install pack → ownership recorded → restart reconcile
+/// (ExpectedAndPresent) → independently upgrade a managed member → reconcile
+/// (VersionChanged) → uninstall pack → unchanged member removed, upgraded member preserved,
+/// journal cleared.
+#[tokio::test]
+async fn lifecycle_path_a_install_reconcile_upgrade_uninstall() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    install_and_record_pack(
+        data_dir.path(),
+        &host,
+        &format!(
+            "{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(VISIBLE_MEMBER)
+        ),
+    )
+    .await
+    .expect("install and record the pack");
+
+    // Restart: ownership survives and reconciles as expected-and-present.
+    drop(plugins);
+    drop(host);
+    drop(pool);
+    let restarted_pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &restarted_pool);
+    let reconciliation = host
+        .reconcile_pack_installation(PACK_ID)
+        .expect("reconcile after restart")
+        .expect("the pack reconciles after restart");
+    assert!(
+        reconciliation
+            .members()
+            .iter()
+            .all(|member| matches!(member, PackMemberReconciliation::ExpectedAndPresent { .. }))
+    );
+
+    // Independently upgrade one managed member: reconcile flips to version-changed while the
+    // other member stays expected.
+    install_member_version(data_dir.path(), VISIBLE_MEMBER, "2.0.0").await;
+    let after_upgrade = host
+        .reconcile_pack_installation(PACK_ID)
+        .expect("reconcile after upgrade")
+        .expect("the pack reconciles after upgrade");
+    assert_eq!(
+        after_upgrade
+            .members()
+            .iter()
+            .map(|member| (
+                member_member_id(member).to_owned(),
+                std::mem::discriminant(member)
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                format!("official/{VISIBLE_MEMBER}"),
+                std::mem::discriminant(&PackMemberReconciliation::VersionChanged {
+                    member_id: String::new(),
+                    version_at_install: String::new(),
+                    current_version: String::new(),
+                    ownership: ora_db::PackMemberOwnership::ManagedByPack,
+                }),
+            ),
+            (
+                format!("official/{HIDDEN_MEMBER}"),
+                std::mem::discriminant(&PackMemberReconciliation::ExpectedAndPresent {
+                    member_id: String::new(),
+                    version_at_install: String::new(),
+                    ownership: ora_db::PackMemberOwnership::ManagedByPack,
+                }),
+            ),
+        ],
+        "the upgraded member is version-changed; the untouched member stays expected"
+    );
+
+    // Uninstall: the version-changed member is preserved, the unchanged managed member is
+    // removed, and the journal is cleared.
+    plugins
+        .uninstall(UninstallPluginRequest {
+            plugin_id: PACK_ID.to_string(),
+            data_disposition: PluginDataDisposition::Delete,
+        })
+        .await
+        .expect("uninstall the pack");
+    assert!(
+        member_installed(data_dir.path(), VISIBLE_MEMBER, "2.0.0"),
+        "the independently upgraded member is preserved"
+    );
+    assert!(
+        !member_installed(data_dir.path(), HIDDEN_MEMBER, "1.0.0"),
+        "the unchanged managed member is removed"
+    );
+    assert!(
+        host.pack_installation(PACK_ID)
+            .expect("load the journal")
+            .is_none(),
+        "the journal is cleared"
+    );
+}
+
+/// Lifecycle Path B: install pack where the third member fails → reverse rollback → restart
+/// with no phantom ownership → retry → final install succeeds and ownership is recorded.
+#[tokio::test]
+async fn lifecycle_path_b_failed_install_rolls_back_and_retry_succeeds() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    const THIRD_MEMBER: &str = "ora-space.third-tools";
+    let mut fixture = stage_pack_fixture(
+        data_dir.path(),
+        &format!(
+            "{}{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(VISIBLE_MEMBER),
+            member_table(THIRD_MEMBER)
+        ),
+    );
+    stage_listing(
+        &data_dir
+            .path()
+            .join("plugins")
+            .join("sources")
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace"),
+        THIRD_MEMBER,
+        &skill_listing(THIRD_MEMBER, "cd".repeat(32).as_str(), true),
+    );
+    std::fs::write(
+        data_dir
+            .path()
+            .join("artifacts")
+            .join(format!("{THIRD_MEMBER}-v1.0.0.orax")),
+        b"corrupted bytes",
+    )
+    .expect("corrupt the third artifact");
+    let namespace = ora_domain::PluginNamespace::official();
+    let source = ora_plugin_registry::RegistrySource::new(
+        "https://github.com/ora-space/marketplace",
+        namespace.clone(),
+        gitlancer::BranchName::new("main"),
+        data_dir
+            .path()
+            .join("plugins")
+            .join("sources")
+            .join("github.com")
+            .join("ora-space")
+            .join("marketplace"),
+    );
+
+    // First attempt: hidden and visible land, third fails → reverse rollback clears both.
+    let preflight = host
+        .preflight_pack(&fixture.pack_manifest, &namespace, &source)
+        .expect("pack preflight succeeds");
+    let installer = Installer::new(ora_utils::http::LocalFileDownloader);
+    let preflight = with_local_releases(&fixture, preflight);
+    let (failed_outcome, _ledger) = host
+        .install_members(&namespace, preflight, &installer, /*progress*/ None)
+        .await
+        .expect("the failure is reported inside the pack outcome");
+    match failed_outcome {
+        InstallOutcome::PackInstalled {
+            members,
+            failed,
+            skipped: _,
+        } => {
+            assert!(members.is_empty(), "created members are rolled back");
+            let failed = failed.expect("the third member failed");
+            assert_eq!(failed.plugin_id, format!("official/{THIRD_MEMBER}"));
+            assert!(failed.rollback_failures.is_empty());
+        }
+        other => panic!("expected a pack outcome, got {other:?}"),
+    }
+    assert!(
+        host.pack_installation(PACK_ID)
+            .expect("load the journal")
+            .is_none(),
+        "no phantom ownership survives the rolled-back attempt"
+    );
+
+    // Restart: the rolled-back state persists and the retry installs everything. The third
+    // member's artifact is rebuilt and registered with the fixture so the transfer-substitution
+    // map covers it on the retry.
+    drop(plugins);
+    drop(host);
+    drop(pool);
+    let restarted_pool = test_pool(data_dir.path());
+    let (restarted_plugins, restarted_host) = pack_test_plugins(data_dir.path(), &restarted_pool);
+    let third_artifact = build_member_artifact(data_dir.path(), THIRD_MEMBER, "1.0.0");
+    fixture
+        .member_artifacts
+        .insert(THIRD_MEMBER, third_artifact);
+    let preflight = restarted_host
+        .preflight_pack(&fixture.pack_manifest, &namespace, &source)
+        .expect("pack preflight succeeds on retry");
+    let preflight = with_local_releases(&fixture, preflight);
+    let (outcome, ledger) = restarted_host
+        .install_members(&namespace, preflight, &installer, /*progress*/ None)
+        .await
+        .expect("the retry installs the pack");
+    match outcome {
+        InstallOutcome::PackInstalled {
+            members, failed, ..
+        } => {
+            assert_eq!(members.len(), 3, "all three members install on retry");
+            assert_eq!(failed, None);
+        }
+        other => panic!("expected a pack outcome, got {other:?}"),
+    }
+    restarted_host
+        .record_pack_run(
+            &ora_domain::PluginId::parse(PACK_ID).expect("pack id"),
+            "https://github.com/ora-space/marketplace",
+            &ledger,
+        )
+        .expect("record ownership");
+    let journal = restarted_host
+        .pack_installation(PACK_ID)
+        .expect("load the journal")
+        .expect("the retry records ownership");
+    assert_eq!(journal.members.len(), 3);
+    assert!(
+        journal
+            .members
+            .iter()
+            .all(|member| member.ownership == ora_db::PackMemberOwnership::ManagedByPack),
+        "every member is pack-managed after the successful retry"
     );
 }

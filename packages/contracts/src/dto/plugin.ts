@@ -347,6 +347,12 @@ export type PackInstallFailure = {
    * The stable public error code the member's install failure classified as.
    */
   errorCode: string;
+  /**
+   * Members created before the original failure whose rollback also failed, in creation
+   * order. These members remain installed and are journaled as pack-managed so a later
+   * uninstall or retry can recover. Empty when the rollback completed.
+   */
+  rollbackFailures: Array<PackRollbackFailure>;
 };
 
 /**
@@ -363,6 +369,17 @@ export type PackInstalledMember = {
 export type PackMemberInstallOutcome = { "state": "installed" } | {
   "state": "installed_with_command_conflict";
   conflictPluginId: string;
+};
+
+/**
+ * One member whose rollback failed during a failed pack install.
+ */
+export type PackRollbackFailure = {
+  pluginId: string;
+  /**
+   * The stable public error code the member's rollback failure classified as.
+   */
+  errorCode: string;
 };
 
 /**

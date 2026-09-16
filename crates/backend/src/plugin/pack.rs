@@ -22,7 +22,7 @@ use ora_contracts::{
 };
 use ora_db::{PackInstallationMemberRecord, PackInstallationRecord, PackMemberOwnership};
 use ora_domain::{PluginId, PluginNamespace};
-use ora_logging::ora_info;
+use ora_logging::{ora_info, ora_warn};
 use ora_plugin_manager::{
     HostTarget, Installer, PluginContribution, PluginManager, ResolvedReleaseSource, select_release,
 };
@@ -67,13 +67,24 @@ impl PackPreflight {
     }
 }
 
-/// What one pack install run actually did, consumed by the durable ownership journal (D3-A).
+/// What one pack install run actually did, consumed by the durable ownership journal (D3-A)
+/// and by the transactional rollback when the run fails (D3-D).
+///
+/// On a failed run the ledger's `installed` list carries exactly the members that remain
+/// installed after the rollback attempt (the residual evidence), `rollback_failed` carries
+/// their canonical ids, and `skipped` is emptied so a failed attempt never mints new
+/// `PreExisting` relationships.
 #[derive(Debug, Default)]
 pub(super) struct PackRunLedger {
-    /// Members this run created: `(canonical id, version that landed)`.
+    /// Members this run created: `(canonical id, version that landed)`. After a failed run
+    /// with a partial rollback these are the residual members.
     installed: Vec<(String, String)>,
-    /// Applicable members that were already installed and therefore skipped.
+    /// Applicable members that were already installed and therefore skipped. Emptied on failed
+    /// runs: the journal must not gain new `PreExisting` relationships from an attempt that
+    /// did not complete.
     skipped: Vec<String>,
+    /// Canonical ids of created members whose rollback failed (D3-D).
+    rollback_failed: Vec<String>,
 }
 
 /// Why a pack uninstall preserves a member instead of removing it.
@@ -113,6 +124,21 @@ impl PackUninstallPlan {
     }
 }
 
+// The accessors exist for in-crate tests; production code in this module reads the fields
+// directly because it shares the struct's module.
+#[cfg(test)]
+impl PackRunLedger {
+    /// Returns the canonical ids of created members whose rollback failed.
+    pub(super) fn rollback_failed(&self) -> &[String] {
+        &self.rollback_failed
+    }
+
+    /// Returns the members this run created that remain installed.
+    pub(super) fn installed(&self) -> &[(String, String)] {
+        &self.installed
+    }
+}
+
 impl PluginApi {
     /// Installs one `kind = "pack"` listing: preflight the membership, then install every
     /// applicable member in declaration order through the ordinary single-plugin chain.
@@ -134,13 +160,27 @@ impl PluginApi {
         let (outcome, ledger) = self
             .install_members(&namespace, preflight, &installer, progress)
             .await?;
-        // The ownership record is written for complete and member-failed runs alike: members the
-        // run created become `ManagedByPack`, members the pack merely named keep whatever
-        // relationship they already had (or become `PreExisting`). A failed member is absent, so
-        // a later pack install that lands it extends the record (decision D7: reinstalling a pack
-        // fills in what is missing).
         let pack_id = self.pack_member_id(&namespace, manifest.name().as_str())?;
-        self.record_pack_run(&pack_id, source.canonical_url(), &ledger)?;
+        match &outcome {
+            // A run whose rollback completed restores the journal to its pre-run facts:
+            // record_pack_run never ran for this attempt, prior relationships are untouched,
+            // and recording now would only mint relations the filesystem no longer backs.
+            InstallOutcome::PackInstalled {
+                failed: Some(failure),
+                ..
+            } if failure.rollback_failures.is_empty() => {
+                ora_info!(
+                    plugin_id = %request.plugin_id,
+                    failure_member = %failure.plugin_id,
+                    "pack install failed and fully rolled back; ownership journal left as before the run"
+                );
+            }
+            // A complete run records ownership; a run whose rollback failed records its
+            // residual members as the durable recovery evidence (D3-D).
+            _ => {
+                self.record_pack_run(&pack_id, source.canonical_url(), &ledger)?;
+            }
+        }
         ora_info!(plugin_id = %request.plugin_id, outcome = ?outcome, "installed marketplace pack");
         Ok(InstallPluginResponse {
             plugin_id: request.plugin_id,
@@ -335,6 +375,28 @@ impl PluginApi {
                     error = %mapped,
                     "pack member installation failed; remaining members are not attempted"
                 );
+                // Transactional rollback (D3-D): undo the members this run created, in reverse
+                // creation order, before reporting the failure. The rollback reuses the
+                // ordinary single-plugin uninstall chain and never touches skipped members.
+                let created = std::mem::take(&mut ledger.installed);
+                let (residual, rollback_failures) = self.rollback_created_members(created).await;
+                ledger.rollback_failed = residual
+                    .iter()
+                    .map(|(member_id, _version)| member_id.clone())
+                    .collect();
+                // A failed run must not mint new PreExisting relationships, so the journal
+                // ledger's skip list is emptied; the outcome still reports the real skips.
+                ledger.skipped = Vec::new();
+                // The residual members are the durable recovery evidence: the journal keeps
+                // them as pack-managed (D3-D).
+                ledger.installed = residual.clone();
+                let members = residual
+                    .iter()
+                    .map(|(member_id, _version)| PackInstalledMember {
+                        plugin_id: member_id.clone(),
+                        outcome: PackMemberInstallOutcome::Installed,
+                    })
+                    .collect::<Vec<_>>();
                 return Ok((
                     InstallOutcome::PackInstalled {
                         members,
@@ -342,6 +404,7 @@ impl PluginApi {
                         failed: Some(PackInstallFailure {
                             plugin_id: member.plugin_id.canonical(),
                             error_code: mapped.public_error().code().to_owned(),
+                            rollback_failures,
                         }),
                     },
                     ledger,
@@ -356,6 +419,26 @@ impl PluginApi {
             {
                 Ok(outcome) => outcome,
                 Err(error) => {
+                    let created = std::mem::take(&mut ledger.installed);
+                    let (residual, rollback_failures) =
+                        self.rollback_created_members(created).await;
+                    ledger.rollback_failed = residual
+                        .iter()
+                        .map(|(member_id, _version)| member_id.clone())
+                        .collect();
+                    // A failed run must not mint new PreExisting relationships, so the journal
+                    // ledger's skip list is emptied; the outcome still reports the real skips.
+                    ledger.skipped = Vec::new();
+                    // The residual members are the durable recovery evidence: the journal
+                    // keeps them as pack-managed (D3-D).
+                    ledger.installed = residual.clone();
+                    let members = residual
+                        .iter()
+                        .map(|(member_id, _version)| PackInstalledMember {
+                            plugin_id: member_id.clone(),
+                            outcome: PackMemberInstallOutcome::Installed,
+                        })
+                        .collect::<Vec<_>>();
                     return Ok((
                         InstallOutcome::PackInstalled {
                             members,
@@ -363,6 +446,7 @@ impl PluginApi {
                             failed: Some(PackInstallFailure {
                                 plugin_id: member.plugin_id.canonical(),
                                 error_code: error.public_error().code().to_owned(),
+                                rollback_failures,
                             }),
                         },
                         ledger,
@@ -398,6 +482,51 @@ impl PluginApi {
             },
             ledger,
         ))
+    }
+
+    /// Rolls back the members this run created, in reverse creation order, through the ordinary
+    /// single-plugin uninstall chain (stop → supervisor → uninstall → data cleanup).
+    ///
+    /// The rollback stops at the first member whose uninstall fails: that member and any
+    /// earlier-created members remain installed and are returned as the residual evidence.
+    /// Pre-existing members are never passed here, so a rollback can never touch user assets.
+    async fn rollback_created_members(
+        &self,
+        created: Vec<(String, String)>,
+    ) -> (
+        Vec<(String, String)>,
+        Vec<ora_contracts::PackRollbackFailure>,
+    ) {
+        // `pending` keeps creation order, so `pop` yields the most recently created member
+        // first: the rollback runs strictly in reverse creation order.
+        let mut pending = created;
+        let mut residual = Vec::new();
+        let mut failures = Vec::new();
+        while let Some((member_id, version)) = pending.pop() {
+            let result = self
+                .uninstall(UninstallPluginRequest {
+                    plugin_id: member_id.clone(),
+                    data_disposition: PluginDataDisposition::Delete,
+                })
+                .await;
+            if let Err(error) = result {
+                ora_warn!(
+                    plugin_id = %member_id,
+                    error = %error,
+                    "pack member rollback failed; earlier members stay installed as residual"
+                );
+                failures.push(ora_contracts::PackRollbackFailure {
+                    plugin_id: member_id.clone(),
+                    error_code: error.public_error().code().to_owned(),
+                });
+                // The failed member and every member the rollback did not reach remain
+                // installed: they are the residual state the journal must record.
+                residual.push((member_id, version));
+                residual.append(&mut pending);
+                break;
+            }
+        }
+        (residual, failures)
     }
 
     /// Assembles the canonical member id a bare pack member identifier resolves to inside the

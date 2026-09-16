@@ -1,10 +1,16 @@
 mod marketplace_sync;
+mod pack_install;
 
 pub use marketplace_sync::MarketplaceAutoSyncEvent;
 
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt};
 use ts_rs::TS;
+
+pub(crate) use pack_install::export as export_pack_install;
+pub use pack_install::{
+    PackInstallFailure, PackInstalledMember, PackMemberInstallOutcome, PackRollbackFailure,
+};
 
 /// Describes the kind-specific contribution of one installed plugin, discriminated by `kind`.
 ///
@@ -658,38 +664,6 @@ pub enum InstallOutcome {
     },
 }
 
-/// One member installed by a pack installation, with its single-plugin outcome.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "plugin.ts")]
-pub struct PackInstalledMember {
-    pub plugin_id: String,
-    pub outcome: PackMemberInstallOutcome,
-}
-
-/// The closed set of single-plugin outcomes a pack member can report.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(
-    tag = "state",
-    rename_all = "snake_case",
-    rename_all_fields = "camelCase"
-)]
-#[ts(export_to = "plugin.ts")]
-pub enum PackMemberInstallOutcome {
-    Installed,
-    InstalledWithCommandConflict { conflict_plugin_id: String },
-}
-
-/// Identifies the first pack member whose installation failed and the classified reason.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "plugin.ts")]
-pub struct PackInstallFailure {
-    pub plugin_id: String,
-    /// The stable public error code the member's install failure classified as.
-    pub error_code: String,
-}
-
 /// Requests updating one installed marketplace plugin to the version its source publishes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -813,9 +787,7 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     InstalledPlugin::export(config)?;
     PluginHostCompatibility::export(config)?;
     AvailablePlugin::export(config)?;
-    PackInstalledMember::export(config)?;
-    PackMemberInstallOutcome::export(config)?;
-    PackInstallFailure::export(config)?;
+    export_pack_install(config)?;
     ListAvailablePluginsRequest::export(config)?;
     ListAvailablePluginsResponse::export(config)?;
     SyncAvailablePluginsRequest::export(config)?;
