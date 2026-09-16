@@ -2,6 +2,8 @@
 
 [English](workflow.md) | 中文
 
+计划扩展：[工作流循环节点实现计划](workflow-loop-plan.zh.md)。
+
 `ora-application` 负责工作流定义用例，`ora-db` 负责持久化，`ora-contracts` 定义公共契约。工作流管理可编辑的 Agent 编排图，以草稿作为编辑工作区，以不可变发布快照作为运行版本。
 
 ## 实体与数据表

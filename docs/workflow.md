@@ -2,6 +2,8 @@
 
 English | [中文](workflow.zh.md)
 
+Planned extension: [Workflow Loop implementation plan](workflow-loop-plan.md).
+
 `ora-application` owns the workflow definition use cases, with persistence in `ora-db` and public contracts in `ora-contracts`. Workflows manage editable agent orchestration graphs with draft-as-workspace semantics and immutable published snapshots.
 
 ## Entities and tables
