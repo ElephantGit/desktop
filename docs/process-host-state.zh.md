@@ -24,7 +24,7 @@ Linux `ora_process_runtime::HostState` 已负责持久化 Scope／Run 意图与�
 - 完整的规范 Scope ID 与 `control.sock` 后缀必须满足 Linux 路径型 socket 长度上限。
   超长路径拒绝，不截短、不换目录。组可写的 checkout 和 `/tmp` 不属于支持的状态父目录。
 
-创建中断可能留下不完整的专用目录；恢复会保留并拒绝该目录，不自动修复；仅支持下述精确 v1、v2、v3 日志的迁移。
+创建中断可能留下不完整的专用目录；恢复会保留并拒绝该目录，不自动修复；仅支持下述精确 v1 至 v4 日志的迁移。
 持有期间不得删除锁文件、替换目录，或删除记录来绕过失败。
 
 ## 持久事实不等于启动权限
@@ -32,7 +32,7 @@ Linux `ora_process_runtime::HostState` 已负责持久化 Scope／Run 意图与�
 宿主持有原 `host.lock`，直到 SQLite 连接关闭。恢复先非阻塞获取原锁，再只读检查日志兼容性，
 最后才提交新的宿主实例。锁竞争返回错误，不授权替换锁或 endpoint。
 
-版本 4 日志使用 application ID `0x4f524148` 和 `user_version=4`，检查精确 schema、完整性及
+版本 5 日志使用 application ID `0x4f524148` 和 `user_version=5`，检查精确 schema、完整性及
 持久身份。记录正数宿主代次及宿主实例 ID，以及各 Scope 的原 guardian 实例、创建时宿主绑定和
 `intent_recorded` 阶段。代次溢出拒绝；恢复不改写意图中的创建者。
 已有 Scope 目录必须具有规范 ID、私有目录元数据和匹配的宿主意图。本切片不检查或管理其内部
@@ -52,7 +52,7 @@ Ready 由 `ora-process-client` 另行查询。
 旧版本不能启动 guardian，因此没有需要推断或回填的启动记录。精确 v2 schema 仅在没有 Scope 目录时迁移：此时移除废弃凭据列，但保留全部已消耗的启动尝试。
 已有旧 Scope 时，在写入身份或移除凭据前就拒绝；旧 guardian 可能仍需要原令牌协议。
 应保留兼容旧 host 管理这些 Scope，或为新任务另选专用状态目录，不得删 Scope 来绕过检查。
-这不是对历史 SQLite 空闲页及备份中的令牌进行安全擦除。未知 schema 拒绝；旧二进制拒绝 v4，不会重置它。宿主恢复不写 guardian.sqlite。
+这不是对历史 SQLite 空闲页及备份中的令牌进行安全擦除。未知 schema 拒绝；旧二进制拒绝 v5，不会重置它。宿主恢复不写 guardian.sqlite。
 
 日志独立启用并验证 WAL＋`synchronous=FULL`，要求实际链接的 SQLite 主线版本包含 WAL-reset 修复
 （不低于 3.51.3）。新事实提交事务后才返回，并同步所在目录条目。因此，提交后的文件系统失败
@@ -76,16 +76,26 @@ run_intent(run) 查询单条责任，run_intents() 按稳定 RunId 顺序枚举�
 恢复后可根据 guardian_access(intent.scope) 找回原 guardian，绑定新 host 实例，
 再通过 GuardianRuns 查询原 Run；确认回复丢失不要求新建 ID。
 
-所有支持的旧 host 格式均在推进宿主绑定的同一事务内添加空 Run 表。v3 可能已经有存活的
+v4 之前的 host 格式在推进宿主绑定的同一事务内添加空 Run 表。v3 可能已经有存活的
 guardian／Run；迁移不读取 guardian.sqlite，不虚构缺失的 host 意图。
 host 查询为空不能证明旧 Run 未执行。未知格式、索引与负载不一致、孤立 Run 引用或负载损坏，
 均在推进宿主身份前拒绝。
+
+## 持久停止和关闭意图
+
+`request_run_stop(run)` 登记强停责任；`request_scope_close(scope)` 永久封闭 host 的接纳入口。
+两者均先提交再回复，重启后仍然生效。已记录 Run 的重复 Start 仍返回原意图，但关闭中的 Scope
+拒绝新 Run 和新 guardian 启动。关闭隐含停止其全部 Run，不改写原始参数。未知身份拒绝。
+这些记录不证明已发送信号或完成清理。
+
+`run_stop_requested`、`scope_close_requested` 和 `scope_intents` 向 host 协调器暴露持久责任。
+旧格式在同一事务内增加空控制表，保留 v4 Run 意图；孤立控制引用在推进宿主权威前阻断恢复。
 
 ## 验证与剩余工作
 
 `cargo test -p ora-process-runtime --test host_state` 覆盖并发创建、锁竞争、重启去重、锁身份不变、
 外部 SIGKILL 后调用者内存丢失、缺失／外来文件、路径长度、权限、链接、版本／schema／身份损坏、
-代次耗尽、冲突修复及精确 v1、v2、v3 升级（含拒绝时旧令牌和代次不变）。Run 测试覆盖重启发现、Scope／参数不变、提交失败、帧上限及索引负载损坏。强杀 fixture 改变 child 的 HOME 和 cwd，仍使用同一显式状态路径。
+代次耗尽、冲突修复及精确 v1 至 v4 升级（含拒绝时旧令牌和代次不变）。Run 测试覆盖重启发现、Scope／参数不变、提交失败、帧上限及索引负载损坏。强杀 fixture 改变 child 的 HOME 和 cwd，仍使用同一显式状态路径。
 测试在测试用户 home 下建立私有临时目录；生产代码不会从该环境变量推导路径。
 
 真实 app 的启动、拒绝、启动方强杀及发现证据见 [guardian 启动](process-guardian.zh.md)。

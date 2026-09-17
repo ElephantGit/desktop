@@ -33,6 +33,9 @@ impl HostState {
             .ok_or(ProcessStateError::Rejected(
                 "Run intent requires an existing scope intent",
             ))?;
+        if self.scope_close_requested(intent.scope)? {
+            return Err(ProcessStateError::Rejected("host Scope is closing"));
+        }
         // Admission must fit the actual outgoing message, not just its smaller stored payload.
         let operation = intent.start_operation();
         encode_guardian_frame(&GuardianRunRequest {

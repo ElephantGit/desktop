@@ -1,5 +1,6 @@
 //! Durable host scope/Run intent and one-shot guardian bootstrap, separate from guardian execution.
 
+mod control;
 mod journal;
 mod launch;
 mod layout;

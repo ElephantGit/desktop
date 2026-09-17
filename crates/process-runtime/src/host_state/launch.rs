@@ -56,6 +56,9 @@ impl HostState {
         scope: ScopeId,
         executable: &Path,
     ) -> Result<GuardianAccess, ProcessStateError> {
+        if self.scope_close_requested(scope)? {
+            return Err(ProcessStateError::Rejected("host Scope is closing"));
+        }
         if self.guardian_access(scope)?.is_some() {
             return Err(ProcessStateError::Rejected(
                 "guardian launch already attempted; discover original instance",

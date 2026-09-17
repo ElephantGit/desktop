@@ -59,7 +59,7 @@ Ready、bind 后，通过 GuardianRuns::execute 使用协议所有的 GuardianRu
 
 ## 已有文件与版本
 
-新 host 和 guardian 日志均为版本 4，各自保存所属 Run 日志，均不再有凭据列。Host 恢复事务化迁移精确 v1/v2/v3 布局，
+新 host 日志为版本 5，guardian 日志为版本 4，各自保存所属 Run 日志，均不再有凭据列。Host 恢复事务化迁移精确 v1/v2/v3/v4 布局，
 保留原 Scope、代次、锁 inode 与已消耗启动尝试。v2 host 若已有 Scope 目录，迁移前即拒绝，
 保留旧版本管理所需的原令牌和代次。此时应使用兼容旧 host，或为新任务选择另一个专用状态目录，
 不能通过删除旧 Scope 强行升级。删除旧令牌列不承诺安全擦除 SQLite 空闲页

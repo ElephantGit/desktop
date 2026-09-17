@@ -68,8 +68,8 @@ This is a real local guardian/client loop, not yet a production Node/host/busine
 
 ## Existing files and versions
 
-New host and guardian journals use version 4, each with its own Run ledger. Neither contains credential columns. Host recovery migrates
-the exact v1/v2/v3 layouts transactionally, retaining original scopes, epochs, lock inodes and consumed
+The host journal uses version 5 and the guardian journal version 4, each with its own Run ledger. Neither contains credential columns. Host recovery migrates
+the exact v1/v2/v3/v4 layouts transactionally, retaining original scopes, epochs, lock inodes and consumed
 launch attempts. Version-2 hosts with existing Scope directories are rejected before migration so
 compatible old binaries retain the original tokens and epoch. Use that compatible host or a separate
 new state directory; do not delete legacy scopes to force an upgrade. Removed historical token values
