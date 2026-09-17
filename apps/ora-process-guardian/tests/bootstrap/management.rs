@@ -31,7 +31,7 @@ async fn durable_takeover_fences_old_channels_and_replays_original_session() -> 
     let old = bound(manager.bind(original_host).await?)?;
     assert_eq!(bound(manager.bind(original_host).await?)?, old);
     let mut wrong = access.clone();
-    wrong.credential = GuardianCredential::new();
+    wrong.intent.guardian = ora_process_protocol::GuardianInstanceId::new();
     // SAFETY: geteuid only queries the current identity.
     let owner = unsafe { libc::geteuid() };
     assert!(
@@ -52,7 +52,6 @@ async fn durable_takeover_fences_old_channels_and_replays_original_session() -> 
     let frame = encode_guardian_frame(&GuardianManagementRequest {
         version: GUARDIAN_WIRE_VERSION,
         intent: access.intent.clone(),
-        credential: access.credential.clone(),
         channel: GuardianChannel::Io,
         operation: GuardianManagementOperation::Inspect {
             session: old.clone(),
@@ -62,7 +61,7 @@ async fn durable_takeover_fences_old_channels_and_replays_original_session() -> 
     drop(host);
     let recovered = recover(&root).await?;
     let new = bound(manager.bind(recovered.binding()).await?)?;
-    assert_ne!(old.credential, new.credential);
+    assert_ne!(old.host, new.host);
     assert_eq!(new.host, recovered.binding());
     assert_eq!(bound(manager.bind(recovered.binding()).await?)?, new);
     for channel in [
@@ -111,23 +110,18 @@ async fn durable_takeover_fences_old_channels_and_replays_original_session() -> 
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
     )?;
     let stored = journal.query_row(
-        "SELECT host_epoch, host_instance, credential FROM guardian_host_session",
+        "SELECT host_epoch, host_instance FROM guardian_host_session",
         [],
         |row| {
             Ok((
                 row.get::<_, i64>(/*idx*/ 0)?,
                 row.get::<_, String>(/*idx*/ 1)?,
-                row.get::<_, Vec<u8>>(/*idx*/ 2)?,
             ))
         },
     )?;
     assert_eq!(
         stored,
-        (
-            new.host.epoch.get() as i64,
-            new.host.instance.to_string(),
-            new.credential.as_bytes().to_vec()
-        )
+        (new.host.epoch.get() as i64, new.host.instance.to_string())
     );
 
     // Lose the takeover response: query the durable row to synchronize, then replay that binding.
@@ -137,7 +131,6 @@ async fn durable_takeover_fences_old_channels_and_replays_original_session() -> 
     lost.write_all(&encode_guardian_frame(&GuardianManagementRequest {
         version: GUARDIAN_WIRE_VERSION,
         intent: access.intent.clone(),
-        credential: access.credential.clone(),
         channel: GuardianChannel::Control,
         operation: GuardianManagementOperation::Bind {
             host: recovered.binding(),

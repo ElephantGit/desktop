@@ -59,24 +59,23 @@ pub(super) fn initialize(
     let mut connection = state_journal::open_writable(&path)?;
     let transaction = connection.transaction()?;
     transaction.execute_batch(
-        "PRAGMA application_id=1330790727; PRAGMA user_version=2;
+        "PRAGMA application_id=1330790727; PRAGMA user_version=3;
         CREATE TABLE guardian_bootstrap (
             singleton INTEGER PRIMARY KEY CHECK (singleton=1), scope TEXT NOT NULL,
             guardian TEXT NOT NULL, host_epoch INTEGER NOT NULL CHECK (host_epoch>0),
-            host_instance TEXT NOT NULL, credential BLOB NOT NULL CHECK(length(credential)=32),
+            host_instance TEXT NOT NULL,
             phase TEXT NOT NULL CHECK (phase='initialized')
         ) STRICT;",
     )?;
     let epoch = i64::try_from(access.intent.created_by.epoch.get())
         .map_err(|_| ProcessStateError::Rejected("host epoch outside journal range"))?;
     transaction.execute(
-        "INSERT INTO guardian_bootstrap VALUES (1, ?1, ?2, ?3, ?4, ?5, 'initialized')",
+        "INSERT INTO guardian_bootstrap VALUES (1, ?1, ?2, ?3, ?4, 'initialized')",
         params![
             access.intent.scope.to_string(),
             access.intent.guardian.to_string(),
             epoch,
-            access.intent.created_by.instance.to_string(),
-            access.credential.as_bytes()
+            access.intent.created_by.instance.to_string()
         ],
     )?;
     super::management::initialize(&transaction, access.intent.created_by)?;

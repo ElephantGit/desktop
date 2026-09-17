@@ -1,9 +1,9 @@
 use std::num::NonZeroU64;
 
 use ora_process_protocol::{
-    GUARDIAN_MAX_FRAME, GUARDIAN_WIRE_VERSION, GuardianChannel, GuardianCredential,
-    GuardianInstanceId, GuardianReady, HostBinding, HostInstanceId, ScopeCreationIntent, ScopeId,
-    decode_guardian_payload, encode_guardian_frame,
+    GUARDIAN_MAX_FRAME, GUARDIAN_WIRE_VERSION, GuardianChannel, GuardianInstanceId, GuardianReady,
+    HostBinding, HostInstanceId, ScopeCreationIntent, ScopeId, decode_guardian_payload,
+    encode_guardian_frame,
 };
 use pretty_assertions::assert_eq;
 use serde::Serialize;
@@ -28,7 +28,6 @@ fn management_messages_cannot_downgrade_to_legacy_readiness() -> TestResult {
             guardian: GuardianInstanceId::new(),
             created_by: host,
         },
-        credential: GuardianCredential::new(),
         channel: GuardianChannel::Control,
         operation: GuardianManagementOperation::Bind { host },
     };
@@ -41,7 +40,6 @@ fn management_messages_cannot_downgrade_to_legacy_readiness() -> TestResult {
     let legacy = GuardianReadyRequest {
         version: request.version,
         intent: request.intent,
-        credential: request.credential,
         channel: request.channel,
         session: [3; 16],
     };
@@ -115,13 +113,5 @@ fn unknown_fields_and_noncanonical_identities_are_rejected() -> TestResult {
         let frame = encode_guardian_frame(&invalid)?;
         assert!(decode_guardian_payload::<ScopeId>(&frame[4..]).is_err());
     }
-    assert!(GuardianCredential::from_bytes(&[0; 31]).is_err());
-    let credential = GuardianCredential::from_bytes(&[42; 32])?;
-    assert_eq!(format!("{credential:?}"), "GuardianCredential([REDACTED])");
-    let frame = encode_guardian_frame(&credential)?;
-    assert_eq!(
-        decode_guardian_payload::<GuardianCredential>(&frame[4..])?,
-        credential
-    );
     Ok(())
 }

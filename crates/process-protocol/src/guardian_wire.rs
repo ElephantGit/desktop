@@ -1,53 +1,12 @@
-use std::fmt;
 use std::io::{self, Cursor};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use uuid::Uuid;
 
 use crate::ScopeCreationIntent;
 
-pub const GUARDIAN_WIRE_VERSION: u16 = 1;
+pub const GUARDIAN_WIRE_VERSION: u16 = 2;
 pub const GUARDIAN_MAX_FRAME: usize = 16_384;
-
-/// A bearer capability for trusted management peers, deliberately redacted from Debug.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GuardianCredential([u8; 32]);
-
-impl GuardianCredential {
-    pub fn new() -> Self {
-        let mut bytes = [0; 32];
-        // Two independently generated v4 UUIDs retain 244 bits of OS-generated randomness.
-        bytes[..16].copy_from_slice(Uuid::new_v4().as_bytes());
-        bytes[16..].copy_from_slice(Uuid::new_v4().as_bytes());
-        Self(bytes)
-    }
-
-    /// Restores only the exact credential size stored by the owning journal.
-    pub fn from_bytes(bytes: &[u8]) -> io::Result<Self> {
-        Ok(Self(bytes.try_into().map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidData, "invalid credential length")
-        })?))
-    }
-
-    /// Exposes secret bytes only for explicit journal persistence, never diagnostic formatting.
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-impl Default for GuardianCredential {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl fmt::Debug for GuardianCredential {
-    /// Prevents derived container diagnostics from printing the bearer credential.
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("GuardianCredential([REDACTED])")
-    }
-}
 
 /// Internal recovery material; it is not Controller authorization or a Run launch capability.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,7 +14,6 @@ impl fmt::Debug for GuardianCredential {
 pub struct GuardianAccess {
     pub scope_dir: PathBuf,
     pub intent: ScopeCreationIntent,
-    pub credential: GuardianCredential,
 }
 
 /// Versioned material delivered only over the dedicated inherited bootstrap channel.
@@ -91,7 +49,6 @@ impl GuardianChannel {
 pub struct GuardianReadyRequest {
     pub version: u16,
     pub intent: ScopeCreationIntent,
-    pub credential: GuardianCredential,
     pub channel: GuardianChannel,
     pub session: [u8; 16],
 }

@@ -24,7 +24,7 @@ Linux `ora_process_runtime::HostState` 已负责持久化宿主创建意图与�
 - 完整的规范 Scope ID 与 `control.sock` 后缀必须满足 Linux 路径型 socket 长度上限。
   超长路径拒绝，不截短、不换目录。组可写的 checkout 和 `/tmp` 不属于支持的状态父目录。
 
-创建中断可能留下不完整的专用目录；恢复会保留并拒绝该目录，不自动修复；仅支持下述精确 v1 日志的增量迁移。
+创建中断可能留下不完整的专用目录；恢复会保留并拒绝该目录，不自动修复；仅支持下述精确 v1、v2 日志的迁移。
 持有期间不得删除锁文件、替换目录，或删除记录来绕过失败。
 
 ## 持久事实不等于启动权限
@@ -32,7 +32,7 @@ Linux `ora_process_runtime::HostState` 已负责持久化宿主创建意图与�
 宿主持有原 `host.lock`，直到 SQLite 连接关闭。恢复先非阻塞获取原锁，再只读检查日志兼容性，
 最后才提交新的宿主实例。锁竞争返回错误，不授权替换锁或 endpoint。
 
-版本 2 日志使用 application ID `0x4f524148` 和 `user_version=2`，检查精确 schema、完整性及
+版本 3 日志使用 application ID `0x4f524148` 和 `user_version=3`，检查精确 schema、完整性及
 持久身份。记录正数宿主代次及宿主实例 ID，以及各 Scope 的原 guardian 实例、创建时宿主绑定和
 `intent_recorded` 阶段。代次溢出拒绝；恢复不改写意图中的创建者。
 已有 Scope 目录必须具有规范 ID、私有目录元数据和匹配的宿主意图。本切片不检查或管理其内部
@@ -43,14 +43,14 @@ journal 与 endpoint。
 进程、凭据或 Ready 事实。没有意图的已有 Scope 路径会阻止登记，原文件保留。
 
 `start_guardian(scope, executable)` 要求已有意图及显式传入的可信可执行文件。
-它先提交凭据和 `launch_unknown` 记录，再创建私有 Scope 目录、获取其锁并 exec guardian。
+它先提交 `launch_unknown` 记录，再创建私有 Scope 目录、获取其锁并 exec guardian。
 此后的错误或取消均消耗这次尝试；即使证明 exec 失败，也不能再次启动。
 `guardian_access(scope)` 在宿主恢复后取回原发现材料，不启动进程，也不转移控制权。
 Ready 由 `ora-process-client` 另行查询。
 
 恢复接受精确的 v1 仅意图 schema，在同一事务中添加启动表并推进宿主身份；原意图、路径与锁 inode 不变。
-旧版本不能启动 guardian，因此没有需要推断或回填的启动记录。未知 schema 拒绝；旧二进制拒绝 v2，
-不会重置它。宿主恢复不写 guardian.sqlite。
+旧版本不能启动 guardian，因此没有需要推断或回填的启动记录。精确 v2 schema 也会迁移：移除废弃凭据列，但保留全部已消耗的启动尝试。
+这不是对历史 SQLite 空闲页及备份中的令牌进行安全擦除。未知 schema 拒绝；旧二进制拒绝 v3，不会重置它。宿主恢复不写 guardian.sqlite。
 
 日志独立启用并验证 WAL＋`synchronous=FULL`，要求实际链接的 SQLite 主线版本包含 WAL-reset 修复
 （不低于 3.51.3）。新事实提交事务后才返回，并同步所在目录条目。因此，提交后的文件系统失败
@@ -62,7 +62,7 @@ Ready 由 `ora-process-client` 另行查询。
 
 `cargo test -p ora-process-runtime --test host_state` 覆盖并发创建、锁竞争、重启去重、锁身份不变、
 外部 SIGKILL 后调用者内存丢失、缺失／外来文件、路径长度、权限、链接、版本／schema／身份损坏、
-代次耗尽、冲突修复及精确 v1 升级。强杀 fixture 改变 child 的 HOME 和 cwd，仍使用同一显式状态路径。
+代次耗尽、冲突修复及精确 v1、v2 升级。强杀 fixture 改变 child 的 HOME 和 cwd，仍使用同一显式状态路径。
 测试在测试用户 home 下建立私有临时目录；生产代码不会从该环境变量推导路径。
 
 真实 app 的启动、拒绝、启动方强杀及发现证据见 [guardian 启动](process-guardian.zh.md)。

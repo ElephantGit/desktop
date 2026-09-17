@@ -1,5 +1,5 @@
 use ora_process_protocol::{
-    GuardianChannel, GuardianCredential, GuardianHostSession, GuardianManagementOperation,
+    GuardianChannel, GuardianHostSession, GuardianManagementOperation,
     GuardianManagementRejection as Rejection, GuardianManagementReply, HostBinding,
     ScopeCreationIntent,
 };
@@ -17,16 +17,14 @@ pub(super) fn initialize(
     transaction.execute_batch(
         "CREATE TABLE guardian_host_session (
         singleton INTEGER PRIMARY KEY CHECK (singleton=1),
-        host_epoch INTEGER NOT NULL CHECK (host_epoch>0), host_instance TEXT NOT NULL,
-        credential BLOB NOT NULL CHECK(length(credential)=32)
+        host_epoch INTEGER NOT NULL CHECK (host_epoch>0), host_instance TEXT NOT NULL
     ) STRICT;",
     )?;
     transaction.execute(
-        "INSERT INTO guardian_host_session VALUES (1, ?1, ?2, ?3)",
+        "INSERT INTO guardian_host_session VALUES (1, ?1, ?2)",
         params![
             i64::try_from(host.epoch.get()).map_err(|_| rusqlite::Error::InvalidQuery)?,
-            host.instance.to_string(),
-            GuardianCredential::new().as_bytes()
+            host.instance.to_string()
         ],
     )?;
     Ok(())
@@ -76,10 +74,19 @@ impl Management {
         if !self.connection.is_autocommit() {
             return Err(Rejection::StorageUnavailable);
         }
-        let current = self.connection.query_row(
-            "SELECT host_epoch, host_instance, credential FROM guardian_host_session WHERE singleton=1", [],
-            |row| Ok((row.get::<_, i64>(/*idx*/ 0)?, row.get::<_, String>(/*idx*/ 1)?, row.get::<_, Vec<u8>>(/*idx*/ 2)?)),
-        ).map_err(|_| Rejection::StorageUnavailable)?;
+        let current = self
+            .connection
+            .query_row(
+                "SELECT host_epoch, host_instance FROM guardian_host_session WHERE singleton=1",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(/*idx*/ 0)?,
+                        row.get::<_, String>(/*idx*/ 1)?,
+                    ))
+                },
+            )
+            .map_err(|_| Rejection::StorageUnavailable)?;
         let current = GuardianHostSession {
             host: HostBinding {
                 epoch: u64::try_from(current.0)
@@ -91,8 +98,6 @@ impl Management {
                     .parse()
                     .map_err(|_| Rejection::StorageUnavailable)?,
             },
-            credential: GuardianCredential::from_bytes(&current.2)
-                .map_err(|_| Rejection::StorageUnavailable)?,
         };
         match operation {
             GuardianManagementOperation::Bind { host } => {
@@ -109,17 +114,14 @@ impl Management {
                 let session = if host == current.host {
                     current
                 } else {
-                    let session = GuardianHostSession {
-                        host,
-                        credential: GuardianCredential::new(),
-                    };
+                    let session = GuardianHostSession { host };
                     let transaction = self
                         .connection
                         .transaction()
                         .map_err(|_| Rejection::StorageUnavailable)?;
                     let changed = transaction.execute(
-                        "UPDATE guardian_host_session SET host_epoch=?1, host_instance=?2, credential=?3 WHERE singleton=1",
-                        params![epoch, host.instance.to_string(), session.credential.as_bytes()],
+                        "UPDATE guardian_host_session SET host_epoch=?1, host_instance=?2 WHERE singleton=1",
+                        params![epoch, host.instance.to_string()],
                     ).map_err(|_| Rejection::StorageUnavailable)?;
                     if changed != 1 {
                         return Err(Rejection::StorageUnavailable);

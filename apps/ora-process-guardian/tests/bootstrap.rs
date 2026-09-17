@@ -5,8 +5,8 @@ mod management;
 
 use ora_process_client::GuardianProbe;
 use ora_process_protocol::{
-    GUARDIAN_WIRE_VERSION, GuardianAccess, GuardianBootstrap, GuardianChannel, GuardianCredential,
-    ScopeId, encode_guardian_frame,
+    GUARDIAN_WIRE_VERSION, GuardianAccess, GuardianBootstrap, GuardianChannel, ScopeId,
+    encode_guardian_frame,
 };
 use ora_process_runtime::{HostState, ProcessStateError};
 use ora_utils::fs::LinuxFileLock;
@@ -103,7 +103,6 @@ fn invalid_bootstrap_preserves_scope_and_never_publishes_endpoints() -> TestResu
             access: GuardianAccess {
                 scope_dir: scope_dir.clone(),
                 intent,
-                credential: GuardianCredential::new(),
             },
         })?;
         // Invalid qualification may close the socket before the parent finishes delivery.
@@ -253,7 +252,7 @@ async fn guardian_commits_before_ready_and_rejects_unauthorized_probes() -> Test
         )
     );
     let mut wrong = access.clone();
-    wrong.credential = GuardianCredential::new();
+    wrong.intent.guardian = ora_process_protocol::GuardianInstanceId::new();
     // SAFETY: geteuid only reads the current identity.
     let owner = unsafe { libc::geteuid() };
     assert!(

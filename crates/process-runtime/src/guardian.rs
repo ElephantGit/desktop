@@ -120,7 +120,7 @@ pub async fn serve_guardian_bootstrap(
     result
 }
 
-/// Rejects a peer before returning any facts; sessions bind the scope, credential and socket role.
+/// Rejects a peer before returning any facts; sessions bind the scope and socket role.
 async fn serve_probe(
     mut stream: UnixStream,
     access: GuardianAccess,
@@ -136,23 +136,14 @@ async fn serve_probe(
             ));
         }
         let request: GuardianRequest = read_message(&mut stream).await?;
-        let (version, intent, credential, requested_channel) = match &request {
-            GuardianRequest::Ready(request) => (
-                request.version,
-                &request.intent,
-                &request.credential,
-                request.channel,
-            ),
-            GuardianRequest::Management(request) => (
-                request.version,
-                &request.intent,
-                &request.credential,
-                request.channel,
-            ),
+        let (version, intent, requested_channel) = match &request {
+            GuardianRequest::Ready(request) => (request.version, &request.intent, request.channel),
+            GuardianRequest::Management(request) => {
+                (request.version, &request.intent, request.channel)
+            }
         };
         if version != GUARDIAN_WIRE_VERSION
             || intent != &access.intent
-            || credential != &access.credential
             || requested_channel != channel
         {
             return Err(io::Error::new(

@@ -47,7 +47,6 @@ impl GuardianManagement {
         let request = GuardianManagementRequest {
             version: GUARDIAN_WIRE_VERSION,
             intent: self.access.intent.clone(),
-            credential: self.access.credential.clone(),
             channel,
             operation,
         };

@@ -93,9 +93,49 @@ fn version_one_upgrade_preserves_intent_and_ownership() -> TestResult {
     assert_eq!(
         database.query_row("PRAGMA user_version", [], |row| row
             .get::<_, i64>(/*idx*/ 0))?,
-        2
+        3
     );
     assert_eq!(fs::read_dir(path.join("scopes"))?.count(), 0);
+    Ok(())
+}
+
+/// The known token-bearing layout loses only its credential column, never an attempted launch.
+#[test]
+fn version_two_upgrade_preserves_consumed_launches() -> TestResult {
+    let directory = directory()?;
+    let path = directory.path().join("s");
+    let mut state = HostState::create(&path)?;
+    let scope = ScopeId::new();
+    let intent = state.record_scope_intent(scope)?;
+    let inode = fs::metadata(path.join("host.lock"))?.ino();
+    drop(state);
+    let old = rusqlite::Connection::open(path.join("host.sqlite"))?;
+    old.execute_batch(
+        "DROP TABLE guardian_launches;
+CREATE TABLE guardian_launches (
+    scope TEXT PRIMARY KEY NOT NULL REFERENCES scope_intents(scope),
+    credential BLOB NOT NULL CHECK (length(credential) = 32),
+    phase TEXT NOT NULL CHECK (phase = 'launch_unknown')
+) STRICT;
+PRAGMA user_version=2;",
+    )?;
+    old.execute(
+        "INSERT INTO guardian_launches VALUES (?1, zeroblob(32), 'launch_unknown')",
+        [scope.to_string()],
+    )?;
+    drop(old);
+    let state = recover(&path)?;
+    assert_eq!(
+        state.guardian_access(scope)?,
+        Some(ora_process_protocol::GuardianAccess {
+            scope_dir: path.join("scopes").join(scope.to_string()),
+            intent
+        })
+    );
+    assert_eq!(fs::metadata(path.join("host.lock"))?.ino(), inode);
+    drop(state);
+    // Reopen also checks that migration produced exactly the new canonical schema.
+    assert!(recover(&path)?.guardian_access(scope)?.is_some());
     Ok(())
 }
 

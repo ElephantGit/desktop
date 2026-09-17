@@ -9,8 +9,7 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use ora_process_protocol::{
-    GUARDIAN_WIRE_VERSION, GuardianAccess, GuardianBootstrap, GuardianCredential, ScopeId,
-    encode_guardian_frame,
+    GUARDIAN_WIRE_VERSION, GuardianAccess, GuardianBootstrap, ScopeId, encode_guardian_frame,
 };
 use ora_utils::{
     fs::LinuxFileLock,
@@ -23,20 +22,20 @@ use tokio::io::AsyncWriteExt;
 use super::{HostState, ProcessStateError};
 
 impl HostState {
-    /// Retrieves the original credential for discovery, never permission to launch again.
+    /// Retrieves the original identity for discovery, never permission to launch again.
     pub fn guardian_access(
         &self,
         scope: ScopeId,
     ) -> Result<Option<GuardianAccess>, ProcessStateError> {
-        let credential = self
+        let attempted = self
             .connection
             .query_row(
-                "SELECT credential FROM guardian_launches WHERE scope=?1",
+                "SELECT phase FROM guardian_launches WHERE scope=?1",
                 [scope.to_string()],
-                |row| row.get::<_, Vec<u8>>(/*idx*/ 0),
+                |row| row.get::<_, String>(/*idx*/ 0),
             )
             .optional()?;
-        let Some(credential) = credential else {
+        let Some(_phase) = attempted else {
             return Ok(None);
         };
         let intent = self
@@ -45,7 +44,6 @@ impl HostState {
         Ok(Some(GuardianAccess {
             scope_dir: self.layout.scope_path(scope),
             intent,
-            credential: GuardianCredential::from_bytes(&credential)?,
         }))
     }
 
@@ -80,7 +78,6 @@ impl HostState {
         let access = GuardianAccess {
             scope_dir: self.layout.scope_path(scope),
             intent,
-            credential: GuardianCredential::new(),
         };
         let bootstrap = encode_guardian_frame(&GuardianBootstrap {
             version: GUARDIAN_WIRE_VERSION,
@@ -88,8 +85,8 @@ impl HostState {
         })?;
         let transaction = self.connection.transaction()?;
         transaction.execute(
-            "INSERT INTO guardian_launches VALUES (?1, ?2, 'launch_unknown')",
-            params![scope.to_string(), access.credential.as_bytes()],
+            "INSERT INTO guardian_launches VALUES (?1, 'launch_unknown')",
+            params![scope.to_string()],
         )?;
         transaction.commit()?;
         self.layout.sync()?;

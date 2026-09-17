@@ -32,7 +32,7 @@ that production composition is not implemented yet.
 
 Creation is intentionally fail-closed: interrupted initialization can leave a partial dedicated
 directory, which is preserved and rejected on recovery. Automatic repair is not provided; only the
-exact version-1 journal has the additive migration described below.
+exact version-1 and version-3 journals have the migrations described below.
 Do not delete lock files, replace the directory while owned, or remove records to bypass a failure.
 
 ## Durable facts, not launch authority
@@ -41,7 +41,7 @@ The host holds the original `host.lock` until its SQLite connection closes. Reco
 lock nonblockingly, then performs a read-only journal compatibility check, and only then commits a
 new host incarnation. Contention is an error, not permission to replace a lock or endpoint.
 
-The version-2 journal identifies itself with application ID `0x4f524148` and `user_version=2`, and
+The version-2 journal identifies itself with application ID `0x4f524148` and `user_version=3`, and
 checks its exact schema, integrity and persisted identities. It stores a positive host epoch with a
 host instance ID, plus each Scope's original guardian instance, creating host binding and
 `intent_recorded` phase. Epoch overflow is rejected; recovery never rewrites an intent's creating host.
@@ -54,7 +54,7 @@ This registration call produces no Scope directory, guardian journal, process, c
 A pre-existing Scope path without an intent blocks registration and is preserved.
 
 `start_guardian(scope, executable)` requires that intent and an explicitly supplied trusted executable.
-It first commits a credential and `launch_unknown` record, then creates the private Scope directory,
+It first commits a `launch_unknown` record, then creates the private Scope directory,
 acquires its lock and execs the guardian. Every subsequent error or cancellation consumes the attempt;
 even a proven exec failure cannot authorize a second launch. `guardian_access(scope)` restores the
 original discovery material after host recovery; it neither launches nor transfers control authority.
@@ -62,8 +62,9 @@ Guardian readiness is queried separately through `ora-process-client`.
 
 Recovery accepts the exact version-1 intent-only schema and atomically adds the launch table while
 advancing host identity. Original intents, paths and lock inode remain unchanged. That old version
-could not launch guardians; it has no launch records to infer or backfill. Unknown schemas fail closed,
-and old binaries reject version 2 rather than resetting it. Host recovery never writes guardian.sqlite.
+could not launch guardians; it has no launch records to infer or backfill. The exact version-2 schema is also migrated: its obsolete credential column is removed while all
+consumed launch attempts are preserved. Historical SQLite free pages and backups are not securely
+erased. Unknown schemas fail closed, and old binaries reject version 3 rather than resetting it. Host recovery never writes guardian.sqlite.
 
 The journal independently enables and verifies WAL plus `synchronous=FULL`; the linked SQLite mainline
 version must include the WAL-reset fix (at least 3.51.3). Transactions commit before returning new
@@ -78,7 +79,7 @@ documentation. Physical power-loss durability remains unverified.
 `cargo test -p ora-process-runtime --test host_state` exercises concurrent creation, lock contention,
 deduplication across restart, unchanged lock identity, lost caller state after external SIGKILL,
 missing/foreign files, path limits, permissions, links, version/schema/identity corruption, epoch
-exhaustion, conflict repair and the exact version-1 upgrade. Crash fixtures override child HOME and cwd while using the same
+exhaustion, conflict repair and the exact version-1 and version-2 upgrades. Crash fixtures override child HOME and cwd while using the same
 explicit state path. Tests use a private temporary fixture under the test user's home; production
 code does not derive a path from that environment variable.
 

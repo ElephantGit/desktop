@@ -1,10 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    GuardianChannel, GuardianCredential, GuardianReadyRequest, HostBinding, ScopeCreationIntent,
-};
+use crate::{GuardianChannel, GuardianReadyRequest, HostBinding, ScopeCreationIntent};
 
-/// Additive message selection preserves the original readiness format on live older guardians.
+/// Message selection separates readiness from management within the current wire version.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum GuardianRequest {
@@ -12,12 +10,11 @@ pub enum GuardianRequest {
     Management(GuardianManagementRequest),
 }
 
-/// A guardian-issued host session, separate from Node authorization and Scope control generations.
+/// A public host binding used to reject stale callers, not a secret or an authentication proof.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GuardianHostSession {
     pub host: HostBinding,
-    pub credential: GuardianCredential,
 }
 
 /// Only host binding changes are available; no variant grants workload mutation or lease renewal.
@@ -28,18 +25,17 @@ pub enum GuardianManagementOperation {
     Inspect { session: GuardianHostSession },
 }
 
-/// Every channel authenticates the original scope before entering the serialized execution gate.
+/// Every channel checks the original scope identity before entering the serialized execution gate.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GuardianManagementRequest {
     pub version: u16,
     pub intent: ScopeCreationIntent,
-    pub credential: GuardianCredential,
     pub channel: GuardianChannel,
     pub operation: GuardianManagementOperation,
 }
 
-/// Rejections do not disclose the current host or its session secret.
+/// Rejections distinguish stale callers from storage and channel failures.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GuardianManagementRejection {
     StaleHost,

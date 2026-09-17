@@ -10,8 +10,7 @@ pub use guardian_management::{
 mod guardian_wire;
 pub use guardian_wire::{
     GUARDIAN_MAX_FRAME, GUARDIAN_WIRE_VERSION, GuardianAccess, GuardianBootstrap, GuardianChannel,
-    GuardianCredential, GuardianReady, GuardianReadyRequest, decode_guardian_payload,
-    encode_guardian_frame,
+    GuardianReady, GuardianReadyRequest, decode_guardian_payload, encode_guardian_frame,
 };
 mod helper;
 mod output;

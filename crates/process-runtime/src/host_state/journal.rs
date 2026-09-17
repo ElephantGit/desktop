@@ -7,10 +7,14 @@ use rusqlite::{Connection, OpenFlags, params};
 use super::ProcessStateError;
 
 const APPLICATION_ID: i64 = 0x4f52_4148;
-const VERSION: i64 = 2;
-const LAUNCH_SCHEMA: &str = "CREATE TABLE guardian_launches (
+const VERSION: i64 = 3;
+const LEGACY_LAUNCH_SCHEMA: &str = "CREATE TABLE guardian_launches (
     scope TEXT PRIMARY KEY NOT NULL REFERENCES scope_intents(scope),
     credential BLOB NOT NULL CHECK (length(credential) = 32),
+    phase TEXT NOT NULL CHECK (phase = 'launch_unknown')
+) STRICT";
+const LAUNCH_SCHEMA: &str = "CREATE TABLE guardian_launches (
+    scope TEXT PRIMARY KEY NOT NULL REFERENCES scope_intents(scope),
     phase TEXT NOT NULL CHECK (phase = 'launch_unknown')
 ) STRICT";
 const HOST_SCHEMA: &str = "CREATE TABLE host_binding (
@@ -59,7 +63,7 @@ pub(super) fn inspect(
         "SELECT (SELECT application_id FROM pragma_application_id), (SELECT user_version FROM pragma_user_version)",
         [], |row| Ok((row.get::<_, i64>(/*idx*/ 0)?, row.get::<_, i64>(/*idx*/ 1)?)),
     )?;
-    if header.0 != APPLICATION_ID || !matches!(header.1, 1 | VERSION) {
+    if header.0 != APPLICATION_ID || !matches!(header.1, 1 | 2 | VERSION) {
         return Err(ProcessStateError::Rejected(
             "unknown journal identity or version",
         ));
@@ -70,6 +74,8 @@ pub(super) fn inspect(
         .collect::<Result<Vec<_>, _>>()?;
     let expected = if header.1 == 1 {
         vec![HOST_SCHEMA, INTENT_SCHEMA]
+    } else if header.1 == 2 {
+        vec![LEGACY_LAUNCH_SCHEMA, HOST_SCHEMA, INTENT_SCHEMA]
     } else {
         vec![LAUNCH_SCHEMA, HOST_SCHEMA, INTENT_SCHEMA]
     };
@@ -120,7 +126,7 @@ pub(super) fn inspect(
             ));
         }
     }
-    if header.1 == VERSION {
+    if header.1 >= 2 {
         let orphaned: i64 = connection.query_row("SELECT count(*) FROM guardian_launches WHERE scope NOT IN (SELECT scope FROM scope_intents)", [], |row| row.get(/*idx*/ 0))?;
         if orphaned != 0 {
             return Err(ProcessStateError::Rejected(
@@ -142,6 +148,14 @@ pub(super) fn advance_binding(
     // schema version and new host binding commit together, so old binaries fail closed afterward.
     if version == 1 {
         transaction.execute_batch(LAUNCH_SCHEMA)?;
+    } else if version == 2 {
+        // Rebuild only the known table, preserving consumed attempts and exact current schema.
+        transaction
+            .execute_batch("ALTER TABLE guardian_launches RENAME TO legacy_guardian_launches;")?;
+        transaction.execute_batch(LAUNCH_SCHEMA)?;
+        transaction.execute_batch("INSERT INTO guardian_launches SELECT scope, phase FROM legacy_guardian_launches; DROP TABLE legacy_guardian_launches;")?;
+    }
+    if version < VERSION {
         transaction.pragma_update(/*schema_name*/ None, "user_version", VERSION)?;
     }
     let changed = transaction.execute(

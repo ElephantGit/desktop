@@ -25,7 +25,6 @@ impl GuardianProbe {
         let request = GuardianReadyRequest {
             version: GUARDIAN_WIRE_VERSION,
             intent: self.access.intent.clone(),
-            credential: self.access.credential.clone(),
             channel,
             session: self.session,
         };
