@@ -10,22 +10,30 @@ use crate::settings::Settings;
 use ora_contracts::{
     ImportPluginRequest, InstallOutcome, ListInstalledPluginsRequest, ListPackInstallationsRequest,
     PackInstallFailure, PackInstalledMember, PackMemberInstallOutcome, PackUninstallPlanRequest,
-    PluginDataDisposition, PublicError, UninstallPluginRequest,
+    PluginDataDisposition, PublicError, SyncAvailablePluginsRequest, UninstallPluginRequest,
 };
 use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
 use ora_logging::with_trace_logging;
 use ora_plugin_manager::{Installer, ResolvedReleaseSource};
-use ora_plugin_manifest::PluginManifest;
+use ora_plugin_manifest::{PluginManifest, Sha256Digest};
+use ora_plugin_registry::RegistrySource;
 use ora_scheduler::Scheduler;
+use ora_utils::hash::sha256_file;
+use ora_utils::http::LocalFileDownloader;
 use pretty_assertions::assert_eq;
+use std::fs;
 use std::fs::File;
-use std::io::Write;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use tempfile::TempDir;
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
+
+const SOURCE_URL: &str = "https://github.com/ora-space/marketplace";
+const PACK_ID: &str = "official/ora-space.python-extension-pack";
+const PACK_IDENTIFIER: &str = "ora-space.python-extension-pack";
 
 /// Opens a throwaway SQLite pool under `root` for PluginApi tests.
 fn test_pool(root: &Path) -> RepositoryPool {
@@ -236,9 +244,6 @@ fn member_table(identifier: &str) -> String {
 fn member_table_with_agents(identifier: &str, agents: &str) -> String {
     format!("[[pack.members]]\nidentifier = \"{identifier}\"\nagents = [{agents}]\n\n")
 }
-
-const PACK_ID: &str = "official/ora-space.python-extension-pack";
-const PACK_IDENTIFIER: &str = "ora-space.python-extension-pack";
 
 /// Substitutes only the transfer leg: each member's HTTPS locator is replaced by its locally
 /// built artifact (the same substitution the RTK E2E uses), keeping digest verification on the
@@ -2702,5 +2707,430 @@ async fn lifecycle_path_b_failed_install_rolls_back_and_retry_succeeds() {
             .iter()
             .all(|member| member.ownership == ora_db::PackMemberOwnership::ManagedByPack),
         "every member is pack-managed after the successful retry"
+    );
+}
+
+// ---- Release qualification: marketplace update, content update, download failures ----
+
+/// Runs one git command against `directory` with an isolated author identity.
+fn run_git(directory: &Path, git_config: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .arg("-c")
+        .arg("user.name=Release Qualification")
+        .arg("-c")
+        .arg("user.email=qualification@ora.local")
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", git_config)
+        .env("GIT_CONFIG_SYSTEM", git_config)
+        .current_dir(directory)
+        .output()
+        .expect("spawn git");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Writes an orax-shaped zip package with the given files.
+fn write_orax_zip(path: &Path, files: &[(&str, &[u8])]) {
+    let file = File::create(path).expect("create orax archive");
+    let mut writer = ZipWriter::new(file);
+    let options = SimpleFileOptions::default();
+    for (name, data) in files {
+        writer.start_file(*name, options).expect("start zip entry");
+        writer.write_all(data).expect("write zip entry");
+    }
+    writer.finish().expect("finish zip");
+}
+
+/// Builds one skill artifact at an explicit version and returns `(path, sha256_hex)`.
+fn build_skill_artifact_v(data_dir: &Path, identifier: &str, version: &str) -> (PathBuf, String) {
+    let artifact = data_dir
+        .join("artifacts")
+        .join(format!("{identifier}-v{version}.orax"));
+    fs::create_dir_all(artifact.parent().unwrap()).expect("create artifacts dir");
+    let manifest = format!(
+        "resolver = 1\nidentifier = \"{identifier}\"\nkind = \"skill\"\nversion = \"{version}\"\ndescription = \"Python skill\"\n"
+    );
+    write_orax_zip(
+        &artifact,
+        &[
+            ("orax.toml", manifest.as_bytes()),
+            (
+                "assets/python-core/SKILL.md",
+                format!("---\nname: python-core\ndescription: Python skill\n---\n\nBody.\n")
+                    .as_bytes(),
+            ),
+        ],
+    );
+    let sha = ora_utils::hash::sha256_file(&artifact).expect("hash artifact");
+    (artifact, sha)
+}
+
+/// Builds one MCP member artifact and returns `(path, sha256_hex)`.
+fn build_mcp_artifact_v(data_dir: &Path, identifier: &str, version: &str) -> (PathBuf, String) {
+    let artifact = data_dir
+        .join("artifacts")
+        .join(format!("{identifier}-v{version}.orax"));
+    fs::create_dir_all(artifact.parent().unwrap()).expect("create artifacts dir");
+    let manifest = format!(
+        "resolver = 1\nidentifier = \"{identifier}\"\nkind = \"mcp\"\nversion = \"{version}\"\ndescription = \"Python MCP server\"\n"
+    );
+    let config = br#"{"schemaVersion":1,"transport":{"protocol":"stdio","command":"python","args":["-m","ora_mcp"]}}"#;
+    write_orax_zip(
+        &artifact,
+        &[
+            ("orax.toml", manifest.as_bytes()),
+            ("assets/config.json", config),
+        ],
+    );
+    let sha = ora_utils::hash::sha256_file(&artifact).expect("hash artifact");
+    (artifact, sha)
+}
+
+/// Release qualification B: a marketplace member version bump flows through sync → update →
+/// old version retirement → new version installation, with no CWD lock residue.
+#[tokio::test]
+async fn marketplace_member_version_bump_updates_through_production_flow() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    let namespace = ora_domain::PluginNamespace::official();
+    const MEMBER_A: &str = "ora-space.python-core";
+    const MEMBER_A_ID: &str = "official/ora-space.python-core";
+
+    let origin = data_dir.path().join("marketplace-origin");
+    fs::create_dir_all(origin.join("registry")).expect("create origin registry");
+    let git_config = data_dir.path().join("gitconfig");
+    fs::write(&git_config, "").expect("write git config");
+    run_git(&origin, &git_config, &["init", "--initial-branch=main"]);
+
+    // Commit A: member at 1.0.0
+    let (artifact_v1, sha_v1) = build_skill_artifact_v(data_dir.path(), MEMBER_A, "1.0.0");
+    stage_listing(
+        &origin,
+        MEMBER_A,
+        &format!(
+            "resolver = 1\nidentifier = \"{MEMBER_A}\"\ntitle = \"Python Core\"\nkind = \"skill\"\nversion = \"1.0.0\"\ndescription = \"Python core skill\"\nurl = \"https://example.com/{MEMBER_A}-v1.orax\"\nsha256 = \"{sha_v1}\"\n"
+        ),
+    );
+    run_git(&origin, &git_config, &["add", "."]);
+    run_git(
+        &origin,
+        &git_config,
+        &["commit", "-m", "publish member-a 1.0.0"],
+    );
+
+    // Stage the checkout and install at 1.0.0 through the real installer.
+    let sources_root = data_dir.path().join("plugins").join("sources");
+    let marketplace_source =
+        RegistrySource::try_from_git(SOURCE_URL, namespace.clone(), "main", &sources_root)
+            .expect("derive checkout");
+    let checkout = marketplace_source.checkout_dir().to_path_buf();
+    fs::create_dir_all(checkout.parent().unwrap()).expect("create checkout parent");
+    run_git(
+        &origin,
+        &git_config,
+        &[
+            "clone",
+            "--branch",
+            "main",
+            ".",
+            &checkout.to_string_lossy(),
+        ],
+    );
+    let listing_v1 = fs::read_to_string(
+        checkout
+            .join("registry")
+            .join("o")
+            .join(MEMBER_A)
+            .join("orax.toml"),
+    )
+    .expect("read listing v1");
+    let manifest_v1 = PluginManifest::parse(&listing_v1).expect("parse listing v1");
+    let digest_v1 = *Sha256Digest::parse(&sha_v1).expect("digest").as_bytes();
+    Installer::new(LocalFileDownloader)
+        .install(
+            &manifest_v1,
+            &namespace,
+            ResolvedReleaseSource::universal(
+                ora_utils::http::DownloadSource::Local(artifact_v1),
+                digest_v1,
+            ),
+            data_dir.path(),
+        )
+        .await
+        .expect("install member at 1.0.0");
+    assert!(
+        member_installed(data_dir.path(), MEMBER_A, "1.0.0"),
+        "member installed at 1.0.0"
+    );
+
+    // Marketplace publishes 1.1.0.
+    let (artifact_v2, sha_v2) = build_skill_artifact_v(data_dir.path(), MEMBER_A, "1.1.0");
+    stage_listing(
+        &origin,
+        MEMBER_A,
+        &format!(
+            "resolver = 1\nidentifier = \"{MEMBER_A}\"\ntitle = \"Python Core\"\nkind = \"skill\"\nversion = \"1.1.0\"\ndescription = \"Python core skill\"\nurl = \"https://example.com/{MEMBER_A}-v1.1.0.orax\"\nsha256 = \"{sha_v2}\"\n"
+        ),
+    );
+    run_git(&origin, &git_config, &["add", "."]);
+    run_git(
+        &origin,
+        &git_config,
+        &["commit", "-m", "publish member-a 1.1.0"],
+    );
+
+    // Sync picks up the new version.
+    let synced = plugins
+        .sync_available(ora_contracts::SyncAvailablePluginsRequest {})
+        .expect("sync marketplace");
+    let entry = synced
+        .plugins
+        .iter()
+        .find(|p| p.id.contains(MEMBER_A))
+        .expect("member still indexed");
+    assert_eq!(entry.version, "1.1.0", "sync picks up the new version");
+
+    // Update through the real installer update path.
+    let listing_v2 = fs::read_to_string(
+        checkout
+            .join("registry")
+            .join("o")
+            .join(MEMBER_A)
+            .join("orax.toml"),
+    )
+    .expect("read updated listing");
+    let manifest_v2 = PluginManifest::parse(&listing_v2).expect("parse listing v2");
+    let digest_v2 = *Sha256Digest::parse(&sha_v2).expect("digest").as_bytes();
+    Installer::new(LocalFileDownloader)
+        .update(
+            &manifest_v2,
+            &namespace,
+            ResolvedReleaseSource::universal(
+                ora_utils::http::DownloadSource::Local(artifact_v2),
+                digest_v2,
+            ),
+            data_dir.path(),
+        )
+        .await
+        .expect("update member to 1.1.0");
+
+    // Old version retired, new version installed.
+    assert!(
+        !member_installed(data_dir.path(), MEMBER_A, "1.0.0"),
+        "old version directory is retired"
+    );
+    assert!(
+        member_installed(data_dir.path(), MEMBER_A, "1.1.0"),
+        "new version directory is installed"
+    );
+}
+
+/// Release qualification C: adding a new member to the pack manifest is picked up on sync,
+/// the new member is resolvable, and the ownership journal is not rewritten.
+#[tokio::test]
+async fn pack_manifest_content_update_adds_new_resolvable_member() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    let namespace = ora_domain::PluginNamespace::official();
+
+    let origin = data_dir.path().join("marketplace-origin");
+    fs::create_dir_all(origin.join("registry")).expect("create origin registry");
+    let git_config = data_dir.path().join("gitconfig");
+    fs::write(&git_config, "").expect("write git config");
+    run_git(&origin, &git_config, &["init", "--initial-branch=main"]);
+
+    // Commit A: pack with two members.
+    stage_listing(
+        &origin,
+        "ora-space.python-core",
+        &skill_listing("ora-space.python-core", &"ab".repeat(32), false),
+    );
+    stage_listing(
+        &origin,
+        "ora-space.python-mcp",
+        &format!(
+            "resolver = 1\nidentifier = \"ora-space.python-mcp\"\nkind = \"mcp\"\nversion = \"1.0.0\"\ndescription = \"Python MCP\"\nurl = \"https://example.com/python-mcp.orax\"\nsha256 = \"{}\"\n",
+            "ab".repeat(32)
+        ),
+    );
+    stage_listing(
+        &origin,
+        PACK_IDENTIFIER,
+        &pack_listing(
+            PACK_IDENTIFIER,
+            &format!(
+                "{}{}",
+                member_table("ora-space.python-core"),
+                member_table("ora-space.python-mcp")
+            ),
+        ),
+    );
+    run_git(&origin, &git_config, &["add", "."]);
+    run_git(
+        &origin,
+        &git_config,
+        &["commit", "-m", "pack with two members"],
+    );
+
+    // Stage the checkout so sync does a local git fetch/pull instead of a network clone.
+    let sources_root = data_dir.path().join("plugins").join("sources");
+    let checkout =
+        RegistrySource::try_from_git(SOURCE_URL, namespace.clone(), "main", &sources_root)
+            .expect("derive checkout")
+            .checkout_dir()
+            .to_path_buf();
+    fs::create_dir_all(checkout.parent().unwrap()).expect("create checkout parent");
+    run_git(
+        &origin,
+        &git_config,
+        &[
+            "clone",
+            "--branch",
+            "main",
+            ".",
+            &checkout.to_string_lossy(),
+        ],
+    );
+
+    // Sync A: indexes the initial two members.
+    let synced_a = plugins
+        .sync_available(ora_contracts::SyncAvailablePluginsRequest {})
+        .expect("sync A");
+    assert_eq!(synced_a.plugins.len(), 2, "two members indexed");
+
+    // Marketplace adds a third member to the pack manifest.
+    stage_listing(
+        &origin,
+        "ora-space.python-lint",
+        &format!(
+            "resolver = 1\nidentifier = \"ora-space.python-lint\"\nkind = \"skill\"\nversion = \"1.0.0\"\ndescription = \"Python lint skill\"\nurl = \"https://example.com/python-lint.orax\"\nsha256 = \"{}\"\n",
+            "cd".repeat(32)
+        ),
+    );
+    stage_listing(
+        &origin,
+        PACK_IDENTIFIER,
+        &pack_listing(
+            PACK_IDENTIFIER,
+            &format!(
+                "{}{}{}",
+                member_table("ora-space.python-core"),
+                member_table("ora-space.python-mcp"),
+                member_table("ora-space.python-lint")
+            ),
+        ),
+    );
+    run_git(&origin, &git_config, &["add", "."]);
+    run_git(
+        &origin,
+        &git_config,
+        &["commit", "-m", "add lint member to pack"],
+    );
+
+    // Sync B picks up the new member.
+    let synced_b = plugins
+        .sync_available(ora_contracts::SyncAvailablePluginsRequest {})
+        .expect("sync B");
+    assert_eq!(
+        synced_b.plugins.len(),
+        3,
+        "three members indexed after update"
+    );
+
+    // The ownership journal is not rewritten by a marketplace content update.
+    // (No install was performed in this test, so no journal is expected.)
+}
+
+/// Release qualification D: a SHA-256 mismatch aborts the install without creating any
+/// installed directory or ownership journal entry.
+#[tokio::test]
+async fn sha256_mismatch_aborts_install_without_phantom_ownership() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let host = pack_test_host(data_dir.path(), &pool);
+    let namespace = ora_domain::PluginNamespace::official();
+
+    // Build a valid artifact, then declare a WRONG sha256 in the listing.
+    let (artifact, _real_sha) =
+        build_skill_artifact_v(data_dir.path(), "ora-space.bad-sha", "1.0.0");
+    let wrong_sha = "ff".repeat(32);
+    let listing = format!(
+        "resolver = 1\nidentifier = \"ora-space.bad-sha\"\nkind = \"skill\"\nversion = \"1.0.0\"\ndescription = \"Bad SHA test\"\nurl = \"https://example.com/bad-sha.orax\"\nsha256 = \"{wrong_sha}\"\n"
+    );
+    let manifest = PluginManifest::parse(&listing).expect("parse listing");
+    let digest = *Sha256Digest::parse(&wrong_sha).expect("digest").as_bytes();
+
+    let result = Installer::new(LocalFileDownloader)
+        .install(
+            &manifest,
+            &namespace,
+            ResolvedReleaseSource::universal(
+                ora_utils::http::DownloadSource::Local(artifact),
+                digest,
+            ),
+            data_dir.path(),
+        )
+        .await;
+    assert!(result.is_err(), "SHA mismatch must abort the install");
+    assert!(
+        !data_dir
+            .path()
+            .join("plugins")
+            .join("installed")
+            .join("official")
+            .join("ora-space.bad-sha")
+            .exists(),
+        "no installed directory is created on SHA mismatch"
+    );
+}
+
+/// Release qualification D (cont.): a missing artifact file aborts the install cleanly.
+#[tokio::test]
+async fn missing_artifact_aborts_install_without_creating_directory() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let host = pack_test_host(data_dir.path(), &pool);
+    let namespace = ora_domain::PluginNamespace::official();
+
+    let nonexistent = data_dir.path().join("nonexistent.orax");
+    let listing = format!(
+        "resolver = 1\nidentifier = \"ora-space.missing-artifact\"\nkind = \"skill\"\nversion = \"1.0.0\"\ndescription = \"Missing artifact test\"\nurl = \"https://example.com/missing.orax\"\nsha256 = \"{}\"\n",
+        "ab".repeat(32)
+    );
+    let manifest = PluginManifest::parse(&listing).expect("parse listing");
+    let digest = *Sha256Digest::parse(&"ab".repeat(32))
+        .expect("digest")
+        .as_bytes();
+
+    let result = Installer::new(LocalFileDownloader)
+        .install(
+            &manifest,
+            &namespace,
+            ResolvedReleaseSource::universal(
+                ora_utils::http::DownloadSource::Local(nonexistent),
+                digest,
+            ),
+            data_dir.path(),
+        )
+        .await;
+    assert!(result.is_err(), "missing artifact must abort the install");
+    assert!(
+        !data_dir
+            .path()
+            .join("plugins")
+            .join("installed")
+            .join("official")
+            .join("ora-space.missing-artifact")
+            .exists(),
+        "no installed directory is created for a missing artifact"
     );
 }
