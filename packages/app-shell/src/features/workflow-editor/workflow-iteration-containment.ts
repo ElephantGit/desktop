@@ -1,8 +1,9 @@
 import type { Edge, Node } from "@xyflow/react";
 import {
+  WORKFLOW_ITERATION_COLLAPSED_HEIGHT,
+  WORKFLOW_ITERATION_COLLAPSED_WIDTH,
   WORKFLOW_NODE_INITIAL_HEIGHT,
   WORKFLOW_NODE_WIDTH,
-  WORKFLOW_ITERATION_CARD_WIDTH,
   type WorkflowNodeData,
 } from "@ora/workflow-mock";
 import {
@@ -44,10 +45,12 @@ export function applyIterationDragRules<TWorkflow extends ContainmentWorkflow>(
       ...iterationExpandedSize(node),
       visibleWidth:
         node.data.collapsed === true
-          ? WORKFLOW_ITERATION_CARD_WIDTH + 16
+          ? WORKFLOW_ITERATION_COLLAPSED_WIDTH
           : iterationExpandedSize(node).width,
       visibleHeight:
-        node.data.collapsed === true ? 112 : iterationExpandedSize(node).height,
+        node.data.collapsed === true
+          ? WORKFLOW_ITERATION_COLLAPSED_HEIGHT
+          : iterationExpandedSize(node).height,
     }));
   const rejectedNodeIds: string[] = [];
   let changed = false;

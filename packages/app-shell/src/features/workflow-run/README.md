@@ -115,11 +115,15 @@ Keep these stacks separate — shared chrome only where noted.
 - **Iteration rounds**: persisted runs project region-node states grouped by
   `(nodeId, iteration)` into `run.roundStates` — one state per executed round —
   while `run.nodeStates` keeps each region node's latest round for existing
-  consumers. Overview marks member nodes with a round badge (`R2`), and the
-  Theater act inspector offers a per-round strip (with a per-round status dot)
-  to view each round's session output. The stage card, conversation, live status, and inspector
-  all read the selected round's projection together, so switching rounds cannot leave one panel
-  showing a different session or status.
+  consumers. Theater projects the frozen graph into outer stages and nested
+  iteration phases instead of flattening region members into a serial rail.
+  Multiple `iteration-entry` targets remain a structural parallel group after
+  completion; Condition fan-out is labeled separately. One region-level round
+  selector drives member status, conversation, stage card, and inspector, and
+  switching a peer preserves that selection. A missing member state is rendered
+  as “not run this round” rather than falling back to the node's latest state.
+  Legacy records without `roundStates` keep the nested structure and use
+  node-level status without rendering a round selector.
 - **Open location**: the run header reuses `LocationActionsButton`
   (File Manager / Terminal / VS Code / Copy Path). It resolves the run's
   Workspace location directly; non-local Workspace adapters remain responsible

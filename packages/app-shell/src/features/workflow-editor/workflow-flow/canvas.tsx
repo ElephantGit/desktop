@@ -23,7 +23,8 @@ import {
   type XYPosition,
 } from "@xyflow/react";
 import {
-  WORKFLOW_ITERATION_CARD_WIDTH,
+  WORKFLOW_ITERATION_COLLAPSED_HEIGHT,
+  WORKFLOW_ITERATION_COLLAPSED_WIDTH,
   type WorkflowNodeKind,
 } from "@ora/workflow-mock";
 import { toast } from "@ora/ui";
@@ -58,13 +59,22 @@ import { WorkflowCanvasTools, type CanvasInteractionMode } from "./tools";
 import { WorkflowHistoryControls } from "./history-controls";
 import type { WorkflowCanvasNode, WorkflowCanvasProps } from "./types";
 import { WorkflowVersionHistory } from "./version-history";
-import { iterationExpandedSize } from "../workflow-iteration-graph";
+import {
+  iterationExpandedSize,
+  projectIterationEdges,
+} from "../workflow-iteration-graph";
 import { WorkflowIterationActionsProvider } from "./iteration-actions";
 import {
   WORKFLOW_ANNOTATION_Z_INDEX,
   WORKFLOW_NODE_Z_INDEX,
   WORKFLOW_SELECTED_NODE_Z_INDEX,
 } from "./z-index";
+import {
+  connectionForCandidate,
+  reconnectDraft,
+  type ConnectionDraft,
+} from "./connection-gesture";
+import { isValidWorkflowConnection } from "./connection-validation";
 import "@xyflow/react/dist/style.css";
 import "./workflow-flow.css";
 
@@ -102,19 +112,6 @@ const CONNECTION_LINE_STYLE = {
 const WORKFLOW_ANNOTATION_WIDTH = 240;
 const WORKFLOW_ANNOTATION_HEIGHT = 140;
 
-type ConnectionDraft =
-  | {
-      kind: "new";
-      source: string;
-    }
-  | {
-      kind: "reconnect";
-      edgeId: string;
-      endpoint: HandleType;
-      source: string;
-      target: string;
-    };
-
 /** Finds the workflow card under a pointer so the whole card remains a forgiving drop zone. */
 function workflowNodeAtClientPoint(
   clientX: number,
@@ -139,27 +136,6 @@ function connectionEndClientPoint(
     return touch === null ? null : { x: touch.clientX, y: touch.clientY };
   }
   return { x: event.clientX, y: event.clientY };
-}
-
-/** Resolves the directed pair represented by a new or reconnect drag. */
-function connectionForCandidate(
-  draft: ConnectionDraft,
-  candidateNodeId: string,
-): Connection {
-  if (draft.kind === "new") {
-    return {
-      source: draft.source,
-      target: candidateNodeId,
-      sourceHandle: null,
-      targetHandle: null,
-    };
-  }
-  return {
-    source: draft.endpoint === "source" ? candidateNodeId : draft.source,
-    target: draft.endpoint === "target" ? candidateNodeId : draft.target,
-    sourceHandle: null,
-    targetHandle: null,
-  };
 }
 
 /** Wraps the flow in a provider so catalog drop can convert screen coordinates. */
@@ -294,56 +270,22 @@ function WorkflowCanvasInner({
       ...executableNodes.filter((node) => node.parentId !== undefined),
     ];
   }, [annotations, nodes, collapsedIterations, memberCountByIteration]);
+  const canvasEdges = useMemo(
+    () => projectIterationEdges({ nodes, edges }, collapsedIterations),
+    [collapsedIterations, edges, nodes],
+  );
   const reconnectingEdgeIdRef = useRef<string | null>(null);
-  const edgeIdByDirectedPair = useMemo(() => {
-    const pairs = new Map<string, string>();
-    for (const edge of edges) {
-      pairs.set(`${edge.source}\u0000${edge.target}`, edge.id);
-    }
-    return pairs;
-  }, [edges]);
 
   /** Rejects self-loops, duplicate directed edges, and edges that cross an iteration
    * region boundary in a direction the composite runtime cannot honor: a member's edge
-   * must stay inside its region, and only the owning iteration may enter its region. */
+   * must stay inside its region, and only the owner's internal-start handle may enter. */
   function isValidConnection(connection: Connection | Edge): boolean {
-    if (
-      connection.source === null ||
-      connection.target === null ||
-      connection.source === connection.target
-    ) {
-      return false;
-    }
-    const iterationIds = new Set(
-      nodes
-        .filter((node) => node.data.kind === "iteration")
-        .map((node) => node.id),
-    );
-    const parentIdOf = (nodeId: string): string | null => {
-      const parent = nodes.find((node) => node.id === nodeId)?.parentId;
-      return parent !== undefined && iterationIds.has(parent) ? parent : null;
-    };
-    const sourceOwner = parentIdOf(connection.source);
-    const targetOwner = parentIdOf(connection.target);
-    // A member's out-edge must stay inside its own region (region closure).
-    if (sourceOwner !== null && targetOwner !== sourceOwner) {
-      return false;
-    }
-    // Only the owning iteration may enter its region.
-    if (
-      targetOwner !== null &&
-      connection.source !== targetOwner &&
-      sourceOwner !== targetOwner
-    ) {
-      return false;
-    }
-    const existingEdgeId = edgeIdByDirectedPair.get(
-      `${connection.source}\u0000${connection.target}`,
-    );
-    return (
-      existingEdgeId === undefined ||
-      existingEdgeId === reconnectingEdgeIdRef.current
-    );
+    return isValidWorkflowConnection({
+      connection,
+      nodes,
+      edges,
+      reconnectingEdgeId: reconnectingEdgeIdRef.current,
+    });
   }
 
   const connectionState = useMemo(() => {
@@ -473,6 +415,7 @@ function WorkflowCanvasInner({
       setConnectionDraft({
         kind: "new",
         source: params.nodeId,
+        sourceHandle: params.handleId,
       });
     }
   }
@@ -569,9 +512,12 @@ function WorkflowCanvasInner({
       const size = iterationExpandedSize(node);
       const width =
         node.data.collapsed === true
-          ? WORKFLOW_ITERATION_CARD_WIDTH + 16
+          ? WORKFLOW_ITERATION_COLLAPSED_WIDTH
           : size.width;
-      const height = node.data.collapsed === true ? 112 : size.height;
+      const height =
+        node.data.collapsed === true
+          ? WORKFLOW_ITERATION_COLLAPSED_HEIGHT
+          : size.height;
       return (
         flowPoint.x >= node.position.x &&
         flowPoint.x <= node.position.x + width &&
@@ -627,7 +573,7 @@ function WorkflowCanvasInner({
               className="workflow-flow bg-muted/25"
               data-interaction-mode={interactionMode}
               nodes={canvasNodes}
-              edges={edges}
+              edges={canvasEdges}
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
               defaultViewport={initialViewport}
@@ -679,15 +625,7 @@ function WorkflowCanvasInner({
               onConnectEnd={finishNewConnection}
               onReconnectStart={(_event, edge, handleType) => {
                 reconnectingEdgeIdRef.current = edge.id;
-                setConnectionDraft({
-                  kind: "reconnect",
-                  edgeId: edge.id,
-                  // React Flow reports the fixed opposite handle here: dragging
-                  // the visible source endpoint therefore reports "target".
-                  endpoint: handleType === "target" ? "source" : "target",
-                  source: edge.source,
-                  target: edge.target,
-                });
+                setConnectionDraft(reconnectDraft(edge, handleType));
               }}
               onReconnect={onReconnect}
               onReconnectEnd={finishReconnect}

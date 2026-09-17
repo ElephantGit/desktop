@@ -1,13 +1,25 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { Edge, Node } from "@xyflow/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createMockWorkflowCapabilities } from "@ora/workflow-mock";
+import {
+  createMockWorkflowCapabilities,
+  type WorkflowNodeData,
+} from "@ora/workflow-mock";
 import { AppI18nProvider } from "../../../i18n/i18n";
 import { appI18n } from "../../../i18n/i18n-instance";
 import {
   IterationInsertMenu,
   WorkflowIterationActionsProvider,
 } from "./iteration-actions";
+import { useWorkflowIterationActions } from "./iteration-actions-context";
+
+function EdgeInsertionProbe({ edge }: { edge: Edge }) {
+  const insertion = useWorkflowIterationActions().insertionForEdge(edge);
+  return (
+    <output data-testid="edge-insertion">{JSON.stringify(insertion)}</output>
+  );
+}
 
 describe("iteration insert actions", () => {
   beforeEach(async () => {
@@ -49,5 +61,44 @@ describe("iteration insert actions", () => {
       type: "entry",
       iterationId: "iter",
     });
+  });
+
+  it("does not duplicate the start affordance on an iteration entry edge", () => {
+    const nodes: Node<WorkflowNodeData, "workflow">[] = [
+      {
+        id: "iter",
+        type: "workflow",
+        position: { x: 0, y: 0 },
+        data: { kind: "iteration", title: "Iteration", description: "" },
+      },
+      {
+        id: "body",
+        type: "workflow",
+        parentId: "iter",
+        position: { x: 120, y: 100 },
+        data: { kind: "agent", title: "Body", description: "" },
+      },
+    ];
+    const edge: Edge = {
+      id: "entry",
+      source: "iter",
+      sourceHandle: "iteration-entry",
+      target: "body",
+    };
+
+    render(
+      <WorkflowIterationActionsProvider
+        capabilities={createMockWorkflowCapabilities("en-US")}
+        nodes={nodes}
+        edges={[edge]}
+        readOnly={false}
+        onInsert={vi.fn()}
+        onToggleCollapsed={vi.fn()}
+      >
+        <EdgeInsertionProbe edge={edge} />
+      </WorkflowIterationActionsProvider>,
+    );
+
+    expect(screen.getByTestId("edge-insertion")).toHaveTextContent("null");
   });
 });

@@ -7,7 +7,7 @@ export interface WorkflowIterationActions {
   nodeTypes: WorkflowNodeType[];
   readOnly: boolean;
   insertionForEdge: (
-    edge: Pick<Edge, "id" | "source" | "target">,
+    edge: Pick<Edge, "id" | "source" | "sourceHandle" | "target">,
   ) => IterationInsertion | null;
   outputInsertion: (
     nodeId: string,

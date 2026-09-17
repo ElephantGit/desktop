@@ -1,5 +1,7 @@
-import type { Edge, Node, XYPosition } from "@xyflow/react";
+import type { Edge, Node, NodeChange, XYPosition } from "@xyflow/react";
 import {
+  WORKFLOW_ITERATION_MEMBER_LEFT,
+  WORKFLOW_ITERATION_MEMBER_TOP,
   WORKFLOW_ITERATION_NODE_HEIGHT,
   WORKFLOW_ITERATION_NODE_WIDTH,
   WORKFLOW_NODE_INITIAL_HEIGHT,
@@ -39,18 +41,27 @@ const ITERATION_FRAME_RIGHT_PADDING = 48;
 const ITERATION_FRAME_BOTTOM_PADDING = 40;
 const CONDITION_NODE_WIDTH = 320;
 
-/** Default horizontal inset of iteration members inside their container frame. */
-export const ITERATION_MEMBER_LEFT = 96;
-/**
- * Default vertical inset of iteration members inside their container frame.
- *
- * The container renders its internal-start affordance row (node-relative y 152–176)
- * inside the region body, and React Flow stacks member nodes above their parent
- * container, so a member placed higher would cover that row and make the entry
- * insert button unreachable. New members and auto-organized members therefore
- * start below it.
- */
-export const ITERATION_MEMBER_TOP = 190;
+/** Hides edges owned by folded regions without changing the persisted graph. */
+export function projectIterationEdges(
+  graph: IterationGraph,
+  collapsedIterationIds: ReadonlySet<string>,
+): Edge[] {
+  if (collapsedIterationIds.size === 0) {
+    return graph.edges;
+  }
+  const parentByNodeId = new Map(
+    graph.nodes.map((node) => [node.id, node.parentId] as const),
+  );
+  return graph.edges.map((edge) => {
+    const sourceParent = parentByNodeId.get(edge.source);
+    const targetParent = parentByNodeId.get(edge.target);
+    return (sourceParent !== undefined &&
+      collapsedIterationIds.has(sourceParent)) ||
+      (targetParent !== undefined && collapsedIterationIds.has(targetParent))
+      ? { ...edge, hidden: true }
+      : edge;
+  });
+}
 
 /** Inserts one iteration member and rewires the selected insertion point atomically. */
 export function insertIterationMember<TGraph extends IterationGraph>(
@@ -273,9 +284,29 @@ function insertionPosition(
       nodeHeight(inputNode),
     );
   if (insertion.type === "entry") {
+    const entryTargetIds = new Set(
+      graph.edges
+        .filter(
+          (edge) =>
+            edge.source === insertion.iterationId &&
+            edge.sourceHandle === "iteration-entry",
+        )
+        .map((edge) => edge.target),
+    );
+    const entryMembers = members.filter((member) =>
+      entryTargetIds.has(member.id),
+    );
+    const firstCandidateY =
+      entryMembers.length === 0
+        ? WORKFLOW_ITERATION_MEMBER_TOP
+        : Math.max(
+            ...entryMembers.map(
+              (member) => member.position.y + nodeHeight(member),
+            ),
+          ) + ITERATION_MEMBER_ROW_GAP;
     return clearOfMembers({
-      x: ITERATION_MEMBER_LEFT,
-      y: stackedMemberTop(members, ITERATION_MEMBER_TOP),
+      x: WORKFLOW_ITERATION_MEMBER_LEFT,
+      y: nextFreeEntryRowY(members, inputNode, firstCandidateY),
     });
   }
   if (insertion.type === "edge") {
@@ -288,15 +319,15 @@ function insertionPosition(
       if (source !== undefined && target !== undefined) {
         const sourcePosition =
           source.id === insertion.iterationId
-            ? { x: 0, y: ITERATION_MEMBER_TOP }
+            ? { x: 0, y: WORKFLOW_ITERATION_MEMBER_TOP }
             : source.position;
         return clearOfMembers({
           x: Math.max(
-            ITERATION_MEMBER_LEFT,
+            WORKFLOW_ITERATION_MEMBER_LEFT,
             Math.round((sourcePosition.x + target.position.x) / 2),
           ),
           y: Math.max(
-            ITERATION_MEMBER_TOP,
+            WORKFLOW_ITERATION_MEMBER_TOP,
             Math.round((sourcePosition.y + target.position.y) / 2),
           ),
         });
@@ -324,8 +355,8 @@ function insertionPosition(
     }
   }
   return clearOfMembers({
-    x: ITERATION_MEMBER_LEFT,
-    y: stackedMemberTop(members, ITERATION_MEMBER_TOP),
+    x: WORKFLOW_ITERATION_MEMBER_LEFT,
+    y: stackedMemberTop(members, WORKFLOW_ITERATION_MEMBER_TOP),
   });
 }
 
@@ -387,6 +418,35 @@ function stackedMemberTop(
   return Math.max(baseTop, lowestBottom + ITERATION_MEMBER_ROW_GAP);
 }
 
+/** Finds the next first-column row whose rectangle does not overlap an authored member. */
+function nextFreeEntryRowY(
+  members: readonly Node<WorkflowNodeData, "workflow">[],
+  inputNode: Node<WorkflowNodeData, "workflow">,
+  firstCandidateY: number,
+): number {
+  const candidateRight = WORKFLOW_ITERATION_MEMBER_LEFT + nodeWidth(inputNode);
+  const candidateHeight = nodeHeight(inputNode);
+  const obstacles = members
+    .filter(
+      (member) =>
+        member.position.x < candidateRight &&
+        member.position.x + nodeWidth(member) > WORKFLOW_ITERATION_MEMBER_LEFT,
+    )
+    .sort((left, right) => left.position.y - right.position.y);
+  let candidateY = firstCandidateY;
+  for (const obstacle of obstacles) {
+    const obstacleBottom = obstacle.position.y + nodeHeight(obstacle);
+    const overlapsWithGap =
+      candidateY < obstacleBottom + ITERATION_MEMBER_ROW_GAP &&
+      candidateY + candidateHeight + ITERATION_MEMBER_ROW_GAP >
+        obstacle.position.y;
+    if (overlapsWithGap) {
+      candidateY = obstacleBottom + ITERATION_MEMBER_ROW_GAP;
+    }
+  }
+  return candidateY;
+}
+
 /** Applies either monotonic expansion or compact fitting to selected iteration frames. */
 function resizeIterationFrames<TGraph extends IterationGraph>(
   graph: TGraph,
@@ -436,9 +496,56 @@ function resizeIterationFrames<TGraph extends IterationGraph>(
       return node;
     }
     changed = true;
-    return { ...node, initialWidth: width, initialHeight: height };
+    // React Flow pins the wrapper to width/height once a manual resize sets
+    // them; mirroring the new size keeps the pinned box from going stale after
+    // an automatic compact or expand rewrites the authored frame size.
+    const resized = { ...node, initialWidth: width, initialHeight: height };
+    if (node.width !== undefined || node.height !== undefined) {
+      resized.width = width;
+      resized.height = height;
+    }
+    return resized;
   });
   return changed ? ({ ...graph, nodes } as TGraph) : graph;
+}
+
+/** Mirrors a manual React Flow resize gesture onto iteration frames' authored size. */
+export function applyIterationFrameResize(
+  nodes: readonly Node<WorkflowNodeData, "workflow">[],
+  changes: readonly NodeChange[],
+): Node<WorkflowNodeData, "workflow">[] {
+  const resizedSizes = new Map<string, { width: number; height: number }>();
+  for (const change of changes) {
+    // Only gesture frames carry `resizing`; plain measurements must never
+    // overwrite the authored frame size.
+    if (
+      change.type === "dimensions" &&
+      change.resizing === true &&
+      change.dimensions !== undefined
+    ) {
+      resizedSizes.set(change.id, change.dimensions);
+    }
+  }
+  if (resizedSizes.size === 0) {
+    return [...nodes];
+  }
+  let changed = false;
+  const resized = nodes.map((node) => {
+    const size = resizedSizes.get(node.id);
+    // Members and annotations resize through node.width; only iteration frames
+    // keep their editable size in initialWidth/initialHeight.
+    if (size === undefined || node.data.kind !== "iteration") {
+      return node;
+    }
+    const width = snapSize(size.width);
+    const height = snapSize(size.height);
+    if (node.initialWidth === width && node.initialHeight === height) {
+      return node;
+    }
+    changed = true;
+    return { ...node, initialWidth: width, initialHeight: height };
+  });
+  return changed ? resized : [...nodes];
 }
 
 /** Returns the visual width used for fitting and insertion. */

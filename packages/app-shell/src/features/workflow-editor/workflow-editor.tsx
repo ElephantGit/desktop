@@ -84,6 +84,7 @@ import type { WorkflowCanvasNode } from "./workflow-flow/types";
 import { WorkflowInspector } from "./workflow-inspector";
 import { applyIterationDragRules } from "./workflow-iteration-containment";
 import {
+  applyIterationFrameResize,
   expandIterationFrames,
   insertIterationMember,
   repairIterationGraphAfterNodeDeletion,
@@ -415,6 +416,8 @@ function WorkflowEditorContent({
   const editGenerationRef = useRef(0);
   const workflowRef = useRef<DemoWorkflow | null>(null);
   const dragStartWorkflowRef = useRef<DemoWorkflow | null>(null);
+  /** Names the iteration frame whose manual resize owns the open history transaction. */
+  const iterationResizeRef = useRef<string | null>(null);
   const previewedVersionRef = useRef<MockWorkflowVersion | null>(null);
   /** Last name known to be persisted, so autosave skips no-op renames. */
   const persistedNameRef = useRef<string | null>(null);
@@ -577,6 +580,8 @@ function WorkflowEditorContent({
   // History belongs to the mounted draft session, so a workflow switch or
   // activation starts at a clean baseline while ordinary edits keep the stack.
   useEffect(() => {
+    // A workflow switch also abandons any in-flight frame resize gesture.
+    iterationResizeRef.current = null;
     if (
       hydratedWorkflowId === resolvedWorkflowId &&
       workflowRef.current !== null
@@ -1777,19 +1782,26 @@ function WorkflowEditorContent({
   /** Applies React Flow node changes directly to the active graph. */
   function changeNodes(changes: NodeChange<WorkflowCanvasNode>[]): void {
     const persistable = changes.some(
-      (change) => change.type !== "select" && change.type !== "dimensions",
+      (change) =>
+        change.type !== "select" &&
+        // Plain dimension measurements stay ephemeral, but an active resize
+        // gesture is an authored edit that must autosave like a node move.
+        (change.type !== "dimensions" || change.resizing === true),
     );
-    // Real card sizes arrive only after render, so the insert-time frame estimate can
-    // undershoot a tall member. React Flow's parent extent then clamps that member up
-    // over the region's internal affordances. Re-fitting frames whenever measurements
-    // arrive releases the clamp without persisting a no-edit workflow open.
-    const measured = changes.some((change) => change.type === "dimensions");
     const removedNodeIds = new Set(
       changes
         .filter((change) => change.type === "remove")
         .map((change) => change.id),
     );
     let clearedCollectSelectorIterationIds: string[] = [];
+    // Real card sizes arrive only after render, so the insert-time frame estimate can
+    // undershoot a tall member and React Flow's parent extent then clamps that member
+    // up over the region's internal affordances. Re-fitting frames whenever plain
+    // measurements arrive releases the clamp without persisting a no-edit workflow.
+    const measured = changes.some(
+      (change) => change.type === "dimensions" && change.resizing !== true,
+    );
+    beginIterationResizeHistory(changes);
     updateWorkflow(
       (current) => {
         const nextNodes = applyNodeChanges<WorkflowCanvasNode>(changes, [
@@ -1798,9 +1810,12 @@ function WorkflowEditorContent({
         ]);
         let nextWorkflow = {
           ...current,
-          nodes: nextNodes.filter(
-            (node): node is Node<WorkflowNodeData, "workflow"> =>
-              !isWorkflowAnnotationNode(node),
+          nodes: applyIterationFrameResize(
+            nextNodes.filter(
+              (node): node is Node<WorkflowNodeData, "workflow"> =>
+                !isWorkflowAnnotationNode(node),
+            ),
+            changes,
           ),
           annotations: nextNodes.filter(isWorkflowAnnotationNode),
         };
@@ -1820,6 +1835,7 @@ function WorkflowEditorContent({
       },
       { persist: persistable },
     );
+    commitIterationResizeHistory(changes);
     if (clearedCollectSelectorIterationIds.length > 0) {
       toast.warning(
         t("settings.workflow.iteration.collectTargetDeleted", {
@@ -1827,6 +1843,67 @@ function WorkflowEditorContent({
         }),
       );
     }
+  }
+
+  /** Opens one undo step when a manual iteration frame resize gesture starts. */
+  function beginIterationResizeHistory(
+    changes: NodeChange<WorkflowCanvasNode>[],
+  ): void {
+    if (iterationResizeRef.current !== null || previewedVersion !== null) {
+      return;
+    }
+    const current = workflowRef.current ?? workflow;
+    if (current === null) {
+      return;
+    }
+    for (const change of changes) {
+      if (change.type !== "dimensions" || change.resizing !== true) {
+        continue;
+      }
+      const node = current.nodes.find(
+        (candidate) => candidate.id === change.id,
+      );
+      if (node?.data.kind !== "iteration") {
+        continue;
+      }
+      iterationResizeRef.current = change.id;
+      workflowHistory.beginTransaction(
+        captureWorkflowHistorySnapshot(current),
+        "iteration.resize",
+        {
+          nodeIds: [change.id],
+          subject: historySubjectForNode(node),
+          nodeTitle: node.data.title,
+          nodeKind: node.data.kind,
+        },
+      );
+      return;
+    }
+  }
+
+  /** Closes the resize undo step once its final dimension change has been applied. */
+  function commitIterationResizeHistory(
+    changes: NodeChange<WorkflowCanvasNode>[],
+  ): void {
+    const resizedId = iterationResizeRef.current;
+    if (
+      resizedId === null ||
+      !changes.some(
+        (change) =>
+          change.type === "dimensions" &&
+          change.resizing === false &&
+          change.id === resizedId,
+      )
+    ) {
+      return;
+    }
+    iterationResizeRef.current = null;
+    const current = workflowRef.current ?? workflow;
+    if (current === null) {
+      workflowHistory.cancelTransaction();
+      return;
+    }
+    workflowHistory.commitTransaction(captureWorkflowHistorySnapshot(current));
   }
 
   /** Applies React Flow edge changes directly to the active graph. */

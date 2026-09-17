@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { type ReactNode, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { IconPlus } from "@tabler/icons-react";
 import type { Edge, Node } from "@xyflow/react";
@@ -10,18 +10,18 @@ import {
 } from "@ora/workflow-mock";
 import {
   Button,
+  cn,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-  cn,
 } from "@ora/ui";
 import type { IterationInsertion } from "../workflow-iteration-graph";
 import { getNodeMetadata } from "../workflow-node-metadata";
 import {
-  WorkflowIterationActionsContext,
-  type WorkflowIterationActions,
   useWorkflowIterationActions,
+  type WorkflowIterationActions,
+  WorkflowIterationActionsContext,
 } from "./iteration-actions-context";
 
 /** Provides graph-aware iteration authoring actions to custom nodes and edges. */
@@ -61,6 +61,11 @@ export function WorkflowIterationActionsProvider({
       ),
       readOnly,
       insertionForEdge: (edge) => {
+        // The fixed start already owns the entry add affordance. Repeating it at the
+        // entry edge midpoint makes one logical insertion seam look like two actions.
+        if (edge.sourceHandle === "iteration-entry") {
+          return null;
+        }
         const sourceOwner = ownerOf(edge.source);
         const targetOwner = ownerOf(edge.target);
         const iterationId =

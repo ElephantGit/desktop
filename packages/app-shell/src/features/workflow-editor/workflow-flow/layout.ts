@@ -1,13 +1,13 @@
 import type { Edge, Node, SnapGrid, XYPosition } from "@xyflow/react";
 import {
+  WORKFLOW_ITERATION_MEMBER_LEFT,
+  WORKFLOW_ITERATION_MEMBER_TOP,
   WORKFLOW_NODE_ANCHOR_Y,
   WORKFLOW_NODE_INITIAL_HEIGHT,
   WORKFLOW_NODE_WIDTH,
   type WorkflowNodeData,
 } from "@ora/workflow-mock";
 import {
-  ITERATION_MEMBER_LEFT,
-  ITERATION_MEMBER_TOP,
   compactIterationFrames,
   iterationExpandedSize,
 } from "../workflow-iteration-graph";
@@ -54,8 +54,8 @@ export function organizeWorkflowNodes(
       (edge) => memberIds.has(edge.source) && memberIds.has(edge.target),
     );
     const positions = layoutDag(members, internalEdges, {
-      x: ITERATION_MEMBER_LEFT,
-      y: ITERATION_MEMBER_TOP,
+      x: WORKFLOW_ITERATION_MEMBER_LEFT,
+      y: WORKFLOW_ITERATION_MEMBER_TOP,
       centerRows: false,
     });
     arranged = arranged.map((node) =>

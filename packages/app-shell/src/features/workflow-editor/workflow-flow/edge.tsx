@@ -3,8 +3,8 @@ import { useTranslation } from "react-i18next";
 import {
   BaseEdge,
   EdgeLabelRenderer,
-  getBezierPath,
   type EdgeProps,
+  getBezierPath,
 } from "@xyflow/react";
 import { cn } from "@ora/ui";
 import { IterationInsertMenu } from "./iteration-actions";
@@ -15,6 +15,7 @@ import { WORKFLOW_EDGE_CONTROL_Z_INDEX } from "./z-index";
 export const WorkflowFlowEdgeView = memo(function WorkflowFlowEdgeView({
   id,
   source,
+  sourceHandleId,
   target,
   sourceX,
   sourceY,
@@ -30,7 +31,12 @@ export const WorkflowFlowEdgeView = memo(function WorkflowFlowEdgeView({
 }: EdgeProps) {
   const { t } = useTranslation();
   const { insertionForEdge } = useWorkflowIterationActions();
-  const insertion = insertionForEdge({ id, source, target });
+  const insertion = insertionForEdge({
+    id,
+    source,
+    sourceHandle: sourceHandleId,
+    target,
+  });
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
@@ -108,7 +114,9 @@ export const WorkflowFlowEdgeView = memo(function WorkflowFlowEdgeView({
               selected && "text-foreground",
             )}
             style={{
-              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY - 14}px)`,
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${
+                labelY - 14
+              }px)`,
             }}
           >
             {String(label)}
