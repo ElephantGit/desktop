@@ -9,7 +9,9 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use ora_utils::fs::LinuxFileLock;
-use ora_utils::process::{LinuxPidFd, ProcessSignal, linux_process_snapshot};
+use ora_utils::process::{
+    LinuxPidFd, ProcessSignal, configure_linux_detached_child, linux_process_snapshot,
+};
 use pretty_assertions::assert_eq;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -96,6 +98,34 @@ fn ordinary_exec_does_not_retain_lock() -> TestResult {
     let lock = acquire(&path)?;
     let mut child = ChildGuard(Command::new("/bin/sleep").arg("30").spawn()?);
     drop(lock);
+    let _recovered = acquire_after_close(&path)?;
+    assert!(child.0.try_wait()?.is_none());
+    Ok(())
+}
+
+/// Detached exec strips even accidentally inheritable descriptors outside explicit stdio mappings.
+#[test]
+fn detached_exec_closes_unintended_inheritable_lock() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("lock");
+    File::create(&path)?;
+    let file = acquire(&path)?.into_file();
+    let mut command = Command::new("/bin/sleep");
+    command.arg("30");
+    let descriptor = file.as_raw_fd();
+    // SAFETY: the file stays live through spawn. Change only the fork child's descriptor flags,
+    // so concurrently spawned test children cannot inherit a non-CLOEXEC parent descriptor.
+    unsafe {
+        command.pre_exec(move || {
+            if libc::fcntl(descriptor, libc::F_SETFD, 0) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    configure_linux_detached_child(&mut command);
+    let mut child = ChildGuard(command.spawn()?);
+    drop(file);
     let _recovered = acquire_after_close(&path)?;
     assert!(child.0.try_wait()?.is_none());
     Ok(())
@@ -214,15 +244,39 @@ fn lock_fixture() -> TestResult {
         let _child = ChildGuard(child);
         std::thread::sleep(Duration::from_secs(/*secs*/ 20));
     } else if role == "holder" {
-        // Stdin is only a test transfer slot. A production bootstrap must verify its descriptor
-        // identity and ownership independently; try_acquire alone is not that verification.
+        // Application scope/path binding is separate; adoption checks the inherited description.
         let inherited = File::from(std::io::stdin().as_fd().try_clone_to_owned()?);
-        let _lock = LinuxFileLock::try_acquire(inherited)?;
+        let _lock = LinuxFileLock::adopt_inherited(inherited)?;
         std::fs::write(directory.join("holder-pid"), std::process::id().to_string())?;
         std::fs::write(directory.join("holder-ready"), b"ready")?;
         std::thread::sleep(Duration::from_secs(/*secs*/ 20));
     } else {
         return Err("unknown fixture role".into());
     }
+    Ok(())
+}
+
+/// Merely reopening the same inode does not acquire the inherited holder's qualification.
+#[test]
+fn adoption_rejects_unlocked_reopened_and_shared_descriptions() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("lock");
+    File::create(&path)?;
+    assert!(LinuxFileLock::adopt_inherited(File::open(&path)?).is_err());
+    let original = acquire(&path)?;
+    assert!(LinuxFileLock::adopt_inherited(File::open(&path)?).is_err());
+    let adopted = LinuxFileLock::adopt_inherited(original.try_clone()?.into_file())?;
+    drop(original);
+    assert!(acquire(&path).is_err());
+    drop(adopted);
+    let shared = acquire_after_close(&path)?.into_file();
+    // SAFETY: flock borrows the owned descriptor; a shared lock must never be promoted by adoption.
+    assert_eq!(
+        unsafe { libc::flock(shared.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) },
+        0
+    );
+    assert!(LinuxFileLock::adopt_inherited(shared.try_clone()?).is_err());
+    drop(shared);
+    acquire_after_close(&path)?;
     Ok(())
 }

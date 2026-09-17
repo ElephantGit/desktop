@@ -1,5 +1,10 @@
 use std::process::Command;
 
+#[cfg(target_os = "linux")]
+mod linux_detached;
+#[cfg(target_os = "linux")]
+pub use linux_detached::configure_linux_detached_child;
+
 #[cfg(unix)]
 mod pipe_capture;
 #[cfg(unix)]

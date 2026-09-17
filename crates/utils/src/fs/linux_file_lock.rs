@@ -1,6 +1,7 @@
 use std::fs::File;
-use std::io;
+use std::io::{self, Read};
 use std::os::fd::AsRawFd;
+use std::path::Path;
 
 /// An exclusive Linux flock tied to an open file description, not a process or pathname.
 ///
@@ -15,6 +16,40 @@ pub struct LinuxFileLock {
 }
 
 impl LinuxFileLock {
+    /// Adopts an already exclusively locked description, rejecting an unlocked or reopened file.
+    ///
+    /// Linux fdinfo reports locks associated with this open description, not merely its inode.
+    /// This requires procfs and does not authenticate the pathname, caller or application identity.
+    /// Trusted holders must not concurrently unlock a duplicate during or after this check.
+    pub fn adopt_inherited(file: File) -> io::Result<Self> {
+        if !file.metadata()?.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "expected a regular lock file",
+            ));
+        }
+        let path = Path::new("/proc/self/fdinfo").join(file.as_raw_fd().to_string());
+        let mut info = String::new();
+        File::open(path)?
+            .take(/*limit*/ 16_384)
+            .read_to_string(&mut info)?;
+        let locked = info.lines().any(|line| {
+            let fields: Vec<_> = line.split_ascii_whitespace().collect();
+            matches!(
+                fields.as_slice(),
+                ["lock:", _, "FLOCK", "ADVISORY", "WRITE", _, _, "0", "EOF"]
+            )
+        });
+        if !locked {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "descriptor does not own an exclusive flock",
+            ));
+        }
+        // Reasserting an already owned lock also restores CLOEXEC, without an unlock/relock gap.
+        Self::try_acquire(file)
+    }
+
     /// Attempts acquisition without waiting or changing file contents; contention is WouldBlock.
     ///
     /// Supply a freshly opened regular file, or an exclusively locked inherited description.
