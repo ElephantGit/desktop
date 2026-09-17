@@ -191,6 +191,37 @@ impl SqlitePackInstallationRepository {
         })
     }
 
+    /// Returns every recorded pack installation with its members, ordered by pack id.
+    pub fn list(&self) -> Result<Vec<PackInstallationRecord>, DatabaseError> {
+        self.pool.with_connection(|connection| {
+            let mut statement =
+                connection.prepare("SELECT pack_id FROM pack_installation ORDER BY pack_id")?;
+            let pack_ids = statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut records = Vec::with_capacity(pack_ids.len());
+            for pack_id in pack_ids {
+                match self.load(&pack_id)? {
+                    Some(record) => records.push(record),
+                    // A pack row without any member rows is still a recorded installation.
+                    None => {
+                        let source_url: String = connection.query_row(
+                            "SELECT source_url FROM pack_installation WHERE pack_id = ?1",
+                            params![pack_id],
+                            |row| row.get(0),
+                        )?;
+                        records.push(PackInstallationRecord {
+                            pack_id,
+                            source_url,
+                            members: Vec::new(),
+                        });
+                    }
+                }
+            }
+            Ok(records)
+        })
+    }
+
     /// Removes one pack installation together with its member relationships, returning whether
     /// a record existed.
     pub fn remove(&self, pack_id: &str) -> Result<bool, DatabaseError> {

@@ -12,6 +12,30 @@ export const pluginTranslations = {
       "集合包成员 {{pluginId}} 自身也是一个集合包，暂不支持嵌套。",
     "errors.pack_no_applicable_members":
       "集合包 {{pluginId}} 没有适用于本次安装的成员。",
+    "settings.plugins.packsSection": "已安装集合包",
+    "settings.plugins.packMembersCount": "{{count}} 个成员",
+    "settings.plugins.packUninstall": "卸载集合包",
+    "settings.plugins.packMemberPreExisting": "预装",
+    "settings.plugins.packMemberExpected": "正常",
+    "settings.plugins.packMemberVersionChanged": "已变更至 {{version}}",
+    "settings.plugins.packMemberMissing": "缺失",
+    "settings.plugins.packInstallTitle": "集合包安装完成",
+    "settings.plugins.packInstalledMembers": "已安装 {{count}} 个成员",
+    "settings.plugins.packSkippedMembers": "跳过 {{count}} 个已存在成员",
+    "settings.plugins.packFailedMember": "{{pluginId}} 安装失败",
+    "settings.plugins.packRollbackFailedMember":
+      "{{pluginId}} 回滚失败，已保留",
+    "settings.plugins.packUninstallTitle": "卸载集合包",
+    "settings.plugins.packUninstallDescription":
+      "根据所有权记录，卸载将按以下方式处理各成员：",
+    "settings.plugins.packUninstallRemoved": "将移除",
+    "settings.plugins.packUninstallPreserved": "将保留",
+    "settings.plugins.packUninstallPreservedPreExisting":
+      "{{member}}（非本集合包安装）将保留",
+    "settings.plugins.packUninstallPreservedVersionChanged":
+      "{{member}}（已被独立修改）将保留",
+    "settings.plugins.packUninstallAlreadyMissing": "以下成员已不存在",
+    "settings.plugins.packUninstallConfirm": "确认卸载",
     "errors.marketplace_s3_credentials_required":
       "启用 S3 签名获取时，请填写 Access Key ID 和 Secret Access Key。",
     "errors.marketplace_artifact_retrieval_field_invalid":
@@ -290,6 +314,31 @@ export const pluginTranslations = {
       "Pack member {{pluginId}} is itself a pack, and nesting is not supported yet.",
     "errors.pack_no_applicable_members":
       "Pack {{pluginId}} has no member that applies to this installation.",
+    "settings.plugins.packsSection": "Installed packs",
+    "settings.plugins.packMembersCount": "{{count}} members",
+    "settings.plugins.packUninstall": "Uninstall pack",
+    "settings.plugins.packMemberPreExisting": "pre-existing",
+    "settings.plugins.packMemberExpected": "up to date",
+    "settings.plugins.packMemberVersionChanged": "changed to {{version}}",
+    "settings.plugins.packMemberMissing": "missing",
+    "settings.plugins.packInstallTitle": "Pack installed",
+    "settings.plugins.packInstalledMembers": "Installed {{count}} members",
+    "settings.plugins.packSkippedMembers": "Skipped {{count}} existing members",
+    "settings.plugins.packFailedMember": "{{pluginId}} failed to install",
+    "settings.plugins.packRollbackFailedMember":
+      "Rollback failed for {{pluginId}}; it remains installed",
+    "settings.plugins.packUninstallTitle": "Uninstall pack",
+    "settings.plugins.packUninstallDescription":
+      "Based on the ownership journal, uninstalling handles each member as follows:",
+    "settings.plugins.packUninstallRemoved": "Will be removed",
+    "settings.plugins.packUninstallPreserved": "Will be preserved",
+    "settings.plugins.packUninstallPreservedPreExisting":
+      "{{member}} (not installed by this pack) will be preserved",
+    "settings.plugins.packUninstallPreservedVersionChanged":
+      "{{member}} (independently changed) will be preserved",
+    "settings.plugins.packUninstallAlreadyMissing":
+      "The following members are already missing",
+    "settings.plugins.packUninstallConfirm": "Uninstall",
     "errors.marketplace_s3_credentials_required":
       "Enter an Access Key ID and Secret Access Key to enable S3 signed retrieval.",
     "errors.marketplace_artifact_retrieval_field_invalid":

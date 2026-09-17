@@ -23,6 +23,7 @@ export const pluginKeys = {
   pluginReadme: (pluginId: string) => ["plugin-readme", pluginId] as const,
   marketplaceSources: ["marketplace-sources"] as const,
   installedPlugins: ["installed-plugins"] as const,
+  packInstallations: ["pack-installations"] as const,
   pluginConfiguration: (pluginId: string) =>
     ["plugin-configuration", pluginId] as const,
 };
@@ -31,6 +32,13 @@ export const pluginKeys = {
 export function invalidateInstalledPlugins(queryClient: QueryClient) {
   return queryClient.invalidateQueries({
     queryKey: pluginKeys.installedPlugins,
+  });
+}
+
+/** Refreshes the ownership journal projection after any pack lifecycle change. */
+export function invalidatePackInstallations(queryClient: QueryClient) {
+  return queryClient.invalidateQueries({
+    queryKey: pluginKeys.packInstallations,
   });
 }
 

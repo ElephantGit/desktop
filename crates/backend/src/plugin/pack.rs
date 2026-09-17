@@ -13,12 +13,15 @@
 
 use super::PluginApi;
 use super::pack_reconcile::PackMemberReconciliation;
+use super::pack_uninstall::PackPreserveReason;
 use crate::error::{BackendError, ErrorClassification};
 use ora_application::Clock;
 use ora_contracts::{
     EmptyErrorParams, InstallOutcome, InstallPluginRequest, InstallPluginResponse,
-    PackInstallFailure, PackInstalledMember, PackMemberInstallOutcome, PackMemberParams,
-    PluginDataDisposition, PublicError, UninstallPluginRequest, UninstallPluginResponse,
+    PackInstallFailure, PackInstallationStatus, PackInstalledMember, PackMemberInstallOutcome,
+    PackMemberParams, PackMemberReconciliationState, PackMemberStatus,
+    PackUninstallPlan as PackUninstallPlanDto, PackUninstallPreservation,
+    PackUninstallPreservationReason, PluginDataDisposition, PublicError, UninstallPluginRequest,
 };
 use ora_db::{PackInstallationMemberRecord, PackInstallationRecord, PackMemberOwnership};
 use ora_domain::{PluginId, PluginNamespace};
@@ -87,43 +90,6 @@ pub(super) struct PackRunLedger {
     rollback_failed: Vec<String>,
 }
 
-/// Why a pack uninstall preserves a member instead of removing it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum PackPreserveReason {
-    /// The member was already installed when the pack named it; the pack never created it.
-    PreExisting,
-    /// The pack created the member, but it has since been independently changed.
-    VersionChanged,
-}
-
-/// The computed, not-yet-executed ownership-aware uninstall plan for one recorded pack.
-///
-/// Only removable member ids drive filesystem work; preserved and already-missing members are
-/// listed so callers can suspend, resume, and present the full member set without re-deriving
-/// the plan.
-#[derive(Debug)]
-pub(super) struct PackUninstallPlan {
-    pack_id: String,
-    remove: Vec<String>,
-    preserve: Vec<(String, PackPreserveReason)>,
-    already_missing: Vec<String>,
-}
-
-impl PackUninstallPlan {
-    /// Returns the canonical ids of members that will be uninstalled.
-    pub(super) fn remove(&self) -> &[String] {
-        &self.remove
-    }
-
-    /// Returns every member id the journal holds, regardless of disposition.
-    pub(super) fn all_member_ids(&self) -> Vec<String> {
-        let mut ids = self.remove.clone();
-        ids.extend(self.preserve.iter().map(|(member_id, _)| member_id.clone()));
-        ids.extend(self.already_missing.iter().cloned());
-        ids
-    }
-}
-
 // The accessors exist for in-crate tests; production code in this module reads the fields
 // directly because it shares the struct's module.
 #[cfg(test)]
@@ -136,6 +102,70 @@ impl PackRunLedger {
     /// Returns the members this run created that remain installed.
     pub(super) fn installed(&self) -> &[(String, String)] {
         &self.installed
+    }
+}
+
+/// Maps one reconciliation classification onto the frontend member status DTO.
+fn member_status(
+    record: &PackInstallationRecord,
+    member: &PackMemberReconciliation,
+) -> PackMemberStatus {
+    let journal_member = record
+        .members
+        .iter()
+        .find(|journal| journal.member_id == member_member_id(member));
+    let ownership = member_ownership(match journal_member {
+        Some(journal) => journal.ownership,
+        None => ora_db::PackMemberOwnership::ManagedByPack,
+    });
+    match member {
+        PackMemberReconciliation::ExpectedAndPresent { .. } => PackMemberStatus {
+            member_id: member_member_id(member).to_owned(),
+            version_at_install: journal_member
+                .map(|journal| journal.version_at_install.clone())
+                .unwrap_or_default(),
+            ownership,
+            state: PackMemberReconciliationState::ExpectedAndPresent,
+        },
+        PackMemberReconciliation::VersionChanged {
+            current_version, ..
+        } => PackMemberStatus {
+            member_id: member_member_id(member).to_owned(),
+            version_at_install: journal_member
+                .map(|journal| journal.version_at_install.clone())
+                .unwrap_or_default(),
+            ownership,
+            state: PackMemberReconciliationState::VersionChanged {
+                current_version: current_version.clone(),
+            },
+        },
+        PackMemberReconciliation::Missing { .. } => PackMemberStatus {
+            member_id: member_member_id(member).to_owned(),
+            version_at_install: journal_member
+                .map(|journal| journal.version_at_install.clone())
+                .unwrap_or_default(),
+            ownership,
+            state: PackMemberReconciliationState::Missing,
+        },
+    }
+}
+
+/// Maps the journal ownership onto the contract enum.
+fn member_ownership(ownership: ora_db::PackMemberOwnership) -> ora_contracts::PackMemberOwnership {
+    match ownership {
+        ora_db::PackMemberOwnership::ManagedByPack => {
+            ora_contracts::PackMemberOwnership::ManagedByPack
+        }
+        ora_db::PackMemberOwnership::PreExisting => ora_contracts::PackMemberOwnership::PreExisting,
+    }
+}
+
+/// Reads the member id off any reconciliation classification.
+fn member_member_id(member: &PackMemberReconciliation) -> &str {
+    match member {
+        PackMemberReconciliation::ExpectedAndPresent { member_id, .. }
+        | PackMemberReconciliation::VersionChanged { member_id, .. }
+        | PackMemberReconciliation::Missing { member_id, .. } => member_id,
     }
 }
 
@@ -559,6 +589,80 @@ impl PluginApi {
         )
     }
 
+    /// Projects every recorded pack installation with its reconciled member states for the
+    /// frontend's installed-packs presentation (D4).
+    pub(super) fn list_pack_installations(
+        &self,
+    ) -> Result<Vec<PackInstallationStatus>, BackendError> {
+        let records = self
+            .pack_installations
+            .list()
+            .map_err(|error| BackendError::internal("failed to list pack installations", error))?;
+        records
+            .iter()
+            .map(|record| {
+                let reconciliation = self.reconcile_pack_installation(&record.pack_id)?;
+                let members = reconciliation
+                    .map(|reconciled| {
+                        reconciled
+                            .members()
+                            .iter()
+                            .map(|member| member_status(record, member))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_else(|| {
+                        // The journal exists but the recorded member is gone from the
+                        // installed tree: reconcile honestly as missing (D3-B).
+                        record
+                            .members
+                            .iter()
+                            .map(|member| PackMemberStatus {
+                                member_id: member.member_id.clone(),
+                                version_at_install: member.version_at_install.clone(),
+                                ownership: member_ownership(member.ownership),
+                                state: PackMemberReconciliationState::Missing,
+                            })
+                            .collect::<Vec<_>>()
+                    });
+                Ok(PackInstallationStatus {
+                    pack_id: record.pack_id.clone(),
+                    source_url: record.source_url.clone(),
+                    members,
+                })
+            })
+            .collect()
+    }
+
+    /// Projects the ownership-aware uninstall plan for one pack id, or `None` when the id has
+    /// no ownership journal (an ordinary single-plugin uninstall then applies).
+    pub(super) fn pack_uninstall_plan(
+        &self,
+        pack_id: &str,
+    ) -> Result<Option<PackUninstallPlanDto>, BackendError> {
+        let Some(plan) = self.pack_uninstall_plan_internal(pack_id)? else {
+            return Ok(None);
+        };
+        Ok(Some(PackUninstallPlanDto {
+            remove: plan.remove,
+            preserve: plan
+                .preserve
+                .into_iter()
+                .map(|(member_id, reason)| PackUninstallPreservation {
+                    member_id,
+                    reason: match reason {
+                        PackPreserveReason::PreExisting => {
+                            PackUninstallPreservationReason::PreExisting
+                        }
+                        PackPreserveReason::VersionChanged => {
+                            PackUninstallPreservationReason::VersionChanged
+                        }
+                    },
+                })
+                .collect(),
+            already_missing: plan.already_missing,
+        }))
+    }
+
     /// Returns whether `member_id` is currently installed, by rescanning the package tree.
     ///
     /// Discovery is the authority for installation state; the cached lifecycle snapshot can lag a
@@ -657,135 +761,6 @@ impl PluginApi {
         self.pack_installations.load(pack_id).map_err(|error| {
             BackendError::internal("failed to load pack installation record", error)
         })
-    }
-
-    /// Computes the ownership-aware uninstall plan for one recorded pack, or `None` when the id
-    /// carries no ownership journal (an ordinary single-plugin uninstall then applies).
-    ///
-    /// Only members the pack created at the version it recorded are removable; everything else
-    /// is preserved with the reason, so a pack uninstall can never touch user assets.
-    pub(super) fn pack_uninstall_plan(
-        &self,
-        pack_id: &str,
-    ) -> Result<Option<PackUninstallPlan>, BackendError> {
-        let Some(reconciliation) = self.reconcile_pack_installation(pack_id)? else {
-            return Ok(None);
-        };
-        let mut plan = PackUninstallPlan {
-            pack_id: pack_id.to_owned(),
-            remove: Vec::new(),
-            preserve: Vec::new(),
-            already_missing: Vec::new(),
-        };
-        for member in reconciliation.members() {
-            match member {
-                PackMemberReconciliation::ExpectedAndPresent {
-                    member_id,
-                    ownership: PackMemberOwnership::ManagedByPack,
-                    ..
-                } => plan.remove.push(member_id.clone()),
-                PackMemberReconciliation::ExpectedAndPresent {
-                    member_id,
-                    ownership: PackMemberOwnership::PreExisting,
-                    ..
-                } => plan
-                    .preserve
-                    .push((member_id.clone(), PackPreserveReason::PreExisting)),
-                // A version change means the user took over the member: the classification is
-                // reported, the member is kept, and its ownership is never re-derived.
-                PackMemberReconciliation::VersionChanged { member_id, .. } => plan
-                    .preserve
-                    .push((member_id.clone(), PackPreserveReason::VersionChanged)),
-                PackMemberReconciliation::Missing {
-                    member_id,
-                    ownership: PackMemberOwnership::ManagedByPack,
-                    ..
-                } => plan.already_missing.push(member_id.clone()),
-                PackMemberReconciliation::Missing {
-                    member_id,
-                    ownership: PackMemberOwnership::PreExisting,
-                    ..
-                } => plan
-                    .preserve
-                    .push((member_id.clone(), PackPreserveReason::PreExisting)),
-            }
-        }
-        Ok(Some(plan))
-    }
-
-    /// Executes an ownership-aware pack uninstall: removable members go through the ordinary
-    /// single-plugin uninstall chain, preserved members keep their packages, and the ownership
-    /// journal releases one relationship at a time so a mid-run failure leaves a retryable state.
-    ///
-    /// The pack root record is deleted only after every journal relationship has been released;
-    /// a member uninstall that fails keeps its journal row and stops the run, and a retry
-    /// re-plans from the surviving journal.
-    pub(super) async fn uninstall_pack(
-        &self,
-        plan: PackUninstallPlan,
-        data_disposition: PluginDataDisposition,
-    ) -> Result<UninstallPluginResponse, BackendError> {
-        let pack_id = plan.pack_id.clone();
-        for member_id in plan.remove {
-            let result = self
-                .uninstall(UninstallPluginRequest {
-                    plugin_id: member_id.clone(),
-                    data_disposition,
-                })
-                .await;
-            if let Err(error) = result {
-                // The member keeps its journal row: the next uninstall re-plans and continues
-                // from exactly this member.
-                return Err(BackendError::new(
-                    error.classification(),
-                    error.public_error().clone(),
-                    format!("pack member {member_id} could not be uninstalled: {error}"),
-                ));
-            }
-            self.pack_installations
-                .remove_member(&pack_id, &member_id)
-                .map_err(|error| {
-                    BackendError::internal(
-                        "failed to release the removed member relationship",
-                        error,
-                    )
-                })?;
-        }
-        // Preserved members and already-absent members leave the journal deliberately: the pack
-        // uninstall dissolves the relationship without touching their packages.
-        for (member_id, _reason) in plan.preserve {
-            self.pack_installations
-                .remove_member(&pack_id, &member_id)
-                .map_err(|error| {
-                    BackendError::internal(
-                        "failed to release the preserved member relationship",
-                        error,
-                    )
-                })?;
-        }
-        for member_id in plan.already_missing {
-            self.pack_installations
-                .remove_member(&pack_id, &member_id)
-                .map_err(|error| {
-                    BackendError::internal(
-                        "failed to release the already-missing member relationship",
-                        error,
-                    )
-                })?;
-        }
-        // The root record goes only when no relationship remains; a failed member keeps the
-        // journal alive for the retry.
-        let remaining = self
-            .pack_installations
-            .load(&pack_id)
-            .map_err(|error| BackendError::internal("failed to load the pack journal", error))?;
-        if remaining.is_none_or(|record| record.members.is_empty()) {
-            self.pack_installations.remove(&pack_id).map_err(|error| {
-                BackendError::internal("failed to remove the pack journal", error)
-            })?;
-        }
-        ora_info!(plugin_id = %pack_id, "uninstalled marketplace pack");
-        Ok(UninstallPluginResponse { plugin_id: pack_id })
     }
 
     /// Resolves the one marketplace source whose namespace owns `namespace`.

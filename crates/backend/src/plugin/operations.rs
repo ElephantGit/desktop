@@ -36,6 +36,26 @@ impl Plugins {
         Arc::new(PluginGateway::new(Arc::clone(&self.host)))
     }
 
+    /// Returns every recorded pack installation with its reconciled member states.
+    pub fn list_pack_installations(
+        &self,
+        _request: ListPackInstallationsRequest,
+    ) -> Result<ListPackInstallationsResponse, BackendError> {
+        Ok(ListPackInstallationsResponse {
+            packs: self.host.list_pack_installations()?,
+        })
+    }
+
+    /// Returns the ownership-aware uninstall plan for one pack id, absent for ordinary plugins.
+    pub fn pack_uninstall_plan(
+        &self,
+        request: PackUninstallPlanRequest,
+    ) -> Result<PackUninstallPlanResponse, BackendError> {
+        Ok(PackUninstallPlanResponse {
+            plan: self.host.pack_uninstall_plan(&request.plugin_id)?,
+        })
+    }
+
     /// Returns the cached installed-plugin snapshot without rescanning the filesystem.
     pub fn list_installed(
         &self,
@@ -189,16 +209,22 @@ impl Plugins {
         request: UninstallPluginRequest,
     ) -> Result<UninstallPluginResponse, BackendError> {
         if let Some(plan) = self.host.pack_uninstall_plan(&request.plugin_id)? {
-            let member_ids = plan.all_member_ids();
-            for member_id in plan.remove() {
+            let member_ids = plan
+                .remove
+                .iter()
+                .chain(plan.preserve.iter().map(|entry| &entry.member_id))
+                .chain(plan.already_missing.iter())
+                .cloned()
+                .collect::<Vec<_>>();
+            for member_id in &plan.remove {
                 self.agent_runtime.suspend_plugin_agent(member_id);
             }
             let result = self
                 .host
-                .uninstall_pack(plan, request.data_disposition)
+                .uninstall_pack(&request.plugin_id, request.data_disposition)
                 .await;
-            for member_id in member_ids {
-                self.agent_runtime.resume_plugin_agent(&member_id);
+            for member_id in &member_ids {
+                self.agent_runtime.resume_plugin_agent(member_id);
             }
             self.agent_runtime.sync_plugin_agents();
             return result;

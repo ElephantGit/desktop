@@ -4,6 +4,8 @@ import {
   type MarketplaceSource,
   type InstalledPlugin,
   type InstallOutcome,
+  type PackInstallationStatus,
+  type PackUninstallPlan,
   type PluginConfigurationDetails,
   type PluginSettingValue,
 } from "@ora/contracts";
@@ -30,6 +32,10 @@ export interface PluginMemoryState {
    * `installed`; a conflict test supplies `installed_with_command_conflict`.
    */
   installOutcome?: InstallOutcome;
+  /** Ownership journal rows served by the pack presentation queries. */
+  packInstallations: PackInstallationStatus[];
+  /** Uninstall plans served by the pack plan query, keyed by pack id. */
+  packUninstallPlans: Map<string, PackUninstallPlan>;
 }
 
 /** Creates an independent plugins memory fixture. */
@@ -42,6 +48,8 @@ export function createPluginMemory(): PluginMemoryState {
     pluginReadmes: new Map(),
     availablePluginsUpdatedAt: 0n,
     marketplaceSources: [],
+    packInstallations: [],
+    packUninstallPlans: new Map(),
   };
 }
 
@@ -331,6 +339,13 @@ export function pluginHandlers(state: PluginMemoryState) {
       installed.description = available.description;
       installed.logo = available.logo;
       return { pluginId: req.pluginId };
+    },
+    listPackInstallations: async () => ({
+      packs: [...state.packInstallations],
+    }),
+    packUninstallPlan: async (req) => {
+      const plan = state.packUninstallPlans.get(req.pluginId);
+      return { plan: plan ?? null };
     },
   } satisfies TestHandlers;
 }

@@ -4,6 +4,7 @@ mod marketplace;
 mod operations;
 mod pack;
 mod pack_reconcile;
+mod pack_uninstall;
 mod registry_sync;
 pub use operations::{AdmittedSync, Plugins};
 

@@ -30,6 +30,22 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
+        operation_name: "listPackInstallations",
+        namespace: NAMESPACE,
+        member_name: "listPackInstallations",
+        request_type: "ListPackInstallationsRequest",
+        response_type: "ListPackInstallationsResponse",
+        response_mode: FrontendResponseMode::Unary,
+    },
+    FrontendEndpoint {
+        operation_name: "packUninstallPlan",
+        namespace: NAMESPACE,
+        member_name: "packUninstallPlan",
+        request_type: "PackUninstallPlanRequest",
+        response_type: "PackUninstallPlanResponse",
+        response_mode: FrontendResponseMode::Unary,
+    },
+    FrontendEndpoint {
         operation_name: "listMarketplaceSources",
         namespace: NAMESPACE,
         member_name: "listSources",

@@ -289,12 +289,12 @@ async fn marketplace_plugin_full_lifecycle_walkthrough() -> Result<(), Box<dyn s
         .find(|plugin| plugin.id == "official/ora-space.python-extension-pack")
         .ok_or("pack listing is discoverable")?;
     assert_eq!(pack.kind, "pack");
-    assert!(
-        matches!(
-            pack.compatibility,
-            PluginHostCompatibility::Incompatible { .. }
-        ),
-        "a pack declares no release of its own, so it is not directly installable"
+    // A pack installs through orchestration rather than a release download, so it projects as
+    // installable even though it declares no release of its own (extension-pack decision D7).
+    assert_eq!(
+        pack.compatibility,
+        PluginHostCompatibility::Compatible,
+        "the pack card always presents an install entry"
     );
     let pack_manifest = RegistryIndex::resolve_manifest(
         &marketplace_source,

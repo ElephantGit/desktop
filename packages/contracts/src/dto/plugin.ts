@@ -61,6 +61,12 @@ export type AvailablePlugin =
      * Host-local asset URLs for the marketplace icon, absent when none is published.
      */
     logo: PluginLogo | null;
+    /**
+     * Declared member identifiers when this listing is a pack (`kind = "pack"`), absent for
+     * every other kind. Display data only: the ownership journal stays the authority for
+     * what a pack installation actually created.
+     */
+    packMembers?: Array<string>;
   }
   & ({ "compatibility": "compatible" } | {
     "compatibility": "incompatible";
@@ -274,6 +280,20 @@ export type ListMarketplaceSourcesResponse = {
 };
 
 /**
+ * Requests every recorded pack installation with its reconciled member states.
+ */
+export type ListPackInstallationsRequest = Record<symbol, never>;
+
+/**
+ * Returns every recorded pack installation, each member reconciled against the installed
+ * tree. Read-only: reconciliation identifies drift, it never repairs the journal or the
+ * installed tree.
+ */
+export type ListPackInstallationsResponse = {
+  packs: Array<PackInstallationStatus>;
+};
+
+/**
  * Describes how one marketplace source retrieves its `.orax` release artifacts.
  *
  * The S3 variant deliberately excludes credentials: source queries may populate editors and
@@ -356,6 +376,24 @@ export type PackInstallFailure = {
 };
 
 /**
+ * One recorded pack installation projected for the installed-packs presentation.
+ */
+export type PackInstallationStatus = {
+  /**
+   * Canonical `namespace/identifier` of the pack listing.
+   */
+  packId: string;
+  /**
+   * Canonical URL of the marketplace source the pack was installed from.
+   */
+  sourceUrl: string;
+  /**
+   * Every journaled member, reconciled against the installed tree.
+   */
+  members: Array<PackMemberStatus>;
+};
+
+/**
  * One member installed by a pack installation, with its single-plugin outcome.
  */
 export type PackInstalledMember = {
@@ -372,6 +410,32 @@ export type PackMemberInstallOutcome = { "state": "installed" } | {
 };
 
 /**
+ * Whether the pack installation created this member or found it already installed.
+ */
+export type PackMemberOwnership = "managed_by_pack" | "pre_existing";
+
+/**
+ * The reconciled state of one journaled pack member against the installed tree.
+ */
+export type PackMemberReconciliationState =
+  | { "state": "expected_and_present" }
+  | { "state": "version_changed"; currentVersion: string }
+  | { "state": "missing" };
+
+/**
+ * One journaled pack member with its reconciled state.
+ */
+export type PackMemberStatus = {
+  memberId: string;
+  /**
+   * The member version at the moment the pack relationship was established.
+   */
+  versionAtInstall: string;
+  ownership: PackMemberOwnership;
+  state: PackMemberReconciliationState;
+};
+
+/**
  * One member whose rollback failed during a failed pack install.
  */
 export type PackRollbackFailure = {
@@ -381,6 +445,49 @@ export type PackRollbackFailure = {
    */
   errorCode: string;
 };
+
+/**
+ * The computed, not-yet-executed uninstall plan for one recorded pack.
+ */
+export type PackUninstallPlan = {
+  /**
+   * Members the pack created at their recorded versions: safe to remove.
+   */
+  remove: Array<string>;
+  /**
+   * Members preserved with the structured reason the UI presents.
+   */
+  preserve: Array<PackUninstallPreservation>;
+  /**
+   * Managed members that are already absent: released without filesystem work.
+   */
+  alreadyMissing: Array<string>;
+};
+
+/**
+ * Requests the ownership-aware uninstall plan for one pack id.
+ */
+export type PackUninstallPlanRequest = { pluginId: string };
+
+/**
+ * Returns the ownership-aware uninstall plan, absent when the id has no journal.
+ */
+export type PackUninstallPlanResponse = { plan: PackUninstallPlan | null };
+
+/**
+ * One preserved member and why the pack uninstall leaves it alone.
+ */
+export type PackUninstallPreservation = {
+  memberId: string;
+  reason: PackUninstallPreservationReason;
+};
+
+/**
+ * Why a pack uninstall preserves a member.
+ */
+export type PackUninstallPreservationReason =
+  | "pre_existing"
+  | "version_changed";
 
 /**
  * Reports whether every required Setting has an effective type-correct value.

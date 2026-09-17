@@ -1,12 +1,16 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
 import type {
   AvailablePlugin,
-  InstalledPlugin,
   InstallOutcome,
+  InstalledPlugin,
+  PackInstallationStatus,
+  PackMemberReconciliationState,
 } from "@ora/contracts";
 import {
+  Badge,
   Button,
   DropdownMenu,
   DropdownMenuContent,
@@ -25,8 +29,15 @@ import {
   IconSettings,
 } from "@tabler/icons-react";
 import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
+import { useContractsClient } from "../../contracts-client-context";
+import {
+  invalidateInstalledPlugins,
+  invalidatePackInstallations,
+} from "../../state/data/plugins";
 import { usePlatform } from "../../platform";
 import { useAvailablePlugins } from "../../state/hooks/use-available-plugins";
+import { PackUninstallConfirm } from "./pack-uninstall-confirm";
+import { usePackInstallations } from "../../state/hooks/use-pack-installations";
 import { useInstallPlugin } from "../../state/hooks/use-install-plugin";
 import { useUpdatePlugin } from "../../state/hooks/use-update-plugin";
 import { useInstalledPlugins } from "../../state/hooks/use-installed-plugins";
@@ -90,6 +101,21 @@ export function PluginsSettings({
   const [readmePlugin, setReadmePlugin] = useState<AvailablePlugin | null>(
     null,
   );
+  const [uninstallingPack, setUninstallingPack] = useState<string | null>(null);
+  const packInstallations = usePackInstallations();
+  const queryClient = useQueryClient();
+  const client = useContractsClient();
+  const uninstallPackMutation = useMutation({
+    mutationFn: (packId: string) =>
+      client.plugin.uninstall({
+        pluginId: packId,
+        dataDisposition: "delete" as const,
+      }),
+    onSettled: async () => {
+      await invalidatePackInstallations(queryClient);
+      await invalidateInstalledPlugins(queryClient);
+    },
+  });
 
   const platform = usePlatform();
   const available = useAvailablePlugins();
@@ -338,7 +364,121 @@ export function PluginsSettings({
           ))}
         </div>
       )}
+
+      <InstalledPacksSection
+        packs={packInstallations.data ?? []}
+        availableById={availableById}
+        onUninstall={(packId) => setUninstallingPack(packId)}
+      />
+
+      {uninstallingPack !== null && (
+        <PackUninstallConfirm
+          packId={uninstallingPack}
+          open
+          onOpenChange={(open) => {
+            if (!open) setUninstallingPack(null);
+          }}
+          onConfirm={() => {
+            uninstallPackMutation.mutate(uninstallingPack);
+            setUninstallingPack(null);
+          }}
+          busy={uninstallPackMutation.isPending}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * The installed-packs presentation is sourced from the ownership journal plus its
+ * reconciliation — packs are never faked into the installed-plugin directory (extension-pack
+ * decision D7 / D3-A).
+ */
+function InstalledPacksSection({
+  packs,
+  availableById,
+  onUninstall,
+}: {
+  packs: PackInstallationStatus[];
+  availableById: Map<string, AvailablePlugin>;
+  onUninstall: (packId: string) => void;
+}) {
+  const { t } = useTranslation();
+  if (packs.length === 0) return null;
+
+  return (
+    <section>
+      <h3 className="mb-2 text-sm font-semibold">
+        {t("settings.plugins.packsSection")}
+      </h3>
+      <div className="space-y-3">
+        {packs.map((pack) => {
+          const listing = availableById.get(pack.packId);
+          return (
+            <div
+              key={pack.packId}
+              className="rounded-lg border border-border p-3"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium">
+                  {listing?.title ?? pack.packId}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {t("settings.plugins.packMembersCount", {
+                    count: pack.members.length,
+                  })}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="ml-auto"
+                  onClick={() => onUninstall(pack.packId)}
+                >
+                  {t("settings.plugins.packUninstall")}
+                </Button>
+              </div>
+              <ul className="mt-2 space-y-1">
+                {pack.members.map((member) => (
+                  <li
+                    key={member.memberId}
+                    className="flex items-center justify-between text-xs"
+                  >
+                    <span className="truncate text-muted-foreground">
+                      {member.memberId}
+                      {member.ownership === "pre_existing" &&
+                        ` · ${t("settings.plugins.packMemberPreExisting")}`}
+                    </span>
+                    <PackMemberStateBadge state={member.state} />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+/** Presents one reconciled pack member state as a restrained badge. */
+function PackMemberStateBadge({
+  state,
+}: {
+  state: PackMemberReconciliationState;
+}) {
+  const { t } = useTranslation();
+  const label =
+    state.state === "expected_and_present"
+      ? t("settings.plugins.packMemberExpected")
+      : state.state === "version_changed"
+        ? t("settings.plugins.packMemberVersionChanged", {
+            version: state.currentVersion,
+          })
+        : t("settings.plugins.packMemberMissing");
+  const destructive =
+    state.state === "missing" || state.state === "version_changed";
+  return (
+    <Badge variant={destructive ? "destructive" : "secondary"}>{label}</Badge>
   );
 }
 
@@ -363,6 +503,11 @@ function AvailablePluginCard({
     showContractError(cause, t("settings.plugins.installFailed"));
   };
   const succeedInstall = (response: { outcome: InstallOutcome }) => {
+    if (response.outcome.state === "pack_installed") {
+      const feedback = packInstallFeedback(response.outcome, t);
+      toast.success(feedback.title, { description: feedback.description });
+      return;
+    }
     toast.success(
       installOutcomeMessage(
         response.outcome,
@@ -399,6 +544,15 @@ function AvailablePluginCard({
         {plugin.description !== "" && (
           <span className="mt-0.5 block truncate text-xs text-muted-foreground">
             {plugin.description}
+          </span>
+        )}
+        {plugin.packMembers !== null && plugin.packMembers !== undefined && (
+          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+            {t("settings.plugins.packMembersCount", {
+              count: plugin.packMembers.length,
+            })}
+            {": "}
+            {plugin.packMembers.join(", ")}
           </span>
         )}
         {incompatible && (
@@ -531,4 +685,49 @@ function installOutcomeMessage(
     });
   }
   return t(successKey);
+}
+
+/**
+ * Builds the toast title and description for a pack install outcome: the journal-backed
+ * per-member facts (installed, skipped, failed, rollback residual) drive every sentence, so the
+ * frontend never re-derives ownership.
+ */
+function packInstallFeedback(
+  outcome: Extract<InstallOutcome, { state: "pack_installed" }>,
+  t: TFunction,
+): { title: string; description: string } {
+  const parts: string[] = [];
+  if (outcome.members.length > 0) {
+    parts.push(
+      t("settings.plugins.packInstalledMembers", {
+        count: outcome.members.length,
+      }),
+    );
+  }
+  if (outcome.skipped.length > 0) {
+    parts.push(
+      t("settings.plugins.packSkippedMembers", {
+        count: outcome.skipped.length,
+      }),
+    );
+  }
+  const failed = outcome.failed;
+  if (failed !== null) {
+    parts.push(
+      t("settings.plugins.packFailedMember", {
+        pluginId: failed.pluginId,
+      }),
+    );
+    for (const rollbackFailure of failed.rollbackFailures) {
+      parts.push(
+        t("settings.plugins.packRollbackFailedMember", {
+          pluginId: rollbackFailure.pluginId,
+        }),
+      );
+    }
+  }
+  return {
+    title: t("settings.plugins.packInstallTitle"),
+    description: parts.join(" "),
+  };
 }

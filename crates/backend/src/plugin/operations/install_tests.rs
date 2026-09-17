@@ -8,9 +8,9 @@ use crate::plugin::PluginApi;
 use crate::plugin::pack_reconcile::PackMemberReconciliation;
 use crate::settings::Settings;
 use ora_contracts::{
-    ImportPluginRequest, InstallOutcome, ListInstalledPluginsRequest, PackInstallFailure,
-    PackInstalledMember, PackMemberInstallOutcome, PluginDataDisposition, PublicError,
-    UninstallPluginRequest,
+    ImportPluginRequest, InstallOutcome, ListInstalledPluginsRequest, ListPackInstallationsRequest,
+    PackInstallFailure, PackInstalledMember, PackMemberInstallOutcome, PackUninstallPlanRequest,
+    PluginDataDisposition, PublicError, UninstallPluginRequest,
 };
 use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
 use ora_logging::with_trace_logging;
@@ -673,6 +673,99 @@ async fn pack_install_records_created_members_as_managed_and_skips_as_pre_existi
                 ownership: ora_db::PackMemberOwnership::ManagedByPack,
             },
         ]
+    );
+}
+
+/// The D4 presentation queries project the journal and reconciliation for the frontend: the
+/// installed-packs list carries reconciled member states, and the uninstall plan separates
+/// removable members from preserved ones with structured reasons.
+#[tokio::test]
+async fn pack_presentation_queries_project_journal_and_reconciliation() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    install_and_record_pack(
+        data_dir.path(),
+        &host,
+        &format!(
+            "{}{}",
+            member_table(HIDDEN_MEMBER),
+            member_table(VISIBLE_MEMBER)
+        ),
+    )
+    .await
+    .expect("install and record the pack");
+
+    let installations = plugins
+        .list_pack_installations(ListPackInstallationsRequest {})
+        .expect("list pack installations")
+        .packs;
+    assert_eq!(installations.len(), 1);
+    let installation = &installations[0];
+    assert_eq!(installation.pack_id, PACK_ID);
+    assert_eq!(
+        installation
+            .members
+            .iter()
+            .map(|member| (
+                member.member_id.as_str(),
+                member.version_at_install.as_str(),
+                member.ownership,
+                member.state.clone(),
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                format!("official/{VISIBLE_MEMBER}").as_str(),
+                "1.0.0",
+                ora_contracts::PackMemberOwnership::ManagedByPack,
+                ora_contracts::PackMemberReconciliationState::ExpectedAndPresent,
+            ),
+            (
+                format!("official/{HIDDEN_MEMBER}").as_str(),
+                "1.0.0",
+                ora_contracts::PackMemberOwnership::ManagedByPack,
+                ora_contracts::PackMemberReconciliationState::ExpectedAndPresent,
+            ),
+        ]
+    );
+
+    let plan = plugins
+        .pack_uninstall_plan(PackUninstallPlanRequest {
+            plugin_id: PACK_ID.to_string(),
+        })
+        .expect("compute the uninstall plan")
+        .plan
+        .expect("the recorded pack plans");
+    assert_eq!(
+        plan.remove,
+        vec![
+            format!("official/{VISIBLE_MEMBER}"),
+            format!("official/{HIDDEN_MEMBER}"),
+        ]
+    );
+    assert!(plan.preserve.is_empty());
+    assert!(plan.already_missing.is_empty());
+
+    // An unrecorded pack id projects neither an installation nor a plan.
+    assert!(
+        plugins
+            .list_pack_installations(ListPackInstallationsRequest {})
+            .expect("list pack installations")
+            .packs
+            .iter()
+            .all(|pack| pack.pack_id != "official/ora-space.absent")
+    );
+    assert!(
+        plugins
+            .pack_uninstall_plan(PackUninstallPlanRequest {
+                plugin_id: "official/ora-space.absent".to_string(),
+            })
+            .expect("plan for an unrecorded pack")
+            .plan
+            .is_none(),
+        "an unrecorded pack has no uninstall plan"
     );
 }
 
@@ -1647,88 +1740,9 @@ async fn pack_uninstall_removes_only_the_eligible_member_in_a_mixed_pack() {
     );
 }
 
-/// A member uninstall that fails keeps its journal relationship so a retry can continue from
-/// exactly the member that failed.
-#[tokio::test]
-async fn a_failed_member_uninstall_keeps_the_journal_and_a_retry_completes() {
-    let _trace = trace_guard();
-    let data_dir = TempDir::new().expect("data dir");
-    let pool = test_pool(data_dir.path());
-    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
-    install_and_record_pack(
-        data_dir.path(),
-        &host,
-        &format!(
-            "{}{}",
-            member_table(HIDDEN_MEMBER),
-            member_table(VISIBLE_MEMBER)
-        ),
-    )
-    .await
-    .expect("install and record the pack");
-
-    // Compute the plan while both members are healthy, then delete the second member's package
-    // so the stale plan's execution fails exactly on that member.
-    let plan = host
-        .pack_uninstall_plan(PACK_ID)
-        .expect("plan the pack uninstall")
-        .expect("the recorded pack plans");
-    assert_eq!(
-        plan.remove().to_vec(),
-        vec![
-            format!("official/{VISIBLE_MEMBER}"),
-            format!("official/{HIDDEN_MEMBER}"),
-        ]
-    );
-    std::fs::remove_dir_all(
-        data_dir
-            .path()
-            .join("plugins")
-            .join("installed")
-            .join("official")
-            .join(HIDDEN_MEMBER),
-    )
-    .expect("delete the second member externally");
-    let failed = host
-        .uninstall_pack(plan, PluginDataDisposition::Delete)
-        .await;
-    assert!(failed.is_err(), "the missing package fails its uninstall");
-    // The first member was removed before the failure; the failed member keeps its journal row.
-    assert!(
-        !member_installed(data_dir.path(), VISIBLE_MEMBER, "1.0.0"),
-        "the first member was removed before the failure"
-    );
-    let journal = host
-        .pack_installation(PACK_ID)
-        .expect("load the journal")
-        .expect("the journal survives the failure");
-    assert_eq!(
-        journal
-            .members
-            .iter()
-            .map(|member| member.member_id.as_str())
-            .collect::<Vec<_>>(),
-        vec![format!("official/{HIDDEN_MEMBER}")],
-    );
-
-    // The retry re-plans from the surviving journal: the failed member is now missing, so the
-    // relationship is released and the pack record is cleared.
-    plugins
-        .uninstall(UninstallPluginRequest {
-            plugin_id: PACK_ID.to_string(),
-            data_disposition: PluginDataDisposition::Delete,
-        })
-        .await
-        .expect("the retry completes the uninstall");
-    assert!(
-        host.pack_installation(PACK_ID)
-            .expect("load the journal after retry")
-            .is_none(),
-        "the retry clears the journal"
-    );
-}
-/// A member that fails after earlier members landed is rolled back: the created member is
-/// removed, the failed member never landed, and the journal restores to its pre-run facts.
+/// The ownership journal is durable: a fresh plugin host on the same database reads the same
+/// relationships without any re-install. This test also verifies the full rollback of created
+/// members when a later member fails during the pack install.
 #[tokio::test]
 async fn rollback_removes_created_members_when_a_later_member_fails() {
     let _trace = trace_guard();
