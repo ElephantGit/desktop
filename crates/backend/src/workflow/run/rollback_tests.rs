@@ -1,7 +1,8 @@
 use super::checkpoint::take_checkpoint;
 use super::rollback::{apply_rollback, plan_rollback, preview};
 use super::test_fixture::{
-    ClockAt, RecordingExecutor, SeqGen, bootstrap, init_git_workspace, started_run_with,
+    ClockAt, RecordingExecutor, SeqGen, TWO_AGENT_GRAPH, bootstrap, init_git_workspace,
+    started_run_with,
 };
 use crate::error::BackendError;
 use ora_application::{
@@ -132,14 +133,37 @@ fn pre_rollback_refs(root: &Path) -> Vec<String> {
 }
 
 fn set_started_at(temp: &TempDir, node_run_id: &str, started_at: i64) {
+    set_node_times(temp, node_run_id, Some(started_at), None);
+}
+
+fn set_finished_at(temp: &TempDir, node_run_id: &str, finished_at: i64) {
+    set_node_times(temp, node_run_id, None, Some(finished_at));
+}
+
+fn set_node_times(
+    temp: &TempDir,
+    node_run_id: &str,
+    started_at: Option<i64>,
+    finished_at: Option<i64>,
+) {
     let connection = rusqlite::Connection::open(temp.path().join("repository.sqlite3")).unwrap();
     connection.busy_timeout(Duration::from_secs(5)).unwrap();
-    connection
-        .execute(
-            "UPDATE workflow_node_runs SET started_at = ?2 WHERE id = ?1",
-            params![node_run_id, started_at],
-        )
-        .unwrap();
+    if let Some(started_at) = started_at {
+        connection
+            .execute(
+                "UPDATE workflow_node_runs SET started_at = ?2 WHERE id = ?1",
+                params![node_run_id, started_at],
+            )
+            .unwrap();
+    }
+    if let Some(finished_at) = finished_at {
+        connection
+            .execute(
+                "UPDATE workflow_node_runs SET finished_at = ?2 WHERE id = ?1",
+                params![node_run_id, finished_at],
+            )
+            .unwrap();
+    }
 }
 
 fn recorded_changes() -> Vec<FileChange> {
@@ -412,5 +436,176 @@ fn resume_keep_and_omitted_rollback_leave_the_worktree_untouched() {
         let after = live_nodes(&fixture.pool, &fixture.run_id);
         assert_eq!(live(&after, "c").status, WorkflowNodeStatus::Running);
         assert_eq!(dispatch_counts(&fixture.executor).get("c"), Some(&2));
+    });
+}
+
+fn checkpoint_and_fail_node(
+    engine: &FixtureEngine,
+    workspace_root: &Path,
+    run_id: &WorkflowRunId,
+    node: &ora_domain::WorkflowNodeRun,
+    message: &str,
+) {
+    let checkpoint = take_checkpoint(workspace_root, run_id, &node.node_id, &node.id);
+    let oid = checkpoint.commit_oid.expect("checkpoint oid");
+    engine
+        .record_node_checkpoint(
+            &node.id,
+            "snapshot-1",
+            Some(&oid),
+            /*checkpoint_error*/ None,
+        )
+        .unwrap();
+    engine
+        .fail_node(
+            run_id,
+            &node.id,
+            NodeFailure::new(NodeFailureKind::Session, message)
+                .with_file_changes(recorded_changes()),
+        )
+        .unwrap();
+}
+
+/// Same-wave sibling that keeps running (D2) and finishes after the failed node blocks checkpoint.
+#[test]
+fn resume_checkpoint_rejects_when_same_wave_sibling_finished_after() {
+    with_trace_logging(|| {
+        let (temp, pool) = bootstrap();
+        let executor = RecordingExecutor::default();
+        let (run_id, _, engine) = started_run_with(&temp, &pool, TWO_AGENT_GRAPH, executor);
+        let workspace_root = init_git_workspace(&temp);
+        let nodes = live_nodes(&pool, &run_id);
+        let l = live(&nodes, "l").clone();
+        let r = live(&nodes, "r").clone();
+        checkpoint_and_fail_node(&engine, &workspace_root, &run_id, &r, "r failed");
+        write_workspace_file(&workspace_root, "f1", "sibling-l\n");
+        complete(&engine, &run_id, &l.id);
+        set_finished_at(&temp, l.id.as_ref(), 80);
+        let response = preview(&pool, &workspace_root, &run_id).unwrap();
+        assert!(response.resumable);
+        assert!(!response.checkpoint_available);
+        assert_eq!(
+            response.checkpoint_unavailable_reason.as_deref(),
+            Some("siblings_ran_after_checkpoint")
+        );
+        let plan = plan_rollback(&pool, &run_id).unwrap();
+        let error = apply_rollback(
+            &workspace_root,
+            &plan,
+            ResumeRollbackMode::Checkpoint,
+            &run_id,
+            PRE_ROLLBACK_NOW,
+        )
+        .expect_err("checkpoint rollback must be rejected");
+        assert_eq!(
+            error.public_error(),
+            &PublicError::WorkflowRunNotResumable(EmptyErrorParams {})
+        );
+        assert_eq!(
+            std::fs::read_to_string(workspace_root.join("f1")).unwrap(),
+            "sibling-l\n"
+        );
+        assert_eq!(pre_rollback_refs(&workspace_root), Vec::<String>::new());
+    });
+}
+
+/// A sibling that already finished before the failed node started does not block checkpoint.
+#[test]
+fn resume_checkpoint_allows_sibling_that_finished_before_unit_started() {
+    with_trace_logging(|| {
+        let (temp, pool) = bootstrap();
+        let executor = RecordingExecutor::default();
+        let (run_id, _, engine) = started_run_with(&temp, &pool, SIBLING_GRAPH, executor);
+        let workspace_root = init_git_workspace(&temp);
+        let nodes = live_nodes(&pool, &run_id);
+        let a = live(&nodes, "a").clone();
+        let b = live(&nodes, "b").clone();
+        complete(&engine, &run_id, &b.id);
+        set_finished_at(&temp, b.id.as_ref(), 30);
+        complete(&engine, &run_id, &a.id);
+        let after_a = live_nodes(&pool, &run_id);
+        let c = live(&after_a, "c").clone();
+        set_started_at(&temp, c.id.as_ref(), 50);
+        let checkpoint = take_checkpoint(&workspace_root, &run_id, "c", &c.id);
+        let oid = checkpoint.commit_oid.expect("checkpoint oid");
+        engine
+            .record_node_checkpoint(
+                &c.id,
+                "snapshot-1",
+                Some(&oid),
+                /*checkpoint_error*/ None,
+            )
+            .unwrap();
+        write_workspace_file(&workspace_root, "f1", "node-f1\n");
+        engine
+            .fail_node(
+                &run_id,
+                &c.id,
+                NodeFailure::new(NodeFailureKind::Session, "c failed")
+                    .with_file_changes(recorded_changes()),
+            )
+            .unwrap();
+        let response = preview(&pool, &workspace_root, &run_id).unwrap();
+        assert!(response.resumable);
+        assert!(response.checkpoint_available);
+        assert_eq!(response.checkpoint_unavailable_reason, None);
+        let plan = plan_rollback(&pool, &run_id).unwrap();
+        apply_rollback(
+            &workspace_root,
+            &plan,
+            ResumeRollbackMode::Checkpoint,
+            &run_id,
+            PRE_ROLLBACK_NOW,
+        )
+        .expect("checkpoint rollback must apply");
+        assert!(!workspace_root.join("f1").exists());
+        assert_eq!(pre_rollback_refs(&workspace_root).len(), 1);
+    });
+}
+
+/// A still-running sibling makes the run itself not resumable; checkpoint is not offered.
+#[test]
+fn resume_is_refused_while_a_sibling_is_still_running() {
+    with_trace_logging(|| {
+        let (temp, pool) = bootstrap();
+        let executor = RecordingExecutor::default();
+        let (run_id, _, engine) = started_run_with(&temp, &pool, TWO_AGENT_GRAPH, executor.clone());
+        let workspace_root = init_git_workspace(&temp);
+        let nodes = live_nodes(&pool, &run_id);
+        let l = live(&nodes, "l").clone();
+        let r = live(&nodes, "r").clone();
+        checkpoint_and_fail_node(&engine, &workspace_root, &run_id, &r, "r failed");
+        let before = live_nodes(&pool, &run_id);
+        let l_before = live(&before, "l").clone();
+        let r_before = live(&before, "r").clone();
+        let response = preview(&pool, &workspace_root, &run_id).unwrap();
+        assert_eq!(response.resumable, false);
+        assert_eq!(
+            engine.resume_from_failure(&run_id).unwrap(),
+            ResumeWorkflowRunResult::NotResumable
+        );
+        let after_refused = live_nodes(&pool, &run_id);
+        assert_eq!(live(&after_refused, "l").id, l_before.id);
+        assert_eq!(live(&after_refused, "l").started_at, l_before.started_at);
+        assert_eq!(live(&after_refused, "r").id, r_before.id);
+        assert_eq!(find_run(&pool, &run_id).status, WorkflowRunStatus::Failed);
+        complete(&engine, &run_id, &l.id);
+        let after_sibling = live_nodes(&pool, &run_id);
+        let l_done = live(&after_sibling, "l").clone();
+        let preview_ready = preview(&pool, &workspace_root, &run_id).unwrap();
+        assert!(preview_ready.resumable);
+        assert_eq!(
+            engine.resume_from_failure(&run_id).unwrap(),
+            ResumeWorkflowRunResult::Resumed
+        );
+        let after_resume = live_nodes(&pool, &run_id);
+        let l_kept = live(&after_resume, "l");
+        assert_eq!(l_kept.id, l_done.id);
+        assert_eq!(l_kept.started_at, l_done.started_at);
+        assert_eq!(l_kept.status, WorkflowNodeStatus::Succeeded);
+        assert_ne!(live(&after_resume, "r").id, r_before.id);
+        assert_eq!(live(&after_resume, "r").status, WorkflowNodeStatus::Running);
+        assert_eq!(dispatch_counts(&executor).get("l"), Some(&1));
+        assert_eq!(dispatch_counts(&executor).get("r"), Some(&2));
     });
 }

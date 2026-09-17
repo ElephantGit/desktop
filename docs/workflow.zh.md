@@ -142,8 +142,9 @@ Start 表单控件与变量类型分离：文本、段落、选择框、数字�
 （只还原失败节点记录过的路径）、`checkpoint`（把整棵工作树还原到续跑单元的检查点）。
 `node_files` 在失败节点没有检查点或文件改动时不可用（`nodeFilesUnavailableReason` 为
 `"no_file_changes"`），续跑单元是迭代复合节点时也不可用（`"composite_region"`）。
-`checkpoint` 不可用的原因是 `"no_checkpoint"`、`"siblings_ran_after_checkpoint"` 或
-`"not_resumable"`。
+`checkpoint` 不可用的原因是 `"no_checkpoint"`、`"siblings_ran_after_checkpoint"`（续跑单元
+最早开始之后，单元外仍有活着的节点在跑：`finished_at` 为空或更晚，或 `started_at` 更晚；
+在该时刻之前已结束的 Start/Condition/Output 行不算），或 `"not_resumable"`。
 
 运行级开关 `inject_last_failure`（默认开启）会在同一 `(node_id, iteration)` 的上次失败属于
 上述四种可注入 kind 时，把失败信息写入提示词，并保存在

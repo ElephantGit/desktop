@@ -10,7 +10,8 @@ use gitlancer::{
     SnapshotWorktreeRequest,
 };
 use ora_application::{
-    ApplicationError, FileChange, WorkflowGraph, WorkflowRunEngineRepository, resume_unit_owner_id,
+    ApplicationError, FileChange, NodeType, WorkflowGraph, WorkflowRunEngineRepository,
+    resume_unit_owner_id,
 };
 use ora_contracts::{
     EmptyErrorParams, PreviewWorkflowRunResumeRequest, PreviewWorkflowRunResumeResponse,
@@ -18,7 +19,9 @@ use ora_contracts::{
     ResumeWorkflowRunResponse, WorkflowFileChange,
 };
 use ora_db::{RepositoryPool, SqliteWorkflowRunEngineRepository};
-use ora_domain::{WorkflowNodeStatus, WorkflowRunId, WorkflowRunStatus, WorkspaceId};
+use ora_domain::{
+    WorkflowNodeRun, WorkflowNodeStatus, WorkflowRunId, WorkflowRunStatus, WorkspaceId,
+};
 use ora_logging::ora_info;
 use std::cmp::Ordering;
 use std::path::Path;
@@ -142,12 +145,12 @@ pub(super) fn plan_rollback(
             .and_then(|row| row.started_at)
             .or(node.started_at)
     });
+    // Checkpoint restore rewinds the whole worktree, so a sibling that was still running (or
+    // that finished after this unit started) would lose files it wrote after the checkpoint.
+    // Re-plan on every apply so a stale preview cannot bypass this check.
     let siblings_ran_after = unit_started_at.is_some_and(|earliest| {
         node_runs.iter().any(|node_run| {
-            !unit_ids.contains(&node_run.node_id)
-                && node_run
-                    .started_at
-                    .is_some_and(|started_at| started_at > earliest)
+            !unit_ids.contains(&node_run.node_id) && sibling_was_active_after(node_run, earliest)
         })
     });
     let unit_checkpoint = failed.iter().find_map(|node| {
@@ -349,6 +352,7 @@ pub(super) fn resume_from_failure(
     let pre_rollback_checkpoint = match (mode, workspace_root.as_deref()) {
         (ResumeRollbackMode::Keep, _) => None,
         (_, Some(workspace_root)) => {
+            // Re-plan from live rows; never trust a client preview for availability.
             let plan = plan_rollback(pool, &run_id)?;
             if !plan.resumable() {
                 return Err(not_resumable());
@@ -488,6 +492,31 @@ fn to_contract_change(change: FileChange) -> WorkflowFileChange {
         additions: change.additions,
         deletions: change.deletions,
     }
+}
+
+/// True when a live row outside the resume unit was still in flight or finished after `earliest`.
+///
+/// Start/Condition/Output rows that already finished before that instant opened the wave and must
+/// not block checkpoint restore; a sibling agent that kept running (D2) would lose its files.
+fn sibling_was_active_after(node_run: &WorkflowNodeRun, earliest: i64) -> bool {
+    let is_control = matches!(
+        node_run.node_type.parse::<NodeType>(),
+        Ok(NodeType::Start | NodeType::Condition | NodeType::Output)
+    );
+    if is_control
+        && node_run
+            .finished_at
+            .is_some_and(|finished_at| finished_at < earliest)
+    {
+        return false;
+    }
+    node_run.finished_at.is_none()
+        || node_run
+            .finished_at
+            .is_some_and(|finished_at| finished_at > earliest)
+        || node_run
+            .started_at
+            .is_some_and(|started_at| started_at > earliest)
 }
 
 fn not_resumable() -> BackendError {

@@ -402,7 +402,10 @@ pub struct PreviewWorkflowRunResumeResponse {
     /// `"no_file_changes"` when a failed node has no checkpoint / recorded changes;
     /// `"composite_region"` when the resume unit is an iteration composite.
     pub node_files_unavailable_reason: Option<String>,
-    /// `node_files_available` and no sibling node run started after the earliest failed checkpoint.
+    /// Available when the run is resumable, the resume unit has a checkpoint, and no live node
+    /// run outside that unit was still active after the unit's earliest start (`finished_at` is
+    /// none or later than that instant, or `started_at` is later). Start/Condition/Output rows
+    /// that finished before the unit started do not count.
     pub checkpoint_available: bool,
     /// `"no_checkpoint"` | `"siblings_ran_after_checkpoint"` | `"not_resumable"`.
     pub checkpoint_unavailable_reason: Option<String>,

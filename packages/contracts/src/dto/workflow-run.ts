@@ -157,7 +157,10 @@ export type PreviewWorkflowRunResumeResponse = {
    */
   nodeFilesUnavailableReason: string | null;
   /**
-   * `node_files_available` and no sibling node run started after the earliest failed checkpoint.
+   * Available when the run is resumable, the resume unit has a checkpoint, and no live node
+   * run outside that unit was still active after the unit's earliest start (`finished_at` is
+   * none or later than that instant, or `started_at` is later). Start/Condition/Output rows
+   * that finished before the unit started do not count.
    */
   checkpointAvailable: boolean;
   /**

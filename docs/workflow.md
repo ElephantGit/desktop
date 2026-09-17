@@ -172,8 +172,10 @@ can undo. Provenance lives on the node-run payload as `checkpoint`, `checkpoint_
 to the resume unit's checkpoint). `node_files` is unavailable with
 `nodeFilesUnavailableReason` `"no_file_changes"` when a failed node has no checkpoint or
 recorded changes, and `"composite_region"` when the resume unit is an iteration composite.
-`checkpoint` is unavailable with `"no_checkpoint"`, `"siblings_ran_after_checkpoint"`, or
-`"not_resumable"`.
+`checkpoint` is unavailable with `"no_checkpoint"`, `"siblings_ran_after_checkpoint"` (a live
+node outside the resume unit was still active after the unit's earliest start: `finished_at`
+is none or later, or `started_at` is later; Start/Condition/Output rows that finished before
+that instant do not count), or `"not_resumable"`.
 
 The run-level switch `inject_last_failure` (default on) injects the previous attempt of the
 same `(node_id, iteration)` into the prompt when that attempt's kind is one of the four
