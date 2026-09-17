@@ -37,16 +37,23 @@ fn merge_error_detail(
 }
 
 /// Marks one node-run `Failed` and writes `payload.error_detail` in the same UPDATE.
+///
+/// Attempt numbering is scoped by `(run_id, node_id, iteration)` (R2). The round is read from
+/// the live row so this helper stays within the clippy argument limit.
 pub(super) fn persist_failed_node_run(
     transaction: &Transaction<'_>,
     node_run_id: &str,
     run_id: &str,
     node_id: &str,
-    iteration: Option<u32>,
     failure: &NodeFailure,
     current_payload: Option<&str>,
     now: i64,
 ) -> Result<(), crate::DatabaseError> {
+    let iteration: Option<u32> = transaction.query_row(
+        "SELECT iteration FROM workflow_node_runs WHERE id = ?1 AND is_deleted = 0",
+        params![node_run_id],
+        |row| row.get(0),
+    )?;
     let attempt = deleted_attempt_count(transaction, run_id, node_id, iteration)?.saturating_add(1);
     let detail = NodeFailureDetail {
         kind: failure.kind,
@@ -98,7 +105,7 @@ pub(super) fn fail_orphaned_run(
     }
     let nodes = {
         let mut statement = transaction.prepare(
-            "SELECT id, node_id, payload, iteration FROM workflow_node_runs
+            "SELECT id, node_id, payload FROM workflow_node_runs
              WHERE run_id = ?1 AND status IN (?2, ?3) AND is_deleted = 0",
         )?;
         let rows = statement.query_map(
@@ -112,7 +119,6 @@ pub(super) fn fail_orphaned_run(
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, Option<String>>(2)?,
-                    row.get::<_, Option<u32>>(3)?,
                 ))
             },
         )?;
@@ -122,13 +128,12 @@ pub(super) fn fail_orphaned_run(
         NodeFailureKind::InterruptedByRestart,
         INTERRUPTED_BY_RESTART,
     );
-    for (id, node_id, payload, iteration) in nodes {
+    for (id, node_id, payload) in nodes {
         persist_failed_node_run(
             transaction,
             &id,
             run_id.as_ref(),
             &node_id,
-            iteration,
             &failure,
             payload.as_deref(),
             now,

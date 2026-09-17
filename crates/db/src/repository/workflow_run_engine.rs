@@ -378,9 +378,9 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
             .with_connection_mut(|connection| {
                 let transaction =
                     Transaction::new(connection, TransactionBehavior::Immediate)?;
-                let Some((run_id, node_id, status, payload, iteration)) = transaction
+                let Some((run_id, node_id, status, payload)) = transaction
                     .query_row(
-                        "SELECT run_id, node_id, status, payload, iteration FROM workflow_node_runs WHERE id = ?1 AND is_deleted = 0",
+                        "SELECT run_id, node_id, status, payload FROM workflow_node_runs WHERE id = ?1 AND is_deleted = 0",
                         params![node_run_id.as_ref()],
                         |row| {
                             Ok((
@@ -388,7 +388,6 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                                 row.get::<_, String>(1)?,
                                 row.get::<_, i64>(2)?,
                                 row.get::<_, Option<String>>(3)?,
-                                row.get::<_, Option<u32>>(4)?,
                             ))
                         },
                     )
@@ -404,7 +403,6 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                     node_run_id.as_ref(),
                     &run_id,
                     &node_id,
-                    iteration,
                     &failure,
                     payload.as_deref(),
                     now,
