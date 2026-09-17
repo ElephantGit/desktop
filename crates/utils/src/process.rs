@@ -1,5 +1,10 @@
 use std::process::Command;
 
+#[cfg(unix)]
+mod pipe_capture;
+#[cfg(unix)]
+pub use pipe_capture::{PipeCapture, PipeRead, PipeReadState};
+
 #[cfg(target_os = "linux")]
 mod child_identity;
 #[cfg(target_os = "linux")]
