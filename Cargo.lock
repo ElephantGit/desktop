@@ -3510,6 +3510,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ora-process-protocol"
+version = "0.0.0"
+dependencies = [
+ "uuid",
+]
+
+[[package]]
+name = "ora-process-runtime"
+version = "0.0.0"
+dependencies = [
+ "ora-process-protocol",
+ "pretty_assertions",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "ora-pty"
 version = "0.0.0"
 dependencies = [

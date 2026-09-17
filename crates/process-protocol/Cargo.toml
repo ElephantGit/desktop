@@ -1,0 +1,10 @@
+[package]
+name = "ora-process-protocol"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+uuid = { workspace = true }

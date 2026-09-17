@@ -24,6 +24,8 @@ members = [
     "crates/plugin-runtime",
     "crates/plugin-registry",
     "crates/process",
+    "crates/process-protocol",
+    "crates/process-runtime",
     "crates/pty",
     "crates/runtime-settings",
     "crates/scheduler",
@@ -58,6 +60,8 @@ default-members = [
     "crates/plugin-runtime",
     "crates/plugin-registry",
     "crates/process",
+    "crates/process-protocol",
+    "crates/process-runtime",
     "crates/pty",
     "crates/scheduler",
     "crates/skill-package",
@@ -106,6 +110,8 @@ ora-plugin-protocol = { path = "crates/plugin-protocol" }
 ora-plugin-registry = { path = "crates/plugin-registry" }
 ora-plugin-runtime = { path = "crates/plugin-runtime" }
 ora-process = { path = "crates/process" }
+ora-process-protocol = { path = "crates/process-protocol" }
+ora-process-runtime = { path = "crates/process-runtime" }
 ora-pty = { path = "crates/pty" }
 ora-runtime-settings = { path = "crates/runtime-settings" }
 ora-scheduler = { path = "crates/scheduler" }
