@@ -30,8 +30,9 @@ Linux 另已加入独立 [Helper 部署预检与认证检查服务](process-help
 
 Linux 已支持[有界内存结果捕获](process-linux-rootless.zh.md#有界结果捕获)，读取器独立推进，限额属于各 Run；
 管道 EOF 与进程清理分别表达。
-持久接受、授权、租约、宿主／guardian 进程、其余平台 adapter、完整 I/O、恢复、资源交接和生产接入均待实现。
-本批不改变文件系统布局，不代表阶段 1 完成，也不证明任何 OS 级纳管保证。
+宿主创建意图已提供可选的[持久日志](process-host-state.zh.md)，仅使用显式传入的专用目录。
+Run 持久接受、授权、租约、宿主／guardian 进程、其余平台 adapter、完整 I/O、运行恢复、资源交接和生产接入均待实现。
+本批不代表阶段 1 完成，也不证明任何 OS 级纳管保证。
 
 ## Guardian 启动基础
 
@@ -58,8 +59,8 @@ Drop 只关闭描述符，故意不显式解锁，否则可能同时释放子进
 `cargo test -p ora-utils --test linux_file_lock` 验证锁竞争、复制后的生命周期、文件内容不变、
 close-on-exec（含显式 pre-exec 屏障），以及 exec 后持锁者在启动方被外部强杀后仍保有独占资格。测试通过 pidfd 固定并
 终止剩余持锁者，然后验证可以重新取得锁。测试子进程不是 guardian 或宿主实现。
-状态目录准入、持久创建意图、描述符认证、bootstrap、guardian app 和 Ready／重连接口仍待接入；
-没有新增远程业务启动端点。
+状态目录准入与持久创建意图已提供[宿主所有的实现](process-host-state.zh.md)，并独立测试日志持有者被外部强杀。
+描述符认证、bootstrap、guardian app 和 Ready／重连接口仍待接入；没有新增远程业务启动端点。
 
 ## 验证
 

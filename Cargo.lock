@@ -3543,6 +3543,7 @@ dependencies = [
 name = "ora-process-protocol"
 version = "0.0.0"
 dependencies = [
+ "pretty_assertions",
  "serde",
  "uuid",
 ]
@@ -3555,6 +3556,7 @@ dependencies = [
  "ora-process-protocol",
  "ora-utils",
  "pretty_assertions",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

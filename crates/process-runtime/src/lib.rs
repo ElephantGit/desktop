@@ -1,6 +1,11 @@
 //! Guardian lifecycle coordination for the new process runtime.
 
 #[cfg(target_os = "linux")]
+mod host_state;
+#[cfg(target_os = "linux")]
+pub use host_state::{HostState, HostStateError};
+
+#[cfg(target_os = "linux")]
 mod linux_best_effort;
 #[cfg(target_os = "linux")]
 mod linux_helper;

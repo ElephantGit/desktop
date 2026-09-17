@@ -40,8 +40,9 @@ spawn outcomes. Dropping the kernel does not provide crash recovery.
 
 Linux now supports [bounded volatile result capture](process-linux-rootless.md#bounded-result-capture),
 with independent readers and per-run limits; pipe EOF is separate from process cleanup.
-Durable acceptance, authorization, leases, host/guardian processes, remaining platform adapters, full I/O, recovery,
-resource handoff and production integration remain unimplemented. No filesystem layout is changed.
+Host creation intent now has an opt-in [durable journal](process-host-state.md) under an explicitly supplied
+dedicated directory. Durable Run acceptance, authorization, leases, host/guardian processes, remaining
+platform adapters, full I/O, runtime recovery, resource handoff and production integration remain unimplemented.
 This increment does not complete implementation phase 1 or prove any OS-level containment guarantee.
 
 ## Guardian bootstrap foundation
@@ -73,8 +74,9 @@ verification API. Same-user adversaries, network filesystems and other platforms
 file contents, close-on-exec (including an explicit pre-exec barrier), and an exec'd holder retaining exclusion after its launcher is killed
 externally. The surviving holder is identified and killed through a pidfd; acquisition must become
 possible again. The child test fixture is not a guardian or host implementation. State-directory
-admission, persistent creation intent, descriptor authentication, bootstrap, the guardian app and
-Ready/reconnect operations remain to be implemented; no new remote launch endpoint is exposed.
+admission and persistent creation intent now have a [host-owned implementation](process-host-state.md),
+with independent external-kill tests of the journal owner. Descriptor authentication, bootstrap,
+the guardian app and Ready/reconnect operations remain to be implemented; no new remote launch endpoint is exposed.
 
 ## Verification
 

@@ -9,3 +9,6 @@ workspace = true
 [dependencies]
 uuid = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
