@@ -244,6 +244,10 @@ pub(super) async fn create_provider_session(
         &session_mcp.selection,
         &setup.mcp,
     );
+    // Observe Host-side health for this Session's Effective MCP Set after the configuration was
+    // logged, so every result pairs with this delivery. This never blocks setup and never changes
+    // the list being sent.
+    crate::session_setup::observe_session_mcp_health(session_mcp, ora_session_id, cwd);
     let mcp_revision = setup.mcp.revision().clone();
     // Read before `into_servers` consumes the snapshot: the window depends on whether the
     // request asks the agent to connect any MCP servers.

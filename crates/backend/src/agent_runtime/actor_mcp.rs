@@ -230,6 +230,13 @@ impl RuntimeActor {
             &self.session_mcp.selection,
             &snapshot,
         );
+        // Live refresh is also a `session/load` boundary, so it pairs the same way; the refresh
+        // itself keeps its existing convergence and barrier semantics.
+        crate::session_setup::observe_session_mcp_health(
+            &self.session_mcp,
+            &self.session.id,
+            &self.cwd,
+        );
         ora_debug!(session_id = %self.session.id, "session/load MCP refresh sent");
         let pending = match client
             .start_session_request::<_, LoadSessionResponse>(

@@ -137,6 +137,13 @@ impl RuntimeActor {
             &self.session_mcp.selection,
             snapshot,
         );
+        // Pair this Session's Host health observation with the configuration just logged. The
+        // restore proceeds unchanged: probing never fails or narrows what is delivered.
+        crate::session_setup::observe_session_mcp_health(
+            &self.session_mcp,
+            &self.session.id,
+            &self.cwd,
+        );
         ora_debug!(session_id = %self.session.id, "session/load sent");
         let pending = client
             .start_session_request::<_, LoadSessionResponse>(
