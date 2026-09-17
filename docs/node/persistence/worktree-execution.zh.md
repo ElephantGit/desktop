@@ -2,6 +2,24 @@
 
 [English](worktree-execution.md) | 中文
 
+## 当前集成边界
+
+`node-db` 工作已导入 `node-process`，保留当前 workspace 的 SQLite 依赖和既有
+`home_directory/ora-node.sqlite3` 布局；Node 业务记录不并入 `host.sqlite` 或 `guardian.sqlite`。
+
+R2 已修正：有效且归属匹配的 checkout 即使有新提交，也按创建成功处理，原 `base_commit`
+仍是比较基准。R5 已修正：新清理请求引用已退役归属、且资源已重新出现时，保存明确的
+WorktreeConflict 失败，不碰现有资源。R3 已补测试：未确认的创建／删除事件重开后同时保留，分别确认互不影响。
+
+R1 仍待完成：导入代码仍使用全 Node 门禁，创建只留下分支时尚未推进恢复；这是已知缺口，
+不是认可的目标行为。R4 仍待完成：`Node::open` 仍直接调用 Git，没有持久 Scope／Run 关联及
+旧进程交接。已选策略是终止旧 Git、完成 BestEffort 收尾后才对相关资源对账；无法确认收尾时
+继续阻塞冲突工作，而不是整个 Node。取得 Node 数据库锁不证明旧 Git 已停止。
+独立 [process host](../../process-host.zh.md) 已可用，但尚未接入 Node。
+
+Node IPC、Controller 结果接管属于后续步骤。当前信任本机调用方；认证、秘密令牌、租约及
+特权 Strong 已推迟，不作为闭环前置。现有 Backend 写入入口不变，本次不改变 ADR 状态。
+
 本 PR 已在 `apps/ora-node` 实现 Worktree 执行与恢复，在 `crates/node-db` 实现 Node 本地持久化，
 通过进程内接口完成创建、删除、查询、结果重放与确认的闭环。本文保留实施顺序和检视基线；
 已完成事项打勾，最终接口、测试证据及实现取舍见第 7 节。
@@ -28,7 +46,7 @@ Node 必须先持久保存输入再变更 Git；无法证明副作用结果时�
 
 | 本 PR 交付                                          | 后续工作                                                            |
 | --------------------------------------------------- | ------------------------------------------------------------------- |
-| `ora-node` 进程内执行接口、初始化与恢复入口         | Node 可执行进程、启动／停止、IPC、握手、认证、重连调度              |
+| `ora-node` 进程内执行接口、初始化与恢复入口         | Node 可执行进程、启动／停止、IPC、握手及重连调度；认证延期          |
 | `ora-node-db` 独立 SQLite 数据库、schema 与事务接口 | Controller 业务数据库、任务调度与 Client 状态展示                   |
 | 注入并校验本地仓库、Main Workspace 绑定和授权根     | Node 注册、仓库发现、绑定管理界面                                   |
 | 创建／删除、状态查询、待确认事件读取及确认处理      | Transport 实际投递、Controller 持久接管后发送确认                   |
@@ -182,7 +200,7 @@ Git、存储故障和时间通过可注入接口控制，优先使用 trait 与�
 | 恢复观察                                                                      | 本 PR 必须实现的行为                                  |
 | ----------------------------------------------------------------------------- | ----------------------------------------------------- |
 | 确认 Git 未开始，或确认无残留变更且可安全重试                                 | 使用原身份和已解析目标继续执行                        |
-| 创建目标的仓库、注册、分支、路径和持久归属全部匹配，base commit 有证据        | 完成原执行，保存成功结果                              |
+| 有效 checkout 的仓库、注册、分支、路径和持久归属匹配，包括已有新提交          | 完成原执行，保留原始 base_commit                      |
 | 删除中 worktree 已移除，但该任务所属的本地分支仍存在                          | 重新验证归属后继续分支清理，不提前报告成功            |
 | 删除全部目标已不存在                                                          | 保存 `AlreadyAbsent` 幂等成功                         |
 | 能确定操作失败且没有未解释的副作用                                            | 保存相应结构化终态失败                                |
@@ -252,8 +270,8 @@ cargo clippy -p ora-node-db -p ora-node --all-targets -- -D warnings
 
 所有变更入口要求 `&mut Node`；共享调用方可使用 Mutex，并发重传等待同一执行结果。
 数据库文件上的独占 OS 锁阻止不同运行实例同时执行，关闭时显式解锁，避免并行 spawn 的子进程临时
-继承描述符导致重开误报冲突。首版采用整个 Node 的恢复门禁：任何未完成记录阻止新命令，但原执行
-重传、状态查询、事件读取、确认和再次恢复仍可用。门禁比按仓库／资源加锁更保守，避免引入调度器。
+继承描述符导致重开误报冲突。导入版本仍采用整个 Node 的恢复门禁：任何未完成记录阻止新命令，
+但原执行重传、状态查询、事件读取、确认和再次恢复仍可用。R1 要求在 R4 交接落实后替换为局部冲突协调。
 
 `Target` 单独持久保存 main 路径、实际 Git metadata directory、授权根、worktree 根、任务路径、
 分支和不可变 base commit。运行时重复校验这些事实，配置变化不能重定向原执行。
@@ -269,6 +287,8 @@ linked checkout 还要通过 metadata directory 的 `commondir` 与 `gitdir` 回
 不存为 `Completed(Failed(ResultUnknown))`。结果与原实例、原 sequence 1 一起保留，确认只删除 outbox。
 已确定无副作用的创建失败会退役其资源预留，释放路径、分支和 Workspace 的 active 唯一约束；
 旧执行输入及失败结果仍保留。已退役资源的 tombstone 不授权删除后来出现的同路径资源。
+已确认资源重新出现时，针对退役归属的新清理操作保存终态 WorktreeConflict；真正的观察失败
+仍保持 Unknown。原操作重传返回不变的历史结果。
 
 ### 直接测试证据
 
@@ -293,11 +313,11 @@ linked checkout 还要通过 metadata directory 的 `commondir` 与 `gitdir` 回
 测试实现位于 `crates/node-db/src/tests.rs` 和 `apps/ora-node/src/tests/`；Git 适配接口还在
 `crates/gitlancer/src/git/inspection.rs` 有单元测试。
 
-验证结果：`task format`、相关 crate 测试、`--all-targets` Clippy 和完整 `task test:crates` 通过。
-`task test` 已运行，但在未改动的前端用例
-`packages/app-shell/src/features/chat/chat-view.test.tsx` 的
-`copies a selected transcript through the conversation context menu` 失败：clipboard `writeText` mock
-未被调用。单独复跑该测试文件仍出现同一失败（其余 80 个用例通过）。因此 P6 的全套验证和 PR
-整体通过条件保留未勾选；这项失败不是 Node 验收测试的替代或延期。
+合入 `node-process` 后的验证结果：`task format`、相关 crate 测试、`--all-targets` Clippy
+和完整 `task test` 在本地 Linux 通过。这取代原分支的前端 clipboard 测试失败记录，
+但不代表远端 macOS 或 Windows CI 已运行。
+`apps/ora-node/src/tests/review.rs` 另覆盖 R2 结果落库前产生任务提交、R3 创建／删除事件独立确认，
+以及 R5 完成写库失败和 Git 观察暂不可用时仍保护替代资源。R1、R4 仍有前述缺口，
+因此整体实现验收条件保持未勾选。
 本次不实现 IPC、进程启动、Controller 接管或旧 Backend 入口切换。静态路径验证不防御恶意 TOCTOU 替换；
 外部 Git 不承诺严格恰好执行一次，恢复以持久意图和可验证资源事实为依据。

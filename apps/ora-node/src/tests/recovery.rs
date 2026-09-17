@@ -297,7 +297,7 @@ fn configuration_change_keeps_recovery_pending_without_redirecting_mutations() {
 #[test]
 fn changed_checkout_and_unavailable_git_keep_unknown_evidence() {
     traced(|| {
-        for mode in ["head", "read", "directory"] {
+        for mode in ["read", "directory"] {
             let fixture = Fixture::new();
             let mut node = fixture.open();
             let command = fixture.ensure(&node);
@@ -311,21 +311,6 @@ fn changed_checkout_and_unavailable_git_keep_unknown_evidence() {
             drop(node);
             fixture.faults.git.set(GitFault::None);
             match mode {
-                "head" => {
-                    cli(
-                        &fixture.root.join("task"),
-                        &[
-                            "-c",
-                            "user.name=Node Test",
-                            "-c",
-                            "user.email=node@example.test",
-                            "commit",
-                            "--allow-empty",
-                            "-m",
-                            "unobserved task change",
-                        ],
-                    );
-                }
                 "read" => fixture.faults.git.set(GitFault::Read),
                 "directory" => {
                     std::fs::rename(fixture.root.join("task"), fixture.root.join("moved")).unwrap()

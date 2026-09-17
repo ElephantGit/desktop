@@ -2,6 +2,7 @@
 mod coordination;
 mod lifecycle;
 mod recovery;
+mod review;
 mod support;
 use super::*;
 use pretty_assertions::assert_eq;

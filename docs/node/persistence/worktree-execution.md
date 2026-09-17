@@ -7,6 +7,29 @@ persistence in `crates/node-db`. Its in-process interface closes creation, remov
 and acknowledgement. Completed items are checked below; implementation choices and direct test
 evidence appear in section 7.
 
+## Current integration boundary
+
+The `node-db` work is now imported into `node-process`, retaining the current workspace SQLite
+dependency and the existing `home_directory/ora-node.sqlite3` layout. Node business records are not
+merged into `host.sqlite` or `guardian.sqlite`.
+
+R2 now treats a valid owned checkout with new commits as successful creation; its original
+`base_commit` remains the comparison baseline. R5 now completes a new cleanup request against retired
+ownership with a WorktreeConflict failure when resources have reappeared, without touching them.
+R3 tests retain unacknowledged creation and deletion events across reopen and acknowledge them independently.
+
+R1 remains pending: the imported implementation still globally gates new commands and leaves
+branch-only creation unresolved. This is a known gap, not the selected target behavior. R4 remains
+pending: `Node::open` still uses direct Git, with no durable Scope/Run association or old-process
+handoff. The selected policy is to terminate old Git, finish BestEffort cleanup and only then reconcile
+the affected resources; unverified cleanup keeps conflicting work blocked, not the whole Node.
+Do not use the Node database lock as evidence that old Git stopped. The independent
+[process host](../../process-host.md) is available but is not wired into Node yet.
+
+Node IPC and Controller result takeover remain later steps. Trusted-local operation is the current
+scope; authentication, secret tokens, leases and privileged Strong containment are deferred, not
+prerequisites to this loop. Existing Backend writers are unchanged. No ADR status is changed here.
+
 This is step 2 of the local Worktree loop: `feat(node): execute worktree operations with durable
 recovery`. The preceding step supplied protocol messages and framing; the next step adds local IPC
 and Node process lifecycle. Git side effects and durable deduplication ship together.
@@ -25,7 +48,7 @@ local loop lands on main.
 
 | Delivered here                                                    | Subsequent work                                                                |
 | ----------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| Library initialization, execution and recovery                    | Executable, process lifecycle, IPC, handshake and authentication               |
+| Library initialization, execution and recovery                    | Executable, process lifecycle, IPC and handshake; authentication deferred      |
 | Independent Node SQLite schema and transactions                   | Controller business storage and scheduling                                     |
 | Injected repository/Main Workspace bindings and authorized roots  | Registration and binding management                                            |
 | Creation, removal, status, replay enumeration and acknowledgement | Transport delivery and Controller durable takeover                             |
@@ -132,15 +155,15 @@ Newly recovered results carry the current observing incarnation. Retained result
 their original incarnation. Status reports the current runtime outside the original result, with
 the same persistent NodeId.
 
-| Recovery observation                                                                   | Required action                                |
-| -------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| No effects and safe retry is proven                                                    | Resume the original identity and frozen target |
-| Repository, registration, ownership, path, branch and base evidence match              | Complete original creation                     |
-| Checkout removed, owned local branch remains                                           | Continue verified branch cleanup               |
-| Every removal target absent                                                            | Complete with AlreadyAbsent                    |
-| Definite failure without unexplained effects                                           | Persist structured terminal failure            |
-| Branch only, inconsistent registration/directory, changed binding or failed inspection | Retain Unknown with diagnostics                |
-| Terminal result already committed but response/ack lost                                | Return/replay original evidence without Git    |
+| Recovery observation                                                                      | Required action                                |
+| ----------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| No effects and safe retry is proven                                                       | Resume the original identity and frozen target |
+| Valid owned checkout, registration, path and expected branch match, including new commits | Complete creation and retain original base     |
+| Checkout removed, owned local branch remains                                              | Continue verified branch cleanup               |
+| Every removal target absent                                                               | Complete with AlreadyAbsent                    |
+| Definite failure without unexplained effects                                              | Persist structured terminal failure            |
+| Branch only, inconsistent registration/directory, changed binding or failed inspection    | Retain Unknown with diagnostics                |
+| Terminal result already committed but response/ack lost                                   | Return/replay original evidence without Git    |
 
 Changed operation type/input under one execution, or rebinding an operation to another execution,
 returns IdentityConflict and preserves old data. RequestId is correlation metadata, not execution
@@ -187,9 +210,9 @@ See [storage layout and schema](storage.md).
 Mutation APIs require `&mut Node`; callers may share it behind a Mutex, with concurrent retransmissions
 waiting for the original result. The database's exclusive OS lock prevents another runtime driving
 it. Closing explicitly unlocks the file so transient descriptors inherited by concurrently spawned
-children do not retain the lease. This version gates the entire Node while any incomplete execution
-remains, a conservative alternative to per-resource scheduling. Original retries, status, replay,
-acknowledgement and repeated recovery remain available.
+children do not retain the lock. The imported version still gates the entire Node while any incomplete
+execution remains; R1 requires replacing this with conflict-local coordination after the R4 handoff.
+Original retries, status, replay, acknowledgement and repeated recovery remain available.
 
 Targets separately retain canonical binding paths, actual Git metadata directory, authorized and
 managed roots, task path, branch and immutable base. Every mutation rechecks these facts. Git's main
@@ -203,6 +226,9 @@ Deletion ignores mutable base_ref when matching retained ownership but requires 
 identity and target facts. Retired tombstones do not authorize deleting resources later appearing
 at the old path. A definitive no-effect creation failure retires its reservation, releasing active
 path, branch and Workspace uniqueness while retaining the original input and failed result.
+Confirmed reappearing resources under retired ownership now yield terminal WorktreeConflict for a
+new cleanup operation; genuine observation failures remain Unknown. Original operation replays return
+their unchanged historical results.
 
 Precondition failures atomically retain structured failure and event; malformed messages and
 Node/execution identity conflicts are entry rejections. Post-mutation storage failures do not return
@@ -240,13 +266,13 @@ cargo clippy -p ora-node-db -p ora-node -p gitlancer -p ora-node-protocol --all-
 task test
 ```
 
-`task format`, focused crate tests, all-target Clippy and full `task test:crates` passed.
-`task test` was run but failed in the unchanged frontend test
-`packages/app-shell/src/features/chat/chat-view.test.tsx`:
-`copies a selected transcript through the conversation context menu` did not call the clipboard
-`writeText` mock. Rerunning that file alone reproduced the failure (the other 80 tests passed).
-P6's full-suite verification and overall PR approval criterion therefore remain unchecked; this
-failure does not substitute for or defer Node acceptance testing. IPC,
+On integration into `node-process`, `task format`, focused crate tests, all-target Clippy and
+the complete `task test` passed locally on Linux. This supersedes the earlier branch's frontend
+clipboard-test failure; it is not evidence of a remote macOS or Windows CI run.
+`apps/ora-node/src/tests/review.rs` additionally covers R2 task commits before result persistence,
+R3 independent creation/deletion acknowledgements, and R5 replacement preservation across completion
+write failure and temporarily unavailable Git observations. R1 and R4 remain incomplete as described
+above, so the overall implementation acceptance criterion remains unchecked. IPC,
 process startup, Controller takeover and switching old Backend entry points remain subsequent work.
 Static path checks do not defend against malicious TOCTOU replacement; external Git is not exactly
 once and recovery relies on durable intent plus verifiable resource facts.

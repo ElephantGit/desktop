@@ -106,7 +106,7 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
         }
     }
 
-    /// Completes creation only with matching registration, branch, checkout and frozen baseline evidence.
+    /// Completes an owned valid checkout without mistaking normal task commits for failed creation.
     fn ensure(
         &mut self,
         record: Execution,
@@ -115,8 +115,7 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
     ) -> Result<(), Error> {
         if let Some(checkout) = &observed.checkout
             && !observed.branch_elsewhere
-            && observed.branch.as_ref() == Some(&target.base_commit)
-            && checkout.head == target.base_commit
+            && observed.branch.as_ref() == Some(&checkout.head)
             && checkout.branch == target.branch
             && checkout.path == target.path
             && observed.directory == DirectoryState::Nonempty
@@ -185,14 +184,16 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
             .resource(&record.command.spec().worktree_id)?
             .ok_or(ora_node_db::Error::ResourceConflict)?;
         if resource.state == ResourceState::Removed && !initially_absent {
-            return self.unknown(
+            return Ok(self.database.complete(
                 &record,
-                Stage::RemoveWorktree,
-                failure(
-                    WorktreeFailureCode::WorktreeConflict,
-                    "resources appeared after their ownership was retired",
+                self.failed(
+                    &record.command,
+                    failure(
+                        WorktreeFailureCode::WorktreeConflict,
+                        "resources appeared after their ownership was retired",
+                    ),
                 ),
-            );
+            )?);
         }
         if observed.branch_elsewhere
             || (observed.checkout.is_none() && observed.directory == DirectoryState::Nonempty)

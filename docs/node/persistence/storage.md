@@ -6,6 +6,11 @@ English | [中文](storage.zh.md)
 unit tests supply temporary directories. The database is always `home_directory/ora-node.sqlite3`.
 The library does not read `HOME` or start a process or IPC server.
 
+This filename and schema remain unchanged when combined with the process subsystem. Node owns
+business execution, resource and event records; the host and guardian own their separate journals.
+The OS lock excludes another Node database owner, but is not proof that an older Git process stopped.
+The workspace's bundled SQLite version is shared; no older engine or host schema is imported.
+
 Opening a database holds an exclusive OS file lock for its lifetime. SQLite uses its default
 rollback journal and FULL synchronous writes. A new database receives application ID `0x4f52414e`
 and schema version 1. Existing empty files, foreign databases, unsupported versions, directories

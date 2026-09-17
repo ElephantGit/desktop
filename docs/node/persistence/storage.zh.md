@@ -5,6 +5,10 @@
 调用方注入 `NodeConfig.home_directory`。部署时赋值为 `~/.ora/node`，单元测试使用临时目录。
 数据库固定为 `home_directory/ora-node.sqlite3`。library 不读取 `HOME`，不启动进程或 IPC 服务。
 
+与 process 子系统组合时保留此文件名和 schema。Node 拥有业务执行、资源与事件记录，host 和
+guardian 分别拥有独立日志。OS 锁排除另一个 Node 数据库所有者，但不证明旧 Git 进程已停止。
+SQLite 使用 workspace 统一的 bundled 版本，不导入旧引擎或 host schema。
+
 数据库打开期间持有独占 OS 文件锁。SQLite 使用默认 rollback journal 和 FULL 同步写入。
 新库的 application ID 为 `0x4f52414e`，schema version 为 1。已有空文件、其他数据库、不支持的版本、
 目录和损坏数据库均拒绝打开，不自动重建。重开保留 NodeId，每个 Node 运行实例生成新的

@@ -73,7 +73,8 @@ pub struct Node<G = gitlancer::Git<gitlancer::CliGitRunner>, W = DurableWrites, 
 }
 
 impl Node {
-    /// Opens the production adapter without starting IPC; logging initializes the local clock.
+    /// Opens the existing direct-Git adapter; this is not yet a crash-safe host-managed composition.
+    /// Callers must not infer old Git termination from obtaining the Node database lock.
     pub fn open(config: NodeConfig) -> Result<Self, Error> {
         Self::open_with_dependencies(
             config,

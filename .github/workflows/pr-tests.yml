@@ -71,6 +71,7 @@ jobs:
               - 'crates/**'
               - 'apps/ora-reaper/**'
               - 'apps/ora-process-*/**'
+              - 'apps/ora-node/**'
               - 'xtask/**'
               - 'apps/desktop/src-tauri/bindings.rs'
               - 'apps/desktop/src-tauri/bindings/**'
