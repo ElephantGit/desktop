@@ -90,6 +90,6 @@ Run app tests cover exact replay, exit/output, lost Start replies, pre/post-exec
 host SIGKILL takeover with Run discovery from the host journal, force/close and guardian SIGKILL with a surviving workload that holds no scope lock.
 
 Controller authorization and leases are deferred. Host coordination and durable query projections are implemented;
-a production host app,
-stdin, durable output, Node/Git/plugin integration and guardian-death recovery remain unfinished. Strong containment,
+[the host app](process-host.md) exposes them over local IPC. Remaining work includes
+stdin, durable output, Node/Git/plugin integration and guardian-death recovery. Strong containment,
 service-manager survival, physical power loss and other-platform support are not established.

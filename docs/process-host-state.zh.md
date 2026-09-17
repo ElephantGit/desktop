@@ -3,7 +3,7 @@
 [English](process-host-state.md) | 中文
 
 Linux `ora_process_runtime::HostState` 已负责持久化 Scope／Run 意图与一次性
-[独立 guardian 启动](process-guardian.zh.md)，不是生产宿主 app 或 Run 启动器。
+[独立 guardian 启动](process-guardian.zh.md)，由[宿主 app](process-host.zh.md) 组合自动协调。
 它是已批准[guardian 启动决策](../specs/decisions/node/process/recovery/20260917-rootless-guardian-bootstrap-and-reconnect.md)
 的部分实现，无需 root、helper、cgroup 委派或服务安装。现有 Git／插件入口及业务数据库政策不变。
 
@@ -114,5 +114,5 @@ Start／Stop／Close 不依赖请求连接继续推进。每个 Scope 最多一�
 
 真实 app 的启动、拒绝、启动方强杀及发现证据见 [guardian 启动](process-guardian.zh.md)。
 其中已包含持久宿主接管与 guardian 侧 Run 接受；协调测试覆盖派发前取消、恢复后真实副作用去重、
-guardian 消失后事实保留，以及失联 Scope 不阻断独立工作。生产 host app、Git／Node 接入仍待实现；
+guardian 消失后事实保留，以及失联 Scope 不阻断独立工作。host app 已实现，Git／Node 接入仍待实现；
 Controller 授权已推迟，没有 ADR 被标为 implemented。

@@ -3565,6 +3565,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ora-process-host"
+version = "0.0.0"
+dependencies = [
+ "libc",
+ "ora-process-client",
+ "ora-process-protocol",
+ "ora-process-runtime",
+ "ora-utils",
+ "pretty_assertions",
+ "rusqlite",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "ora-process-protocol"
 version = "0.0.0"
 dependencies = [

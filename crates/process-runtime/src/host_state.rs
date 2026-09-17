@@ -28,6 +28,15 @@ pub struct HostState {
 }
 
 impl HostState {
+    /// Publishes host-owned endpoints only while this journal owns the stable host lock.
+    pub(crate) async fn bind_endpoints(
+        &self,
+    ) -> Result<(tokio::net::UnixListener, tokio::net::UnixListener), ProcessStateError> {
+        Ok((
+            self.layout.bind_endpoint("host.sock").await?,
+            self.layout.bind_endpoint("host-io.sock").await?,
+        ))
+    }
     /// Initializes a previously absent dedicated directory; even an existing empty directory fails.
     pub fn create(state_dir: &Path) -> Result<Self, ProcessStateError> {
         state_journal::check_engine()?;

@@ -1,4 +1,6 @@
+mod server;
 mod worker;
+pub use server::serve_process_host;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;

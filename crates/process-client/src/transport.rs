@@ -16,8 +16,22 @@ pub(super) async fn exchange<Request: Serialize, Reply: DeserializeOwned>(
     channel: GuardianChannel,
     request: &Request,
 ) -> io::Result<Reply> {
+    exchange_path(
+        &access.scope_dir.join(channel.socket_name()),
+        expected_uid,
+        request,
+    )
+    .await
+}
+
+/// Shares bounded local framing between host and guardian without sharing their authority models.
+pub(super) async fn exchange_path<Request: Serialize, Reply: DeserializeOwned>(
+    endpoint: &std::path::Path,
+    expected_uid: u32,
+    request: &Request,
+) -> io::Result<Reply> {
     tokio::time::timeout(Duration::from_secs(/*secs*/ 5), async {
-        let mut stream = UnixStream::connect(access.scope_dir.join(channel.socket_name())).await?;
+        let mut stream = UnixStream::connect(endpoint).await?;
         if stream.peer_cred()?.uid() != expected_uid {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,

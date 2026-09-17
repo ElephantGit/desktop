@@ -1,7 +1,7 @@
 use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::os::unix::{
     ffi::OsStrExt,
-    fs::{DirBuilderExt, OpenOptionsExt},
+    fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
 };
 use std::path::{Path, PathBuf};
 
@@ -98,6 +98,9 @@ impl HostLayout {
                     )?;
                 }
                 Some("scopes") => {}
+                Some("host.sock" | "host-io.sock") => {
+                    self.validate_socket(&entry.path())?;
+                }
                 _ => return Err(ProcessStateError::Rejected("unknown state directory entry")),
             }
         }
@@ -148,6 +151,52 @@ impl HostLayout {
     pub(super) fn sync(&self) -> Result<(), ProcessStateError> {
         self.directory.sync_all()?;
         Ok(())
+    }
+
+    /// Only a private socket can occupy a recognized endpoint name; other user files are preserved.
+    fn validate_socket(&self, path: &Path) -> Result<(), ProcessStateError> {
+        let metadata = fs::symlink_metadata(path)?;
+        if !metadata.file_type().is_socket()
+            || metadata.uid() != self.owner
+            || metadata.mode() & 0o777 != 0o600
+            || metadata.nlink() != 1
+        {
+            return Err(ProcessStateError::Rejected("invalid host endpoint inode"));
+        }
+        Ok(())
+    }
+
+    /// Replaces only a refused private socket under the already-held stable host lock.
+    pub(super) async fn bind_endpoint(
+        &self,
+        name: &str,
+    ) -> Result<tokio::net::UnixListener, ProcessStateError> {
+        let path = self.path.join(name);
+        match fs::symlink_metadata(&path) {
+            Ok(_) => {
+                self.validate_socket(&path)?;
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(/*secs*/ 1),
+                    tokio::net::UnixStream::connect(&path),
+                )
+                .await
+                {
+                    Ok(Err(error)) if error.kind() == std::io::ErrorKind::ConnectionRefused => {}
+                    _ => {
+                        return Err(ProcessStateError::Rejected(
+                            "host endpoint may still be active",
+                        ));
+                    }
+                }
+                fs::remove_file(&path)?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        let listener = tokio::net::UnixListener::bind(&path)?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(/*mode*/ 0o600))?;
+        self.sync()?;
+        Ok(listener)
     }
 }
 

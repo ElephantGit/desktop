@@ -76,5 +76,5 @@ Runtime 测试覆盖执行队列检查、持久化失败与锁生命周期；Hos
 Run 真实 app 测试覆盖精确重放、退出／输出、Start 回复丢失、exec 前后存储失败、host SIGKILL
 后从 host 日志找回 Run 并接管、强停／关闭，以及 guardian SIGKILL 后工作负载仍活着但不持有 Scope 锁。
 
-Controller 授权和租约已推迟。host 自动协调与持久查询投影已实现；生产宿主 app、stdin、持久输出、
+Controller 授权和租约已推迟。host 自动协调与持久查询投影已通过[宿主 app](process-host.zh.md) 提供本机 IPC；stdin、持久输出、
 Node／Git／插件接入和 guardian 死亡恢复仍未完成。强纳管、服务管理器下存续、物理断电与其他平台支持尚未证明。

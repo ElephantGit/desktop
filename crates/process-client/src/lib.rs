@@ -1,6 +1,11 @@
 //! Guardian discovery, host binding and Run transport; no runtime, database or spawner dependency.
 
 #[cfg(target_os = "linux")]
+mod host;
+#[cfg(target_os = "linux")]
+pub use host::ProcessHost;
+
+#[cfg(target_os = "linux")]
 mod runs;
 #[cfg(target_os = "linux")]
 pub use runs::GuardianRuns;

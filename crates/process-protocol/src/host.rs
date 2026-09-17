@@ -65,6 +65,22 @@ pub enum HostOperation {
     },
 }
 
+impl HostOperation {
+    /// Output waits cannot consume the host's control-channel connection slots.
+    pub fn socket_name(&self) -> &'static str {
+        match self {
+            Self::Output { .. } => "host-io.sock",
+            Self::Inspect
+            | Self::CreateScope { .. }
+            | Self::Start { .. }
+            | Self::QueryRun { .. }
+            | Self::Stop { .. }
+            | Self::Close { .. }
+            | Self::QueryScope { .. } => "host.sock",
+        }
+    }
+}
+
 /// Unknown versions must fail before creating or modifying durable responsibility.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
