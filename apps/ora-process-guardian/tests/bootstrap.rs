@@ -382,8 +382,25 @@ async fn launcher_kill_preserves_original_guardian_and_lost_ready_is_queryable()
     launcher.0.kill()?;
     launcher.0.wait()?;
     let mut recovered = recover(&root).await?;
+    // Discover the original Run and Scope through the host ledger, not a surviving caller handle.
+    let intents = recovered.run_intents()?;
+    let [intent] = intents.as_slice() else {
+        return Err("expected one durable Run intent".into());
+    };
+    let mut expected_spec = workload;
+    expected_spec.cwd = root.clone();
+    assert_eq!(
+        intent,
+        &ora_process_protocol::HostRunIntent {
+            scope,
+            run,
+            spec: expected_spec,
+            host_disconnect: ora_process_protocol::GuardianHostDisconnect::KeepRunning,
+        }
+    );
+    let run = intent.run;
     let access = recovered
-        .guardian_access(scope)?
+        .guardian_access(intent.scope)?
         .ok_or("lost guardian responsibility")?;
     ready(&access).await?;
     assert_eq!(guardian_pid(&access).await?, pid);
@@ -456,6 +473,12 @@ async fn launcher_fixture() -> TestResult {
             ora_process_protocol::DescendantPolicy::WaitForAll,
         );
         spec.args.push("60".into());
+        let intent = host.record_run_intent(ora_process_protocol::HostRunIntent {
+            scope,
+            run,
+            spec,
+            host_disconnect: ora_process_protocol::GuardianHostDisconnect::KeepRunning,
+        })?;
         // SAFETY: geteuid only queries the fixture process's identity.
         let client = ora_process_client::GuardianRuns::new(
             access.clone(),
@@ -463,13 +486,7 @@ async fn launcher_fixture() -> TestResult {
             runs::bind(&access, host.binding()).await?,
         );
         assert!(matches!(
-            client
-                .execute(ora_process_protocol::GuardianRunOperation::Start {
-                    run,
-                    spec,
-                    host_disconnect: ora_process_protocol::GuardianHostDisconnect::KeepRunning
-                })
-                .await?,
+            client.execute(intent.start_operation()).await?,
             ora_process_protocol::GuardianRunResult::Run(_)
         ));
     }

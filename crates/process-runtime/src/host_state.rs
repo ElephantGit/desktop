@@ -1,8 +1,9 @@
-//! Durable host creation responsibility and one-shot guardian bootstrap, without Run launch.
+//! Durable host scope/Run intent and one-shot guardian bootstrap, separate from guardian execution.
 
 mod journal;
 mod launch;
 mod layout;
+mod runs;
 
 use std::num::NonZeroU64;
 use std::path::Path;

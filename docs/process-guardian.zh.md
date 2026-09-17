@@ -59,7 +59,7 @@ Ready、bind 后，通过 GuardianRuns::execute 使用协议所有的 GuardianRu
 
 ## 已有文件与版本
 
-新 host 日志版本为 3，新 guardian 日志版本为 4（增加 Run 日志），均不再有凭据列。Host 恢复事务化迁移精确 v1/v2 布局，
+新 host 和 guardian 日志均为版本 4，各自保存所属 Run 日志，均不再有凭据列。Host 恢复事务化迁移精确 v1/v2/v3 布局，
 保留原 Scope、代次、锁 inode 与已消耗启动尝试。v2 host 若已有 Scope 目录，迁移前即拒绝，
 保留旧版本管理所需的原令牌和代次。此时应使用兼容旧 host，或为新任务选择另一个专用状态目录，
 不能通过删除旧 Scope 强行升级。删除旧令牌列不承诺安全擦除 SQLite 空闲页
@@ -74,7 +74,7 @@ Ready、bind 后，通过 GuardianRuns::execute 使用协议所有的 GuardianRu
 错误 Scope／UID、继承锁资格、旧日志拒绝、三个旧通道失效、迟到字节及接管回复丢失。
 Runtime 测试覆盖执行队列检查、持久化失败与锁生命周期；Host 测试覆盖精确 v1/v2 迁移。
 Run 真实 app 测试覆盖精确重放、退出／输出、Start 回复丢失、exec 前后存储失败、host SIGKILL
-后接管、强停／关闭，以及 guardian SIGKILL 后工作负载仍活着但不持有 Scope 锁。
+后从 host 日志找回 Run 并接管、强停／关闭，以及 guardian SIGKILL 后工作负载仍活着但不持有 Scope 锁。
 
-Controller 授权和租约已推迟。生产宿主 app、host 侧 Run 意图／投影、stdin、持久输出、
+Controller 授权和租约已推迟。生产宿主 app、host 自动派发／协调与查询投影、stdin、持久输出、
 Node／Git／插件接入和 guardian 死亡恢复仍未完成。强纳管、服务管理器下存续、物理断电与其他平台支持尚未证明。

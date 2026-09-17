@@ -46,7 +46,7 @@ with independent readers and per-run limits; pipe EOF is separate from process c
 Host creation intent now has an opt-in [durable journal](process-host-state.md) under an explicitly supplied
 dedicated directory and [independent guardian bootstrap/Ready discovery](process-guardian.md).
 Guardian-side durable Run acceptance and polling/output/force-stop now work for trusted local callers.
-Authorization and leases are deferred. Host-side Run intent/projection, a production host app, remaining
+Authorization and leases are deferred. Host Run intent and restart enumeration are implemented. Automatic host dispatch/reconciliation and query projection, a production host app, remaining
 platform adapters, full I/O, runtime recovery, resource handoff and production integration remain unimplemented.
 This increment does not complete implementation phase 1 or prove any OS-level containment guarantee.
 

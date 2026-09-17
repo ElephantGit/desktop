@@ -13,6 +13,8 @@ pub use guardian_wire::{
     GuardianReady, GuardianReadyRequest, decode_guardian_payload, encode_guardian_frame,
 };
 mod helper;
+mod host_run;
+pub use host_run::HostRunIntent;
 mod output;
 mod run;
 mod state;

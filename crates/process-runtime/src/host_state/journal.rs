@@ -7,7 +7,7 @@ use rusqlite::{Connection, OpenFlags, params};
 use super::ProcessStateError;
 
 const APPLICATION_ID: i64 = 0x4f52_4148;
-const VERSION: i64 = 3;
+const VERSION: i64 = 4;
 const LEGACY_LAUNCH_SCHEMA: &str = "CREATE TABLE guardian_launches (
     scope TEXT PRIMARY KEY NOT NULL REFERENCES scope_intents(scope),
     credential BLOB NOT NULL CHECK (length(credential) = 32),
@@ -41,6 +41,7 @@ pub(super) fn initialize(
     transaction.execute_batch(HOST_SCHEMA)?;
     transaction.execute_batch(INTENT_SCHEMA)?;
     transaction.execute_batch(LAUNCH_SCHEMA)?;
+    transaction.execute_batch(super::runs::SCHEMA)?;
     transaction.execute(
         "INSERT INTO host_binding VALUES (1, ?1, ?2)",
         params![epoch_to_sql(binding.epoch)?, binding.instance.to_string()],
@@ -63,7 +64,7 @@ pub(super) fn inspect(
         "SELECT (SELECT application_id FROM pragma_application_id), (SELECT user_version FROM pragma_user_version)",
         [], |row| Ok((row.get::<_, i64>(/*idx*/ 0)?, row.get::<_, i64>(/*idx*/ 1)?)),
     )?;
-    if header.0 != APPLICATION_ID || !matches!(header.1, 1 | 2 | VERSION) {
+    if header.0 != APPLICATION_ID || !matches!(header.1, 1 | 2 | 3 | VERSION) {
         return Err(ProcessStateError::Rejected(
             "unknown journal identity or version",
         ));
@@ -76,8 +77,15 @@ pub(super) fn inspect(
         vec![HOST_SCHEMA, INTENT_SCHEMA]
     } else if header.1 == 2 {
         vec![LEGACY_LAUNCH_SCHEMA, HOST_SCHEMA, INTENT_SCHEMA]
-    } else {
+    } else if header.1 == 3 {
         vec![LAUNCH_SCHEMA, HOST_SCHEMA, INTENT_SCHEMA]
+    } else {
+        vec![
+            LAUNCH_SCHEMA,
+            HOST_SCHEMA,
+            super::runs::SCHEMA,
+            INTENT_SCHEMA,
+        ]
     };
     if definitions != expected {
         return Err(ProcessStateError::Rejected(
@@ -134,6 +142,9 @@ pub(super) fn inspect(
             ));
         }
     }
+    if header.1 == VERSION {
+        super::runs::inspect(&connection)?;
+    }
     Ok((binding, header.1))
 }
 
@@ -156,6 +167,8 @@ pub(super) fn advance_binding(
         transaction.execute_batch("INSERT INTO guardian_launches SELECT scope, phase FROM legacy_guardian_launches; DROP TABLE legacy_guardian_launches;")?;
     }
     if version < VERSION {
+        // Old guardians retain their own facts; do not invent host intents for historical Runs.
+        transaction.execute_batch(super::runs::SCHEMA)?;
         transaction.pragma_update(/*schema_name*/ None, "user_version", VERSION)?;
     }
     let changed = transaction.execute(
