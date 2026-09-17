@@ -3,7 +3,8 @@
 English | [中文](process-runtime.zh.md)
 
 The [approved process ADRs](../specs/decisions/node/process/README.md) are being implemented incrementally.
-The current increment provides an in-memory lifecycle kernel, **not a production process launcher**.
+The current increment provides an in-memory lifecycle kernel and a
+[rootless Linux best-effort adapter](process-linux-rootless.md), **not a production process launcher**.
 Existing `ora-process`, `ora-reaper`, Git and plugin entry points are unchanged.
 
 Linux also has an independent [helper deployment preflight and authenticated inspection service](process-helper.md). Its checks
@@ -17,7 +18,7 @@ exists for trusted helper code; it is not exposed over IPC and awaits privileged
   wire types. Host/guardian wire encoding is not yet defined.
 - `ora-process-runtime::ScopeRuntime<P>` owns one scope's admission, run records and stop deadlines.
   `Platform` supplies verified capabilities, creation-time containment, observations and per-run signals.
-  There is no OS adapter in this increment; tests inject platform facts through this boundary.
+  Linux has a rootless adapter; controlled tests also inject platform facts through this boundary.
 - Scope creation freezes the actual guarantee. Required strong containment is rejected when unavailable;
   explicitly requested best-effort containment is never silently promoted to strong containment.
 - Replaying a RunId with identical parameters returns its current facts; changed parameters conflict.
@@ -37,7 +38,7 @@ Calls are serialized through mutable ownership. The caller must drive `reconcile
 Platform methods must be bounded and must retain stable attempt identities, including after uncertain
 spawn outcomes. Dropping the kernel does not provide crash recovery.
 
-Durable acceptance, authorization, leases, host/guardian processes, platform adapters, I/O, recovery,
+Durable acceptance, authorization, leases, host/guardian processes, remaining platform adapters, I/O, recovery,
 resource handoff and production integration remain unimplemented. No filesystem layout is changed.
 This increment does not complete implementation phase 1 or prove any OS-level containment guarantee.
 
@@ -45,7 +46,8 @@ This increment does not complete implementation phase 1 or prove any OS-level co
 
 Run `cargo test -p ora-process-runtime` and
 `cargo clippy -p ora-process-protocol -p ora-process-runtime --all-targets -- -D warnings`.
-Integration tests exercise the public runtime interface with controlled platform facts and time,
-without sleeps or environment mutation. Evidence is recorded as `Partial` in the
-[core case index](../specs/test-cases/node/process/README.md); real descendants, crashes, persistence,
-cross-process races and platform permission boundaries still require direct verification.
+Controlled integration tests exercise the public runtime interface with injected platform facts and
+time. Rootless Linux tests additionally exercise real children and descendants with readiness
+handshakes and bounded polling. Neither mutates the test runner's environment. Evidence remains
+`Partial` in the [core case index](../specs/test-cases/node/process/README.md); crashes, persistence,
+exhaustive identity races and strong platform permission boundaries still require direct verification.

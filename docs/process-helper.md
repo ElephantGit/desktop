@@ -7,6 +7,10 @@ The independent privileged helper direction is approved in the
 The executable provides deployment preflight and an **authenticated inspection-only listener**.
 It has no launch API, service installer or guardian integration, and does not advertise strong containment.
 
+This route is paused at the current checkpoint while development prioritizes the
+[fully rootless best-effort adapter](process-linux-rootless.md). Existing helper code is retained;
+no privileged deployment is required by that adapter.
+
 ## Build and configuration
 
 Build with `cargo build -p ora-process-helper`. A deployment administrator can explicitly run the

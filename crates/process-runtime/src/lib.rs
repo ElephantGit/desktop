@@ -1,7 +1,11 @@
 //! Guardian lifecycle coordination for the new process runtime.
 
 #[cfg(target_os = "linux")]
+mod linux_best_effort;
+#[cfg(target_os = "linux")]
 mod linux_helper;
+#[cfg(target_os = "linux")]
+pub use linux_best_effort::LinuxBestEffort;
 mod platform;
 mod scope;
 mod stop;

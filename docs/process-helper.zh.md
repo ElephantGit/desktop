@@ -7,6 +7,9 @@
 当前可执行文件支持部署预检和**带认证的只读检查监听服务**，没有启动 API、服务安装器或 guardian 接入，
 不宣称强纳管能力。
 
+此路线暂存于当前阶段，开发优先推进[完全无需 root 的尽力清理 adapter](process-linux-rootless.zh.md)。
+既有 helper 代码保留；无特权 adapter 不要求部署此服务。
+
 ## 构建与配置
 
 使用 `cargo build -p ora-process-helper` 构建。部署管理员可显式以独立 root 进程运行
