@@ -572,6 +572,84 @@ mod tests {
     }
 
     #[test]
+    fn load_input_rejects_a_non_agent_node() {
+        let (temp, pool) = bootstrap();
+        let (run_id, node_runs, engine) = started_run_with(&temp, &pool, AGENT_GRAPH, NoopExecutor);
+        let agent = node_runs
+            .iter()
+            .find(|node| node.node_id == "agent")
+            .expect("agent node");
+        engine
+            .fail_node(
+                &run_id,
+                &agent.id,
+                NodeFailure::new(NodeFailureKind::Session, "boom"),
+            )
+            .unwrap();
+        let start = node_runs
+            .iter()
+            .find(|node| node.node_id == "start")
+            .expect("start node");
+        let conn = rusqlite::Connection::open(temp.path().join("repository.sqlite3")).unwrap();
+        conn.execute(
+            "UPDATE workflow_node_runs SET status = 3 WHERE id = ?1",
+            rusqlite::params![start.id.as_ref()],
+        )
+        .unwrap();
+        let error = load_input(&pool, temp.path(), run_id.as_ref(), "start").unwrap_err();
+        assert_eq!(
+            error.public_error(),
+            &PublicError::WorkflowNodeNotDiagnosable(EmptyErrorParams {})
+        );
+    }
+
+    #[test]
+    fn resume_preview_is_identical_with_and_without_ai_diagnosis() {
+        use crate::workflow::run::rollback::preview;
+        let (temp, pool) = bootstrap();
+        let (run_id, node_runs, engine) = started_run_with(&temp, &pool, AGENT_GRAPH, NoopExecutor);
+        let agent = node_runs
+            .iter()
+            .find(|node| node.node_id == "agent")
+            .expect("agent node");
+        engine
+            .fail_node(
+                &run_id,
+                &agent.id,
+                NodeFailure::new(NodeFailureKind::StructuredOutput, "bad json"),
+            )
+            .unwrap();
+        let workspace = temp.path().join("fixture-project");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let before = preview(&pool, &workspace, &run_id).unwrap();
+        let conn = rusqlite::Connection::open(temp.path().join("repository.sqlite3")).unwrap();
+        let current: Option<String> = conn
+            .query_row(
+                "SELECT payload FROM workflow_node_runs WHERE id = ?1",
+                rusqlite::params![agent.id.as_ref()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let mut payload = current
+            .as_deref()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+            .unwrap_or_else(|| serde_json::json!({}));
+        payload["ai_diagnosis"] = serde_json::json!({
+            "text": "the schema was too strict",
+            "agentCli": "open_code",
+            "model": "m",
+            "generatedAt": 1
+        });
+        conn.execute(
+            "UPDATE workflow_node_runs SET payload = ?2 WHERE id = ?1",
+            rusqlite::params![agent.id.as_ref(), payload.to_string()],
+        )
+        .unwrap();
+        let after = preview(&pool, &workspace, &run_id).unwrap();
+        assert_eq!(before, after);
+    }
+
+    #[test]
     fn load_input_accepts_a_failed_node_without_error_detail() {
         let (temp, pool) = bootstrap();
         let (run_id, node_runs, engine) = started_run_with(&temp, &pool, AGENT_GRAPH, NoopExecutor);

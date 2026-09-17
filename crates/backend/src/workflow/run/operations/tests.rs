@@ -1,10 +1,17 @@
 use super::WorkflowRuns;
-use crate::workflow::run::test_fixture::{AGENT_GRAPH, bind_and_park, run_test, started_run};
+use crate::workflow::run::test_fixture::{
+    AGENT_GRAPH, RecordingExecutor, bind_and_park, run_test, started_run, started_run_with,
+};
 use crate::{Backend, test_backend::backend_paths};
 use agent_client_protocol_schema::v1::{ContentBlock, ContentChunk, SessionUpdate, TextContent};
-use ora_application::{SessionRepository, WorkflowRunEngineRepository};
+use ora_application::{
+    NodeFailure, NodeFailureKind, SessionRepository, WorkflowRunEngineRepository,
+    WorkflowRunRepository,
+};
 use ora_contracts::*;
-use ora_db::{SqliteSessionRepository, SqliteWorkflowRunEngineRepository};
+use ora_db::{
+    SqliteSessionRepository, SqliteWorkflowRunEngineRepository, SqliteWorkflowRunRepository,
+};
 use ora_domain::{SessionId, WorkflowNodeRunId};
 use ora_history::{HistoryLine, HistoryRecord, history_path};
 use pretty_assertions::assert_eq;
@@ -379,5 +386,81 @@ fn recovery_fails_interrupted_turns_and_resumes_stalled_runs() {
                 .expect("recovered run");
             assert_eq!(detail.run.status, recovered_run_status);
         }
+    });
+}
+
+/// B10: exclusive run lock admits exactly one concurrent resume.
+#[test]
+fn concurrent_resume_from_failure_reruns_the_failed_node_once() {
+    run_test(async {
+        let temporary = TempDir::new().expect("run fixture");
+        let backend = Backend::open(backend_paths(temporary.path(), temporary.path()))
+            .expect("backend composition");
+        let runs = backend.workflow_runs();
+        let (run_id, nodes, engine) = started_run_with(
+            &temporary,
+            &runs.pool,
+            AGENT_GRAPH,
+            RecordingExecutor::default(),
+        );
+        let agent = nodes
+            .iter()
+            .find(|node| node.node_id == "agent")
+            .expect("agent node")
+            .clone();
+        engine
+            .fail_node(
+                &run_id,
+                &agent.id,
+                NodeFailure::new(NodeFailureKind::Session, "agent failed"),
+            )
+            .unwrap();
+        drop(engine);
+        let request = ResumeWorkflowRunRequest {
+            run_id: run_id.to_string(),
+            rollback: None,
+            snapshot_id: None,
+        };
+        let start = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let runs_a = runs.clone();
+        let runs_b = runs.clone();
+        let request_a = request.clone();
+        let request_b = request.clone();
+        let start_a = start.clone();
+        let start_b = start;
+        let (first, second) = tokio::join!(
+            tokio::task::spawn_blocking(move || {
+                start_a.wait();
+                runs_a.resume_from_failure(request_a)
+            }),
+            tokio::task::spawn_blocking(move || {
+                start_b.wait();
+                runs_b.resume_from_failure(request_b)
+            }),
+        );
+        let outcomes = [first.expect("join first"), second.expect("join second")];
+        let resumed = outcomes.iter().filter(|result| result.is_ok()).count();
+        let refused = outcomes
+            .iter()
+            .filter(|result| {
+                result.as_ref().is_err_and(|error| {
+                    matches!(
+                        error.public_error(),
+                        PublicError::WorkflowRunNotResumable(_) | PublicError::WorkflowRunActive(_)
+                    )
+                })
+            })
+            .count();
+        assert_eq!((resumed, refused), (1, 1), "{outcomes:?}");
+        let live = SqliteWorkflowRunRepository::new(runs.pool.clone())
+            .list_node_runs(&run_id)
+            .unwrap();
+        let agent_live: Vec<_> = live.iter().filter(|node| node.node_id == "agent").collect();
+        assert_eq!(agent_live.len(), 1);
+        assert_ne!(agent_live[0].id.as_ref(), agent.id.as_ref());
+        assert_eq!(
+            agent_live[0].status,
+            ora_domain::WorkflowNodeStatus::Running
+        );
     });
 }

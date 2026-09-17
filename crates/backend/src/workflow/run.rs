@@ -14,8 +14,12 @@ mod prerequisites;
 mod prompt;
 mod recovery;
 #[cfg(test)]
+mod resume_gap_tests;
+#[cfg(test)]
 mod resume_tests;
 mod rollback;
+#[cfg(test)]
+mod rollback_content_tests;
 #[cfg(test)]
 mod rollback_tests;
 mod snapshot_switch;

@@ -1,6 +1,6 @@
 use super::checkpoint::record_pre_node_checkpoint;
-use super::rollback::{fill_snapshot_preview, preview};
-use super::snapshot_switch::{load_context, switch_if_requested};
+use super::rollback::{apply_rollback, fill_snapshot_preview, plan_rollback, preview};
+use super::snapshot_switch::{check_switch, load_context, switch_if_requested};
 use super::test_fixture::{
     ClockAt, RecordingExecutor, SeqGen, bootstrap, init_git_workspace, started_run_with,
 };
@@ -10,7 +10,10 @@ use ora_application::{
     WorkflowRunPayload, WorkflowRunRepository, WorkflowVariablePool,
 };
 use ora_application::{PublishSnapshotResult, UpdateDraftResult, WorkflowRepository};
-use ora_contracts::{PublicError, WorkflowRunLocale, WorkflowSnapshotIncompatibleWithResumeParams};
+use ora_contracts::{
+    PublicError, ResumeRollbackMode, WorkflowRunLocale,
+    WorkflowSnapshotIncompatibleWithResumeParams,
+};
 use ora_db::{
     SqliteWorkflowRepository, SqliteWorkflowRunEngineRepository, SqliteWorkflowRunRepository,
 };
@@ -23,6 +26,7 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::process::Command;
 use tempfile::TempDir;
 
 const V1_GRAPH: &str = r#"{"nodes":[
@@ -390,5 +394,173 @@ fn record_pre_node_checkpoint_writes_payload_snapshot_id() {
         let payload: serde_json::Value =
             serde_json::from_str(live(&nodes, "c").payload.as_deref().unwrap()).unwrap();
         assert_eq!(payload["snapshot_id"], "snapshot-1");
+    });
+}
+
+fn merge_payload_snapshot_id(temp: &TempDir, node_run_id: &str, snapshot_id: &str) {
+    let connection = rusqlite::Connection::open(temp.path().join("repository.sqlite3")).unwrap();
+    let current: Option<String> = connection
+        .query_row(
+            "SELECT payload FROM workflow_node_runs WHERE id = ?1",
+            rusqlite::params![node_run_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let mut payload: serde_json::Value = current
+        .as_deref()
+        .and_then(|raw| serde_json::from_str(raw).ok())
+        .unwrap_or_else(|| json!({}));
+    payload["snapshot_id"] = json!(snapshot_id);
+    connection
+        .execute(
+            "UPDATE workflow_node_runs SET payload = ?2 WHERE id = ?1",
+            rusqlite::params![node_run_id, payload.to_string()],
+        )
+        .unwrap();
+}
+
+fn git_pre_rollback_refs(root: &Path) -> Vec<String> {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args([
+            "for-each-ref",
+            "--format=%(objectname) %(refname)",
+            "refs/ora/checkpoints/",
+        ])
+        .output()
+        .unwrap();
+    String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .filter(|line| line.contains("pre-rollback-"))
+        .map(str::to_string)
+        .collect()
+}
+
+/// B9: an incompatible snapshot is refused before any worktree mutation.
+#[test]
+fn incompatible_snapshot_switch_does_not_touch_rows_files_or_pre_rollback_ref() {
+    with_trace_logging(|| {
+        let fixture = fail_c();
+        let workspace = init_git_workspace(&fixture.temp);
+        std::fs::write(workspace.join("kept.txt"), "before\n").unwrap();
+        let repository = SqliteWorkflowRunEngineRepository::new(fixture.pool.clone());
+        record_pre_node_checkpoint(
+            &repository,
+            &workspace,
+            &fixture.run_id,
+            "c",
+            &fixture.c_old,
+            "snapshot-1",
+            95,
+        )
+        .unwrap();
+        std::fs::write(workspace.join("kept.txt"), "after\n").unwrap();
+        std::fs::write(workspace.join("extra.txt"), "new\n").unwrap();
+        publish_version(&fixture.pool, "snapshot-3", "v3", V3_GRAPH, 60);
+        let rows_before = live_nodes(&fixture.pool, &fixture.run_id);
+        let run_before = find_run(&fixture.pool, &fixture.run_id);
+        let context = load_context(&fixture.pool, &fixture.run_id).unwrap();
+        let target = SqliteWorkflowRepository::new(fixture.pool.clone())
+            .find_snapshot_by_id(&context.workflow.id, &WorkflowSnapshotId::new("snapshot-3"))
+            .unwrap()
+            .unwrap();
+        let error = check_switch(&fixture.pool, &context, &target).expect_err("v3 must be refused");
+        assert_eq!(
+            error.public_error(),
+            &PublicError::WorkflowSnapshotIncompatibleWithResume(
+                WorkflowSnapshotIncompatibleWithResumeParams {
+                    reason: "node_missing:b".to_string(),
+                }
+            )
+        );
+        assert_eq!(find_run(&fixture.pool, &fixture.run_id), run_before);
+        assert_eq!(live_nodes(&fixture.pool, &fixture.run_id), rows_before);
+        assert_eq!(
+            std::fs::read_to_string(workspace.join("kept.txt")).unwrap(),
+            "after\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(workspace.join("extra.txt")).unwrap(),
+            "new\n"
+        );
+        assert_eq!(git_pre_rollback_refs(&workspace), Vec::<String>::new());
+        assert_eq!(run_before.status, WorkflowRunStatus::Failed);
+    });
+}
+
+/// B9: a compatible published snapshot plus checkpoint rollback both apply, and only rerun rows
+/// pick up the new snapshot id.
+#[test]
+fn compatible_snapshot_switch_with_checkpoint_records_new_id_only_on_rerun_rows() {
+    with_trace_logging(|| {
+        let fixture = fail_c();
+        let workspace = init_git_workspace(&fixture.temp);
+        let nodes = live_nodes(&fixture.pool, &fixture.run_id);
+        merge_payload_snapshot_id(&fixture.temp, live(&nodes, "a").id.as_ref(), "snapshot-1");
+        merge_payload_snapshot_id(&fixture.temp, live(&nodes, "b").id.as_ref(), "snapshot-1");
+        let repository = SqliteWorkflowRunEngineRepository::new(fixture.pool.clone());
+        record_pre_node_checkpoint(
+            &repository,
+            &workspace,
+            &fixture.run_id,
+            "c",
+            &fixture.c_old,
+            "snapshot-1",
+            95,
+        )
+        .unwrap();
+        std::fs::write(workspace.join("from-c.txt"), "dirty\n").unwrap();
+        publish_version(&fixture.pool, "snapshot-2", "v2", V2_GRAPH, 50);
+        let plan = plan_rollback(&fixture.pool, &fixture.run_id).unwrap();
+        apply_rollback(
+            &workspace,
+            &plan,
+            ResumeRollbackMode::Checkpoint,
+            &fixture.run_id,
+            99,
+        )
+        .unwrap();
+        assert!(!workspace.join("from-c.txt").exists());
+        switch(&fixture, "snapshot-2").unwrap();
+        assert_eq!(
+            fixture.engine.resume_from_failure(&fixture.run_id).unwrap(),
+            ResumeWorkflowRunResult::Resumed
+        );
+        let after = live_nodes(&fixture.pool, &fixture.run_id);
+        let a = live(&after, "a");
+        let b = live(&after, "b");
+        let c_new = live(&after, "c");
+        assert_ne!(c_new.id, fixture.c_old);
+        let context = load_context(&fixture.pool, &fixture.run_id).unwrap();
+        record_pre_node_checkpoint(
+            &repository,
+            &workspace,
+            &fixture.run_id,
+            "c",
+            &c_new.id,
+            context.run.snapshot_id.as_ref(),
+            110,
+        )
+        .unwrap();
+        let a_payload: serde_json::Value =
+            serde_json::from_str(a.payload.as_deref().unwrap()).unwrap();
+        let b_payload: serde_json::Value =
+            serde_json::from_str(b.payload.as_deref().unwrap()).unwrap();
+        let c_payload: serde_json::Value = serde_json::from_str(
+            live(&live_nodes(&fixture.pool, &fixture.run_id), "c")
+                .payload
+                .as_deref()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(a_payload["snapshot_id"], "snapshot-1");
+        assert_eq!(b_payload["snapshot_id"], "snapshot-1");
+        assert_eq!(c_payload["snapshot_id"], "snapshot-2");
+        assert_eq!(
+            find_run(&fixture.pool, &fixture.run_id).snapshot_id,
+            WorkflowSnapshotId::new("snapshot-2")
+        );
+        assert!(!git_pre_rollback_refs(&workspace).is_empty());
     });
 }
