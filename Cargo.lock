@@ -3510,6 +3510,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ora-process-helper"
+version = "0.0.0"
+dependencies = [
+ "ora-process-runtime",
+ "pretty_assertions",
+]
+
+[[package]]
 name = "ora-process-protocol"
 version = "0.0.0"
 dependencies = [
@@ -3520,8 +3528,12 @@ dependencies = [
 name = "ora-process-runtime"
 version = "0.0.0"
 dependencies = [
+ "libc",
  "ora-process-protocol",
+ "ora-utils",
  "pretty_assertions",
+ "serde",
+ "serde_json",
  "thiserror 2.0.20",
 ]
 
@@ -3629,6 +3641,7 @@ dependencies = [
  "flate2",
  "futures",
  "hmac",
+ "libc",
  "pretty_assertions",
  "proc-macro2",
  "quick-xml",

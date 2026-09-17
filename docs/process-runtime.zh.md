@@ -6,6 +6,8 @@
 当前增量提供内存态生命周期内核，**不是生产进程启动器**。
 现有 `ora-process`、`ora-reaper`、Git 和插件入口保持不变。
 
+Linux 另已加入独立 [Helper 部署预检](process-helper.zh.md)，检查不启用工作负载启动，也不构成平台 adapter。
+
 ## 所有权与行为
 
 - `ora-process-protocol` 拥有本地域类型：运行身份、精确启动参数、纳管选择、停止意图、直接退出事实和清理证据，尚未定义线协议编码。

@@ -2,6 +2,7 @@
 members = [
     "apps/desktop/src-tauri",
     "apps/ora-reaper",
+    "apps/ora-process-helper",
     "crates/application",
     "crates/acp",
     "crates/backend",
@@ -39,6 +40,7 @@ members = [
 ]
 default-members = [
     "apps/ora-reaper",
+    "apps/ora-process-helper",
     "crates/application",
     "crates/acp",
     "crates/backend",
