@@ -343,6 +343,7 @@ export function buildDisplayRun(
       status: string;
       state: string | null;
       input: string | null;
+      snapshotId?: string;
       startedAt: bigint | null;
       finishedAt: bigint | null;
       createdAt: bigint;
@@ -449,6 +450,9 @@ export function buildDisplayRun(
       ...(errorDetail != null ? { errorDetail } : {}),
       ...(aiDiagnosis != null ? { aiDiagnosis } : {}),
       ...(payload?.snapshot_id != null ? { snapshotId: payload.snapshot_id } : {}),
+      ...(payload?.injected_failure_context != null
+        ? { injectedFailureContext: payload.injected_failure_context }
+        : {}),
       ...(payload?.stop_reason != null
         ? { stopReason: payload.stop_reason }
         : {}),
@@ -500,6 +504,9 @@ export function buildDisplayRun(
     updatedAt: toIso(detail.run.updatedAt),
     ...(detail.run.finishedAt != null
       ? { finishedAt: toIso(detail.run.finishedAt) }
+      : {}),
+    ...(typeof detail.run.snapshotId === "string" && detail.run.snapshotId !== ""
+      ? { snapshotId: detail.run.snapshotId }
       : {}),
   };
 }
@@ -562,6 +569,7 @@ function parseNodePayload(payload: string): {
   file_changes?: WorkflowNodeFileChange[];
   error_detail?: unknown;
   snapshot_id?: string;
+  injected_failure_context?: string;
   ai_diagnosis?: unknown;
 } | null {
   try {
@@ -574,6 +582,7 @@ function parseNodePayload(payload: string): {
       }>;
       error_detail?: unknown;
       snapshot_id?: unknown;
+      injected_failure_context?: unknown;
       ai_diagnosis?: unknown;
     };
     return {
@@ -603,6 +612,9 @@ function parseNodePayload(payload: string): {
       ...(typeof value.snapshot_id === "string" && value.snapshot_id !== ""
         ? { snapshot_id: value.snapshot_id }
         : {}),
+      ...(typeof value.injected_failure_context === "string"
+        ? { injected_failure_context: value.injected_failure_context }
+        : {}),
       ...(value.ai_diagnosis !== undefined
         ? { ai_diagnosis: value.ai_diagnosis }
         : {}),
@@ -623,6 +635,7 @@ function parseErrorDetail(value: unknown): WorkflowNodeErrorDetail | undefined {
     source_chain?: unknown;
     attempt?: unknown;
     resumable?: unknown;
+    injects_previous_failure?: unknown;
     recorded_at?: unknown;
   };
   if (typeof detail.kind !== "string") {
@@ -636,6 +649,10 @@ function parseErrorDetail(value: unknown): WorkflowNodeErrorDetail | undefined {
       : [],
     attempt: typeof detail.attempt === "number" ? detail.attempt : 1,
     resumable: typeof detail.resumable === "boolean" ? detail.resumable : true,
+    injectsPreviousFailure:
+      typeof detail.injects_previous_failure === "boolean"
+        ? detail.injects_previous_failure
+        : false,
     recordedAt: typeof detail.recorded_at === "number" ? detail.recorded_at : 0,
   };
 }

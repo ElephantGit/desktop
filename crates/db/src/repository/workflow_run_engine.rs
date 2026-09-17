@@ -22,6 +22,7 @@ mod current_nodes;
 mod failure_detail;
 mod finish;
 mod payload_json;
+mod restart;
 mod resume;
 mod snapshot_switch;
 
@@ -427,6 +428,14 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
         )
     }
 
+    fn record_node_injected_failure(
+        &self,
+        node_run_id: &WorkflowNodeRunId,
+        text: &str,
+    ) -> Result<(), RepositoryError> {
+        payload_json::record_node_injected_failure(&self.pool, node_run_id, text)
+    }
+
     fn record_node_ai_diagnosis(
         &self,
         node_run_id: &WorkflowNodeRunId,
@@ -458,53 +467,7 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
         run_id: &WorkflowRunId,
         now: i64,
     ) -> Result<RestartWorkflowRunResult, RepositoryError> {
-        self.pool
-            .with_connection_mut(|connection| {
-                let transaction =
-                    Transaction::new(connection, TransactionBehavior::Immediate)?;
-                let state = transaction
-                    .query_row(
-                        "SELECT run_status, payload FROM workflow_runs WHERE id = ?1 AND is_deleted = 0",
-                        params![run_id.as_ref()],
-                        |row| {
-                            Ok((
-                                row.get::<_, i64>(0)?,
-                                row.get::<_, Option<String>>(1)?,
-                            ))
-                        },
-                    )
-                    .optional()?;
-                let Some((status, payload)) = state else {
-                    return Ok(RestartWorkflowRunResult::NotFound);
-                };
-                if WorkflowRunStatus::from_database_value(status)? == WorkflowRunStatus::Running {
-                    return Ok(RestartWorkflowRunResult::NotRestartable);
-                }
-                // A restart is a fresh execution: the previous node runs are soft-deleted so their
-                // history stays queryable, while the fresh run starts from an empty node-run set.
-                transaction.execute(
-                    "UPDATE workflow_node_runs SET is_deleted = 1, updated_at = ?2
-                     WHERE run_id = ?1 AND is_deleted = 0",
-                    params![run_id.as_ref(), now],
-                )?;
-                let state = current_nodes_to_state(&[])?;
-                transaction.execute(
-                    "UPDATE workflow_runs SET run_status = ?2, state = ?3, output = NULL, error = NULL, started_at = NULL, finished_at = NULL, updated_at = ?4
-                     WHERE id = ?1 AND is_deleted = 0",
-                    params![
-                        run_id.as_ref(),
-                        WorkflowRunStatus::Pending.database_value(),
-                        state,
-                        now,
-                    ],
-                )?;
-                // Reset computed values while preserving the separately stored run instruction and
-                // the deployment values owned by the Start node.
-                reset_run_execution_state(&transaction, run_id, payload.as_deref())?;
-                transaction.commit()?;
-                Ok(RestartWorkflowRunResult::Restarted)
-            })
-            .map_err(engine_repository_error_from_database)
+        restart::restart_run(&self.pool, run_id, now)
     }
 
     fn resume_from_failure(

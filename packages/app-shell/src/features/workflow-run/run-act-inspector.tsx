@@ -25,6 +25,7 @@ import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selecti
 import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 import type {
   GraphWorkflowNodeState,
+  GraphWorkflowRunStatus,
   GraphWorkflowSnapshotNodePatch,
   WorkflowArtifact,
   WorkflowNodeData,
@@ -78,6 +79,8 @@ interface RunActInspectorProps {
   instructionSavePending?: boolean;
   /** Fallback close action when no stage card can host the persistent toggle. */
   onClose?: () => void;
+  runStatus?: GraphWorkflowRunStatus;
+  runSnapshotId?: string;
 }
 
 /** Formats an optional typed Start value for the compact read-only summary. */
@@ -140,6 +143,8 @@ export function RunActInspector({
   onDiscardInstructionDraft,
   instructionSavePending = false,
   onClose,
+  runStatus,
+  runSnapshotId,
 }: RunActInspectorProps) {
   const { t } = useTranslation();
   // The node's incremental worktree changes arrive in its run payload, captured by the engine.
@@ -189,6 +194,8 @@ export function RunActInspector({
       instructionSavePending={instructionSavePending}
       fileChanges={fileChanges}
       onClose={onClose}
+      runStatus={runStatus}
+      runSnapshotId={runSnapshotId}
     />
   );
 }
@@ -210,6 +217,8 @@ function RunActInspectorPanel({
   instructionSavePending,
   fileChanges,
   onClose,
+  runStatus,
+  runSnapshotId,
 }: {
   nodeId: string;
   data: WorkflowNodeData;
@@ -227,6 +236,8 @@ function RunActInspectorPanel({
   instructionSavePending?: boolean;
   fileChanges: WorkflowNodeFileChange[];
   onClose?: () => void;
+  runStatus?: GraphWorkflowRunStatus;
+  runSnapshotId?: string;
 }) {
   const { i18n, t } = useTranslation();
   const runId = useWorkspaceSelectionStore((s) => s.selection.workflowRunId);
@@ -295,6 +306,13 @@ function RunActInspectorPanel({
         <p className="mt-1 truncate text-[11px] text-muted-foreground">
           {data.description}
         </p>
+        {state.snapshotId != null &&
+          runSnapshotId != null &&
+          state.snapshotId !== runSnapshotId && (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {t("workflowRun.nodeFromOlderSnapshotHint")}
+            </p>
+          )}
       </div>
 
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
@@ -502,14 +520,34 @@ function RunActInspectorPanel({
                       count: state.errorDetail.attempt,
                     })}
                   </p>
-                  {state.errorDetail.resumable === false && (
-                    <p>{t("workflowRun.errorNotResumableHint")}</p>
-                  )}
+                  {state.errorDetail.resumable === false &&
+                    state.errorDetail.injectsPreviousFailure === true && (
+                      <p>{t("workflowRun.errorInjectedResumeHint")}</p>
+                    )}
+                  {state.errorDetail.resumable === false &&
+                    state.errorDetail.injectsPreviousFailure === false && (
+                      <p>{t("workflowRun.errorNotResumableHint")}</p>
+                    )}
                 </div>
               )}
               <p>{state.errorMessage}</p>
             </div>
           )}
+          {(state.status === "failed" || state.status === "cancelled") &&
+            (runStatus === "failed" || runStatus === "cancelled") && (
+              <p className="text-[11px] text-muted-foreground">
+                {t("workflowRun.resumeFromTopHint")}
+              </p>
+            )}
+          {state.injectedFailureContext !== undefined &&
+            state.injectedFailureContext !== "" && (
+              <details>
+                <summary>{t("workflowRun.injectedFailure.title")}</summary>
+                <pre className="whitespace-pre-wrap text-[11px] leading-5">
+                  {state.injectedFailureContext}
+                </pre>
+              </details>
+            )}
           {state.status === "failed" && data.kind === "agent" && runId != null ? (
             <div className="space-y-2">
               {state.aiDiagnosis != null ? (

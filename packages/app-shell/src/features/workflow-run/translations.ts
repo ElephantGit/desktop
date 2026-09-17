@@ -247,7 +247,7 @@ export const workflowRunTranslations = {
       "修正模板中引用的变量后发布新版本",
     "workflowRun.errorKind.structured_output": "结构化输出不合格",
     "workflowRun.errorHint.structured_output":
-      "智能体的回复不符合输出结构，调整提示词或输出结构后发布新版本",
+      "智能体的回复不符合输出结构；可直接续跑让它带着失败信息重试，或调整提示词/输出结构后发布新版本",
     "workflowRun.errorKind.missing_skill_materialization": "技能未就绪",
     "workflowRun.errorHint.missing_skill_materialization":
       "重新发布工作流以重新生成技能文件",
@@ -266,7 +266,7 @@ export const workflowRunTranslations = {
     "workflowRun.errorHint.session": "检查智能体进程与网络后续跑",
     "workflowRun.errorKind.agent_refusal": "智能体拒绝了请求",
     "workflowRun.errorHint.agent_refusal":
-      "调整提示词或任务描述后发布新版本",
+      "智能体拒绝了请求；可直接续跑让它带着失败信息重试，或调整提示词后发布新版本",
     "workflowRun.errorKind.unknown_stop_reason": "未知的停止原因",
     "workflowRun.errorHint.unknown_stop_reason":
       "智能体以本版本 Ora 不认识的方式停止，请升级 Ora 或更换智能体",
@@ -282,6 +282,13 @@ export const workflowRunTranslations = {
     "workflowRun.errorAttempt": "第 {{count}} 次尝试",
     "workflowRun.errorNotResumableHint":
       "这类失败通常源于工作流本身，直接续跑很可能再次失败；建议修改工作流后重新运行。",
+    "workflowRun.errorInjectedResumeHint":
+      "同版本续跑时，Ora 会把这次失败的类型、原因和上次输出告诉智能体让它重试；若仍失败，再修改工作流并发布新版本。",
+    "workflowRun.injectedFailure.title": "本次尝试注入的上次失败信息",
+    "workflowRun.resumeFromTopHint":
+      "可在顶部点「从失败处继续」重跑这个节点",
+    "workflowRun.nodeFromOlderSnapshotHint":
+      "此节点的结果来自本运行之前使用的版本（续跑时已切换版本）",
     "workflowRun.aiDiagnosis.run": "让 AI 分析",
     "workflowRun.aiDiagnosis.running": "AI 正在分析…",
     "workflowRun.aiDiagnosis.rerun": "重新分析",
@@ -557,7 +564,7 @@ export const workflowRunTranslations = {
       "Fix the variables referenced by the template and publish a new version",
     "workflowRun.errorKind.structured_output": "Structured output invalid",
     "workflowRun.errorHint.structured_output":
-      "The agent's reply did not match the output schema; adjust the prompt or schema and publish a new version",
+      "The agent's reply did not match the output schema; resume to let it retry with the failure context, or adjust the prompt/schema and publish a new version",
     "workflowRun.errorKind.missing_skill_materialization":
       "Skill not materialized",
     "workflowRun.errorHint.missing_skill_materialization":
@@ -581,7 +588,7 @@ export const workflowRunTranslations = {
       "Check the agent process and network, then resume",
     "workflowRun.errorKind.agent_refusal": "Agent refused the request",
     "workflowRun.errorHint.agent_refusal":
-      "Adjust the prompt or task and publish a new version",
+      "The agent refused; resume to let it retry with the failure context, or adjust the prompt and publish a new version",
     "workflowRun.errorKind.unknown_stop_reason": "Unknown stop reason",
     "workflowRun.errorHint.unknown_stop_reason":
       "The agent stopped in a way this Ora version cannot interpret; upgrade Ora or change the agent",
@@ -600,6 +607,14 @@ export const workflowRunTranslations = {
     "workflowRun.errorAttempt": "Attempt {{count}}",
     "workflowRun.errorNotResumableHint":
       "This kind of failure usually comes from the workflow itself; resuming as-is will likely fail again. Edit the workflow and run it again.",
+    "workflowRun.errorInjectedResumeHint":
+      "Resuming on the same version tells the agent this failure's kind, reason and previous output so it can retry; if it still fails, revise the workflow and publish a new version.",
+    "workflowRun.injectedFailure.title":
+      "Previous-failure context injected into this attempt",
+    "workflowRun.resumeFromTopHint":
+      "Use “Resume from failure” at the top to rerun this node",
+    "workflowRun.nodeFromOlderSnapshotHint":
+      "This node's result comes from the version this run used before switching",
     "workflowRun.aiDiagnosis.run": "Ask AI to analyze",
     "workflowRun.aiDiagnosis.running": "AI is analyzing…",
     "workflowRun.aiDiagnosis.rerun": "Analyze again",

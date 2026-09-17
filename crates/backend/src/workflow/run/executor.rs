@@ -1,6 +1,8 @@
 use super::checkpoint::{fail_dispatched_node, record_pre_node_checkpoint};
 use super::last_failure::previous_failure_for_injection;
-use super::prompt::{RequiredWorkflowSkill, WorkflowPromptRequest, assemble_workflow_prompt};
+use super::prompt::{
+    RequiredWorkflowSkill, WorkflowPromptRequest, assemble_workflow_prompt, render_previous_failure,
+};
 use crate::agent_runtime::AgentRuntimeManager;
 use crate::clock::SystemClock;
 use crate::error::BackendError;
@@ -363,6 +365,12 @@ async fn drive_agent_node(
             locale: run_payload.locale,
             previous_failure: previous_failure.as_ref(),
         });
+        if let Some(previous) = previous_failure.as_ref() {
+            repository.record_node_injected_failure(
+                node_run_id,
+                &render_previous_failure(previous, run_payload.locale),
+            )?;
+        }
 
         // Snapshot the worktree before this node runs so its completion diff is the node's own
         // incremental change (previous nodes' changes are already in the baseline).

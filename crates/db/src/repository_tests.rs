@@ -1069,6 +1069,7 @@ fn fail_node_writes_error_detail_and_preserves_existing_payload_keys() {
     assert_eq!(parsed["error_detail"]["kind"], "session");
     assert_eq!(parsed["error_detail"]["attempt"], 1);
     assert_eq!(parsed["error_detail"]["resumable"], true);
+    assert_eq!(parsed["error_detail"]["injects_previous_failure"], false);
     assert_eq!(parsed["error_detail"]["recorded_at"], 50);
     assert_eq!(parsed["error_detail"]["message"], "review failed");
 }
@@ -1308,6 +1309,55 @@ fn record_node_checkpoint_merges_into_existing_payload() {
     assert_eq!(parsed["checkpoint"], "abc123");
     assert_eq!(parsed["snapshot_id"], "snapshot-1");
     assert!(parsed.get("checkpoint_error").is_none());
+}
+
+/// `record_node_injected_failure` merges the rendered prompt block and keeps existing keys.
+#[test]
+fn record_node_injected_failure_merges_into_existing_payload() {
+    let (temp_dir, pool) = bootstrapped_pool();
+    let engine_repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+    let run_id = seed_pending_run(&temp_dir, &pool);
+    engine_repository
+        .start_ready_nodes(
+            &run_id,
+            &[NodeRunToStart {
+                id: WorkflowNodeRunId::new("nr-review"),
+                node_id: "review".to_string(),
+                node_type: "agent".to_string(),
+                input: None,
+            }],
+            40,
+        )
+        .unwrap();
+    pool.with_connection(|connection| {
+        connection.execute(
+            "UPDATE workflow_node_runs SET payload = ?2 WHERE id = ?1",
+            rusqlite::params![
+                "nr-review",
+                r#"{"checkpoint":"abc123","snapshot_id":"snapshot-1"}"#
+            ],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    engine_repository
+        .record_node_injected_failure(
+            &WorkflowNodeRunId::new("nr-review"),
+            "## 上一次尝试（第 1 次）失败信息\n...",
+        )
+        .unwrap();
+
+    let nodes = engine_repository.list_node_runs(&run_id).unwrap();
+    let node = nodes.iter().find(|node| node.node_id == "review").unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(node.payload.as_deref().unwrap()).unwrap();
+    assert_eq!(
+        parsed,
+        serde_json::json!({
+            "checkpoint": "abc123",
+            "snapshot_id": "snapshot-1",
+            "injected_failure_context": "## 上一次尝试（第 1 次）失败信息\n...",
+        })
+    );
 }
 
 /// `record_node_ai_diagnosis` merges `ai_diagnosis` into an existing payload and overwrites only that key.
@@ -1600,6 +1650,7 @@ fn fail_orphaned_node_runs_writes_interrupted_by_restart_error_detail() {
     let parsed: serde_json::Value = serde_json::from_str(node.payload.as_deref().unwrap()).unwrap();
     assert_eq!(parsed["error_detail"]["kind"], "interrupted_by_restart");
     assert_eq!(parsed["error_detail"]["resumable"], true);
+    assert_eq!(parsed["error_detail"]["injects_previous_failure"], false);
     assert_eq!(parsed["error_detail"]["attempt"], 1);
     assert_eq!(parsed["error_detail"]["recorded_at"], 80);
 }

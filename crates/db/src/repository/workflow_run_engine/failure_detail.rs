@@ -51,6 +51,7 @@ pub(super) fn persist_failed_node_run(
         source_chain: failure.source_chain.clone(),
         attempt,
         resumable: failure.kind.resumable(),
+        injects_previous_failure: failure.kind.inject_into_prompt(),
         recorded_at: now,
     };
     let payload = merge_error_detail(current_payload, &detail, &failure.file_changes)?;

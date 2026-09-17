@@ -278,6 +278,14 @@ pub trait WorkflowRunEngineRepository {
         now: i64,
     ) -> Result<(), RepositoryError>;
 
+    /// Persists the previous-failure block that was injected into this node's prompt, under
+    /// `payload.injected_failure_context`. Provenance for the inspector: never fails the node.
+    fn record_node_injected_failure(
+        &self,
+        node_run_id: &WorkflowNodeRunId,
+        text: &str,
+    ) -> Result<(), RepositoryError>;
+
     /// Merges `payload.ai_diagnosis` onto one node-run row, overwriting a previous guess.
     ///
     /// Provenance only: nothing in scheduling, resume, or rollback reads this key. A missing row

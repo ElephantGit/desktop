@@ -173,6 +173,14 @@ impl WorkflowRunEngineRepository for RecordingRepository {
         Ok(())
     }
 
+    fn record_node_injected_failure(
+        &self,
+        _node_run_id: &WorkflowNodeRunId,
+        _text: &str,
+    ) -> Result<(), RepositoryError> {
+        Ok(())
+    }
+
     fn record_node_ai_diagnosis(
         &self,
         _node_run_id: &WorkflowNodeRunId,

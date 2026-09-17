@@ -659,6 +659,8 @@ export function RunTheater({
                 state={primaryState ?? null}
                 artifacts={primaryArtifacts}
                 revealedArtifactId={revealedArtifactId}
+                runStatus={run.status}
+                runSnapshotId={run.snapshotId}
                 editable={isEditableStart}
                 onPatchNode={
                   isEditableStart

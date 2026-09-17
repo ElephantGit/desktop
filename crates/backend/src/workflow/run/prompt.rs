@@ -509,7 +509,10 @@ fn text_block(text: String) -> ContentBlock {
 }
 
 /// Renders the last agent-behaviour failure so the next attempt can avoid repeating it.
-fn render_previous_failure(previous: &PreviousFailure, locale: WorkflowRunLocale) -> String {
+pub(crate) fn render_previous_failure(
+    previous: &PreviousFailure,
+    locale: WorkflowRunLocale,
+) -> String {
     let copy = prompt_copy(locale);
     let attempt = previous.attempt.to_string();
     let kind = failure_kind_label(previous.kind, locale);

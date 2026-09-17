@@ -284,6 +284,7 @@ export interface WorkflowNodeErrorDetail {
   sourceChain: string[];
   attempt: number;
   resumable: boolean;
+  injectsPreviousFailure: boolean;
   recordedAt: number;
 }
 
@@ -306,6 +307,8 @@ export interface GraphWorkflowNodeState {
   errorDetail?: WorkflowNodeErrorDetail;
   /** Snapshot id recorded when this node last ran, from `payload.snapshot_id`. */
   snapshotId?: string;
+  /** Previous-failure block injected into this attempt's prompt, from `payload.injected_failure_context`. */
+  injectedFailureContext?: string;
   /** On-demand AI guess stored as `payload.ai_diagnosis`; never used for scheduling or resume. */
   aiDiagnosis?: WorkflowNodeAiDiagnosis;
   /** ACP stop reason recorded in `payload.stop_reason` when the node succeeded. */
@@ -382,6 +385,8 @@ export interface GraphWorkflowRun {
   createdAt: string;
   updatedAt: string;
   finishedAt?: string;
+  /** Snapshot this run currently points at; may differ from a node's payload.snapshot_id after a version switch. */
+  snapshotId?: string;
 }
 
 /**

@@ -112,6 +112,9 @@ pub struct NodeFailureDetail {
     /// row (same `run_id` + `node_id`, `is_deleted = 1`). Filled in by the repository.
     pub attempt: u32,
     pub resumable: bool,
+    /// Whether a same-version rerun of this node injects this failure into the agent prompt;
+    /// mirrors `NodeFailureKind::inject_into_prompt`.
+    pub injects_previous_failure: bool,
     /// Unix millis, the repository's `now`.
     pub recorded_at: i64,
 }
@@ -279,10 +282,14 @@ mod tests {
             source_chain: vec!["outer".to_string(), "inner".to_string()],
             attempt: 2,
             resumable: true,
+            injects_previous_failure: false,
             recorded_at: 1_700_000_000_000,
         };
         let json = serde_json::to_string(&detail).unwrap();
         let parsed: NodeFailureDetail = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, detail);
+        assert!(json.contains(
+            "\"resumable\":true,\"injects_previous_failure\":false,\"recorded_at\":1700000000000"
+        ));
     }
 }

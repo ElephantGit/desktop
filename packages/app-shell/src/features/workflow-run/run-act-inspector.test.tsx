@@ -18,6 +18,7 @@ import { RunActInspector } from "./run-act-inspector";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import type {
   GraphWorkflowNodeState,
+  GraphWorkflowRunStatus,
   WorkflowNodeData,
 } from "@ora/workflow-runtime";
 import { AGENT_REF } from "../../test/agent-identity";
@@ -74,6 +75,8 @@ function renderInspector(
   options: {
     data?: WorkflowNodeData;
     handlers?: TestHandlers;
+    runStatus?: GraphWorkflowRunStatus;
+    runSnapshotId?: string;
   } = {},
 ) {
   useWorkspaceSelectionStore
@@ -130,6 +133,8 @@ function renderInspector(
           artifacts={[]}
           revealedArtifactId={null}
           onClose={() => undefined}
+          runStatus={options.runStatus}
+          runSnapshotId={options.runSnapshotId}
         />
       </Wrapper>,
     ),
@@ -186,6 +191,7 @@ describe("RunActInspector failure detail", () => {
         sourceChain: ["not json"],
         attempt: 2,
         resumable: false,
+        injectsPreviousFailure: false,
         recordedAt: 50,
       },
     });
@@ -193,7 +199,7 @@ describe("RunActInspector failure detail", () => {
     expect(await screen.findByText("结构化输出不合格")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "智能体的回复不符合输出结构，调整提示词或输出结构后发布新版本",
+        "智能体的回复不符合输出结构；可直接续跑让它带着失败信息重试，或调整提示词/输出结构后发布新版本",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("第 2 次尝试")).toBeInTheDocument();
@@ -218,6 +224,7 @@ describe("RunActInspector failure detail", () => {
         sourceChain: [],
         attempt: 1,
         resumable: true,
+        injectsPreviousFailure: false,
         recordedAt: 80,
       },
     });
@@ -230,6 +237,130 @@ describe("RunActInspector failure detail", () => {
     expect(
       screen.queryByText(
         "这类失败通常源于工作流本身，直接续跑很可能再次失败；建议修改工作流后重新运行。",
+      ),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the injected-resume hint for a structured_output failure", async () => {
+    await appI18n.changeLanguage("zh-CN");
+    renderInspector({
+      status: "failed",
+      errorMessage: "agent node review structured output failed: not json",
+      errorDetail: {
+        kind: "structured_output",
+        message: "agent node review structured output failed: not json",
+        sourceChain: ["not json"],
+        attempt: 2,
+        resumable: false,
+        injectsPreviousFailure: true,
+        recordedAt: 50,
+      },
+    });
+
+    expect(
+      await screen.findByText(
+        "同版本续跑时，Ora 会把这次失败的类型、原因和上次输出告诉智能体让它重试；若仍失败，再修改工作流并发布新版本。",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        "这类失败通常源于工作流本身，直接续跑很可能再次失败；建议修改工作流后重新运行。",
+      ),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders injected previous-failure context in a collapsed details element", async () => {
+    await appI18n.changeLanguage("zh-CN");
+    renderInspector({
+      status: "running",
+      injectedFailureContext: "## 上一次尝试（第 1 次）失败信息\n类型：结构化输出不合格",
+    });
+    expect(
+      await screen.findByText("本次尝试注入的上次失败信息"),
+    ).toBeInTheDocument();
+    expect(document.querySelector("pre")?.textContent).toBe(
+      "## 上一次尝试（第 1 次）失败信息\n类型：结构化输出不合格",
+    );
+  });
+
+  it("omits injected previous-failure context when the node has none", async () => {
+    await appI18n.changeLanguage("zh-CN");
+    renderInspector({ status: "running" });
+    expect(
+      screen.queryByText("本次尝试注入的上次失败信息"),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("RunActInspector run context hints", () => {
+  it("renders the resume-from-top hint for a failed node on a failed run", async () => {
+    await appI18n.changeLanguage("zh-CN");
+    renderInspector(
+      {
+        status: "failed",
+        errorMessage: "boom",
+      },
+      { runStatus: "failed" },
+    );
+    expect(
+      await screen.findByText("可在顶部点「从失败处继续」重跑这个节点"),
+    ).toBeInTheDocument();
+  });
+
+  it("omits the resume-from-top hint while the run is still running", async () => {
+    await appI18n.changeLanguage("zh-CN");
+    renderInspector(
+      {
+        status: "failed",
+        errorMessage: "boom",
+      },
+      { runStatus: "running" },
+    );
+    expect(await screen.findByText("boom")).toBeInTheDocument();
+    expect(
+      screen.queryByText("可在顶部点「从失败处继续」重跑这个节点"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the older-snapshot hint when node and run snapshot ids differ", async () => {
+    await appI18n.changeLanguage("zh-CN");
+    renderInspector(
+      { status: "succeeded", snapshotId: "snap-old" },
+      { runSnapshotId: "snap-new" },
+    );
+    expect(
+      await screen.findByText(
+        "此节点的结果来自本运行之前使用的版本（续跑时已切换版本）",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("omits the older-snapshot hint when snapshot ids match or either is missing", async () => {
+    await appI18n.changeLanguage("zh-CN");
+    const matching = renderInspector(
+      { status: "succeeded", snapshotId: "snap-1" },
+      { runSnapshotId: "snap-1" },
+    );
+    expect(
+      screen.queryByText(
+        "此节点的结果来自本运行之前使用的版本（续跑时已切换版本）",
+      ),
+    ).not.toBeInTheDocument();
+    matching.unmount();
+    const missingRun = renderInspector({
+      status: "succeeded",
+      snapshotId: "snap-old",
+    });
+    expect(
+      screen.queryByText(
+        "此节点的结果来自本运行之前使用的版本（续跑时已切换版本）",
+      ),
+    ).not.toBeInTheDocument();
+    missingRun.unmount();
+    renderInspector({ status: "succeeded" }, { runSnapshotId: "snap-new" });
+    expect(
+      screen.queryByText(
+        "此节点的结果来自本运行之前使用的版本（续跑时已切换版本）",
       ),
     ).not.toBeInTheDocument();
   });

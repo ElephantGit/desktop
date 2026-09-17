@@ -101,3 +101,37 @@ pub(super) fn record_node_checkpoint(
     })
     .map_err(engine_repository_error_from_database)
 }
+
+/// Merges `payload.injected_failure_context` onto one node-run row.
+///
+/// A missing row is provenance-only and succeeds as a no-op so a late write cannot fail the node.
+pub(super) fn record_node_injected_failure(
+    pool: &RepositoryPool,
+    node_run_id: &WorkflowNodeRunId,
+    text: &str,
+) -> Result<(), RepositoryError> {
+    pool.with_connection_mut(|connection| {
+        let transaction = Transaction::new(connection, TransactionBehavior::Immediate)?;
+        let existing = transaction
+            .query_row(
+                "SELECT payload FROM workflow_node_runs WHERE id = ?1 AND is_deleted = 0",
+                params![node_run_id.as_ref()],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?;
+        let Some(existing) = existing else {
+            return Ok(());
+        };
+        let payload = merge_payload_keys(
+            existing.as_deref(),
+            [("injected_failure_context", serde_json::json!(text))],
+        )?;
+        transaction.execute(
+            "UPDATE workflow_node_runs SET payload = ?2 WHERE id = ?1 AND is_deleted = 0",
+            params![node_run_id.as_ref(), payload],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    })
+    .map_err(engine_repository_error_from_database)
+}
