@@ -54,6 +54,13 @@ impl HostState {
         let scopes = layout.validate_entries()?;
         // Read-only compatibility inspection precedes any journal configuration or authority write.
         let (previous, version) = journal::inspect(&layout.database_path(), &scopes)?;
+        // Existing v2 scopes may still need their original tokens. Preserve that entire host
+        // layout for a compatible binary rather than destroying discovery during migration.
+        if version == 2 && !scopes.is_empty() {
+            return Err(ProcessStateError::Rejected(
+                "legacy guardian scopes require a compatible host version",
+            ));
+        }
         let epoch = previous
             .epoch
             .get()

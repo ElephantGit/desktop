@@ -70,7 +70,10 @@ This is a real local guardian/client loop, not yet a production Node/host/busine
 
 New host journals use version 3; new guardian journals use version 4 with the Run ledger. Neither contains credential columns. Host recovery migrates
 the exact v1/v2 layouts transactionally, retaining original scopes, epochs, lock inodes and consumed
-launch attempts. Removed historical token values are not promised to be securely erased from SQLite
+launch attempts. Version-2 hosts with existing Scope directories are rejected before migration so
+compatible old binaries retain the original tokens and epoch. Use that compatible host or a separate
+new state directory; do not delete legacy scopes to force an upgrade. Removed historical token values
+are not promised to be securely erased from SQLite
 free pages or backups. Unknown layouts fail without repair.
 
 Live older guardians require the older token protocol and are incompatible with the new client.

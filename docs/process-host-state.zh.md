@@ -49,7 +49,9 @@ journal 与 endpoint。
 Ready 由 `ora-process-client` 另行查询。
 
 恢复接受精确的 v1 仅意图 schema，在同一事务中添加启动表并推进宿主身份；原意图、路径与锁 inode 不变。
-旧版本不能启动 guardian，因此没有需要推断或回填的启动记录。精确 v2 schema 也会迁移：移除废弃凭据列，但保留全部已消耗的启动尝试。
+旧版本不能启动 guardian，因此没有需要推断或回填的启动记录。精确 v2 schema 仅在没有 Scope 目录时迁移：此时移除废弃凭据列，但保留全部已消耗的启动尝试。
+已有旧 Scope 时，在写入身份或移除凭据前就拒绝；旧 guardian 可能仍需要原令牌协议。
+应保留兼容旧 host 管理这些 Scope，或为新任务另选专用状态目录，不得删 Scope 来绕过检查。
 这不是对历史 SQLite 空闲页及备份中的令牌进行安全擦除。未知 schema 拒绝；旧二进制拒绝 v3，不会重置它。宿主恢复不写 guardian.sqlite。
 
 日志独立启用并验证 WAL＋`synchronous=FULL`，要求实际链接的 SQLite 主线版本包含 WAL-reset 修复
@@ -62,7 +64,7 @@ Ready 由 `ora-process-client` 另行查询。
 
 `cargo test -p ora-process-runtime --test host_state` 覆盖并发创建、锁竞争、重启去重、锁身份不变、
 外部 SIGKILL 后调用者内存丢失、缺失／外来文件、路径长度、权限、链接、版本／schema／身份损坏、
-代次耗尽、冲突修复及精确 v1、v2 升级。强杀 fixture 改变 child 的 HOME 和 cwd，仍使用同一显式状态路径。
+代次耗尽、冲突修复及精确 v1、v2 升级（含拒绝时旧令牌和代次不变）。强杀 fixture 改变 child 的 HOME 和 cwd，仍使用同一显式状态路径。
 测试在测试用户 home 下建立私有临时目录；生产代码不会从该环境变量推导路径。
 
 真实 app 的启动、拒绝、启动方强杀及发现证据见 [guardian 启动](process-guardian.zh.md)。

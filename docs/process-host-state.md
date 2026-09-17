@@ -62,7 +62,10 @@ Guardian readiness is queried separately through `ora-process-client`.
 
 Recovery accepts the exact version-1 intent-only schema and atomically adds the launch table while
 advancing host identity. Original intents, paths and lock inode remain unchanged. That old version
-could not launch guardians; it has no launch records to infer or backfill. The exact version-2 schema is also migrated: its obsolete credential column is removed while all
+could not launch guardians; it has no launch records to infer or backfill. The exact version-2 schema is migrated only when no Scope directory exists. Existing legacy scopes
+block migration before any authority write or credential removal; their guardian may still need the
+original token protocol. Keep a compatible old host for them, or use a separate new state directory;
+never delete a Scope to bypass this check. For eligible journals, the obsolete credential column is removed while all
 consumed launch attempts are preserved. Historical SQLite free pages and backups are not securely
 erased. Unknown schemas fail closed, and old binaries reject version 3 rather than resetting it. Host recovery never writes guardian.sqlite.
 
@@ -79,7 +82,7 @@ documentation. Physical power-loss durability remains unverified.
 `cargo test -p ora-process-runtime --test host_state` exercises concurrent creation, lock contention,
 deduplication across restart, unchanged lock identity, lost caller state after external SIGKILL,
 missing/foreign files, path limits, permissions, links, version/schema/identity corruption, epoch
-exhaustion, conflict repair and the exact version-1 and version-2 upgrades. Crash fixtures override child HOME and cwd while using the same
+exhaustion, conflict repair and the exact version-1 and version-2 upgrades, including unchanged legacy tokens and epochs on rejection. Crash fixtures override child HOME and cwd while using the same
 explicit state path. Tests use a private temporary fixture under the test user's home; production
 code does not derive a path from that environment variable.
 

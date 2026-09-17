@@ -124,6 +124,24 @@ PRAGMA user_version=2;",
         [scope.to_string()],
     )?;
     drop(old);
+    let legacy_scope = path.join("scopes").join(scope.to_string());
+    fs::create_dir(&legacy_scope)?;
+    fs::set_permissions(&legacy_scope, fs::Permissions::from_mode(/*mode*/ 0o700))?;
+    assert!(matches!(
+        recover(&path),
+        Err(ProcessStateError::Rejected(
+            "legacy guardian scopes require a compatible host version"
+        ))
+    ));
+    let preserved = rusqlite::Connection::open_with_flags(
+        path.join("host.sqlite"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    assert_eq!(preserved.query_row("SELECT (SELECT user_version FROM pragma_user_version), epoch, instance, (SELECT credential FROM guardian_launches) FROM host_binding", [], |row| Ok((row.get::<_, i64>(/*idx*/ 0)?, row.get::<_, i64>(/*idx*/ 1)?, row.get::<_, String>(/*idx*/ 2)?, row.get::<_, Vec<u8>>(/*idx*/ 3)?)))?, (2, intent.created_by.epoch.get() as i64, intent.created_by.instance.to_string(), vec![0; 32]));
+    assert_eq!(fs::metadata(path.join("host.lock"))?.ino(), inode);
+    drop(preserved);
+    // Only remove this empty synthetic test directory; production never erases legacy scopes.
+    fs::remove_dir(&legacy_scope)?;
     let state = recover(&path)?;
     assert_eq!(
         state.guardian_access(scope)?,
