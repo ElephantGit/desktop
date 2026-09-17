@@ -14,6 +14,26 @@ pub enum TrustedPathKind {
     Directory,
 }
 
+/// Opens an owner-private target under trusted ancestors, without changing existing permissions.
+///
+/// Regular files must have one link so a second pathname cannot accidentally share private state.
+/// Ancestors follow `open_trusted_path` rules; the final target must belong to the selected owner
+/// and deny all group/other access. This does not isolate mutually untrusted code with the same UID.
+pub fn open_private_path(path: &Path, owner: u32, kind: TrustedPathKind) -> io::Result<File> {
+    let file = open_trusted_path(path, owner, kind)?;
+    let metadata = file.metadata()?;
+    if metadata.uid() != owner
+        || metadata.mode() & 0o077 != 0
+        || (metadata.is_file() && metadata.nlink() != 1)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "target is not an owner-private inode",
+        ));
+    }
+    Ok(file)
+}
+
 /// Opens an absolute path without following links, trusting only root and the selected owner.
 ///
 /// Every ancestor and the final inode must reject group/other writes. Descriptor-relative walks

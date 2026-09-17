@@ -17,6 +17,6 @@ pub use lexical::{canonicalize_longest_existing_prefix, normalize_absolute, norm
 pub use portable::{PortableRelativePath, PortableRelativePathError};
 pub use strict::{RelativePathLimits, StrictRelativePath, StrictRelativePathError};
 #[cfg(unix)]
-pub use trusted::{TrustedPathKind, open_trusted_path};
+pub use trusted::{TrustedPathKind, open_private_path, open_trusted_path};
 
 pub(crate) use portable::is_windows_reserved_device_name;

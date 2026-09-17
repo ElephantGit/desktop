@@ -26,5 +26,10 @@ filesystem-facing crate.
 
 ## Boundaries
 
+On Unix, `open_trusted_path` walks absolute paths without following links and requires root or the
+selected owner to control every ancestor (no group/other writes). `open_private_path` adds exact
+ownership and no group/other access on the final inode; regular files must have one hard link.
+Neither changes permissions or isolates hostile code running under the same UID.
+
 The two relative-path types are intentionally distinct; callers choose by trust level and must
 not convert one into the other implicitly.
