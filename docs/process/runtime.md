@@ -5,7 +5,8 @@ English | [中文](runtime.zh.md)
 The [approved process ADRs](../../specs/decisions/node/process/README.md) are being implemented incrementally.
 The current increment connects the in-memory lifecycle kernel and
 [rootless Linux best-effort adapter](linux/rootless.md) through a
-[trusted local guardian Run loop](guardian.md). It is **not yet integrated into production business launchers**.
+[trusted local guardian Run loop](guardian.md) and [standalone Node Git execution](../node/runtime.md).
+Existing Backend business launchers have not been switched over.
 Existing `ora-process`, `ora-reaper`, Git and plugin entry points are unchanged.
 
 Linux also has an independent [helper deployment preflight and authenticated inspection service](linux/helper.md). Its checks

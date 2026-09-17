@@ -11,11 +11,13 @@ R2 已修正：有效且归属匹配的 checkout 即使有新提交，也按创�
 仍是比较基准。R5 已修正：新清理请求引用已退役归属、且资源已重新出现时，保存明确的
 WorktreeConflict 失败，不碰现有资源。R3 已补测试：未确认的创建／删除事件重开后同时保留，分别确认互不影响。
 
-R1 仍待完成：导入代码仍使用全 Node 门禁，创建只留下分支时尚未推进恢复；这是已知缺口，
-不是认可的目标行为。R4 仍待完成：`Node::open` 仍直接调用 Git，没有持久 Scope／Run 关联及
-旧进程交接。已选策略是终止旧 Git、完成 BestEffort 收尾后才对相关资源对账；无法确认收尾时
-继续阻塞冲突工作，而不是整个 Node。取得 Node 数据库锁不证明旧 Git 已停止。
-独立 [process host](../../process/host/service.zh.md) 已可用，但尚未接入 Node。
+R1 已允许不冲突的新工作继续执行，未知执行仍保留资源预留。仅剩所属任务分支且仍位于冻结基准时，
+按原执行持久记录清理意图，再清理重建；每轮恢复至多重试一次。分支内容改变、被其他 checkout 占用，
+或存在无法解释的非空残留时仍保护现场。
+R4 已通过 [process host](../../process/host/service.zh.md) 执行 Git。Node 在派发变更前持久保存
+Scope／Run 关联，恢复时关闭原尝试并确认收尾后才对账资源；guardian 在 Node 退出时独立终止所属 Run。
+guardian 证据不可用时继续阻塞冲突工作。BestEffort 不是 Strong 静止保证。
+[独立 Node](../runtime.zh.md) 已提供启动恢复和有界停止，不含 Controller IPC。
 
 Node IPC、Controller 结果接管属于后续步骤。当前信任本机调用方；认证、秘密令牌、租约及
 特权 Strong 已推迟，不作为闭环前置。现有 Backend 写入入口不变，本次不改变 ADR 状态。
@@ -25,7 +27,7 @@ Node IPC、Controller 结果接管属于后续步骤。当前信任本机调用�
 已完成事项打勾，最终接口、测试证据及实现取舍见第 7 节。
 
 本 PR 对应本机 Worktree 最小闭环的第 2 步：`feat(node): execute worktree operations with durable recovery`。
-前一步已提供 `ora-node-protocol` 消息和 Frame Codec；下一步接入本机 IPC 和 Node 进程生命周期。
+前一步已提供 `ora-node-protocol` 消息和 Frame Codec；本步已提供独立 Node 生命周期，下一步接入本机 IPC 和 Controller。
 本 PR 内部按下文顺序实施、检视，Git 副作用与持久去重必须一起交付。
 
 ## 1. 目标、依据与范围
@@ -44,13 +46,13 @@ Node 必须先持久保存输入再变更 Git；无法证明副作用结果时�
 相关 ADR 按最小闭环约定保持 `proposed`，随实现调整，在完整闭环合入 main 后统一转为 `implemented`。
 实现中若改变本文的范围、事务顺序或恢复语义，应同步修改中英文 plan 并说明原因，供 reviewer 检视。
 
-| 本 PR 交付                                          | 后续工作                                                            |
-| --------------------------------------------------- | ------------------------------------------------------------------- |
-| `ora-node` 进程内执行接口、初始化与恢复入口         | Node 可执行进程、启动／停止、IPC、握手及重连调度；认证延期          |
-| `ora-node-db` 独立 SQLite 数据库、schema 与事务接口 | Controller 业务数据库、任务调度与 Client 状态展示                   |
-| 注入并校验本地仓库、Main Workspace 绑定和授权根     | Node 注册、仓库发现、绑定管理界面                                   |
-| 创建／删除、状态查询、待确认事件读取及确认处理      | Transport 实际投递、Controller 持久接管后发送确认                   |
-| 本地持久恢复、去重与聚焦验证                        | clone、fetch、push、跨 Node 迁移、文件传输及旧 Backend 写入入口切换 |
+| 本 PR 交付                                             | 后续工作                                                            |
+| ------------------------------------------------------ | ------------------------------------------------------------------- |
+| `ora-node` library、独立可执行入口、初始化、恢复和停止 | Controller IPC、握手及重连调度；认证延期                            |
+| `ora-node-db` 独立 SQLite 数据库、schema 与事务接口    | Controller 业务数据库、任务调度与 Client 状态展示                   |
+| 注入并校验本地仓库、Main Workspace 绑定和授权根        | Node 注册、仓库发现、绑定管理界面                                   |
+| 创建／删除、状态查询、待确认事件读取及确认处理         | Transport 实际投递、Controller 持久接管后发送确认                   |
+| 本地持久恢复、去重与聚焦验证                           | clone、fetch、push、跨 Node 迁移、文件传输及旧 Backend 写入入口切换 |
 
 本 PR 不承诺外部 Git 命令严格恰好执行一次。进程可能在 Git 已变更、结果尚未落盘时停止，恢复必须对账；
 不能仅凭执行记录、命令退出码或路径存在就认定成功。
@@ -82,7 +84,7 @@ Git、存储故障和时间通过可注入接口控制，优先使用 trait 与�
 
 - [x] 将 `apps/ora-node` 和 `crates/node-db` 加入 Cargo workspace、默认成员及必要依赖声明。
 - [x] 定义进程内初始化输入：`home_directory`、本地仓库／Main Workspace 绑定、授权根和 Node 管理的 worktree 根。
-      本 PR 由调用方显式提供配置；部署时 `home_directory` 赋值为 `~/.ora/node`，数据库固定放在其下的 `ora-node.sqlite3`。
+      调用方显式提供绝对数据目录 `home_directory`，不从 HOME 推导默认值；数据库固定放在其下的 `ora-node.sqlite3`。
       测试注入临时目录，不依赖进程环境；进程启动参数留给 IPC 步骤。
 - [x] 持久保存 `NodeId`，每次运行生成新的 `NodeIncarnationId`。重开同一数据库沿用 NodeId；
       请求或配置中的 NodeId 不匹配时拒绝执行，不改写旧记录的归属。
@@ -177,7 +179,7 @@ Git、存储故障和时间通过可注入接口控制，优先使用 trait 与�
 
 - [x] 为第 5 节每项验收条件提供直接测试证据，记录实际测试入口；未完成项保留未勾选状态。
 - [x] 同步中英文 plan，补充最终接口、schema／布局和必要的实现取舍；若语义改变，同步检查相关 ADR。
-- [ ] 运行相关 crate 测试和 lint，再运行完整 `task test`；将结果与剩余限制写入 PR。
+- [x] 运行相关 crate 测试和 lint，再运行完整 `task test`；将结果与剩余限制写入 PR。
       本 PR 的执行与持久化恢复必须完整，不把这些验证延期到最后的旧代码清理步骤。
 
 ## 4. 状态与恢复检视基线
@@ -197,15 +199,16 @@ Git、存储故障和时间通过可注入接口控制，优先使用 trait 与�
 新产生的恢复结果携带实际完成观察的当前运行实例。已经持久保存的结果与事件保留原实例；
 `ExecutionStatus.node` 使用当前报告者实例，内层结果的持久 NodeId 必须与它一致。
 
-| 恢复观察                                                                      | 本 PR 必须实现的行为                                  |
-| ----------------------------------------------------------------------------- | ----------------------------------------------------- |
-| 确认 Git 未开始，或确认无残留变更且可安全重试                                 | 使用原身份和已解析目标继续执行                        |
-| 有效 checkout 的仓库、注册、分支、路径和持久归属匹配，包括已有新提交          | 完成原执行，保留原始 base_commit                      |
-| 删除中 worktree 已移除，但该任务所属的本地分支仍存在                          | 重新验证归属后继续分支清理，不提前报告成功            |
-| 删除全部目标已不存在                                                          | 保存 `AlreadyAbsent` 幂等成功                         |
-| 能确定操作失败且没有未解释的副作用                                            | 保存相应结构化终态失败                                |
-| 创建后只留下分支、注册与目录不一致、配置归属改变或 Git 检查失败，不能证明结果 | 保留 ResultUnknown 和诊断，不覆盖、猜测成功或盲目重跑 |
-| 终态已持久化，响应或确认丢失                                                  | 返回原结果／重放原未确认事件，不再执行 Git            |
+| 恢复观察                                                             | 本 PR 必须实现的行为                                  |
+| -------------------------------------------------------------------- | ----------------------------------------------------- |
+| 确认 Git 未开始，或确认无残留变更且可安全重试                        | 使用原身份和已解析目标继续执行                        |
+| 有效 checkout 的仓库、注册、分支、路径和持久归属匹配，包括已有新提交 | 完成原执行，保留原始 base_commit                      |
+| 删除中 worktree 已移除，但该任务所属的本地分支仍存在                 | 重新验证归属后继续分支清理，不提前报告成功            |
+| 删除全部目标已不存在                                                 | 保存 `AlreadyAbsent` 幂等成功                         |
+| 能确定操作失败且没有未解释的副作用                                   | 保存相应结构化终态失败                                |
+| 仅剩所属分支且位于冻结基准，没有其他 checkout 或无法解释的文件       | 持久记录清理意图，清理后按原执行重试，每轮至多一次    |
+| 注册与目录不一致、配置归属改变或 Git 检查失败，不能证明结果          | 保留 ResultUnknown 和诊断，不覆盖、猜测成功或盲目重跑 |
+| 终态已持久化，响应或确认丢失                                         | 返回原结果／重放原未确认事件，不再执行 Git            |
 
 幂等检查同时约束 operation 与 execution 的关联。相同 execution 的操作类型或规范化输入改变、
 同一 operation 被改绑到另一 execution，均返回 `IdentityConflict`，保留旧记录和结果；
@@ -247,7 +250,7 @@ cargo clippy -p ora-node-db -p ora-node --all-targets -- -D warnings
 
 ## 6. PR 完成条件
 
-- [ ] P1–P6 完成，V1–V12 各有直接证据，相关验证通过。
+- [x] P1–P6 完成，V1–V12 在本 Node 切片范围内验证通过，不代表 Controller 端到端验收完成。
 - [x] Reviewer 能从请求沿着持久接受、Git 变更、结果事务、重放／确认和重启恢复检查完整链路。
 - [x] 数据库或 Git 任一阶段失败时，都能说明保留了什么事实、后续允许做什么；没有以新身份绕过不确定状态的路径。
 - [x] main worktree 与任务资源的归属和清理范围明确，旧文件布局不会被覆盖，新旧写入入口尚未同时接管同一资源。
@@ -257,7 +260,7 @@ cargo clippy -p ora-node-db -p ora-node --all-targets -- -D warnings
 
 ### 调用入口与布局
 
-`Node::open(NodeConfig)` 使用真实 Git 和 Ora 本地时钟；进程入口应先初始化 Ora logging 的时区。
+`Node::open(NodeConfig, ProcessConfig, Shutdown)` 使用受管 Git 和 Ora 本地时钟；进程入口应先初始化 Ora logging 的时区。
 测试使用 `Node::open_with_dependencies(config, git, writes, clock)`，分别注入 `WorktreeGit`、
 `WriteGuard` 和 `Clock`。Node 持有 `home_directory`，不读取 `HOME`。
 [存储布局与 schema](storage.zh.md)说明 `home_directory/ora-node.sqlite3`、文件保护和表约束。
@@ -270,8 +273,8 @@ cargo clippy -p ora-node-db -p ora-node --all-targets -- -D warnings
 
 所有变更入口要求 `&mut Node`；共享调用方可使用 Mutex，并发重传等待同一执行结果。
 数据库文件上的独占 OS 锁阻止不同运行实例同时执行，关闭时显式解锁，避免并行 spawn 的子进程临时
-继承描述符导致重开误报冲突。导入版本仍采用整个 Node 的恢复门禁：任何未完成记录阻止新命令，
-但原执行重传、状态查询、事件读取、确认和再次恢复仍可用。R1 要求在 R4 交接落实后替换为局部冲突协调。
+继承描述符导致重开误报冲突。`RecoveryPending` 只表示存在未完成执行，不再是整个 Node 的准入门禁。
+资源预留阻止冲突工作，不冲突的新任务仍可执行；原执行重传、查询、事件读取与确认均保留。
 
 `Target` 单独持久保存 main 路径、实际 Git metadata directory、授权根、worktree 根、任务路径、
 分支和不可变 base commit。运行时重复校验这些事实，配置变化不能重定向原执行。
@@ -302,13 +305,13 @@ linked checkout 还要通过 metadata directory 的 `commondir` 与 `gitdir` 回
 | V3   | `atomic_acceptance_deduplicates_and_reserves_resources`、`duplicate_inputs_and_resource_conflicts_preserve_original_result`、`concurrent_retransmissions_mutate_once`                                                                                                                  |
 | V4   | `invalid_paths_bindings_and_unowned_resources_never_mutate_git`、`existing_targets_and_main_workspace_are_protected`、`static_symlink_escape_is_rejected`（Unix）、`inconsistent_main_registration_is_rejected`, `main_checkout_overlap_is_rejected_even_for_a_distinct_task_identity` |
 | V5   | `real_create_remove_replay_and_acknowledgement`、`completed_retry_ignores_moved_base_and_missing_configuration`                                                                                                                                                                        |
-| V6   | `sqlite_failures_gate_mutations_and_recover_on_reopen`、`process_stops_before_and_after_create_keep_frozen_identity_and_base`、`branch_only_creation_remains_unknown_and_preserves_other_results`、`changed_checkout_and_unavailable_git_keep_unknown_evidence`                        |
+| V6   | `sqlite_failures_gate_mutations_and_recover_on_reopen`、`process_stops_before_and_after_create_keep_frozen_identity_and_base`、`branch_only_creation_recovers_and_preserves_other_results`、`changed_checkout_and_unavailable_git_keep_unknown_evidence`                               |
 | V7   | `real_create_remove_replay_and_acknowledgement`、`missing_checkout_still_cleans_branch_and_empty_owned_directory`                                                                                                                                                                      |
 | V8   | `partial_removal_continues_only_the_owned_branch`                                                                                                                                                                                                                                      |
 | V9   | `existing_targets_and_main_workspace_are_protected`、`real_create_remove_replay_and_acknowledgement`、`missing_checkout_still_cleans_branch_and_empty_owned_directory`、`branch_cleanup_uses_exact_local_names_even_with_ambiguous_tags`                                               |
 | V10  | `real_create_remove_replay_and_acknowledgement`                                                                                                                                                                                                                                        |
 | V11  | `completion_and_outbox_rollback_together_and_ack_retains_result`、`real_create_remove_replay_and_acknowledgement`                                                                                                                                                                      |
-| V12  | `recovery_and_new_submission_share_one_mutation_owner`、`branch_only_creation_remains_unknown_and_preserves_other_results`、`configuration_change_keeps_recovery_pending_without_redirecting_mutations`                                                                                |
+| V12  | `recovery_and_new_submission_share_one_mutation_owner`、`branch_only_creation_recovers_and_preserves_other_results`、`configuration_change_keeps_recovery_pending_without_redirecting_mutations`                                                                                       |
 
 测试实现位于 `crates/node-db/src/tests.rs` 和 `apps/ora-node/src/tests/`；Git 适配接口还在
 `crates/gitlancer/src/git/inspection.rs` 有单元测试。
@@ -317,7 +320,7 @@ linked checkout 还要通过 metadata directory 的 `commondir` 与 `gitdir` 回
 和完整 `task test` 在本地 Linux 通过。这取代原分支的前端 clipboard 测试失败记录，
 但不代表远端 macOS 或 Windows CI 已运行。
 `apps/ora-node/src/tests/review.rs` 另覆盖 R2 结果落库前产生任务提交、R3 创建／删除事件独立确认，
-以及 R5 完成写库失败和 Git 观察暂不可用时仍保护替代资源。R1、R4 仍有前述缺口，
-因此整体实现验收条件保持未勾选。
-本次不实现 IPC、进程启动、Controller 接管或旧 Backend 入口切换。静态路径验证不防御恶意 TOCTOU 替换；
+以及 R5 完成写库失败和 Git 观察暂不可用时仍保护替代资源。R1 的定向测试位于 `tests/local_recovery.rs`，
+独立 Node 强杀／重启、guardian 丢失及正常停止证据位于 `apps/ora-node/tests/standalone.rs`。
+本次不实现 Controller IPC、Controller 接管或旧 Backend 入口切换。静态路径验证不防御恶意 TOCTOU 替换；
 外部 Git 不承诺严格恰好执行一次，恢复以持久意图和可验证资源事实为依据。

@@ -5,14 +5,14 @@ English | [中文](storage.zh.md)
 Linux `ora_process_runtime::HostState` owns durable Scope/Run intent and one-shot
 [independent guardian bootstrap](../guardian.md). The [host app](service.md) composes it with automatic coordination. It implements part of the approved
 [guardian bootstrap decision](../../../specs/decisions/node/process/recovery/20260917-rootless-guardian-bootstrap-and-reconnect.md).
-It requires no root, helper, cgroup delegation or service installation. Existing Git/plugin entry
+It requires no root, helper, cgroup delegation or service installation. Existing Backend Git/plugin entry
 points and application database policy are unchanged.
 
 ## Explicit location and ownership
 
 The caller supplies an absolute, dedicated `state_dir`. `HostState` never reads HOME or business cwd.
-Application composition must choose this directory from its explicitly injected Node/home location;
-that production composition is not implemented yet.
+Deployment injects the host directory separately from Node data. The
+[standalone Node](../../node/runtime.md) receives this host path explicitly for managed Git.
 
 - `HostState::create(&state_dir)` requires an absent directory, including rejecting an existing empty
   directory. It creates only `host.lock`, `host.sqlite`, SQLite sidecars and `scopes/`.

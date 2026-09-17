@@ -64,7 +64,8 @@ Workloads use the existing LinuxBestEffort adapter and its pidfd observations, i
 with unintended descriptors closed at exec. Descendants escaping before discovery may survive.
 Guardian SIGKILL can leave workloads alive: old numeric PIDs never become signal authority, stored
 Running facts are historical rather than current evidence, and neither guardian nor Run is respawned.
-This is a real local guardian/client loop, not yet a production Node/host/business integration.
+The host and [standalone Node](../node/runtime.md) now compose this loop for managed Git;
+Controller IPC and existing Backend business launchers remain outside this integration.
 
 ## Existing files and versions
 
@@ -98,5 +99,5 @@ host SIGKILL takeover with Run discovery from the host journal, force/close and 
 
 Controller authorization and leases are deferred. Host coordination and durable query projections are implemented;
 [the host app](host/service.md) exposes them over local IPC. Remaining work includes
-stdin, durable output, Node/Git/plugin integration and guardian-death recovery. Strong containment,
+stdin, durable output, plugin integration and guardian-death recovery. Node/Git is integrated. Strong containment,
 service-manager survival, physical power loss and other-platform support are not established.

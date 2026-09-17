@@ -47,5 +47,6 @@ guardian 不可达不授权重启，也不擦除已记录结果；bootstrap、�
 覆盖 host SIGKILL／重连、原 guardian／Run 延续、停止与关闭、Start 回复丢失、副作用不重复、
 输出连接停滞、宿主竞争及外来文件保留。测试 HOME 与显式状态目录不同。工作区测试会构建两个 app。
 
-下一步是 Git／Node 生产组合与资源交接。当前不提供退休／垃圾回收、stdin、输出流订阅、特权 Strong、
-非 Linux adapter、Node 认证或 Controller 租约。现有进程消费者未改变。
+[独立 Node](../../node/runtime.zh.md) 已接通受管 Git 和持久资源交接；Controller IPC 和 Backend
+写入入口切换仍单独推进。当前不提供退休／垃圾回收、stdin、输出流订阅、特权 Strong、
+非 Linux adapter、Node 认证或 Controller 租约。现有 Backend 进程消费者未改变。

@@ -55,7 +55,8 @@ Ready、bind 后，通过 GuardianRuns::execute 使用协议所有的 GuardianRu
 工作负载复用 LinuxBestEffort adapter 与 pidfd 观测，处于独立 session，exec 时关闭非显式描述符。
 发现前就脱离的后代可能逃逸。Guardian 被 SIGKILL 后，工作负载可能继续存活：
 旧数字 PID 不重新获得发信号资格，日志中 Running 只是历史事实，不是实时证据，
-也不会重启 guardian 或 Run。这已是真实的本地 guardian／客户端闭环，尚未接入生产 Node／host／业务入口。
+也不会重启 guardian 或 Run。host 和[独立 Node](../node/runtime.zh.md) 已将此闭环用于受管 Git；
+Controller IPC 和现有 Backend 业务启动入口仍不在本次集成范围内。
 
 ## 已有文件与版本
 
@@ -82,4 +83,4 @@ Run 真实 app 测试覆盖精确重放、退出／输出、Start 回复丢失�
 后从 host 日志找回 Run 并接管、强停／关闭，以及 guardian SIGKILL 后工作负载仍活着但不持有 Scope 锁。
 
 Controller 授权和租约已推迟。host 自动协调与持久查询投影已通过[宿主 app](host/service.zh.md) 提供本机 IPC；stdin、持久输出、
-Node／Git／插件接入和 guardian 死亡恢复仍未完成。强纳管、服务管理器下存续、物理断电与其他平台支持尚未证明。
+插件接入和 guardian 死亡恢复仍未完成。Node／Git 已接通。强纳管、服务管理器下存续、物理断电与其他平台支持尚未证明。

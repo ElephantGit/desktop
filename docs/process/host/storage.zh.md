@@ -5,12 +5,12 @@
 Linux `ora_process_runtime::HostState` 已负责持久化 Scope／Run 意图与一次性
 [独立 guardian 启动](../guardian.zh.md)，由[宿主 app](service.zh.md) 组合自动协调。
 它是已批准[guardian 启动决策](../../../specs/decisions/node/process/recovery/20260917-rootless-guardian-bootstrap-and-reconnect.md)
-的部分实现，无需 root、helper、cgroup 委派或服务安装。现有 Git／插件入口及业务数据库政策不变。
+的部分实现，无需 root、helper、cgroup 委派或服务安装。现有 Backend Git／插件入口及业务数据库政策不变。
 
 ## 显式定位与所有权
 
 调用方提供绝对路径、专用的 `state_dir`；`HostState` 不读取 HOME，也不使用业务 cwd。
-应用组合层应从显式注入的 Node／home 定位选择该目录；生产组合尚未接入。
+部署将 host 目录与 Node 数据目录分别注入；[独立 Node](../../node/runtime.zh.md) 显式接收该 host 路径，用于受管 Git。
 
 - `HostState::create(&state_dir)` 要求目标目录不存在，已有空目录也拒绝。只创建
   `host.lock`、`host.sqlite`、SQLite 辅助文件及 `scopes/`。

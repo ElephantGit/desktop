@@ -4,7 +4,8 @@
 
 [已批准的进程 ADR](../../specs/decisions/node/process/README.md) 正在分批实施。
 当前已将内存态生命周期内核和[无需 root 的 Linux 尽力清理 adapter](linux/rootless.zh.md)
-接通为[可信本机 guardian Run 闭环](guardian.zh.md)，**尚未接入生产业务启动入口**。
+接通为[可信本机 guardian Run 闭环](guardian.zh.md)和[独立 Node Git 执行](../node/runtime.zh.md)。
+现有 Backend 业务启动入口尚未切换。
 现有 `ora-process`、`ora-reaper`、Git 和插件入口保持不变。
 
 Linux 另已加入独立 [Helper 部署预检与认证检查服务](linux/helper.zh.md)，不启用工作负载启动，也不构成平台 adapter。

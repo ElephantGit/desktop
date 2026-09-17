@@ -55,6 +55,7 @@ private binaries and exercises host SIGKILL/reconnect, original guardian/Run con
 lost Start replies, exactly-once side effects, stalled output peers, host contention and foreign-file
 preservation. Test HOME differs from the injected state path. Workspace tests build both apps.
 
-Git/Node production composition and resource handoff remain next. This app does not yet provide
+[Standalone Node](../../node/runtime.md) now composes managed Git and durable resource handoff.
+Controller IPC and Backend writer cutover remain separate. This app does not yet provide
 retirement/garbage collection, stdin, output streaming, privileged Strong containment, non-Linux
-adapters, Node authentication or Controller leases. Existing process consumers are unchanged.
+adapters, Node authentication or Controller leases. Existing Backend process consumers are unchanged.
