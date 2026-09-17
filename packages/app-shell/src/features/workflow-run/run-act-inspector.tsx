@@ -32,27 +32,7 @@ import type {
   WorkflowNodeFileChange,
   WorkflowVariableValueType,
 } from "@ora/workflow-runtime";
-
-/** Wire values for `NodeFailureKind`; kept in one list so i18n tests can iterate them. */
-export const NODE_FAILURE_KINDS = [
-  "missing_agent_ref",
-  "workflow_model_not_found",
-  "missing_agent_config",
-  "invalid_run_payload",
-  "prompt_template",
-  "structured_output",
-  "missing_skill_materialization",
-  "session_ended_without_stop_reason",
-  "session_binding_rejected",
-  "baseline_persist",
-  "repository",
-  "session",
-  "agent_refusal",
-  "unknown_stop_reason",
-  "interrupted_by_restart",
-  "multiple_outputs",
-  "condition_evaluation",
-] as const;
+import { NODE_FAILURE_KINDS } from "./node-failure-kinds";
 
 const KNOWN_NODE_FAILURE_KINDS = new Set<string>(NODE_FAILURE_KINDS);
 

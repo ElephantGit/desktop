@@ -14,12 +14,13 @@ import {
   type TestHandlers,
 } from "../../test/contracts-transport";
 import { appI18n, translationResources } from "../../i18n/i18n-instance";
+import { ResumeRunDialog } from "./resume-run-dialog";
 import {
-  ResumeRunDialog,
   RESUME_ROLLBACK_UNAVAILABLE_REASONS,
+  ROLLBACK_UNAVAILABLE_KEYS,
   rollbackUnavailableReasonText,
-} from "./resume-run-dialog";
-import { NODE_FAILURE_KINDS } from "./run-act-inspector";
+} from "./resume-rollback";
+import { NODE_FAILURE_KINDS } from "./node-failure-kinds";
 
 const PREVIEW: PreviewWorkflowRunResumeResponse = {
   resumable: true,
@@ -311,15 +312,12 @@ describe("ResumeRunDialog", () => {
 
   it("has rollback-unavailable reason keys in both locales", () => {
     for (const locale of ["zh-CN", "en-US"] as const) {
-      const table = translationResources[locale] as Record<string, string>;
+      const table = translationResources[locale];
       for (const reason of RESUME_ROLLBACK_UNAVAILABLE_REASONS) {
-        const text = rollbackUnavailableReasonText(reason, (key) => {
-          const value = table[key];
-          expect(value, `${locale} ${key}`).toEqual(expect.any(String));
-          expect(value.length, `${locale} ${key}`).toBeGreaterThan(0);
-          return value;
-        });
-        expect(text, `${locale} ${reason}`).toEqual(expect.any(String));
+        const key = ROLLBACK_UNAVAILABLE_KEYS[reason];
+        const value = table[key];
+        expect(value, `${locale} ${key}`).toEqual(expect.any(String));
+        expect(value.length, `${locale} ${key}`).toBeGreaterThan(0);
       }
     }
   });
