@@ -2,8 +2,8 @@
 
 English | [中文](process-host-state.zh.md)
 
-Linux `ora_process_runtime::HostState` now owns durable **host creation intent**, not a running host
-or guardian. It is a preparatory slice of the approved
+Linux `ora_process_runtime::HostState` owns durable host creation intent and one-shot
+[independent guardian bootstrap](process-guardian.md), not a production host app or Run launcher. It implements part of the approved
 [guardian bootstrap decision](../specs/decisions/node/process/recovery/20260917-rootless-guardian-bootstrap-and-reconnect.md).
 It requires no root, helper, cgroup delegation or service installation. Existing Git/plugin entry
 points and application database policy are unchanged.
@@ -31,7 +31,8 @@ that production composition is not implemented yet.
   a supported state parent.
 
 Creation is intentionally fail-closed: interrupted initialization can leave a partial dedicated
-directory, which is preserved and rejected on recovery. Automatic repair/migration is not provided.
+directory, which is preserved and rejected on recovery. Automatic repair is not provided; only the
+exact version-1 journal has the additive migration described below.
 Do not delete lock files, replace the directory while owned, or remove records to bypass a failure.
 
 ## Durable facts, not launch authority
@@ -40,7 +41,7 @@ The host holds the original `host.lock` until its SQLite connection closes. Reco
 lock nonblockingly, then performs a read-only journal compatibility check, and only then commits a
 new host incarnation. Contention is an error, not permission to replace a lock or endpoint.
 
-The version-1 journal identifies itself with application ID `0x4f524148` and `user_version=1`, and
+The version-2 journal identifies itself with application ID `0x4f524148` and `user_version=2`, and
 checks its exact schema, integrity and persisted identities. It stores a positive host epoch with a
 host instance ID, plus each Scope's original guardian instance, creating host binding and
 `intent_recorded` phase. Epoch overflow is rejected; recovery never rewrites an intent's creating host.
@@ -49,8 +50,20 @@ intent. Their internal journals and endpoints are not inspected or managed by th
 
 `record_scope_intent(scope)` commits a new original intent or returns the existing one unchanged.
 `scope_intent(scope)` queries that responsibility; absence is not permission to recreate a guardian.
-No Scope directory, guardian journal, launch ticket, process, credential or Ready fact is produced.
+This registration call produces no Scope directory, guardian journal, process, credential or Ready fact.
 A pre-existing Scope path without an intent blocks registration and is preserved.
+
+`start_guardian(scope, executable)` requires that intent and an explicitly supplied trusted executable.
+It first commits a credential and `launch_unknown` record, then creates the private Scope directory,
+acquires its lock and execs the guardian. Every subsequent error or cancellation consumes the attempt;
+even a proven exec failure cannot authorize a second launch. `guardian_access(scope)` restores the
+original discovery material after host recovery; it neither launches nor transfers control authority.
+Guardian readiness is queried separately through `ora-process-client`.
+
+Recovery accepts the exact version-1 intent-only schema and atomically adds the launch table while
+advancing host identity. Original intents, paths and lock inode remain unchanged. That old version
+could not launch guardians; it has no launch records to infer or backfill. Unknown schemas fail closed,
+and old binaries reject version 2 rather than resetting it. Host recovery never writes guardian.sqlite.
 
 The journal independently enables and verifies WAL plus `synchronous=FULL`; the linked SQLite mainline
 version must include the WAL-reset fix (at least 3.51.3). Transactions commit before returning new
@@ -65,10 +78,10 @@ documentation. Physical power-loss durability remains unverified.
 `cargo test -p ora-process-runtime --test host_state` exercises concurrent creation, lock contention,
 deduplication across restart, unchanged lock identity, lost caller state after external SIGKILL,
 missing/foreign files, path limits, permissions, links, version/schema/identity corruption, epoch
-exhaustion and conflict repair. Crash fixtures override child HOME and cwd while using the same
+exhaustion, conflict repair and the exact version-1 upgrade. Crash fixtures override child HOME and cwd while using the same
 explicit state path. Tests use a private temporary fixture under the test user's home; production
 code does not derive a path from that environment variable.
 
-The tests do not establish guardian launch ordering or survival. Scope lock qualification/handoff,
-bootstrap credentials, guardian journal/app, authenticated Ready discovery, host-session fencing,
-Run acceptance and platform cleanup remain to be implemented. No ADR is marked implemented.
+Real-app bootstrap, refusal, launcher-kill and discovery evidence is documented under
+[guardian bootstrap](process-guardian.md). Host-session fencing, Run acceptance, production host
+composition and platform cleanup remain unfinished. No ADR is marked implemented.

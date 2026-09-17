@@ -1,30 +1,18 @@
-//! Durable host creation responsibility, deliberately without a process-launch capability.
+//! Durable host creation responsibility and one-shot guardian bootstrap, without Run launch.
 
 mod journal;
+mod launch;
 mod layout;
 
 use std::num::NonZeroU64;
 use std::path::Path;
 
+use crate::{ProcessStateError, state_journal};
 use ora_process_protocol::{HostBinding, HostInstanceId, ScopeCreationIntent, ScopeId};
 use ora_utils::fs::LinuxFileLock;
 use rusqlite::Connection;
-use thiserror::Error;
 
-/// Refuses unsupported or ambiguous state instead of reconstructing missing responsibility.
-#[derive(Debug, Error)]
-pub enum HostStateError {
-    #[error("process state filesystem operation failed: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("process state journal operation failed: {0}")]
-    Sqlite(#[from] rusqlite::Error),
-    #[error("process state rejected: {0}")]
-    Rejected(&'static str),
-    #[error("process state contains an invalid identity: {0}")]
-    Identity(#[from] ora_process_protocol::InvalidProcessIdentity),
-}
-
-/// Holds the host lock for the entire journal lifetime; not a running host or guardian launcher.
+/// Holds host ownership for its journal lifetime and records each guardian launch before exec.
 ///
 /// The injected directory belongs exclusively to this runtime. Creation and recovery are separate:
 /// recovery never creates missing files, resets a journal, or authorizes another guardian launch.
@@ -38,12 +26,12 @@ pub struct HostState {
 
 impl HostState {
     /// Initializes a previously absent dedicated directory; even an existing empty directory fails.
-    pub fn create(state_dir: &Path) -> Result<Self, HostStateError> {
-        journal::check_engine()?;
+    pub fn create(state_dir: &Path) -> Result<Self, ProcessStateError> {
+        state_journal::check_engine()?;
         let layout = layout::HostLayout::create(state_dir)?;
         let lock = LinuxFileLock::try_acquire(layout.create_file("host.lock")?)?;
         layout.create_file("host.sqlite")?;
-        let mut connection = journal::open_writable(&layout.database_path())?;
+        let mut connection = state_journal::open_writable(&layout.database_path())?;
         let binding = HostBinding {
             epoch: NonZeroU64::MIN,
             instance: HostInstanceId::new(),
@@ -59,26 +47,26 @@ impl HostState {
     }
 
     /// Validates an existing journal under its original lock, then durably advances host identity.
-    pub fn recover(state_dir: &Path) -> Result<Self, HostStateError> {
-        journal::check_engine()?;
+    pub fn recover(state_dir: &Path) -> Result<Self, ProcessStateError> {
+        state_journal::check_engine()?;
         let layout = layout::HostLayout::open(state_dir)?;
         let lock = LinuxFileLock::try_acquire(layout.open_file("host.lock")?)?;
         let scopes = layout.validate_entries()?;
         // Read-only compatibility inspection precedes any journal configuration or authority write.
-        let previous = journal::inspect(&layout.database_path(), &scopes)?;
+        let (previous, version) = journal::inspect(&layout.database_path(), &scopes)?;
         let epoch = previous
             .epoch
             .get()
             .checked_add(1)
             .filter(|epoch| *epoch <= i64::MAX as u64)
             .and_then(NonZeroU64::new)
-            .ok_or(HostStateError::Rejected("host epoch exhausted"))?;
+            .ok_or(ProcessStateError::Rejected("host epoch exhausted"))?;
         let binding = HostBinding {
             epoch,
             instance: HostInstanceId::new(),
         };
-        let mut connection = journal::open_writable(&layout.database_path())?;
-        journal::advance_binding(&mut connection, binding)?;
+        let mut connection = state_journal::open_writable(&layout.database_path())?;
+        journal::advance_binding(&mut connection, binding, version)?;
         layout.sync()?;
         Ok(Self {
             connection,
@@ -100,7 +88,7 @@ impl HostState {
     pub fn record_scope_intent(
         &mut self,
         scope: ScopeId,
-    ) -> Result<ScopeCreationIntent, HostStateError> {
+    ) -> Result<ScopeCreationIntent, ProcessStateError> {
         if let Some(intent) = journal::find_intent(&self.connection, scope)? {
             // A prior call may have committed but failed its directory sync. Replays must cross
             // that remaining durability boundary too, rather than acknowledging it from cache.
@@ -122,7 +110,7 @@ impl HostState {
     pub fn scope_intent(
         &self,
         scope: ScopeId,
-    ) -> Result<Option<ScopeCreationIntent>, HostStateError> {
+    ) -> Result<Option<ScopeCreationIntent>, ProcessStateError> {
         journal::find_intent(&self.connection, scope)
     }
 }

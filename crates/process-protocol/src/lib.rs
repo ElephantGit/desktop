@@ -1,7 +1,13 @@
-//! Domain types shared by the process runtime and the inspection-only helper protocol.
+//! Domain types and bounded wire messages for process runtime, guardian discovery and helper inspection.
 
 mod containment;
 mod guardian;
+mod guardian_wire;
+pub use guardian_wire::{
+    GUARDIAN_MAX_FRAME, GUARDIAN_WIRE_VERSION, GuardianAccess, GuardianBootstrap, GuardianChannel,
+    GuardianCredential, GuardianReady, GuardianReadyRequest, decode_guardian_payload,
+    encode_guardian_frame,
+};
 mod helper;
 mod output;
 mod run;

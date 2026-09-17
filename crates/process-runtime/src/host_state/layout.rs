@@ -11,7 +11,7 @@ use ora_utils::{
     path::{TrustedPathKind, open_private_path, open_trusted_path},
 };
 
-use super::HostStateError;
+use super::ProcessStateError;
 
 /// Owns path policy; only the journal owner decides which durable layout names are recognized.
 pub(super) struct HostLayout {
@@ -22,13 +22,13 @@ pub(super) struct HostLayout {
 
 impl HostLayout {
     /// Creates exactly one dedicated directory; no existing directory or parent is repaired.
-    pub(super) fn create(path: &Path) -> Result<Self, HostStateError> {
+    pub(super) fn create(path: &Path) -> Result<Self, ProcessStateError> {
         check_endpoint_length(path)?;
         // SAFETY: geteuid has no preconditions and does not modify process identity.
         let owner = unsafe { libc::geteuid() };
         let parent = path
             .parent()
-            .ok_or(HostStateError::Rejected("missing state parent"))?;
+            .ok_or(ProcessStateError::Rejected("missing state parent"))?;
         let parent = open_trusted_path(parent, owner, TrustedPathKind::Directory)?;
         require_local_filesystem(&parent)?;
         DirBuilder::new().mode(/*mode*/ 0o700).create(path)?;
@@ -42,7 +42,7 @@ impl HostLayout {
     }
 
     /// Opens only private local state; links and untrusted ancestors fail before journal access.
-    pub(super) fn open(path: &Path) -> Result<Self, HostStateError> {
+    pub(super) fn open(path: &Path) -> Result<Self, ProcessStateError> {
         check_endpoint_length(path)?;
         // SAFETY: geteuid only queries the current effective identity.
         let owner = unsafe { libc::geteuid() };
@@ -56,7 +56,7 @@ impl HostLayout {
     }
 
     /// Creates a private regular file exclusively, never truncating an existing entry.
-    pub(super) fn create_file(&self, name: &str) -> Result<File, HostStateError> {
+    pub(super) fn create_file(&self, name: &str) -> Result<File, ProcessStateError> {
         let file = OpenOptions::new()
             .read(/*read*/ true)
             .write(/*write*/ true)
@@ -69,7 +69,7 @@ impl HostLayout {
     }
 
     /// Pins a recognized private file without following links or granting creation permission.
-    pub(super) fn open_file(&self, name: &str) -> Result<File, HostStateError> {
+    pub(super) fn open_file(&self, name: &str) -> Result<File, ProcessStateError> {
         Ok(open_private_path(
             &self.path.join(name),
             self.owner,
@@ -78,7 +78,7 @@ impl HostLayout {
     }
 
     /// Rejects unknown entries and missing required files; SQLite owns only its known sidecars.
-    pub(super) fn validate_entries(&self) -> Result<Vec<ScopeId>, HostStateError> {
+    pub(super) fn validate_entries(&self) -> Result<Vec<ScopeId>, ProcessStateError> {
         self.open_file("host.sqlite")?;
         let scopes = open_private_path(
             &self.path.join("scopes"),
@@ -94,11 +94,11 @@ impl HostLayout {
                         entry
                             .file_name()
                             .to_str()
-                            .ok_or(HostStateError::Rejected("invalid layout name"))?,
+                            .ok_or(ProcessStateError::Rejected("invalid layout name"))?,
                     )?;
                 }
                 Some("scopes") => {}
-                _ => return Err(HostStateError::Rejected("unknown state directory entry")),
+                _ => return Err(ProcessStateError::Rejected("unknown state directory entry")),
             }
         }
         let mut scopes = Vec::new();
@@ -107,7 +107,7 @@ impl HostLayout {
             let scope = entry
                 .file_name()
                 .to_str()
-                .ok_or(HostStateError::Rejected("invalid scope directory name"))?
+                .ok_or(ProcessStateError::Rejected("invalid scope directory name"))?
                 .parse()?;
             open_private_path(&entry.path(), self.owner, TrustedPathKind::Directory)?;
             scopes.push(scope);
@@ -118,7 +118,7 @@ impl HostLayout {
     }
 
     /// Prevents registering a fresh intent over an unaccounted-for scope directory or link.
-    pub(super) fn reject_existing_scope(&self, scope: ScopeId) -> Result<(), HostStateError> {
+    pub(super) fn reject_existing_scope(&self, scope: ScopeId) -> Result<(), ProcessStateError> {
         open_private_path(
             &self.path.join("scopes"),
             self.owner,
@@ -128,7 +128,7 @@ impl HostLayout {
         match fs::symlink_metadata(path) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(error.into()),
-            Ok(_) => Err(HostStateError::Rejected(
+            Ok(_) => Err(ProcessStateError::Rejected(
                 "scope path already exists without a creation intent",
             )),
         }
@@ -139,21 +139,26 @@ impl HostLayout {
         self.path.join("host.sqlite")
     }
 
+    /// Locates one canonical scope without accepting caller-controlled path fragments.
+    pub(super) fn scope_path(&self, scope: ScopeId) -> PathBuf {
+        self.path.join("scopes").join(scope.to_string())
+    }
+
     /// Flushes directory entries after journal commits that may create SQLite sidecars.
-    pub(super) fn sync(&self) -> Result<(), HostStateError> {
+    pub(super) fn sync(&self) -> Result<(), ProcessStateError> {
         self.directory.sync_all()?;
         Ok(())
     }
 }
 
 /// Reserves the full canonical Scope/socket suffix rather than truncating long Unix socket paths.
-fn check_endpoint_length(path: &Path) -> Result<(), HostStateError> {
+fn check_endpoint_length(path: &Path) -> Result<(), ProcessStateError> {
     let endpoint = path
         .join("scopes")
         .join("00000000-0000-0000-0000-000000000001")
         .join("control.sock");
     if !path.is_absolute() || endpoint.as_os_str().as_bytes().len() >= 108 {
-        return Err(HostStateError::Rejected(
+        return Err(ProcessStateError::Rejected(
             "state path must be absolute and fit Linux Unix socket paths",
         ));
     }
@@ -161,10 +166,10 @@ fn check_endpoint_length(path: &Path) -> Result<(), HostStateError> {
 }
 
 /// Limits the first deployment set; this is a filesystem gate, not a hardware durability proof.
-fn require_local_filesystem(file: &File) -> Result<(), HostStateError> {
+fn require_local_filesystem(file: &File) -> Result<(), ProcessStateError> {
     match LinuxFilesystem::for_file(file)? {
         LinuxFilesystem::Ext | LinuxFilesystem::Xfs | LinuxFilesystem::Btrfs => Ok(()),
-        LinuxFilesystem::Other => Err(HostStateError::Rejected(
+        LinuxFilesystem::Other => Err(ProcessStateError::Rejected(
             "unsupported process state filesystem",
         )),
     }

@@ -15,7 +15,9 @@ exists for trusted helper code; it is not exposed over IPC and awaits privileged
 
 - `ora-process-protocol` owns local domain types: run identity, exact launch specification, containment
   selection, stop intent, direct exit facts and cleanup evidence, plus the helper's inspection-only
-  wire types. Host/guardian wire encoding is not yet defined.
+  wire types and bounded MessagePack guardian bootstrap/readiness messages.
+- `ora-process-client` depends on protocol types, not runtime or SQLite. The thin Linux
+  `ora-process-guardian` app delegates bootstrap and read-only readiness to runtime.
 - `ora-process-runtime::ScopeRuntime<P>` owns one scope's admission, run records and stop deadlines.
   `Platform` supplies verified capabilities, creation-time containment, observations and per-run signals.
   Linux has a rootless adapter; controlled tests also inject platform facts through this boundary.
@@ -41,7 +43,8 @@ spawn outcomes. Dropping the kernel does not provide crash recovery.
 Linux now supports [bounded volatile result capture](process-linux-rootless.md#bounded-result-capture),
 with independent readers and per-run limits; pipe EOF is separate from process cleanup.
 Host creation intent now has an opt-in [durable journal](process-host-state.md) under an explicitly supplied
-dedicated directory. Durable Run acceptance, authorization, leases, host/guardian processes, remaining
+dedicated directory and [independent guardian bootstrap/Ready discovery](process-guardian.md).
+Durable Run acceptance, authorization, leases, a production host app, remaining
 platform adapters, full I/O, runtime recovery, resource handoff and production integration remain unimplemented.
 This increment does not complete implementation phase 1 or prove any OS-level containment guarantee.
 
@@ -53,7 +56,7 @@ The workspace now uses bundled `rusqlite` 0.40.2 / SQLite 3.53.2, including the
 at least 3.51.3. They also cover committed versus uncommitted visibility across connections,
 rollback, checkpoint and reopening a file-backed database. This is a dependency prerequisite,
 not guardian crash-durability evidence; the existing application database schema and its
-`synchronous=NORMAL` policy are unchanged. Guardian journals still require their own `FULL` policy.
+`synchronous=NORMAL` policy are unchanged. Host and guardian journals independently enable `FULL`.
 
 The approved [rootless guardian bootstrap decision](../specs/decisions/node/process/recovery/20260917-rootless-guardian-bootstrap-and-reconnect.md)
 now has its first building block: `ora_utils::fs::LinuxFileLock`. It accepts an already opened
@@ -66,17 +69,20 @@ does not promise immediate reacquisition. Callers must observe actual lock acqui
 Drop only closes a descriptor: it deliberately does not issue an explicit unlock, which could also
 release a child's shared lock. This follows Linux's [flock lifetime semantics](https://man7.org/linux/man-pages/man2/flock.2.html).
 The caller must preserve the inode, resolve trusted paths and qualify the actual local filesystem.
-This primitive neither creates nor deletes files, authenticates inherited descriptors, proves data
-durability, nor proves workload cleanup. It may acquire an unlocked file; it is not a bootstrap
-verification API. Same-user adversaries, network filesystems and other platforms are not certified.
+This primitive neither creates nor deletes files, proves data durability, nor proves workload cleanup.
+`try_acquire` may lock an unlocked file; `adopt_inherited` instead requires an already-held exclusive
+flock on that open description. The guardian separately verifies scope/path binding. Same-user
+adversaries, network filesystems and other platforms are not certified.
 
 `cargo test -p ora-utils --test linux_file_lock` verifies contention, duplicate lifetime, unchanged
 file contents, close-on-exec (including an explicit pre-exec barrier), and an exec'd holder retaining exclusion after its launcher is killed
 externally. The surviving holder is identified and killed through a pidfd; acquisition must become
 possible again. The child test fixture is not a guardian or host implementation. State-directory
 admission and persistent creation intent now have a [host-owned implementation](process-host-state.md),
-with independent external-kill tests of the journal owner. Descriptor authentication, bootstrap,
-the guardian app and Ready/reconnect operations remain to be implemented; no new remote launch endpoint is exposed.
+with independent external-kill tests of the journal owner. [Real-app bootstrap tests](process-guardian.md)
+now additionally verify inherited qualification, journal-before-Ready and original-instance discovery
+after launcher death. Persisted management-session fencing remains unfinished; no remote Run launch
+endpoint is exposed.
 
 ## Verification
 

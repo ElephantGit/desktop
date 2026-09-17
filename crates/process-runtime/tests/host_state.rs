@@ -8,7 +8,7 @@ use std::sync::Barrier;
 use std::time::{Duration, Instant};
 
 use ora_process_protocol::{HostBinding, ScopeCreationIntent, ScopeId};
-use ora_process_runtime::{HostState, HostStateError};
+use ora_process_runtime::{HostState, ProcessStateError};
 use pretty_assertions::assert_eq;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -25,11 +25,11 @@ fn directory() -> Result<tempfile::TempDir, std::io::Error> {
 }
 
 /// Retries only actual ownership contention, including temporary references from concurrent forks.
-fn recover(path: &Path) -> Result<HostState, HostStateError> {
+fn recover(path: &Path) -> Result<HostState, ProcessStateError> {
     let deadline = Instant::now() + Duration::from_secs(/*secs*/ 10);
     loop {
         match HostState::recover(path) {
-            Err(HostStateError::Io(error))
+            Err(ProcessStateError::Io(error))
                 if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline =>
             {
                 std::thread::sleep(Duration::from_millis(/*millis*/ 5));
@@ -52,7 +52,7 @@ fn recovery_keeps_original_creation_intent_and_stable_lock() -> TestResult {
     assert_eq!(first.scope_intent(ScopeId::new())?, None);
     let inode = fs::metadata(path.join("host.lock"))?.ino();
     assert!(
-        matches!(HostState::recover(&path), Err(HostStateError::Io(error)) if error.kind() == std::io::ErrorKind::WouldBlock)
+        matches!(HostState::recover(&path), Err(ProcessStateError::Io(error)) if error.kind() == std::io::ErrorKind::WouldBlock)
     );
     drop(first);
 
@@ -63,7 +63,39 @@ fn recovery_keeps_original_creation_intent_and_stable_lock() -> TestResult {
     assert_eq!(second.record_scope_intent(scope)?, intent);
     assert_eq!(fs::metadata(path.join("host.lock"))?.ino(), inode);
     assert_eq!(fs::read_dir(path.join("scopes"))?.count(), 0);
-    // This slice owns only host intent; it cannot initialize a guardian database or launch a Run.
+    // Recording intent alone must not create a guardian directory or launch a Run.
+    Ok(())
+}
+
+/// Migrates the exact intent-only layout without replacing identities or the stable lock inode.
+#[test]
+fn version_one_upgrade_preserves_intent_and_ownership() -> TestResult {
+    let directory = directory()?;
+    let path = directory.path().join("s");
+    let scope = ScopeId::new();
+    let mut state = HostState::create(&path)?;
+    let intent = state.record_scope_intent(scope)?;
+    let inode = fs::metadata(path.join("host.lock"))?.ino();
+    drop(state);
+    let old = rusqlite::Connection::open(path.join("host.sqlite"))?;
+    old.execute_batch("DROP TABLE guardian_launches; PRAGMA user_version=1;")?;
+    drop(old);
+
+    let state = recover(&path)?;
+    assert_eq!(state.scope_intent(scope)?, Some(intent.clone()));
+    assert_eq!(state.guardian_access(scope)?, None);
+    assert_eq!(
+        state.binding().epoch.get(),
+        intent.created_by.epoch.get() + 1
+    );
+    assert_eq!(fs::metadata(path.join("host.lock"))?.ino(), inode);
+    let database = rusqlite::Connection::open(path.join("host.sqlite"))?;
+    assert_eq!(
+        database.query_row("PRAGMA user_version", [], |row| row
+            .get::<_, i64>(/*idx*/ 0))?,
+        2
+    );
+    assert_eq!(fs::read_dir(path.join("scopes"))?.count(), 0);
     Ok(())
 }
 
@@ -97,7 +129,7 @@ fn concurrent_creation_has_one_owner() -> TestResult {
                 let intent = state.record_scope_intent(scope)?;
                 assert_eq!(state.scope_intent(scope)?, Some(intent));
             }
-            Err(HostStateError::Io(error)) => {
+            Err(ProcessStateError::Io(error)) => {
                 assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists)
             }
             Err(error) => return Err(error.into()),
@@ -199,7 +231,7 @@ fn unknown_scope_directories_block_recovery_without_changing_binding() -> TestRe
     fs::set_permissions(&orphan, fs::Permissions::from_mode(/*mode*/ 0o700))?;
     assert!(matches!(
         HostState::recover(&path),
-        Err(HostStateError::Rejected(_))
+        Err(ProcessStateError::Rejected(_))
     ));
     assert!(orphan.is_dir());
     fs::rename(&orphan, directory.path().join("preserved"))?;
@@ -316,7 +348,7 @@ fn committed_intent_survives_owner_kill_without_becoming_a_new_attempt() -> Test
         },
     };
     assert!(
-        matches!(HostState::recover(&path), Err(HostStateError::Io(error)) if error.kind() == std::io::ErrorKind::WouldBlock)
+        matches!(HostState::recover(&path), Err(ProcessStateError::Io(error)) if error.kind() == std::io::ErrorKind::WouldBlock)
     );
     child.0.kill()?;
     child.0.wait()?;

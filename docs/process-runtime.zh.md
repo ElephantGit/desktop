@@ -11,7 +11,8 @@ Linux 另已加入独立 [Helper 部署预检与认证检查服务](process-help
 
 ## 所有权与行为
 
-- `ora-process-protocol` 拥有本地域类型：运行身份、精确启动参数、纳管选择、停止意图、直接退出事实和清理证据，以及 helper 只读检查协议类型；host／guardian 线协议编码尚未定义。
+- `ora-process-protocol` 拥有本地域类型：运行身份、精确启动参数、纳管选择、停止意图、直接退出事实和清理证据，以及 helper 只读检查类型和有界 MessagePack guardian bootstrap／Ready 消息。
+- `ora-process-client` 只依赖协议，不依赖 runtime 或 SQLite；薄 Linux `ora-process-guardian` app 将启动与只读 Ready 服务交给 runtime。
 - `ora-process-runtime::ScopeRuntime<P>` 拥有单个 Scope 的准入、运行记录与停止期限。
   `Platform` 提供已验证能力、创建时纳管、观测和单 Run 信号。Linux 已有无特权 adapter；受控测试也通过这一边界注入平台事实。
 - 创建 Scope 时冻结实际保证。必须强但能力不足时拒绝；明确要求尽力时不能静默提升为强模式。
@@ -31,7 +32,8 @@ Linux 另已加入独立 [Helper 部署预检与认证检查服务](process-help
 Linux 已支持[有界内存结果捕获](process-linux-rootless.zh.md#有界结果捕获)，读取器独立推进，限额属于各 Run；
 管道 EOF 与进程清理分别表达。
 宿主创建意图已提供可选的[持久日志](process-host-state.zh.md)，仅使用显式传入的专用目录。
-Run 持久接受、授权、租约、宿主／guardian 进程、其余平台 adapter、完整 I/O、运行恢复、资源交接和生产接入均待实现。
+另已支持[独立 guardian 启动与 Ready 发现](process-guardian.zh.md)。Run 持久接受、授权、租约、生产宿主 app、
+其余平台 adapter、完整 I/O、运行恢复、资源交接和生产接入均待实现。
 本批不代表阶段 1 完成，也不证明任何 OS 级纳管保证。
 
 ## Guardian 启动基础
@@ -41,7 +43,7 @@ Workspace 已升级为捆绑 `rusqlite` 0.40.2／SQLite 3.53.2，包含
 `sqlite_version()` 和 `sqlite_source_id()`，要求实际链接的主线引擎不低于 3.51.3；
 另覆盖多连接间已提交与未提交数据的可见性、回滚、checkpoint 和文件数据库重新打开。
 这是依赖前置条件，不是 guardian 崩溃耐久证据；现有业务数据库 schema 和
-`synchronous=NORMAL` 政策不变，guardian journal 仍须独立设置 `FULL`。
+`synchronous=NORMAL` 政策不变，host 与 guardian journal 已分别启用 `FULL`。
 
 已批准的[无特权 Guardian 启动决策](../specs/decisions/node/process/recovery/20260917-rootless-guardian-bootstrap-and-reconnect.md)
 已实现第一项基础能力：`ora_utils::fs::LinuxFileLock`。它接收已打开的普通文件，以非阻塞方式尝试
@@ -52,15 +54,17 @@ Workspace 已升级为捆绑 `rusqlite` 0.40.2／SQLite 3.53.2，包含
 
 Drop 只关闭描述符，故意不显式解锁，否则可能同时释放子进程共享的锁；依据是 Linux 的
 [flock 生命周期语义](https://man7.org/linux/man-pages/man2/flock.2.html)。调用方仍负责保留原 inode、
-可信路径解析及实际本地文件系统能力验证。此工具不创建／删除文件，不认证继承描述符，也不证明
-数据耐久或业务清理完成。它可以给尚未加锁的文件加锁，因此不是 bootstrap 资格验证接口。
+可信路径解析及实际本地文件系统能力验证。此工具不创建／删除文件，也不证明数据耐久或业务清理完成。
+`try_acquire` 可以给未加锁文件加锁；`adopt_inherited` 则要求该打开描述已持有独占 flock，guardian
+再独立验证 Scope／路径绑定。
 同用户攻击者、网络文件系统及其他平台不在已验证范围。
 
 `cargo test -p ora-utils --test linux_file_lock` 验证锁竞争、复制后的生命周期、文件内容不变、
 close-on-exec（含显式 pre-exec 屏障），以及 exec 后持锁者在启动方被外部强杀后仍保有独占资格。测试通过 pidfd 固定并
 终止剩余持锁者，然后验证可以重新取得锁。测试子进程不是 guardian 或宿主实现。
 状态目录准入与持久创建意图已提供[宿主所有的实现](process-host-state.zh.md)，并独立测试日志持有者被外部强杀。
-描述符认证、bootstrap、guardian app 和 Ready／重连接口仍待接入；没有新增远程业务启动端点。
+[真实 app 启动测试](process-guardian.zh.md) 另已验证继承资格、日志先于 Ready 以及启动方死亡后的原实例发现。
+持久管理会话 fencing 仍待实现；没有新增远程 Run 启动端点。
 
 ## 验证
 

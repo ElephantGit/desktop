@@ -2,6 +2,7 @@ use std::fmt;
 use std::num::NonZeroU64;
 use std::str::FromStr;
 
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
 
 /// Rejects noncanonical identities before they can become filesystem components.
@@ -54,6 +55,22 @@ macro_rules! identity {
                 Ok(Self(id))
             }
         }
+
+        impl Serialize for $name {
+            /// Keeps the same canonical identity in messages and journal paths.
+            fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                serializer.serialize_str(&self.to_string())
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $name {
+            /// Reuses the validated parser instead of accepting alternate wire spellings.
+            fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                String::deserialize(deserializer)?
+                    .parse()
+                    .map_err(serde::de::Error::custom)
+            }
+        }
     };
 }
 
@@ -71,14 +88,16 @@ identity!(
 );
 
 /// Durable host incarnation ordering; this is not a Controller grant or Scope control generation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HostBinding {
     pub epoch: NonZeroU64,
     pub instance: HostInstanceId,
 }
 
 /// Persisted creation responsibility only; this is neither launch permission nor a Ready fact.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ScopeCreationIntent {
     pub scope: ScopeId,
     pub guardian: GuardianInstanceId,

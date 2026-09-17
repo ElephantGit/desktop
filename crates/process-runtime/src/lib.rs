@@ -3,7 +3,17 @@
 #[cfg(target_os = "linux")]
 mod host_state;
 #[cfg(target_os = "linux")]
-pub use host_state::{HostState, HostStateError};
+pub use host_state::HostState;
+#[cfg(target_os = "linux")]
+mod guardian;
+#[cfg(target_os = "linux")]
+mod state_error;
+#[cfg(target_os = "linux")]
+mod state_journal;
+#[cfg(target_os = "linux")]
+pub use guardian::serve_guardian_bootstrap;
+#[cfg(target_os = "linux")]
+pub use state_error::ProcessStateError;
 
 #[cfg(target_os = "linux")]
 mod linux_best_effort;
