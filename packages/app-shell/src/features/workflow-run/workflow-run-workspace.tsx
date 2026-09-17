@@ -12,6 +12,10 @@ import {
   AlertDialogTitle,
   Button,
   Spinner,
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
   toast,
 } from "@ora/ui";
 import {
@@ -28,6 +32,7 @@ import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selecti
 import { useGraphWorkflowRunLive } from "../../state/data/mock-workflow-runs";
 import {
   useCancelWorkflowRun,
+  usePreviewWorkflowRunResume,
   useRealWorkflowRun,
   useRestartWorkflowRun,
   useStartWorkflowRun,
@@ -84,6 +89,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   const updateRunInput = useUpdateWorkflowRunInput();
   const cancelRun = useCancelWorkflowRun();
   const rerun = useRestartWorkflowRun();
+  const previewResume = usePreviewWorkflowRunResume();
 
   const [viewMode, setViewMode] = useState<WorkflowRunViewMode>("overview");
   const [focusNodeId, setFocusNodeId] = useState<string | null>(null);
@@ -360,6 +366,15 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   const canRunAgain = run !== null && isTerminalRunStatus(run.status);
   const canResume =
     run !== null && (run.status === "failed" || run.status === "cancelled");
+  const resumeDisabled =
+    previewResume.data !== undefined && previewResume.data.resumable === false;
+  const previewResumeMutate = previewResume.mutate;
+  useEffect(() => {
+    if (!canResume || run === null) {
+      return;
+    }
+    previewResumeMutate({ runId: run.id });
+  }, [canResume, run, previewResumeMutate]);
   const startNode =
     run?.definitionSnapshot.nodes.find((node) => node.data.kind === "start") ??
     null;
@@ -610,16 +625,27 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
             </Button>
           )}
           {canResume && run && (
-            <Button
-              type="button"
-              size="sm"
-              className="h-7 gap-1.5 px-2.5 text-xs"
-              disabled={actionBusy}
-              onClick={() => setResumeOpen(true)}
-            >
-              <IconPlayerPlay className="size-3.5" />
-              {t("workflowRun.resumeFromFailure")}
-            </Button>
+            <TooltipProvider>
+              <Tooltip disabled={!resumeDisabled}>
+                <TooltipTrigger render={<span className="inline-flex" />}>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-7 gap-1.5 px-2.5 text-xs"
+                    disabled={actionBusy || resumeDisabled}
+                    onClick={() => setResumeOpen(true)}
+                  >
+                    <IconPlayerPlay className="size-3.5" />
+                    {t("workflowRun.resumeFromFailure")}
+                  </Button>
+                </TooltipTrigger>
+                {resumeDisabled ? (
+                  <TooltipContent>
+                    {t("workflowRun.resume.reason.not_resumable")}
+                  </TooltipContent>
+                ) : null}
+              </Tooltip>
+            </TooltipProvider>
           )}
         </div>
         <LocationActionsButton workspaceId={workspaceId} />
