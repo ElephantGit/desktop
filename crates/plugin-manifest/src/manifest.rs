@@ -319,7 +319,9 @@ fn deserialize<'de, T: Deserialize<'de>>(source: &'de str) -> Result<T, Manifest
 /// Pairs `kind` with the sections it may carry so a manifest cannot be half of two kinds.
 ///
 /// `[webview]` is required by, and exclusive to, `kind = "webview"`; `[workbench]` is exclusive
-/// to `kind = "workbench"` but optional there, because a static page needs no methods.
+/// to `kind = "workbench"` but optional there, because a static page needs no methods. Every
+/// other kind — including `workflow`, whose package contributes documents under `assets/`
+/// instead of declaring a section — carries neither.
 fn validate_kind_sections(
     kind: PluginKind,
     workbench: Option<RawWorkbench>,
@@ -333,7 +335,8 @@ fn validate_kind_sections(
             | PluginKind::Webview
             | PluginKind::Skill
             | PluginKind::Mcp
-            | PluginKind::Hook,
+            | PluginKind::Hook
+            | PluginKind::Workflow,
             Some(_),
         ) => {
             return Err(invalid_field(
@@ -346,7 +349,8 @@ fn validate_kind_sections(
             | PluginKind::Webview
             | PluginKind::Skill
             | PluginKind::Mcp
-            | PluginKind::Hook,
+            | PluginKind::Hook
+            | PluginKind::Workflow,
             None,
         ) => None,
     };
@@ -363,7 +367,8 @@ fn validate_kind_sections(
             | PluginKind::Workbench
             | PluginKind::Skill
             | PluginKind::Mcp
-            | PluginKind::Hook,
+            | PluginKind::Hook
+            | PluginKind::Workflow,
             Some(_),
         ) => {
             return Err(invalid_field(
@@ -376,7 +381,8 @@ fn validate_kind_sections(
             | PluginKind::Workbench
             | PluginKind::Skill
             | PluginKind::Mcp
-            | PluginKind::Hook,
+            | PluginKind::Hook
+            | PluginKind::Workflow,
             None,
         ) => None,
     };

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import type {
   AvailablePlugin,
+  ImportedWorkflowOutcome,
   InstalledPlugin,
   InstallOutcome,
 } from "@ora/contracts";
@@ -171,14 +172,23 @@ export function PluginsSettings({
       importPlugin.mutate(
         { path },
         {
-          onSuccess: (response) =>
-            toast.success(
-              installOutcomeMessage(
-                response.outcome,
-                t,
-                "settings.plugins.importSuccess",
-              ),
-            ),
+          onSuccess: (response) => {
+            const message = installOutcomeMessage(
+              response.outcome,
+              t,
+              "settings.plugins.importSuccess",
+            );
+            // Only a package that carried workflow documents says anything about workflows.
+            // Every other kind keeps the one-argument call, so an ordinary plugin import still
+            // produces the plain success toast its callers already match against.
+            if (response.workflows.length === 0) {
+              toast.success(message);
+              return;
+            }
+            toast.success(message, {
+              description: workflowImportSummary(response.workflows, t),
+            });
+          },
           onError: (cause) =>
             showContractError(cause, t("settings.plugins.importFailed")),
         },
@@ -531,4 +541,24 @@ function installOutcomeMessage(
     });
   }
   return t(successKey);
+}
+
+/**
+ * Summarizes the per-document outcomes of a workflow package import.
+ *
+ * Every document imports on its own, so the summary reports both counts instead of only
+ * failures: "all imported" and "some refused" are different results, and the user has to be able
+ * to tell them apart without going to the workflow library to count rows.
+ */
+function workflowImportSummary(
+  outcomes: readonly ImportedWorkflowOutcome[],
+  t: TFunction,
+): string {
+  const imported = outcomes.filter(
+    (outcome) => outcome.state === "imported",
+  ).length;
+  const failed = outcomes.length - imported;
+  return failed === 0
+    ? t("settings.plugins.importWorkflowsImported", { count: imported })
+    : t("settings.plugins.importWorkflowsSummary", { imported, failed });
 }

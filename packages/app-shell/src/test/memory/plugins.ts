@@ -3,6 +3,7 @@ import {
   type AvailablePlugin,
   type MarketplaceSource,
   type InstalledPlugin,
+  type ImportedWorkflowOutcome,
   type InstallOutcome,
   type PluginConfigurationDetails,
   type PluginSettingValue,
@@ -30,6 +31,11 @@ export interface PluginMemoryState {
    * `installed`; a conflict test supplies `installed_with_command_conflict`.
    */
   installOutcome?: InstallOutcome;
+  /**
+   * Per-document workflow outcomes a local `.orax` import should report. Defaults to none, which
+   * is what every kind other than a Workflow package reports.
+   */
+  importedWorkflows?: ImportedWorkflowOutcome[];
 }
 
 /** Creates an independent plugins memory fixture. */
@@ -299,6 +305,7 @@ export function pluginHandlers(state: PluginMemoryState) {
       return {
         pluginId: target.id,
         outcome,
+        workflows: state.importedWorkflows ?? [],
       };
     },
     installPlugin: async (req) => {
