@@ -81,7 +81,8 @@ possible again. The child test fixture is not a guardian or host implementation.
 admission and persistent creation intent now have a [host-owned implementation](process-host-state.md),
 with independent external-kill tests of the journal owner. [Real-app bootstrap tests](process-guardian.md)
 now additionally verify inherited qualification, journal-before-Ready and original-instance discovery
-after launcher death. Persisted management-session fencing remains unfinished; no remote Run launch
+after launcher death. Durable host-session takeover now fences queued session inspections; Controller
+authorization and Run/stdin execution fencing remain unfinished. No remote Run launch
 endpoint is exposed.
 
 ## Verification

@@ -3535,6 +3535,7 @@ name = "ora-process-client"
 version = "0.0.0"
 dependencies = [
  "ora-process-protocol",
+ "serde",
  "tokio",
  "uuid",
 ]

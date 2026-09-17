@@ -83,5 +83,6 @@ explicit state path. Tests use a private temporary fixture under the test user's
 code does not derive a path from that environment variable.
 
 Real-app bootstrap, refusal, launcher-kill and discovery evidence is documented under
-[guardian bootstrap](process-guardian.md). Host-session fencing, Run acceptance, production host
+[guardian bootstrap](process-guardian.md), including durable host-session takeover. Controller authorization,
+Run acceptance, production host
 composition and platform cleanup remain unfinished. No ADR is marked implemented.

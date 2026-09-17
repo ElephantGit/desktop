@@ -1,5 +1,8 @@
 #![cfg(target_os = "linux")]
 
+#[path = "bootstrap/management.rs"]
+mod management;
+
 use ora_process_client::GuardianProbe;
 use ora_process_protocol::{
     GUARDIAN_WIRE_VERSION, GuardianAccess, GuardianBootstrap, GuardianChannel, GuardianCredential,
@@ -378,6 +381,18 @@ async fn launcher_kill_preserves_original_guardian_and_lost_ready_is_queryable()
         .ok_or("lost guardian responsibility")?;
     ready(&access).await?;
     assert_eq!(guardian_pid(&access).await?, pid);
+    // Actual external launcher death advances only host authority, never the guardian identity.
+    let manager =
+        ora_process_client::GuardianManagement::new(access.clone(), unsafe { libc::geteuid() });
+    assert!(
+        matches!(manager.bind(recovered.binding()).await?, ora_process_protocol::GuardianManagementReply::Bound { session, .. } if session.host == recovered.binding())
+    );
+    assert_eq!(
+        manager.bind(access.intent.created_by).await?,
+        ora_process_protocol::GuardianManagementReply::Rejected(
+            ora_process_protocol::GuardianManagementRejection::StaleHost
+        )
+    );
     assert_eq!(
         fs::metadata(access.scope_dir.join("guardian.lock"))?.ino(),
         inode

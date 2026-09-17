@@ -8,6 +8,7 @@ workspace = true
 
 [dependencies]
 ora-process-protocol = { workspace = true }
+serde = { workspace = true }
 uuid = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]

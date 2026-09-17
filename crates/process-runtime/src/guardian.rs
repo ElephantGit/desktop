@@ -1,28 +1,32 @@
-//! Bootstrap-only guardian: persistent identity and authenticated read-only readiness, no Runs.
+//! Guardian bootstrap and durable host-session binding, without Run or workload I/O capabilities.
 
 mod journal;
+mod management;
 
 use std::fs::File;
 use std::future::Future;
 use std::io;
 use std::os::unix::fs::PermissionsExt;
+use std::sync::Arc;
 use std::time::Duration;
 
+use management::Management;
 use ora_process_protocol::{
     GUARDIAN_MAX_FRAME, GUARDIAN_WIRE_VERSION, GuardianAccess, GuardianBootstrap, GuardianChannel,
-    GuardianReady, GuardianReadyRequest, decode_guardian_payload, encode_guardian_frame,
+    GuardianReady, GuardianRequest, decode_guardian_payload, encode_guardian_frame,
 };
 use ora_utils::fs::LinuxFileLock;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
+use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 
 use crate::ProcessStateError;
 
 /// Owns an inherited locked description before any journal creation or endpoint publication.
 ///
-/// Bootstrap EOF after delivery is not a liveness lease. All three sockets currently support only
-/// authenticated readiness queries; no mutation, event subscription or workload I/O is available.
+/// Bootstrap EOF after delivery is not a liveness lease. All sockets authenticate discovery and
+/// session inspection; Control can bind a host, but no workload mutation or subscription exists.
 pub async fn serve_guardian_bootstrap(
     inherited_lock: File,
     mut bootstrap: UnixStream,
@@ -49,7 +53,11 @@ pub async fn serve_guardian_bootstrap(
     }
     let access = message.access;
     drop(bootstrap);
-    let _journal = journal::initialize(&access, &lock, owner)?;
+    let management = Arc::new(Mutex::new(Management::new(
+        journal::initialize(&access, &lock, owner)?,
+        access.intent.clone(),
+        lock,
+    )));
     let control = UnixListener::bind(
         access
             .scope_dir
@@ -87,19 +95,19 @@ pub async fn serve_guardian_bootstrap(
             }
             result = control.accept(), if control_workers.len() < 16 => {
                 match result {
-                    Ok((stream, _)) => { control_workers.spawn(serve_probe(stream, access.clone(), GuardianChannel::Control, owner)); }
+                    Ok((stream, _)) => { control_workers.spawn(serve_probe(stream, access.clone(), GuardianChannel::Control, owner, management.clone())); }
                     Err(error) => break Err(error.into()),
                 }
             }
             result = events.accept(), if event_workers.len() < 16 => {
                 match result {
-                    Ok((stream, _)) => { event_workers.spawn(serve_probe(stream, access.clone(), GuardianChannel::Events, owner)); }
+                    Ok((stream, _)) => { event_workers.spawn(serve_probe(stream, access.clone(), GuardianChannel::Events, owner, management.clone())); }
                     Err(error) => break Err(error.into()),
                 }
             }
             result = io_listener.accept(), if io_workers.len() < 16 => {
                 match result {
-                    Ok((stream, _)) => { io_workers.spawn(serve_probe(stream, access.clone(), GuardianChannel::Io, owner)); }
+                    Ok((stream, _)) => { io_workers.spawn(serve_probe(stream, access.clone(), GuardianChannel::Io, owner, management.clone())); }
                     Err(error) => break Err(error.into()),
                 }
             }
@@ -118,6 +126,7 @@ async fn serve_probe(
     access: GuardianAccess,
     channel: GuardianChannel,
     owner: u32,
+    management: Arc<Mutex<Management>>,
 ) -> io::Result<()> {
     tokio::time::timeout(Duration::from_secs(/*secs*/ 5), async {
         if stream.peer_cred()?.uid() != owner {
@@ -126,24 +135,46 @@ async fn serve_probe(
                 "guardian peer identity mismatch",
             ));
         }
-        let request: GuardianReadyRequest = read_message(&mut stream).await?;
-        if request.version != GUARDIAN_WIRE_VERSION
-            || request.intent != access.intent
-            || request.credential != access.credential
-            || request.channel != channel
+        let request: GuardianRequest = read_message(&mut stream).await?;
+        let (version, intent, credential, requested_channel) = match &request {
+            GuardianRequest::Ready(request) => (
+                request.version,
+                &request.intent,
+                &request.credential,
+                request.channel,
+            ),
+            GuardianRequest::Management(request) => (
+                request.version,
+                &request.intent,
+                &request.credential,
+                request.channel,
+            ),
+        };
+        if version != GUARDIAN_WIRE_VERSION
+            || intent != &access.intent
+            || credential != &access.credential
+            || requested_channel != channel
         {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "guardian probe rejected",
             ));
         }
-        let ready = GuardianReady {
-            version: GUARDIAN_WIRE_VERSION,
-            intent: access.intent,
-            channel,
-            session: request.session,
+        let frame = match request {
+            GuardianRequest::Ready(request) => encode_guardian_frame(&GuardianReady {
+                version: GUARDIAN_WIRE_VERSION,
+                intent: access.intent,
+                channel,
+                session: request.session,
+            })?,
+            GuardianRequest::Management(request) => {
+                // Decode/queue before locking; check the live binding only when executing. No await
+                // separates the authority check from its SQLite effect or the response fact.
+                let reply = management.lock().await.execute(channel, request.operation);
+                encode_guardian_frame(&reply)?
+            }
         };
-        stream.write_all(&encode_guardian_frame(&ready)?).await?;
+        stream.write_all(&frame).await?;
         Ok(())
     })
     .await

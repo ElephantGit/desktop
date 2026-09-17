@@ -66,4 +66,4 @@ Ready 由 `ora-process-client` 另行查询。
 测试在测试用户 home 下建立私有临时目录；生产代码不会从该环境变量推导路径。
 
 真实 app 的启动、拒绝、启动方强杀及发现证据见 [guardian 启动](process-guardian.zh.md)。
-宿主会话 fencing、Run 接受、生产宿主组合及平台清理仍待实现；没有 ADR 被标为 implemented。
+其中已包含持久宿主会话接管。Controller 授权、Run 接受、生产宿主组合及平台清理仍待实现；没有 ADR 被标为 implemented。

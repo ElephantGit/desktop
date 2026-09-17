@@ -64,7 +64,7 @@ close-on-exec（含显式 pre-exec 屏障），以及 exec 后持锁者在启动
 终止剩余持锁者，然后验证可以重新取得锁。测试子进程不是 guardian 或宿主实现。
 状态目录准入与持久创建意图已提供[宿主所有的实现](process-host-state.zh.md)，并独立测试日志持有者被外部强杀。
 [真实 app 启动测试](process-guardian.zh.md) 另已验证继承资格、日志先于 Ready 以及启动方死亡后的原实例发现。
-持久管理会话 fencing 仍待实现；没有新增远程 Run 启动端点。
+持久宿主会话接管已对排队的会话查询落实 fencing；Controller 授权和 Run／stdin 执行 fencing 仍待实现，没有远程 Run 启动端点。
 
 ## 验证
 
