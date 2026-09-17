@@ -20,11 +20,11 @@ use ora_domain::{
     Workflow, WorkflowId, WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRun,
     WorkflowRunId, WorkflowRunStatus, WorkflowSnapshot, WorkflowSnapshotId, WorkspaceLocation,
 };
-use std::cell::Cell;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tempfile::TempDir;
 
 pub(crate) const AGENT_GRAPH: &str = r#"{"nodes":[
@@ -87,13 +87,14 @@ impl NodeExecutor for RecordingExecutor {
 
 #[derive(Default)]
 pub(crate) struct SeqGen {
-    next: Cell<u64>,
+    // Atomic so a fixture engine can be shared across threads; a Mutex around resume would
+    // serialize the calls itself and hide whether the run lock is doing that work.
+    next: AtomicU64,
 }
 
 impl WorkflowNodeRunIdGenerator for SeqGen {
     fn generate_node_run_id(&self) -> WorkflowNodeRunId {
-        let current = self.next.get();
-        self.next.set(current + 1);
+        let current = self.next.fetch_add(1, Ordering::Relaxed);
         WorkflowNodeRunId::new(format!("node-{current}"))
     }
 }

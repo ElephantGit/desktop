@@ -1,12 +1,14 @@
 use super::WorkflowRuns;
+use crate::git_cleanup::KeyedResourceLocks;
 use crate::workflow::run::test_fixture::{
-    AGENT_GRAPH, RecordingExecutor, bind_and_park, run_test, started_run, started_run_with,
+    AGENT_GRAPH, RecordingExecutor, bind_and_park, bootstrap, run_test, started_run,
+    started_run_with,
 };
 use crate::{Backend, test_backend::backend_paths};
 use agent_client_protocol_schema::v1::{ContentBlock, ContentChunk, SessionUpdate, TextContent};
 use ora_application::{
-    NodeFailure, NodeFailureKind, SessionRepository, WorkflowRunEngineRepository,
-    WorkflowRunRepository,
+    NodeFailure, NodeFailureKind, ResumeWorkflowRunResult, SessionRepository,
+    WorkflowRunEngineRepository, WorkflowRunRepository,
 };
 use ora_contracts::*;
 use ora_db::{
@@ -390,19 +392,17 @@ fn recovery_fails_interrupted_turns_and_resumes_stalled_runs() {
 }
 
 /// B10: exclusive run lock admits exactly one concurrent resume.
+///
+/// Driven through the same lock-then-resume protocol as `WorkflowRuns::resume_from_failure`,
+/// but with `RecordingExecutor` so the rerun node stays `Running`. The Backend composition has
+/// no executor seam; its real dispatcher fails the agent within milliseconds and would make a
+/// second serialized resume legitimate product behaviour.
 #[test]
 fn concurrent_resume_from_failure_reruns_the_failed_node_once() {
-    run_test(async {
-        let temporary = TempDir::new().expect("run fixture");
-        let backend = Backend::open(backend_paths(temporary.path(), temporary.path()))
-            .expect("backend composition");
-        let runs = backend.workflow_runs();
-        let (run_id, nodes, engine) = started_run_with(
-            &temporary,
-            &runs.pool,
-            AGENT_GRAPH,
-            RecordingExecutor::default(),
-        );
+    ora_logging::with_trace_logging(|| {
+        let (temporary, pool) = bootstrap();
+        let (run_id, nodes, engine) =
+            started_run_with(&temporary, &pool, AGENT_GRAPH, RecordingExecutor::default());
         let agent = nodes
             .iter()
             .find(|node| node.node_id == "agent")
@@ -415,44 +415,47 @@ fn concurrent_resume_from_failure_reruns_the_failed_node_once() {
                 NodeFailure::new(NodeFailureKind::Session, "agent failed"),
             )
             .unwrap();
-        drop(engine);
-        let request = ResumeWorkflowRunRequest {
-            run_id: run_id.to_string(),
-            rollback: None,
-            snapshot_id: None,
-        };
-        let start = std::sync::Arc::new(std::sync::Barrier::new(2));
-        let runs_a = runs.clone();
-        let runs_b = runs.clone();
-        let request_a = request.clone();
-        let request_b = request.clone();
-        let start_a = start.clone();
-        let start_b = start;
-        let (first, second) = tokio::join!(
-            tokio::task::spawn_blocking(move || {
-                start_a.wait();
-                runs_a.resume_from_failure(request_a)
-            }),
-            tokio::task::spawn_blocking(move || {
-                start_b.wait();
-                runs_b.resume_from_failure(request_b)
-            }),
-        );
-        let outcomes = [first.expect("join first"), second.expect("join second")];
+        let locks = KeyedResourceLocks::new();
+        let start = std::sync::Barrier::new(2);
+        let (first, second) = std::thread::scope(|scope| {
+            let first = scope.spawn(|| {
+                start.wait();
+                let _gate = locks.acquire_exclusive(run_id.as_ref());
+                engine.resume_from_failure(&run_id)
+            });
+            let second = scope.spawn(|| {
+                start.wait();
+                let _gate = locks.acquire_exclusive(run_id.as_ref());
+                engine.resume_from_failure(&run_id)
+            });
+            (
+                first.join().expect("join first"),
+                second.join().expect("join second"),
+            )
+        });
+        let outcomes = [first, second].map(|result| match result.expect("resume") {
+            ResumeWorkflowRunResult::Resumed => Ok(()),
+            ResumeWorkflowRunResult::NotResumable => {
+                Err(PublicError::WorkflowRunNotResumable(EmptyErrorParams {}))
+            }
+            ResumeWorkflowRunResult::NotFound => {
+                Err(PublicError::WorkflowRunNotFound(EmptyErrorParams {}))
+            }
+        });
         let resumed = outcomes.iter().filter(|result| result.is_ok()).count();
         let refused = outcomes
             .iter()
             .filter(|result| {
                 result.as_ref().is_err_and(|error| {
                     matches!(
-                        error.public_error(),
+                        error,
                         PublicError::WorkflowRunNotResumable(_) | PublicError::WorkflowRunActive(_)
                     )
                 })
             })
             .count();
         assert_eq!((resumed, refused), (1, 1), "{outcomes:?}");
-        let live = SqliteWorkflowRunRepository::new(runs.pool.clone())
+        let live = SqliteWorkflowRunRepository::new(pool)
             .list_node_runs(&run_id)
             .unwrap();
         let agent_live: Vec<_> = live.iter().filter(|node| node.node_id == "agent").collect();
