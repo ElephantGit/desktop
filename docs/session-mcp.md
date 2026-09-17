@@ -70,6 +70,24 @@ so an empty list is delivered correctly but may not remove a server registered b
 Session in the same OpenCode process. This provider conformance gap is tracked upstream in
 [OpenCode issue #32371](https://github.com/anomalyco/opencode/issues/32371).
 
+Setup waits are inactivity windows that widen with delivery, because connecting the delivered
+servers is the slow part of a conforming setup: a `session/new` or `session/load` that carries MCP
+servers waits up to 120 seconds of silence instead of 30, and setup notifications the agent emits
+meanwhile rearm the window (see [ACP Agent Runtime](agent-runtime.md)).
+
+ACP 1.6.0 provides no receipt for MCP connections — `NewSessionResponse` and `LoadSessionResponse`
+carry no MCP status, and `SessionUpdate` has no MCP variant — so setup success means the complete
+list was delivered and accepted, never that the agent finished connecting. The protocol's
+documented session-setup sequence has the agent connect the delivered servers _before_ answering;
+an agent that answers first and connects in the background can serve a prompt that arrives before
+those connections complete, with no host-visible signal. That window is an agent conformance
+responsibility: Gemini CLI fixed the identical race by making prompt handling wait for MCP
+initialization ([gemini-cli #18893](https://github.com/google-gemini/gemini-cli/issues/18893), fixed in
+[#20205](https://github.com/google-gemini/gemini-cli/pull/20205)), and Claude Code tracks the same
+class of first-turn tool race in
+[claude-code #83555](https://github.com/anthropics/claude-code/issues/83555). Host-side connection
+observation without changing delivery semantics remains a separate proposed decision in `specs`.
+
 ## Security and compatibility
 
 Setting values may exist in the Configuration Store, a short-lived in-memory Snapshot, and the
