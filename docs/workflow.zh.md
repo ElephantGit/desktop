@@ -114,6 +114,60 @@ Start 表单控件与变量类型分离：文本、段落、选择框、数字�
 视图按 `(node_id, iteration)` 分组区域状态：总览为成员节点标注轮次徽标，剧场的 act 检视器
 提供按轮切换条，可逐轮查看每轮的会话与输出。
 
+### 失败可见性与从失败处续跑
+
+失败节点保持可见。某个节点失败时，运行立即失败（D2），仍在执行的兄弟节点会跑完且仍可绑定；
+调度器随后不会再向 `Failed` / `Cancelled` 运行派发新节点。失败节点的
+`payload.error_detail` 记录 `kind`、`message`、`source_chain`、`attempt`、`resumable`、
+`injects_previous_failure`、`recorded_at`。`kind` 是机械分类，从不由模型推断。
+
+`resumable` 只表示「同一快照再跑一次是否像环境/瞬时问题」，不决定界面是否允许续跑——失败或
+已取消且空闲的运行始终可以续跑：
+
+| Kind | `resumable` |
+| --- | --- |
+| `workflow_model_not_found`、`missing_agent_config`、`session`、`session_ended_without_stop_reason`、`session_binding_rejected`、`interrupted_by_restart`、`repository`、`baseline_persist` | true |
+| `structured_output`、`agent_refusal`、`prompt_template`、`missing_agent_ref`、`missing_skill_materialization`、`invalid_run_payload`、`unknown_stop_reason`、`multiple_outputs`、`condition_evaluation` | false |
+
+只有智能体自身行为导致的失败会注入后续提示词（`injects_previous_failure`）：
+`structured_output`、`agent_refusal`、`unknown_stop_reason`、`multiple_outputs`。
+
+续跑会软删除失败/取消的节点运行及其全部后继（`is_deleted = 1`），再从幸存状态重新调度。
+尝试次数按 `(run_id, node_id, iteration)` 统计软删除前驱（外层行为 `iteration IS NULL`）。
+`find_last_failed_attempt` 使用同一作用域。
+
+每个节点开始前会在 `refs/ora/checkpoints/<node_run_id>` 记录 git 检查点。回滚前先把工作树
+存成 `pre-rollback-<run>-<ts>`，方便反悔。节点 payload 保存 `checkpoint`、
+`checkpoint_error`、`file_changes`。三种回滚模式：`keep`（保留现状）、`node_files`
+（只还原失败节点记录过的路径）、`checkpoint`（把整棵工作树还原到续跑单元的检查点）。
+`node_files` 在失败节点没有检查点或文件改动时不可用（`nodeFilesUnavailableReason` 为
+`"no_file_changes"`），续跑单元是迭代复合节点时也不可用（`"composite_region"`）。
+`checkpoint` 不可用的原因是 `"no_checkpoint"`、`"siblings_ran_after_checkpoint"` 或
+`"not_resumable"`。
+
+运行级开关 `inject_last_failure`（默认开启）会在同一 `(node_id, iteration)` 的上次失败属于
+上述四种可注入 kind 时，把失败信息写入提示词，并保存在
+`payload.injected_failure_context`。
+
+失败或已取消的运行可以改用更新的已发布快照续跑，前提是两张图兼容：删除节点、改变节点类型、
+改变 Start 契约都不兼容（`node_missing:<id>`、`node_type_changed:<id>`、
+`start_node_changed`、`start_variables_changed`、`variable_type_changed:<selector>`、
+`variable_missing:<selector>`）。已成功且不在续跑单元内的迭代复合节点，若
+`iterationConfig` 或区域成员集合变了，也不兼容（`iteration node <id> changed after it
+completed`）；本身就是续跑单元的复合节点可以任意改，因为它会从第一轮重跑。节点上次实际运行
+的快照记在 `payload.snapshot_id`。
+
+按需 AI 诊断写入 `payload.ai_diagnosis`。它标明为推测，调度、续跑、回滚、快照切换都不会读取。
+
+区域内任何失败/取消行（`iteration IS NOT NULL`），或复合节点自身失败/取消，都以拥有该区域
+的复合节点为续跑单元：软删除复合行、每一轮的全部区域行、该复合节点写入的账本与池绑定
+（`{iter}.item`、`{iter}.index`，以及已暴露的 `{iter}.output` / `{iter}.entries` /
+`{iter}.failed_count`），以及复合节点的全部外层后继，然后重新调度；循环从第 1 轮重来。
+不支持循环内部分续跑。该单元不能使用 `node_files` 回滚（`composite_region`）；
+`checkpoint` 还原到循环开始前为复合节点记录的检查点。开机清扫仍感知区域：被打断的区域行
+记 `interrupted_by_restart`，复合行与运行存活，该轮按失败结算；非区域行仍走整次运行的
+`InterruptedByRestart` 处理。
+
 ### 实体与状态
 
 | 领域类型          | 数据表               |
