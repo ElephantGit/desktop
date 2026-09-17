@@ -6,7 +6,7 @@
 当前增量提供内存态生命周期内核，**不是生产进程启动器**。
 现有 `ora-process`、`ora-reaper`、Git 和插件入口保持不变。
 
-Linux 另已加入独立 [Helper 部署预检](process-helper.zh.md)，检查不启用工作负载启动，也不构成平台 adapter。
+Linux 另已加入独立 [Helper 部署预检与认证检查服务](process-helper.zh.md)，不启用工作负载启动，也不构成平台 adapter。
 
 ## 所有权与行为
 

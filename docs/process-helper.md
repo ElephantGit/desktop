@@ -1,11 +1,11 @@
-# Linux process helper deployment preflight
+# Linux process helper deployment and management
 
 English | [中文](process-helper.zh.md)
 
 The independent privileged helper direction is approved in the
 [Linux follow-up ADR](../specs/decisions/node/process/containment/linux/20260917-independent-privileged-helper.md).
-The current executable implements **deployment preflight only**. It has no launch API, listener,
-service installer or guardian integration, and does not advertise strong containment.
+The executable provides deployment preflight and an **authenticated inspection-only listener**.
+It has no launch API, service installer or guardian integration, and does not advertise strong containment.
 
 ## Build and configuration
 
@@ -38,14 +38,38 @@ Preflight never writes to these files. The helper itself must remain outside the
 Checking succeeds only for these prerequisites: it does not prove all descendants are gone,
 freeze future permissions, verify account provisioning or grant permission to launch.
 
+## Inspection service
+
+An administrator can explicitly run `ora-process-helper --serve /etc/ora/process-helper.json /run/ora-helper/control.sock`.
+The parent directory must already exist and satisfy the same root-controlled, non-writable-by-others,
+no-symlink checks. The endpoint is owned by `manager_uid`, mode `0600`; its parent must allow that
+manager to traverse it. Existing files or sockets are never replaced. SIGINT/SIGTERM closes the
+listener and cancels exchanges, then removes only the socket inode created by this service.
+Crash leftovers require administrator inspection/removal before restart; automatic recovery is pending.
+
+Each connection is authenticated using the kernel's connecting peer UID before any payload is read.
+The manager must not pass authenticated sockets to workloads: this is connection-time identity,
+not per-message reauthentication. The manager can query availability, never choose a command, UID,
+PID or cgroup target. Wire declarations belong to `ora-process-protocol`.
+
+Each connection carries one request and one reply: a four-byte big-endian length followed by UTF-8 JSON.
+Request: `{"version":1,"operation":"inspect"}`. Reply: `{"version":1,"status":"launch_unavailable"}`.
+Other statuses are `unauthorized`, `invalid_request` and `unsupported_version`. Unknown fields are
+rejected. Requests are limited to 16 KiB before allocation; the entire accepted exchange has a
+five-second deadline, including reply writes. Truncated frames and timeouts close the connection.
+At most 16 exchanges run concurrently; remaining connections stay in the bounded OS listen queue.
+These transport limits are not workload shutdown policy. Inspection does not revalidate cgroup state.
+
 ## Remaining boundary
 
-Authenticated management IPC, execution before/after privilege dropping, no-new-privileges,
+Execution before/after privilege dropping, no-new-privileges,
 creation-time membership, descriptor handoff, workspace access under the workload identity,
 guardian survival and helper recovery are still pending. The root helper must never become a
 general-purpose arbitrary-root-command or arbitrary-PID migration interface.
 
 Current tests exercise configuration rejection, non-cgroup filesystem rejection, CLI failure and
-trusted path handling without privilege elevation. Positive root/cgroup tests still require an
+trusted path handling without privilege elevation. Real Unix-socket tests additionally cover peer
+authentication, strict framing, timeout and listener shutdown on an unprivileged Linux runner.
+Positive root/cgroup deployment and endpoint ownership/cleanup tests still require an
 explicitly provisioned environment. The crates CI job now runs on Linux, macOS and Windows;
 that matrix alone is not containment evidence.

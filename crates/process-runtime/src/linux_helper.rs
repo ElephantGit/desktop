@@ -5,6 +5,10 @@ use std::path::{Path, PathBuf};
 use ora_utils::path::{TrustedPathKind, open_trusted_path};
 use serde::Deserialize;
 
+mod management;
+mod service;
+pub use service::serve_linux_helper;
+
 /// Administrator-owned deployment policy, never accepted from a workload launch request.
 pub struct LinuxHelperConfig(RawConfig);
 
@@ -88,6 +92,11 @@ impl LinuxHelperConfig {
 /// Refuses setuid invocation; installation must use a separately managed root process. Success
 /// does not advertise Strong: workload launch and guardian integration are separate obligations.
 pub fn check_linux_helper_deployment(config_path: &Path) -> Result<(), String> {
+    load_deployment(config_path)?.verify_deployment()
+}
+
+/// Keeps diagnostic and serving entry points behind the same root-owned configuration gate.
+fn load_deployment(config_path: &Path) -> Result<LinuxHelperConfig, String> {
     // SAFETY: these identity queries take no pointers and have no side effects.
     if unsafe { libc::getuid() } != 0 || unsafe { libc::geteuid() } != 0 {
         return Err("helper deployment check requires a separately managed root process".into());
@@ -101,5 +110,5 @@ pub fn check_linux_helper_deployment(config_path: &Path) -> Result<(), String> {
     if bytes.len() > 16384 {
         return Err("helper deployment configuration exceeds 16 KiB".into());
     }
-    LinuxHelperConfig::from_json(&bytes)?.verify_deployment()
+    LinuxHelperConfig::from_json(&bytes)
 }

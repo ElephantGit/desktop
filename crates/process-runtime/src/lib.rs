@@ -6,7 +6,7 @@ mod platform;
 mod scope;
 mod stop;
 #[cfg(target_os = "linux")]
-pub use linux_helper::{LinuxHelperConfig, check_linux_helper_deployment};
+pub use linux_helper::{LinuxHelperConfig, check_linux_helper_deployment, serve_linux_helper};
 
 pub use platform::{
     ContainmentObservation, Platform, PlatformCapabilities, PlatformError, PlatformObservation,

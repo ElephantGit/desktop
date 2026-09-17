@@ -6,7 +6,7 @@ The [approved process ADRs](../specs/decisions/node/process/README.md) are being
 The current increment provides an in-memory lifecycle kernel, **not a production process launcher**.
 Existing `ora-process`, `ora-reaper`, Git and plugin entry points are unchanged.
 
-Linux now also has an independent [helper deployment preflight](process-helper.md). Its checks
+Linux also has an independent [helper deployment preflight and authenticated inspection service](process-helper.md). Its checks
 do not enable workload launch or constitute a platform adapter.
 
 ## Ownership and behavior

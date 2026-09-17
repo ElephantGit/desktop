@@ -3515,12 +3515,14 @@ version = "0.0.0"
 dependencies = [
  "ora-process-runtime",
  "pretty_assertions",
+ "tokio",
 ]
 
 [[package]]
 name = "ora-process-protocol"
 version = "0.0.0"
 dependencies = [
+ "serde",
  "uuid",
 ]
 
@@ -3534,7 +3536,9 @@ dependencies = [
  "pretty_assertions",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]

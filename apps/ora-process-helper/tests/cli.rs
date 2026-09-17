@@ -8,6 +8,8 @@ fn helper_cli_rejects_execution_and_missing_deployments() {
         vec!["--exec", "/bin/true"],
         vec!["--check"],
         vec!["--check", "relative-config.json"],
+        vec!["--serve"],
+        vec!["--serve", "relative-config.json", "relative.sock"],
     ] {
         let result = Command::new(env!("CARGO_BIN_EXE_ora-process-helper"))
             .args(arguments)

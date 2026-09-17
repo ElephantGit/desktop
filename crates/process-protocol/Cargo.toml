@@ -8,3 +8,4 @@ workspace = true
 
 [dependencies]
 uuid = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
