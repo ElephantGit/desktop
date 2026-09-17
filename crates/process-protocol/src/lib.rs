@@ -2,6 +2,11 @@
 
 mod containment;
 mod guardian;
+mod guardian_management;
+pub use guardian_management::{
+    GuardianHostSession, GuardianManagementOperation, GuardianManagementRejection,
+    GuardianManagementReply, GuardianManagementRequest, GuardianRequest,
+};
 mod guardian_wire;
 pub use guardian_wire::{
     GUARDIAN_MAX_FRAME, GUARDIAN_WIRE_VERSION, GuardianAccess, GuardianBootstrap, GuardianChannel,

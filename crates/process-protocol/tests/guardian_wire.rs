@@ -10,6 +10,50 @@ use serde::Serialize;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+/// Management is additive: legacy readiness decoders reject it rather than interpreting a grant.
+#[test]
+fn management_messages_cannot_downgrade_to_legacy_readiness() -> TestResult {
+    use ora_process_protocol::{
+        GuardianManagementOperation, GuardianManagementRequest, GuardianReadyRequest,
+        GuardianRequest,
+    };
+    let host = HostBinding {
+        epoch: NonZeroU64::MIN,
+        instance: HostInstanceId::new(),
+    };
+    let request = GuardianManagementRequest {
+        version: GUARDIAN_WIRE_VERSION,
+        intent: ScopeCreationIntent {
+            scope: ScopeId::new(),
+            guardian: GuardianInstanceId::new(),
+            created_by: host,
+        },
+        credential: GuardianCredential::new(),
+        channel: GuardianChannel::Control,
+        operation: GuardianManagementOperation::Bind { host },
+    };
+    let frame = encode_guardian_frame(&request)?;
+    assert!(matches!(
+        decode_guardian_payload::<GuardianRequest>(&frame[4..])?,
+        GuardianRequest::Management(_)
+    ));
+    assert!(decode_guardian_payload::<GuardianReadyRequest>(&frame[4..]).is_err());
+    let legacy = GuardianReadyRequest {
+        version: request.version,
+        intent: request.intent,
+        credential: request.credential,
+        channel: request.channel,
+        session: [3; 16],
+    };
+    let frame = encode_guardian_frame(&legacy)?;
+    assert!(matches!(
+        decode_guardian_payload::<GuardianRequest>(&frame[4..])?,
+        GuardianRequest::Ready(_)
+    ));
+    assert!(decode_guardian_payload::<GuardianManagementRequest>(&frame[4..]).is_err());
+    Ok(())
+}
+
 /// Round trips the public wire value and rejects concatenated, truncated and oversized payloads.
 #[test]
 fn framing_requires_one_complete_bounded_message() -> TestResult {
