@@ -46,6 +46,14 @@ This increment does not complete implementation phase 1 or prove any OS-level co
 
 ## Guardian bootstrap foundation
 
+The workspace now uses bundled `rusqlite` 0.40.2 / SQLite 3.53.2, including the
+[WAL-reset fix](https://sqlite.org/wal.html). `ora-db` tests query `sqlite_version()` and
+`sqlite_source_id()` through a real pooled connection and require the linked mainline engine to be
+at least 3.51.3. They also cover committed versus uncommitted visibility across connections,
+rollback, checkpoint and reopening a file-backed database. This is a dependency prerequisite,
+not guardian crash-durability evidence; the existing application database schema and its
+`synchronous=NORMAL` policy are unchanged. Guardian journals still require their own `FULL` policy.
+
 The approved [rootless guardian bootstrap decision](../specs/decisions/node/process/recovery/20260917-rootless-guardian-bootstrap-and-reconnect.md)
 now has its first building block: `ora_utils::fs::LinuxFileLock`. It accepts an already opened
 regular file, attempts exclusive acquisition without waiting, and returns `WouldBlock` for contention.

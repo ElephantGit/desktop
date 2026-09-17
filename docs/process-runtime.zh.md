@@ -35,6 +35,13 @@ Linux 已支持[有界内存结果捕获](process-linux-rootless.zh.md#有界结
 
 ## Guardian 启动基础
 
+Workspace 已升级为捆绑 `rusqlite` 0.40.2／SQLite 3.53.2，包含
+[WAL-reset 修复](https://sqlite.org/wal.html)。`ora-db` 测试通过真实池连接查询
+`sqlite_version()` 和 `sqlite_source_id()`，要求实际链接的主线引擎不低于 3.51.3；
+另覆盖多连接间已提交与未提交数据的可见性、回滚、checkpoint 和文件数据库重新打开。
+这是依赖前置条件，不是 guardian 崩溃耐久证据；现有业务数据库 schema 和
+`synchronous=NORMAL` 政策不变，guardian journal 仍须独立设置 `FULL`。
+
 已批准的[无特权 Guardian 启动决策](../specs/decisions/node/process/recovery/20260917-rootless-guardian-bootstrap-and-reconnect.md)
 已实现第一项基础能力：`ora_utils::fs::LinuxFileLock`。它接收已打开的普通文件，以非阻塞方式尝试
 独占加锁，竞争失败返回 `WouldBlock`。克隆复制同一个持锁的打开文件描述；`into_file()` 用于
