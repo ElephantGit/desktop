@@ -102,6 +102,7 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
       }
       ariaLabel={`${t("settings.workflow.nodeSuffix", { type: nodeKindLabel })}: ${data.title}`}
       frameClassName={cn(
+        parentId !== undefined && "group/iteration-member",
         isConnectionCandidate && "border-ring/60 shadow-md ring-2 ring-ring/10",
       )}
       details={
@@ -322,10 +323,15 @@ function IterationOutputInsertButton({
   }
   return (
     <div
-      className="absolute z-10"
+      className="absolute z-10 flex w-[34px] justify-end"
       style={{ right: -34, top, transform: "translateY(-50%)" }}
     >
-      <IterationInsertMenu insertion={insertion} label={label} side="right" />
+      <IterationInsertMenu
+        insertion={insertion}
+        label={label}
+        side="right"
+        className="pointer-events-none opacity-0 transition-opacity duration-150 group-hover/iteration-member:pointer-events-auto group-hover/iteration-member:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 data-popup-open:pointer-events-auto data-popup-open:opacity-100"
+      />
     </div>
   );
 }

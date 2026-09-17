@@ -21,6 +21,10 @@ import { WorkflowConnectionStateProvider } from "./connection-state";
 import { WorkflowFlowNodeView } from "./node";
 import { applyIterationFrameResize } from "../workflow-iteration-graph";
 
+vi.mock("./node-parameter-summary", () => ({
+  WorkflowNodeParameterSummary: () => null,
+}));
+
 const nodeTypes = { workflow: WorkflowFlowNodeView };
 
 /** jsdom never runs layout, and d3 drag needs a window-scoped event view. */
@@ -82,6 +86,69 @@ function renderIteration({
                 edges={[]}
                 nodeTypes={nodeTypes}
                 nodesConnectable={!readOnly}
+              />
+            </WorkflowIterationActionsProvider>
+          </WorkflowConnectionStateProvider>
+        </ReactFlowProvider>
+      </div>
+    </AppI18nProvider>,
+  );
+}
+
+/** Renders an iteration with one unconnected member so its append affordance is available. */
+function renderIterationWithMember() {
+  const nodes: Node<WorkflowNodeData, "workflow">[] = [
+    {
+      id: "iter",
+      type: "workflow",
+      position: { x: 40, y: 40 },
+      initialWidth: 560,
+      initialHeight: 340,
+      data: {
+        kind: "iteration",
+        title: "Iteration",
+        description: "",
+        regionMemberCount: 1,
+      },
+    },
+    {
+      id: "agent",
+      type: "workflow",
+      parentId: "iter",
+      extent: "parent",
+      position: { x: 160, y: 100 },
+      initialWidth: 280,
+      initialHeight: 140,
+      data: {
+        kind: "agent",
+        title: "Agent",
+        description: "",
+      },
+    },
+  ];
+  return render(
+    <AppI18nProvider>
+      <div style={{ width: 800, height: 600 }}>
+        <ReactFlowProvider>
+          <WorkflowConnectionStateProvider
+            value={{
+              connectionCandidateEndpoint: null,
+              connectionCandidateNodeId: null,
+            }}
+          >
+            <WorkflowIterationActionsProvider
+              capabilities={createMockWorkflowCapabilities("en-US")}
+              nodes={nodes}
+              edges={[]}
+              readOnly={false}
+              onInsert={vi.fn()}
+              onToggleCollapsed={vi.fn()}
+            >
+              <ReactFlow
+                nodes={nodes}
+                edges={[]}
+                nodeTypes={nodeTypes}
+                nodesConnectable
               />
             </WorkflowIterationActionsProvider>
           </WorkflowConnectionStateProvider>
@@ -221,9 +288,13 @@ describe("iteration composite node", () => {
       name: "Add a node to the iteration region",
     });
     expect(insert).toHaveClass(
+      "pointer-events-none",
       "opacity-0",
+      "group-hover/iteration-start:pointer-events-auto",
       "group-hover/iteration-start:opacity-100",
+      "focus-visible:pointer-events-auto",
       "focus-visible:opacity-100",
+      "data-popup-open:pointer-events-auto",
       "data-popup-open:opacity-100",
     );
     const start = document.querySelector("[data-workflow-iteration-start]");
@@ -232,7 +303,30 @@ describe("iteration composite node", () => {
       "nodrag",
       "nopan",
       "group/iteration-start",
+      "gap-1.5",
     );
+  });
+
+  it("reveals a member append affordance only while hovering that member", async () => {
+    renderIterationWithMember();
+
+    const append = await screen.findByRole("button", {
+      name: "Add a node after Agent",
+    });
+    expect(append).toHaveClass(
+      "pointer-events-none",
+      "opacity-0",
+      "group-hover/iteration-member:pointer-events-auto",
+      "group-hover/iteration-member:opacity-100",
+      "focus-visible:pointer-events-auto",
+      "focus-visible:opacity-100",
+      "data-popup-open:pointer-events-auto",
+      "data-popup-open:opacity-100",
+    );
+    expect(
+      document.querySelector('[data-workflow-node-id="agent"]'),
+    ).toHaveClass("group/iteration-member");
+    expect(append.parentElement).toHaveClass("flex", "w-[34px]", "justify-end");
   });
 
   it("renders a Dify-style bottom-right resize affordance when editable", async () => {

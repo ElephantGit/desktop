@@ -649,7 +649,7 @@ function WorkflowCanvasInner({
           </WorkflowIterationActionsProvider>
         </WorkflowConnectionStateProvider>
 
-        {/* History caption sits in the same row as zoom so it cannot overlap the toolbar. */}
+        {/* Version state remains top-right while viewport controls stay independently bottom-right. */}
         <div className="pointer-events-none absolute inset-x-2 top-2 z-40 flex items-center gap-2">
           {inspectorCollapsed && inspectorAvailable && (
             <div className="pointer-events-auto">
@@ -669,9 +669,9 @@ function WorkflowCanvasInner({
               onPublishDraft={onPublishDraft}
               onDeleteVersion={onDeleteVersion}
             />
-            <WorkflowCanvasControls defaultViewport={DEFAULT_VIEWPORT} />
           </div>
         </div>
+        <WorkflowCanvasControls defaultViewport={DEFAULT_VIEWPORT} />
         <WorkflowCanvasTools
           mode={interactionMode}
           readOnly={readOnly}

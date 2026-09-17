@@ -202,7 +202,7 @@ export function IterationNodeFrame({
           </div>
 
           <div
-            className="nodrag nopan group/iteration-start absolute z-20 flex items-center gap-3"
+            className="nodrag nopan group/iteration-start absolute z-20 flex items-center gap-1.5"
             style={{
               left: ITERATION_START_LEFT,
               top: WORKFLOW_ITERATION_ENTRY_HANDLE_Y - ITERATION_START_SIZE / 2,
@@ -232,7 +232,7 @@ export function IterationNodeFrame({
             <IterationInsertMenu
               insertion={{ type: "entry", iterationId: id }}
               label={t("settings.workflow.iteration.addNode")}
-              className="opacity-0 transition-opacity duration-150 group-hover/iteration-start:opacity-100 focus-visible:opacity-100 data-popup-open:opacity-100"
+              className="pointer-events-none opacity-0 transition-opacity duration-150 group-hover/iteration-start:pointer-events-auto group-hover/iteration-start:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 data-popup-open:pointer-events-auto data-popup-open:opacity-100"
             />
           </div>
           {!iterationActions.readOnly && (
