@@ -129,7 +129,7 @@ fn resume_from_failure_retries_the_structured_node_after_injected_context() -> T
             .nodes
             .iter()
             .find(|node| node.node_id == "first")
-            .expect("first node");
+            .ok_or("missing first node")?;
         let first_id = first_failed.id.clone();
         let first_started = first_failed.started_at;
         assert_eq!(first_failed.status, WorkflowNodeStatus::Succeeded);
@@ -150,17 +150,21 @@ fn resume_from_failure_retries_the_structured_node_after_injected_context() -> T
             .nodes
             .iter()
             .find(|node| node.node_id == "first")
-            .expect("first node after resume");
+            .ok_or("missing first node after resume")?;
         assert_eq!(first_live.id, first_id);
         assert_eq!(first_live.started_at, first_started);
         let second_live = succeeded
             .nodes
             .iter()
             .find(|node| node.node_id == "second")
-            .expect("second node after resume");
+            .ok_or("missing second node after resume")?;
         assert_eq!(second_live.status, WorkflowNodeStatus::Succeeded);
-        let payload: serde_json::Value =
-            serde_json::from_str(second_live.payload.as_deref().expect("second node payload"))?;
+        let payload: serde_json::Value = serde_json::from_str(
+            second_live
+                .payload
+                .as_deref()
+                .ok_or("missing second node payload")?,
+        )?;
         assert!(
             payload
                 .get("injected_failure_context")
