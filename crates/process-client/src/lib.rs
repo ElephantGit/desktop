@@ -1,4 +1,9 @@
-//! Guardian discovery and host binding; no runtime, database or process-launch dependency.
+//! Guardian discovery, host binding and Run transport; no runtime, database or spawner dependency.
+
+#[cfg(target_os = "linux")]
+mod runs;
+#[cfg(target_os = "linux")]
+pub use runs::GuardianRuns;
 
 #[cfg(target_os = "linux")]
 mod guardian;

@@ -3,8 +3,9 @@
 English | [中文](process-runtime.zh.md)
 
 The [approved process ADRs](../specs/decisions/node/process/README.md) are being implemented incrementally.
-The current increment provides an in-memory lifecycle kernel and a
-[rootless Linux best-effort adapter](process-linux-rootless.md), **not a production process launcher**.
+The current increment connects the in-memory lifecycle kernel and
+[rootless Linux best-effort adapter](process-linux-rootless.md) through a
+[trusted local guardian Run loop](process-guardian.md). It is **not yet integrated into production business launchers**.
 Existing `ora-process`, `ora-reaper`, Git and plugin entry points are unchanged.
 
 Linux also has an independent [helper deployment preflight and authenticated inspection service](process-helper.md). Its checks
@@ -15,9 +16,9 @@ exists for trusted helper code; it is not exposed over IPC and awaits privileged
 
 - `ora-process-protocol` owns local domain types: run identity, exact launch specification, containment
   selection, stop intent, direct exit facts and cleanup evidence, plus the helper's inspection-only
-  wire types and bounded MessagePack guardian bootstrap/readiness messages.
+  wire types and bounded MessagePack guardian discovery, management and Run messages.
 - `ora-process-client` depends on protocol types, not runtime or SQLite. The thin Linux
-  `ora-process-guardian` app delegates bootstrap and read-only readiness to runtime.
+  `ora-process-guardian` app delegates bootstrap, host takeover and durable Run operations to runtime.
 - `ora-process-runtime::ScopeRuntime<P>` owns one scope's admission, run records and stop deadlines.
   `Platform` supplies verified capabilities, creation-time containment, observations and per-run signals.
   Linux has a rootless adapter; controlled tests also inject platform facts through this boundary.
@@ -44,7 +45,8 @@ Linux now supports [bounded volatile result capture](process-linux-rootless.md#b
 with independent readers and per-run limits; pipe EOF is separate from process cleanup.
 Host creation intent now has an opt-in [durable journal](process-host-state.md) under an explicitly supplied
 dedicated directory and [independent guardian bootstrap/Ready discovery](process-guardian.md).
-Durable Run acceptance, authorization, leases, a production host app, remaining
+Guardian-side durable Run acceptance and polling/output/force-stop now work for trusted local callers.
+Authorization and leases are deferred. Host-side Run intent/projection, a production host app, remaining
 platform adapters, full I/O, runtime recovery, resource handoff and production integration remain unimplemented.
 This increment does not complete implementation phase 1 or prove any OS-level containment guarantee.
 
@@ -81,9 +83,8 @@ possible again. The child test fixture is not a guardian or host implementation.
 admission and persistent creation intent now have a [host-owned implementation](process-host-state.md),
 with independent external-kill tests of the journal owner. [Real-app bootstrap tests](process-guardian.md)
 now additionally verify inherited qualification, journal-before-Ready and original-instance discovery
-after launcher death. Durable host-session takeover now fences queued session inspections; Controller
-authorization and Run/stdin execution fencing remain unfinished. No remote Run launch
-endpoint is exposed.
+after launcher death. Durable host takeover fences both session inspections and local Run execution.
+Controller authorization and stdin remain deferred; no network Run endpoint is exposed.
 
 ## Verification
 

@@ -3,7 +3,8 @@
 [English](process-runtime.md) | 中文
 
 [已批准的进程 ADR](../specs/decisions/node/process/README.md) 正在分批实施。
-当前增量提供内存态生命周期内核和[无需 root 的 Linux 尽力清理 adapter](process-linux-rootless.zh.md)，**不是生产进程启动器**。
+当前已将内存态生命周期内核和[无需 root 的 Linux 尽力清理 adapter](process-linux-rootless.zh.md)
+接通为[可信本机 guardian Run 闭环](process-guardian.zh.md)，**尚未接入生产业务启动入口**。
 现有 `ora-process`、`ora-reaper`、Git 和插件入口保持不变。
 
 Linux 另已加入独立 [Helper 部署预检与认证检查服务](process-helper.zh.md)，不启用工作负载启动，也不构成平台 adapter。
@@ -11,8 +12,8 @@ Linux 另已加入独立 [Helper 部署预检与认证检查服务](process-help
 
 ## 所有权与行为
 
-- `ora-process-protocol` 拥有本地域类型：运行身份、精确启动参数、纳管选择、停止意图、直接退出事实和清理证据，以及 helper 只读检查类型和有界 MessagePack guardian bootstrap／Ready 消息。
-- `ora-process-client` 只依赖协议，不依赖 runtime 或 SQLite；薄 Linux `ora-process-guardian` app 将启动与只读 Ready 服务交给 runtime。
+- `ora-process-protocol` 拥有本地域类型：运行身份、精确启动参数、纳管选择、停止意图、直接退出事实和清理证据，以及 helper 只读检查类型和有界 MessagePack guardian 发现、管理和 Run 消息。
+- `ora-process-client` 只依赖协议，不依赖 runtime 或 SQLite；薄 Linux `ora-process-guardian` app 将启动、host 接管和持久 Run 操作交给 runtime。
 - `ora-process-runtime::ScopeRuntime<P>` 拥有单个 Scope 的准入、运行记录与停止期限。
   `Platform` 提供已验证能力、创建时纳管、观测和单 Run 信号。Linux 已有无特权 adapter；受控测试也通过这一边界注入平台事实。
 - 创建 Scope 时冻结实际保证。必须强但能力不足时拒绝；明确要求尽力时不能静默提升为强模式。
@@ -32,8 +33,9 @@ Linux 另已加入独立 [Helper 部署预检与认证检查服务](process-help
 Linux 已支持[有界内存结果捕获](process-linux-rootless.zh.md#有界结果捕获)，读取器独立推进，限额属于各 Run；
 管道 EOF 与进程清理分别表达。
 宿主创建意图已提供可选的[持久日志](process-host-state.zh.md)，仅使用显式传入的专用目录。
-另已支持[独立 guardian 启动与 Ready 发现](process-guardian.zh.md)。Run 持久接受、授权、租约、生产宿主 app、
-其余平台 adapter、完整 I/O、运行恢复、资源交接和生产接入均待实现。
+另已支持[独立 guardian 启动与 Ready 发现](process-guardian.zh.md)，以及可信本机调用方的 guardian 侧 Run
+持久接受、查询、输出和强停。授权与租约已推迟；host 侧 Run 意图／投影、生产宿主 app、其余平台 adapter、
+完整 I/O、运行恢复、资源交接和生产接入均待实现。
 本批不代表阶段 1 完成，也不证明任何 OS 级纳管保证。
 
 ## Guardian 启动基础
@@ -64,7 +66,7 @@ close-on-exec（含显式 pre-exec 屏障），以及 exec 后持锁者在启动
 终止剩余持锁者，然后验证可以重新取得锁。测试子进程不是 guardian 或宿主实现。
 状态目录准入与持久创建意图已提供[宿主所有的实现](process-host-state.zh.md)，并独立测试日志持有者被外部强杀。
 [真实 app 启动测试](process-guardian.zh.md) 另已验证继承资格、日志先于 Ready 以及启动方死亡后的原实例发现。
-持久宿主会话接管已对排队的会话查询落实 fencing；Controller 授权和 Run／stdin 执行 fencing 仍待实现，没有远程 Run 启动端点。
+持久宿主接管已同时拦截旧会话查询和本地 Run 执行。Controller 授权与 stdin 暂未接入，没有网络 Run 启动端点。
 
 ## 验证
 

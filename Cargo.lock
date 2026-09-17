@@ -3568,6 +3568,7 @@ dependencies = [
 name = "ora-process-protocol"
 version = "0.0.0"
 dependencies = [
+ "ora-utils",
  "pretty_assertions",
  "rmp-serde",
  "serde",

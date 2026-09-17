@@ -59,7 +59,7 @@ pub(super) fn initialize(
     let mut connection = state_journal::open_writable(&path)?;
     let transaction = connection.transaction()?;
     transaction.execute_batch(
-        "PRAGMA application_id=1330790727; PRAGMA user_version=3;
+        "PRAGMA application_id=1330790727; PRAGMA user_version=4;
         CREATE TABLE guardian_bootstrap (
             singleton INTEGER PRIMARY KEY CHECK (singleton=1), scope TEXT NOT NULL,
             guardian TEXT NOT NULL, host_epoch INTEGER NOT NULL CHECK (host_epoch>0),
@@ -79,6 +79,7 @@ pub(super) fn initialize(
         ],
     )?;
     super::management::initialize(&transaction, access.intent.created_by)?;
+    super::runs::initialize(&transaction)?;
     transaction.commit()?;
     fs::DirBuilder::new()
         .mode(/*mode*/ 0o700)

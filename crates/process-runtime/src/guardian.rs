@@ -1,7 +1,8 @@
-//! Guardian bootstrap and durable host-session binding, without Run or workload I/O capabilities.
+//! Independent trusted-local guardian with durable Run acceptance and rootless cleanup.
 
 mod journal;
 mod management;
+mod runs;
 
 use std::fs::File;
 use std::future::Future;
@@ -25,8 +26,8 @@ use crate::ProcessStateError;
 
 /// Owns an inherited locked description before any journal creation or endpoint publication.
 ///
-/// Bootstrap EOF after delivery is not a liveness lease. All sockets authenticate discovery and
-/// session inspection; Control can bind a host, but no workload mutation or subscription exists.
+/// Bootstrap EOF after delivery is not a liveness lease. Accepted KeepRunning workloads outlive
+/// host connections; Control owns mutation and polling, while Io exposes bounded volatile output.
 pub async fn serve_guardian_bootstrap(
     inherited_lock: File,
     mut bootstrap: UnixStream,
@@ -57,7 +58,7 @@ pub async fn serve_guardian_bootstrap(
         journal::initialize(&access, &lock, owner)?,
         access.intent.clone(),
         lock,
-    )));
+    )?));
     let control = UnixListener::bind(
         access
             .scope_dir
@@ -79,11 +80,14 @@ pub async fn serve_guardian_bootstrap(
     let mut control_workers = JoinSet::new();
     let mut event_workers = JoinSet::new();
     let mut io_workers = JoinSet::new();
+    let mut reconcile = tokio::time::interval(Duration::from_millis(/*millis*/ 50));
+    reconcile.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     tokio::pin!(shutdown);
     let result = loop {
+        // Fair selection lets stop/takeover traffic proceed even when reconciliation overruns a tick.
         tokio::select! {
-            biased;
             () = &mut shutdown => break Ok(()),
+            _ = reconcile.tick() => management.lock().await.reconcile(),
             result = control_workers.join_next(), if !control_workers.is_empty() => {
                 if let Some(Err(error)) = result { break Err(io::Error::other(error).into()); }
             }
@@ -141,6 +145,7 @@ async fn serve_probe(
             GuardianRequest::Management(request) => {
                 (request.version, &request.intent, request.channel)
             }
+            GuardianRequest::Run(request) => (request.version, &request.intent, request.channel),
         };
         if version != GUARDIAN_WIRE_VERSION
             || intent != &access.intent
@@ -152,6 +157,10 @@ async fn serve_probe(
             ));
         }
         let frame = match request {
+            GuardianRequest::Run(request) => {
+                let reply = management.lock().await.execute_run(channel, request);
+                encode_guardian_frame(&reply)?
+            }
             GuardianRequest::Ready(request) => encode_guardian_frame(&GuardianReady {
                 version: GUARDIAN_WIRE_VERSION,
                 intent: access.intent,

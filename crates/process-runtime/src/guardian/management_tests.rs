@@ -41,9 +41,10 @@ fn fixture(connection: Connection) -> Result<Management, Box<dyn std::error::Err
         connection,
         intent,
         ora_utils::fs::LinuxFileLock::try_acquire(tempfile::tempfile()?)?,
-    );
+    )?;
     let transaction = owner.connection.transaction()?;
     initialize(&transaction, owner.intent.created_by)?;
+    super::super::runs::initialize(&transaction)?;
     transaction.commit()?;
     Ok(owner)
 }
@@ -142,7 +143,7 @@ fn persistence_failure_and_reopen_never_reset_authority() -> TestResult {
         crate::state_journal::open_writable(&path)?,
         intent,
         ora_utils::fs::LinuxFileLock::try_acquire(tempfile::tempfile()?)?,
-    );
+    )?;
     assert_eq!(
         session(owner.execute(
             GuardianChannel::Control,

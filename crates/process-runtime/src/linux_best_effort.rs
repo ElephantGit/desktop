@@ -1,11 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
-use std::os::unix::process::{CommandExt, ExitStatusExt};
+use std::os::unix::process::ExitStatusExt;
 use std::process::{Child, Command, ExitStatus, Stdio};
 
 use ora_process_protocol::{ContainmentGuarantee, DirectProcessState, ExitOutcome, RunId, RunSpec};
 use ora_process_protocol::{OutputPolicy, OutputRead, OutputStream};
-use ora_utils::process::{LinuxPidFd, ProcessSignal, linux_process_snapshot};
+use ora_utils::process::{
+    LinuxPidFd, ProcessSignal, configure_linux_detached_child, linux_process_snapshot,
+};
 
 use crate::OutputPlatform;
 use crate::linux_output::CapturedOutput;
@@ -134,16 +136,8 @@ impl Platform for LinuxBestEffort {
         if matches!(spec.output, OutputPolicy::Capture { .. }) {
             command.stdout(Stdio::piped()).stderr(Stdio::piped());
         }
-        // SAFETY: setsid and construction of a raw OS error are allocation-free after fork.
-        unsafe {
-            command.pre_exec(|| {
-                if libc::setsid() < 0 {
-                    Err(io::Error::last_os_error())
-                } else {
-                    Ok(())
-                }
-            });
-        }
+        // Workloads must not inherit guardian locks, SQLite descriptors or private endpoints.
+        configure_linux_detached_child(&mut command);
         let mut child = command
             .spawn()
             .map_err(|error| SpawnError::NotStarted(error.to_string()))?;

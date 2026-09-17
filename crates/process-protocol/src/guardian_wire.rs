@@ -43,7 +43,7 @@ impl GuardianChannel {
     }
 }
 
-/// The first capability is a read-only Ready probe; there is no mutation or Run message variant.
+/// Readiness is a read-only probe, separate from management and Run messages.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GuardianReadyRequest {

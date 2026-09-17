@@ -1,5 +1,7 @@
+use serde::{Deserialize, Serialize};
+
 /// Explicit per-run policy; capture limits are byte counts, independently applied to each pipe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OutputPolicy {
     Discard,
     Capture {
@@ -9,14 +11,14 @@ pub enum OutputPolicy {
 }
 
 /// Streams have independent ordering, limits and EOF facts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OutputStream {
     Stdout,
     Stderr,
 }
 
 /// Pipe completion says nothing about process exit, cleanup, or durable storage.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OutputState {
     Open,
     Eof,
@@ -24,7 +26,7 @@ pub enum OutputState {
 }
 
 /// An in-memory retained prefix. Truncation remains visible even after EOF.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutputRead {
     pub bytes: Vec<u8>,
     pub retained: usize,

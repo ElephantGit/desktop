@@ -2,6 +2,8 @@
 
 #[path = "bootstrap/management.rs"]
 mod management;
+#[path = "bootstrap/runs.rs"]
+mod runs;
 
 use ora_process_client::GuardianProbe;
 use ora_process_protocol::{
@@ -163,8 +165,9 @@ impl Drop for Fixture {
         if let Ok(snapshot) = linux_process_snapshot() {
             for stat in snapshot.flatten() {
                 let executable = Path::new("/proc").join(stat.pid.to_string()).join("exe");
-                if fs::read_link(executable).ok().as_ref() == Some(&self.executable)
-                    && let Ok(handle) = LinuxPidFd::from_observation(&stat)
+                if fs::read_link(executable).ok().is_some_and(|path| {
+                    path == self.executable || path == self.directory.path().join("sleep")
+                }) && let Ok(handle) = LinuxPidFd::from_observation(&stat)
                 {
                     let _ = handle.signal(ProcessSignal::Kill);
                 }
@@ -341,6 +344,8 @@ async fn launcher_kill_preserves_original_guardian_and_lost_ready_is_queryable()
     let root = fixture.directory.path().join("s");
     let marker = fixture.directory.path().join("ready");
     let scope = ScopeId::new();
+    let run = ora_process_protocol::RunId::new();
+    let workload = runs::sleeper(&fixture)?;
     let mut launcher = ChildGuard(
         Command::new(std::env::current_exe()?)
             .args(["--exact", "launcher_fixture", "--nocapture"])
@@ -348,6 +353,8 @@ async fn launcher_kill_preserves_original_guardian_and_lost_ready_is_queryable()
             .env("ORA_GUARDIAN_FIXTURE_PROGRAM", &fixture.executable)
             .env("ORA_GUARDIAN_FIXTURE_MARKER", &marker)
             .env("ORA_GUARDIAN_FIXTURE_SCOPE", scope.to_string())
+            .env("ORA_GUARDIAN_FIXTURE_WORKLOAD", &workload.program)
+            .env("ORA_GUARDIAN_FIXTURE_RUN", run.to_string())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
@@ -380,6 +387,27 @@ async fn launcher_kill_preserves_original_guardian_and_lost_ready_is_queryable()
         .ok_or("lost guardian responsibility")?;
     ready(&access).await?;
     assert_eq!(guardian_pid(&access).await?, pid);
+    // The accepted workload survives external host SIGKILL, not just a dropped client socket.
+    let client = ora_process_client::GuardianRuns::new(
+        access.clone(),
+        unsafe { libc::geteuid() },
+        runs::bind(&access, recovered.binding()).await?,
+    );
+    assert_eq!(
+        client
+            .execute(ora_process_protocol::GuardianRunOperation::Query { run })
+            .await?,
+        ora_process_protocol::GuardianRunResult::Run(ora_process_protocol::RunSnapshot {
+            id: run,
+            launch: ora_process_protocol::LaunchFact::Started,
+            direct: ora_process_protocol::DirectProcessState::Running,
+            cleanup: ora_process_protocol::CleanupState::Pending,
+        })
+    );
+    client
+        .execute(ora_process_protocol::GuardianRunOperation::Stop { run })
+        .await?;
+    runs::completed(&client, run).await?;
     // Actual external launcher death advances only host authority, never the guardian identity.
     let manager =
         ora_process_client::GuardianManagement::new(access.clone(), unsafe { libc::geteuid() });
@@ -420,6 +448,31 @@ async fn launcher_fixture() -> TestResult {
     host.record_scope_intent(scope)?;
     let access = host.start_guardian(scope, &executable).await?;
     ready(&access).await?;
+    if let Some(workload) = std::env::var_os("ORA_GUARDIAN_FIXTURE_WORKLOAD") {
+        let run = std::env::var("ORA_GUARDIAN_FIXTURE_RUN")?.parse()?;
+        let mut spec = ora_process_protocol::RunSpec::new(
+            workload,
+            Path::new(&root),
+            ora_process_protocol::DescendantPolicy::WaitForAll,
+        );
+        spec.args.push("60".into());
+        // SAFETY: geteuid only queries the fixture process's identity.
+        let client = ora_process_client::GuardianRuns::new(
+            access.clone(),
+            unsafe { libc::geteuid() },
+            runs::bind(&access, host.binding()).await?,
+        );
+        assert!(matches!(
+            client
+                .execute(ora_process_protocol::GuardianRunOperation::Start {
+                    run,
+                    spec,
+                    host_disconnect: ora_process_protocol::GuardianHostDisconnect::KeepRunning
+                })
+                .await?,
+            ora_process_protocol::GuardianRunResult::Run(_)
+        ));
+    }
     fs::write(
         marker.with_extension("pending"),
         guardian_pid(&access).await?.to_string(),

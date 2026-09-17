@@ -8,6 +8,7 @@ use crate::{GuardianChannel, GuardianReadyRequest, HostBinding, ScopeCreationInt
 pub enum GuardianRequest {
     Ready(GuardianReadyRequest),
     Management(GuardianManagementRequest),
+    Run(crate::GuardianRunRequest),
 }
 
 /// A public host binding used to reject stale callers, not a secret or an authentication proof.

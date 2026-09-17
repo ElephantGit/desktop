@@ -19,12 +19,19 @@ mod state;
 
 pub use containment::{ContainmentGuarantee, ContainmentRequest};
 pub use guardian::{
-    GuardianInstanceId, HostBinding, HostInstanceId, InvalidProcessIdentity, ScopeCreationIntent,
-    ScopeId,
+    GuardianInstanceId, HostBinding, HostInstanceId, InvalidProcessIdentity, RunId,
+    ScopeCreationIntent, ScopeId,
 };
 pub use helper::{HelperOperation, HelperRequest, HelperResponse, HelperStatus};
 pub use output::{OutputPolicy, OutputRead, OutputState, OutputStream};
-pub use run::{DescendantPolicy, LaunchFact, RunId, RunSnapshot, RunSpec};
+pub use run::{DescendantPolicy, LaunchFact, RunSnapshot, RunSpec};
 pub use state::{
     CleanupEvidence, CleanupState, DirectProcessState, ExitOutcome, ScopeState, StopRequest,
+};
+
+mod guardian_run;
+pub use guardian_run::{
+    GUARDIAN_CAPTURE_LIMIT, GUARDIAN_OUTPUT_CHUNK_LIMIT, GuardianHostDisconnect,
+    GuardianRunOperation, GuardianRunRejection, GuardianRunReply, GuardianRunRequest,
+    GuardianRunResult,
 };

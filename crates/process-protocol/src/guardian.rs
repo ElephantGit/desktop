@@ -75,6 +75,11 @@ macro_rules! identity {
 }
 
 identity!(
+    RunId,
+    "A never-reused launch attempt, independent of OS process identities."
+);
+
+identity!(
     ScopeId,
     "A never-reused Scope identity, independent of a guardian process."
 );

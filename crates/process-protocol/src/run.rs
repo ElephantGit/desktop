@@ -3,47 +3,29 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use uuid::Uuid;
+use serde::{Deserialize, Serialize};
 
-use crate::{CleanupState, DirectProcessState, OutputPolicy};
-
-/// A single launch attempt, independent of OS process and Node instance identities.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RunId(Uuid);
-
-impl RunId {
-    pub fn new() -> Self {
-        Self(Uuid::new_v4())
-    }
-}
-
-impl Default for RunId {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl std::fmt::Display for RunId {
-    /// Formats the stable identity without exposing a process identifier.
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(formatter)
-    }
-}
+use crate::{CleanupState, DirectProcessState, OutputPolicy, RunId};
 
 /// The policy chosen before the direct process can leave descendants behind.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DescendantPolicy {
     Cleanup { grace: Duration },
     WaitForAll,
 }
 
-/// An exact local launch specification; command normalization and wire encoding remain separate.
+/// An exact local launch specification shared by the runtime and guardian wire.
 ///
-/// OS strings preserve non-UTF-8 inputs. Nothing in this type persists environment values or secrets.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// OS strings preserve non-UTF-8 inputs; callers must treat persisted specifications as private data.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RunSpec {
     pub program: OsString,
     pub args: Vec<OsString>,
+    #[serde(
+        serialize_with = "ora_utils::path::serialize_native_path",
+        deserialize_with = "ora_utils::path::deserialize_native_path"
+    )]
     pub cwd: PathBuf,
     pub env: BTreeMap<OsString, OsString>,
     pub descendants: DescendantPolicy,
@@ -69,7 +51,7 @@ impl RunSpec {
 }
 
 /// What is known about whether this attempt ever executed.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LaunchFact {
     NotStarted(String),
     Started,
@@ -77,7 +59,7 @@ pub enum LaunchFact {
 }
 
 /// Facts exposed to the guardian's caller, not an acknowledgement of durable acceptance.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunSnapshot {
     pub id: RunId,
     pub launch: LaunchFact,

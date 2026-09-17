@@ -32,6 +32,8 @@ pub(super) fn initialize(
 
 /// Owns the persisted binding and execution gate; callers hold one mutex across check and effect.
 pub(super) struct Management {
+    // Drop tracked workloads before the database and stable scope lock.
+    runs: super::runs::Runs,
     connection: Connection,
     // No cached binding: even a commit whose acknowledgement failed must be read back from SQLite.
     intent: ScopeCreationIntent,
@@ -44,11 +46,47 @@ impl Management {
         connection: Connection,
         intent: ScopeCreationIntent,
         lock: ora_utils::fs::LinuxFileLock,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, crate::ProcessStateError> {
+        Ok(Self {
+            runs: super::runs::Runs::new()?,
             connection,
             intent,
             _lock: lock,
+        })
+    }
+
+    /// Advances accepted responsibilities independently of client connection lifetime.
+    pub(super) fn reconcile(&mut self) {
+        // The next request reports storage errors; the runtime still advances existing stop plans.
+        let _ = self.runs.reconcile(&mut self.connection);
+    }
+
+    /// Uses the management owner for stale-host checks immediately before executing a Run operation.
+    pub(super) fn execute_run(
+        &mut self,
+        channel: GuardianChannel,
+        request: ora_process_protocol::GuardianRunRequest,
+    ) -> ora_process_protocol::GuardianRunReply {
+        use ora_process_protocol::{GuardianRunRejection, GuardianRunResult};
+        let result = if channel != request.operation.channel() {
+            GuardianRunResult::Rejected(GuardianRunRejection::Management(Rejection::WrongChannel))
+        } else {
+            match self.apply(
+                channel,
+                GuardianManagementOperation::Inspect {
+                    session: request.session.clone(),
+                },
+            ) {
+                Ok(_) => self.runs.execute(&mut self.connection, request.operation),
+                Err(reason) => {
+                    GuardianRunResult::Rejected(GuardianRunRejection::Management(reason))
+                }
+            }
+        };
+        ora_process_protocol::GuardianRunReply {
+            intent: self.intent.clone(),
+            session: request.session,
+            result,
         }
     }
 
