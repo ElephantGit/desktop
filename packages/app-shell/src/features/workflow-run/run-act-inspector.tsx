@@ -33,7 +33,8 @@ import type {
   WorkflowVariableValueType,
 } from "@ora/workflow-runtime";
 
-const KNOWN_NODE_FAILURE_KINDS = new Set([
+/** Wire values for `NodeFailureKind`; kept in one list so i18n tests can iterate them. */
+export const NODE_FAILURE_KINDS = [
   "missing_agent_ref",
   "workflow_model_not_found",
   "missing_agent_config",
@@ -51,7 +52,9 @@ const KNOWN_NODE_FAILURE_KINDS = new Set([
   "interrupted_by_restart",
   "multiple_outputs",
   "condition_evaluation",
-]);
+] as const;
+
+const KNOWN_NODE_FAILURE_KINDS = new Set<string>(NODE_FAILURE_KINDS);
 
 interface RunActInspectorProps {
   nodeId: string | null;
@@ -617,7 +620,9 @@ function RunActInspectorPanel({
                 </pre>
               </details>
             )}
-          {state.status === "failed" && data.kind === "agent" && runId != null ? (
+          {state.status === "failed" &&
+          data.kind === "agent" &&
+          runId != null ? (
             <div className="space-y-2">
               {state.aiDiagnosis != null ? (
                 <div className="rounded-lg border border-border px-3 py-2">

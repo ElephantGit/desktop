@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import type { PreviewWorkflowRunResumeResponse, ResumeRollbackMode } from "@ora/contracts";
+import type {
+  PreviewWorkflowRunResumeResponse,
+  ResumeRollbackMode,
+} from "@ora/contracts";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -29,16 +32,25 @@ interface ResumeRunDialogProps {
   onResumed: () => void;
 }
 
-const REASON_KEYS = {
+/** Backend reason strings that disable `node_files` / `checkpoint`. */
+export const RESUME_ROLLBACK_UNAVAILABLE_REASONS = [
+  "no_file_changes",
+  "composite_region",
+  "no_checkpoint",
+  "siblings_ran_after_checkpoint",
+  "not_resumable",
+] as const;
+
+export type ResumeRollbackUnavailableReason =
+  (typeof RESUME_ROLLBACK_UNAVAILABLE_REASONS)[number];
+
+const ROLLBACK_UNAVAILABLE_KEYS = {
+  no_file_changes: "workflowRun.resume.rollbackUnavailable.no_file_changes",
+  composite_region: "workflowRun.resume.rollbackUnavailable.composite_region",
   no_checkpoint: "workflowRun.resume.reason.no_checkpoint",
   siblings_ran_after_checkpoint:
     "workflowRun.resume.reason.siblings_ran_after_checkpoint",
   not_resumable: "workflowRun.resume.reason.not_resumable",
-} as const;
-
-const NODE_FILES_REASON_KEYS = {
-  no_file_changes: "workflowRun.resume.rollbackUnavailable.no_file_changes",
-  composite_region: "workflowRun.resume.rollbackUnavailable.composite_region",
 } as const;
 
 const SNAPSHOT_REASON_KEYS = {
@@ -47,7 +59,8 @@ const SNAPSHOT_REASON_KEYS = {
   start_node_changed: "workflowRun.resume.snapshotReason.start_node_changed",
   start_variables_changed:
     "workflowRun.resume.snapshotReason.start_variables_changed",
-  variable_type_changed: "workflowRun.resume.snapshotReason.variable_type_changed",
+  variable_type_changed:
+    "workflowRun.resume.snapshotReason.variable_type_changed",
   variable_missing: "workflowRun.resume.snapshotReason.variable_missing",
 } as const;
 
@@ -87,11 +100,11 @@ export function ResumeRunDialog({
   }, [open, runId, previewMutate, previewReset]);
 
   const previewData = preview.data;
-  const checkpointReason = checkpointReasonText(
+  const checkpointReason = rollbackUnavailableReasonText(
     previewData?.checkpointUnavailableReason,
     t,
   );
-  const nodeFilesReason = nodeFilesReasonText(
+  const nodeFilesReason = rollbackUnavailableReasonText(
     previewData?.nodeFilesUnavailableReason,
     t,
   );
@@ -238,15 +251,15 @@ export function ResumeRunDialog({
           </label>
           <label
             className={`flex items-start gap-2 text-sm ${
-              previewData && !previewData.nodeFilesAvailable
-                ? "opacity-50"
-                : ""
+              previewData && !previewData.nodeFilesAvailable ? "opacity-50" : ""
             }`}
           >
             <RadioGroupItem
               value="node_files"
               className="mt-0.5"
-              disabled={previewData !== undefined && !previewData.nodeFilesAvailable}
+              disabled={
+                previewData !== undefined && !previewData.nodeFilesAvailable
+              }
             />
             <span className="space-y-1">
               <span className="block">{t("workflowRun.resume.nodeFiles")}</span>
@@ -272,7 +285,9 @@ export function ResumeRunDialog({
               }
             />
             <span className="space-y-1">
-              <span className="block">{t("workflowRun.resume.checkpoint")}</span>
+              <span className="block">
+                {t("workflowRun.resume.checkpoint")}
+              </span>
               {checkpointReason ? (
                 <span className="block text-xs text-muted-foreground">
                   {checkpointReason}
@@ -319,16 +334,18 @@ export function ResumeRunDialog({
   );
 }
 
-/** Maps a node-files unavailability reason onto the matching translated explanation. */
-function nodeFilesReasonText(
+/** Maps a rollback unavailability reason onto the matching translated explanation. */
+export function rollbackUnavailableReasonText(
   reason: string | null | undefined,
   t: TFunction,
 ): string | null {
-  if (reason === "no_file_changes") {
-    return t(NODE_FILES_REASON_KEYS.no_file_changes);
+  if (reason === null || reason === undefined) {
+    return null;
   }
-  if (reason === "composite_region") {
-    return t(NODE_FILES_REASON_KEYS.composite_region);
+  if (reason in ROLLBACK_UNAVAILABLE_KEYS) {
+    return t(
+      ROLLBACK_UNAVAILABLE_KEYS[reason as ResumeRollbackUnavailableReason],
+    );
   }
   return null;
 }
@@ -348,26 +365,6 @@ function uniqueResumeUnits(
     names.push(owner);
   }
   return names;
-}
-
-/** Maps a backend availability reason onto the matching translated explanation. */
-function checkpointReasonText(
-  reason: string | null | undefined,
-  t: TFunction,
-): string | null {
-  if (reason === null || reason === undefined) {
-    return null;
-  }
-  if (reason === "no_checkpoint") {
-    return t(REASON_KEYS.no_checkpoint);
-  }
-  if (reason === "siblings_ran_after_checkpoint") {
-    return t(REASON_KEYS.siblings_ran_after_checkpoint);
-  }
-  if (reason === "not_resumable") {
-    return t(REASON_KEYS.not_resumable);
-  }
-  return null;
 }
 
 /** Maps a machine-readable snapshot incompatibility onto the matching translated explanation. */
