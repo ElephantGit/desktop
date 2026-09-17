@@ -7,6 +7,7 @@ use crate::{
 
 pub const GUARDIAN_OUTPUT_CHUNK_LIMIT: usize = 4096;
 pub const GUARDIAN_CAPTURE_LIMIT: usize = 1_048_576;
+pub const GUARDIAN_RUN_LIMIT: usize = 64;
 
 /// The initial rootless path requires an explicit choice, not an implicit connection lease.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

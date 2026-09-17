@@ -10,8 +10,6 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::{LinuxBestEffort, ProcessStateError, ScopeRuntime};
 
-const MAX_RUNS: i64 = 64;
-
 /// Commits an empty run ledger as part of original guardian initialization, never recovery.
 pub(super) fn initialize(transaction: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
     transaction.execute_batch(
@@ -182,7 +180,7 @@ impl Runs {
                 row.get(/*idx*/ 0)
             })
             .map_err(|_| Rejection::StorageUnavailable)?;
-        if count >= MAX_RUNS
+        if count >= ora_process_protocol::GUARDIAN_RUN_LIMIT as i64
             || matches!(spec.output, OutputPolicy::Capture { stdout_limit, stderr_limit } if stdout_limit > GUARDIAN_CAPTURE_LIMIT || stderr_limit > GUARDIAN_CAPTURE_LIMIT)
         {
             return Err(Rejection::LimitExceeded);

@@ -5,7 +5,7 @@ use crate::{
     ScopeId, ScopeState,
 };
 
-pub const HOST_WIRE_VERSION: u16 = 1;
+pub const HOST_WIRE_VERSION: u16 = 2;
 
 /// Connectivity and coordination are not process facts; historical Running is never live evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

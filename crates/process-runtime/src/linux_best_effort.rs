@@ -4,9 +4,10 @@ use std::os::unix::process::ExitStatusExt;
 use std::process::{Child, Command, ExitStatus, Stdio};
 
 use ora_process_protocol::{ContainmentGuarantee, DirectProcessState, ExitOutcome, RunId, RunSpec};
-use ora_process_protocol::{OutputPolicy, OutputRead, OutputStream};
+use ora_process_protocol::{OutputPolicy, OutputRead, OutputStream, RunLifetime};
 use ora_utils::process::{
-    LinuxPidFd, ProcessSignal, configure_linux_detached_child, linux_process_snapshot,
+    LinuxPidFd, ProcessSignal, configure_linux_detached_child, linux_process,
+    linux_process_snapshot,
 };
 
 use crate::OutputPlatform;
@@ -40,6 +41,7 @@ struct TrackedRun {
     root: RootHandle,
     members: BTreeMap<(u32, u64), LinuxPidFd>,
     stop: Option<StopSignal>,
+    owner: Option<LinuxPidFd>,
 }
 
 enum RootHandle {
@@ -124,6 +126,24 @@ impl Platform for LinuxBestEffort {
                 "adapter only supports discarded output".into(),
             ));
         }
+        let owner = match spec.lifetime {
+            RunLifetime::Independent => None,
+            RunLifetime::TerminateOnOwnerExit { pid, start_ticks } => {
+                let stat = linux_process(pid).map_err(|e| SpawnError::NotStarted(e.to_string()))?;
+                if stat.start_ticks != start_ticks {
+                    return Err(SpawnError::NotStarted("Run owner identity changed".into()));
+                }
+                let handle = LinuxPidFd::from_observation(&stat)
+                    .map_err(|e| SpawnError::NotStarted(e.to_string()))?;
+                if handle
+                    .has_exited()
+                    .map_err(|e| SpawnError::NotStarted(e.to_string()))?
+                {
+                    return Err(SpawnError::NotStarted("Run owner already exited".into()));
+                }
+                Some(handle)
+            }
+        };
         let mut command = Command::new(&spec.program);
         command
             .args(&spec.args)
@@ -169,6 +189,7 @@ impl Platform for LinuxBestEffort {
                 root,
                 members: BTreeMap::new(),
                 stop: None,
+                owner,
             }),
         );
         result
@@ -190,7 +211,14 @@ impl Platform for LinuxBestEffort {
                 containment: ContainmentObservation::Empty,
             }),
             Attempt::Tracking(tracked) => {
-                if output_failed {
+                // Once pinned, owner exit is independent of host connectivity and PID reuse.
+                // Unreadable liveness fails closed by stopping, not by certifying cleanup.
+                if output_failed
+                    || tracked
+                        .owner
+                        .as_ref()
+                        .is_some_and(|owner| owner.has_exited().unwrap_or(true))
+                {
                     tracked.stop = Some(StopSignal::Force);
                 }
                 let observation = (|| -> io::Result<_> {

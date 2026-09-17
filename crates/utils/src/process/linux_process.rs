@@ -164,6 +164,18 @@ impl LinuxPidFd {
     }
 }
 
+/// Pins one proc directory so callers can compare observations around stable handle acquisition.
+pub fn linux_process(pid: u32) -> io::Result<LinuxProcessStat> {
+    let directory = File::open(std::path::Path::new("/proc").join(pid.to_string()))?;
+    let stat = read_stat(&directory)?;
+    Ok(LinuxProcessStat {
+        pid: stat.pid,
+        session: stat.session,
+        start_ticks: stat.start_ticks,
+        directory,
+    })
+}
+
 /// Enumerates visible processes; permission and parse failures are errors, never empty evidence.
 pub fn linux_process_snapshot() -> io::Result<impl Iterator<Item = io::Result<LinuxProcessStat>>> {
     Ok(std::fs::read_dir("/proc")?.filter_map(|entry| {

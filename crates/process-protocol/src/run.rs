@@ -14,6 +14,18 @@ pub enum DescendantPolicy {
     WaitForAll,
 }
 
+/// Local cooperative owner liveness is a cleanup trigger, never authority to recover resources.
+/// Recovery must still observe the original Run's cleanup; numeric owner identity is never signaled.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RunLifetime {
+    #[default]
+    Independent,
+    TerminateOnOwnerExit {
+        pid: u32,
+        start_ticks: u64,
+    },
+}
+
 /// An exact local launch specification shared by the runtime and guardian wire.
 ///
 /// OS strings preserve non-UTF-8 inputs; callers must treat persisted specifications as private data.
@@ -30,6 +42,8 @@ pub struct RunSpec {
     pub env: BTreeMap<OsString, OsString>,
     pub descendants: DescendantPolicy,
     pub output: OutputPolicy,
+    #[serde(default)]
+    pub lifetime: RunLifetime,
 }
 
 impl RunSpec {
@@ -46,6 +60,7 @@ impl RunSpec {
             env: BTreeMap::new(),
             descendants,
             output: OutputPolicy::Discard,
+            lifetime: RunLifetime::Independent,
         }
     }
 }

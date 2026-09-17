@@ -34,7 +34,7 @@ queued before takeover. Scope lock ownership lasts until remaining workers close
 transaction or storage failure cannot produce a successful takeover acknowledgement. Ready discovery
 is independent of current host-session inspection.
 
-Messages use bounded length-prefixed MessagePack (16 KiB, depth 16), version 2. Each exchange has a
+Messages use bounded length-prefixed MessagePack (16 KiB, depth 16), version 3. Each exchange has a
 five-second I/O deadline and channel workers are independently bounded. The guardian additionally
 drives lifecycle reconciliation every 50 ms, independently of host connections.
 
@@ -67,6 +67,13 @@ Running facts are historical rather than current evidence, and neither guardian 
 This is a real local guardian/client loop, not yet a production Node/host/business integration.
 
 ## Existing files and versions
+
+RunSpec now supports explicit `TerminateOnOwnerExit` liveness. The Linux adapter pins the observed
+owner before exec and force-cleans the Run when that pidfd exits, independently of host connectivity.
+The numeric owner identity is never signaled and is only a cleanup trigger, not a resource-handoff
+certificate. Callers still query the original Run's cleanup. The default remains `Independent`;
+old stored specifications without the field retain that policy. Wire v3 rejects old live peers;
+keep their compatible manager and journals rather than replacing an original guardian.
 
 The host journal uses version 6 and the guardian journal version 4, each with its own Run ledger. Neither contains credential columns. Host recovery migrates
 the exact v1/v2/v3/v4/v5 layouts transactionally, retaining original scopes, epochs, lock inodes and consumed

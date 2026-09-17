@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::ScopeCreationIntent;
 
-pub const GUARDIAN_WIRE_VERSION: u16 = 2;
+pub const GUARDIAN_WIRE_VERSION: u16 = 3;
 pub const GUARDIAN_MAX_FRAME: usize = 16_384;
 
 /// Internal recovery material; it is not Controller authorization or a Run launch capability.

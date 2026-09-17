@@ -29,7 +29,7 @@ GuardianManagement::bind 接收通过 HostState 独占资格提交的绑定。�
 Scope 锁保持到剩余 worker 关闭 SQLite；未结束事务或存储失败不能产生成功接管确认。
 Ready 发现独立于当前宿主会话查询。
 
-消息使用有界、长度前缀 MessagePack（16 KiB、深度 16），协议版本为 2；每次交互有 5 秒 I/O
+消息使用有界、长度前缀 MessagePack（16 KiB、深度 16），协议版本为 3；每次交互有 5 秒 I/O
 期限，各通道 worker 独立限额。Guardian 另以 50 ms 间隔推进生命周期，不依赖 host 保持连接。
 
 ## 可信本机 Run 闭环
@@ -58,6 +58,11 @@ Ready、bind 后，通过 GuardianRuns::execute 使用协议所有的 GuardianRu
 也不会重启 guardian 或 Run。这已是真实的本地 guardian／客户端闭环，尚未接入生产 Node／host／业务入口。
 
 ## 已有文件与版本
+
+RunSpec 新增显式 `TerminateOnOwnerExit` 存活策略。Linux adapter 在 exec 前固定观测到的所属进程，
+对应 pidfd 退出后强制收尾该 Run，不依赖 host 连接。数字身份不用于发送信号，只是清理触发条件，
+不是资源恢复的证明；调用方仍须查询原 Run 的清理结果。默认仍为 `Independent`，缺少字段的旧持久
+参数沿用该策略。Wire v3 拒绝旧存活对端；应保留其兼容管理程序与日志，而非替换原 guardian。
 
 新 host 日志为版本 6，guardian 日志为版本 4，各自保存所属 Run 日志，均不再有凭据列。Host 恢复事务化迁移精确 v1/v2/v3/v4/v5 布局，
 保留原 Scope、代次、锁 inode 与已消耗启动尝试。v2 host 若已有 Scope 目录，迁移前即拒绝，

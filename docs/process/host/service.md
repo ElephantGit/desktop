@@ -33,7 +33,7 @@ client or cancelling a wait does not cancel the accepted operation. Conflicting 
 
 ## Protocol and recovery boundary
 
-Host wire version 1 uses the existing bounded MessagePack frame codec (16 KiB, depth 16). Control and
+Host wire version 2 uses the existing bounded MessagePack frame codec (16 KiB, depth 16). Control and
 output use separate `host.sock` / `host-io.sock` endpoints, each with 16 connection slots and a five-second
 exchange deadline. Output chunks are at most 4096 bytes; the guardian retains its bounded volatile
 capture policy. Slow output clients cannot occupy control slots. Both peers check the kernel UID;

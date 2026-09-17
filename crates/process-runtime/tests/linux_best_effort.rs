@@ -14,6 +14,71 @@ use pretty_assertions::assert_eq;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+/// Owner exit triggers cleanup independently of a requester; mismatched owners cannot launch work.
+#[test]
+fn owner_exit_stops_only_its_run_and_stale_identity_cannot_launch() -> TestResult {
+    use ora_process_protocol::RunLifetime;
+    use ora_utils::process::linux_process;
+    let directory = tempfile::tempdir()?;
+    let mut owner = std::process::Command::new("/bin/sleep").arg("60").spawn()?;
+    let identity = linux_process(owner.id())?;
+    let mut scope = ScopeRuntime::new(
+        ContainmentRequest::BestEffort,
+        LinuxBestEffort::with_discarded_io()?,
+    )?;
+    let mut spec = shell(
+        "exec /bin/sleep 60",
+        directory.path(),
+        DescendantPolicy::WaitForAll,
+    );
+    spec.lifetime = RunLifetime::TerminateOnOwnerExit {
+        pid: identity.pid,
+        start_ticks: identity.start_ticks + 1,
+    };
+    let rejected = scope.start(RunId::new(), spec.clone())?;
+    assert!(matches!(rejected.launch, LaunchFact::NotStarted(_)));
+    spec.lifetime = RunLifetime::TerminateOnOwnerExit {
+        pid: identity.pid,
+        start_ticks: identity.start_ticks,
+    };
+    let owned = RunId::new();
+    scope.start(owned, spec)?;
+    let independent = RunId::new();
+    scope.start(
+        independent,
+        shell(
+            "exec /bin/sleep 60",
+            directory.path(),
+            DescendantPolicy::WaitForAll,
+        ),
+    )?;
+    owner.kill()?;
+    owner.wait()?;
+    until(&mut scope, |scope| {
+        scope
+            .run(owned)
+            .is_some_and(|r| matches!(r.cleanup, CleanupState::Complete(_)))
+    });
+    assert_eq!(
+        scope.run(owned),
+        Some(RunSnapshot {
+            id: owned,
+            launch: LaunchFact::Started,
+            direct: DirectProcessState::Exited(ExitOutcome::Signal(libc::SIGKILL)),
+            cleanup: CleanupState::Complete(CleanupEvidence::BestEffortComplete),
+        })
+    );
+    assert_eq!(
+        scope.run(independent).map(|run| run.direct),
+        Some(DirectProcessState::Running)
+    );
+    scope.close(StopRequest::Force, Instant::now())?;
+    until(&mut scope, |scope| {
+        matches!(scope.state(), ScopeState::Closed(_))
+    });
+    Ok(())
+}
+
 /// Polls actual process facts with a failure deadline, never uses sleep as evidence of completion.
 fn until(
     scope: &mut ScopeRuntime<LinuxBestEffort>,

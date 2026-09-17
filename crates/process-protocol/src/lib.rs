@@ -31,14 +31,14 @@ pub use guardian::{
 };
 pub use helper::{HelperOperation, HelperRequest, HelperResponse, HelperStatus};
 pub use output::{OutputPolicy, OutputRead, OutputState, OutputStream};
-pub use run::{DescendantPolicy, LaunchFact, RunSnapshot, RunSpec};
+pub use run::{DescendantPolicy, LaunchFact, RunLifetime, RunSnapshot, RunSpec};
 pub use state::{
     CleanupEvidence, CleanupState, DirectProcessState, ExitOutcome, ScopeState, StopRequest,
 };
 
 mod guardian_run;
 pub use guardian_run::{
-    GUARDIAN_CAPTURE_LIMIT, GUARDIAN_OUTPUT_CHUNK_LIMIT, GuardianHostDisconnect,
-    GuardianRunOperation, GuardianRunRejection, GuardianRunReply, GuardianRunRequest,
-    GuardianRunResult,
+    GUARDIAN_CAPTURE_LIMIT, GUARDIAN_OUTPUT_CHUNK_LIMIT, GUARDIAN_RUN_LIMIT,
+    GuardianHostDisconnect, GuardianRunOperation, GuardianRunRejection, GuardianRunReply,
+    GuardianRunRequest, GuardianRunResult,
 };

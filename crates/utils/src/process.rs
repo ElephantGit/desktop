@@ -17,7 +17,9 @@ pub use child_identity::LinuxChildIdentity;
 #[cfg(target_os = "linux")]
 mod linux_process;
 #[cfg(target_os = "linux")]
-pub use linux_process::{LinuxPidFd, LinuxProcessStat, ProcessSignal, linux_process_snapshot};
+pub use linux_process::{
+    LinuxPidFd, LinuxProcessStat, ProcessSignal, linux_process, linux_process_snapshot,
+};
 
 /// Configures a background child so it does not surface a console window on Windows.
 pub fn hide_console_window(command: &mut Command) {

@@ -29,7 +29,7 @@ SIGTERM／SIGINT 只停止 host 协调，不停止工作负载；终止工作须
 
 ## 协议与恢复边界
 
-Host wire 版本 1 使用已有有界 MessagePack 帧编码（16 KiB、深度 16）。控制与输出分走
+Host wire 版本 2 使用已有有界 MessagePack 帧编码（16 KiB、深度 16）。控制与输出分走
 `host.sock`／`host-io.sock`，各有 16 个连接槽、五秒交换期限；输出每块至多 4096 字节，
 guardian 仍采用有界易失捕获政策。慢输出连接不占控制槽。双方检查内核 UID，host 绑定来自自身日志，
 不接受 Node 传入的宿主代次。
