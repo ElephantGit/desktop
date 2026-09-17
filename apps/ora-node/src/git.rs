@@ -46,6 +46,20 @@ impl Observation {
 /// Supplies Git and filesystem facts plus individually recoverable mutations.
 /// Implementations must inspect authoritative registration and never compensate mutations implicitly.
 pub trait WorktreeGit {
+    /// Closes admission and verifies cleanup of remote process responsibility before a normal exit.
+    fn shutdown(&self) -> Result<(), WorktreeFailure> {
+        Ok(())
+    }
+    /// Shutdown may close new-command admission while historical queries and retransmissions remain valid.
+    fn accepting_work(&self) -> bool {
+        true
+    }
+    /// Fences earlier process attempts before reading or repairing an accepted execution's resources.
+    fn begin_execution(&self, _record: &ora_node_db::Execution) -> Result<(), WorktreeFailure> {
+        Ok(())
+    }
+    /// Releases only local dispatch context; dropping it must not abandon remote cleanup responsibility.
+    fn end_execution(&self) {}
     /// Proves this is an existing main checkout and returns its canonical Git metadata directory.
     fn main_git_directory(&self, main: &Path) -> Result<PathBuf, WorktreeFailure>;
     /// Resolves an immutable base and validates the requested literal local branch name.
@@ -67,7 +81,48 @@ pub trait WorktreeGit {
     fn remove_empty_directory(&self, target: &Target) -> Result<(), WorktreeFailure>;
 }
 
-impl<R: GitRunner> WorktreeGit for Git<R> {
+/// Supplies execution-scoped handoff to Git without putting Node identities into gitlancer.
+pub trait ExecutionGitRunner: GitRunner {
+    /// Explicit normal-stop cleanup is separate from dropping a local handle.
+    fn shutdown(&self) -> Result<(), WorktreeFailure> {
+        Ok(())
+    }
+    /// Indicates whether the execution owner is accepting new work.
+    fn accepting_work(&self) -> bool {
+        true
+    }
+    /// Establishes the original execution and verifies all previous process attempts are closed.
+    fn begin_execution(&self, record: &ora_node_db::Execution) -> Result<(), WorktreeFailure>;
+    /// Ends local dispatch context without changing the lifetime of accepted remote work.
+    fn end_execution(&self);
+}
+
+impl ExecutionGitRunner for gitlancer::CliGitRunner {
+    /// Direct execution is available only through explicitly injected test/embedding adapters.
+    fn begin_execution(&self, _record: &ora_node_db::Execution) -> Result<(), WorktreeFailure> {
+        Ok(())
+    }
+    /// Synchronous direct callers have no managed dispatch context.
+    fn end_execution(&self) {}
+}
+
+impl<R: ExecutionGitRunner> WorktreeGit for Git<R> {
+    /// Leaves durable unresolved associations intact if the process owner cannot verify cleanup.
+    fn shutdown(&self) -> Result<(), WorktreeFailure> {
+        self.runner().shutdown()
+    }
+    /// Keeps signal-driven admission policy with the process execution owner.
+    fn accepting_work(&self) -> bool {
+        self.runner().accepting_work()
+    }
+    /// Keeps durable process handoff ahead of all execution-level Git observations.
+    fn begin_execution(&self, record: &ora_node_db::Execution) -> Result<(), WorktreeFailure> {
+        self.runner().begin_execution(record)
+    }
+    /// Delegates local context release to the injected execution strategy.
+    fn end_execution(&self) {
+        self.runner().end_execution();
+    }
     /// Cross-checks repository discovery, main registration and the live checkout's metadata directory.
     fn main_git_directory(&self, main: &Path) -> Result<PathBuf, WorktreeFailure> {
         let repository = self

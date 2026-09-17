@@ -8,6 +8,17 @@ use std::sync::{
 };
 
 struct CountingRunner(Arc<AtomicUsize>);
+impl ExecutionGitRunner for CountingRunner {
+    /// Synchronous test runs cannot outlive this fixture's command return.
+    fn begin_execution(
+        &self,
+        _record: &ora_node_db::Execution,
+    ) -> Result<(), ora_node_protocol::WorktreeFailure> {
+        Ok(())
+    }
+    /// The counter has no remote execution context.
+    fn end_execution(&self) {}
+}
 impl GitRunner for CountingRunner {
     /// Counts real external mutations across concurrent callers using one shared Node.
     fn run(&self, command: &GitCommand) -> Result<GitOutput, GitExecError> {

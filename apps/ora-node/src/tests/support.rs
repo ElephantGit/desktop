@@ -30,6 +30,7 @@ pub enum GitFault {
     AfterCreate,
     BranchOnly,
     BeforeBranch,
+    AfterBranch,
 }
 impl WriteGuard for Faults {
     /// Rejects a named SQLite boundary while leaving actual transaction semantics intact.
@@ -107,7 +108,11 @@ impl WorktreeGit for ControlledGit {
                 "branch deletion blocked",
             ));
         }
-        gitlancer::Git::new(gitlancer::CliGitRunner).remove_branch(target)
+        gitlancer::Git::new(gitlancer::CliGitRunner).remove_branch(target)?;
+        if self.0.git.get() == GitFault::AfterBranch {
+            panic!("simulated stop after branch removal");
+        }
+        Ok(())
     }
     /// Uses nonrecursive directory cleanup to test residual-file protection.
     fn remove_empty_directory(&self, target: &Target) -> Result<(), WorktreeFailure> {

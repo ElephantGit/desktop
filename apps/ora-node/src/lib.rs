@@ -6,7 +6,8 @@ use ora_node_protocol::{
 use std::path::{Path, PathBuf};
 
 /// One explicitly registered repository and its existing Main Workspace.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RepositoryBinding {
     pub repository: RepositoryRef,
     pub main_workspace: MainWorkspaceBinding,
@@ -14,7 +15,9 @@ pub struct RepositoryBinding {
     pub worktree_root: PathBuf,
 }
 
-/// Deployment supplies `~/.ora/node`; tests inject an isolated temporary directory.
+/// Deployment supplies the data directory explicitly; the Node never derives it from HOME.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NodeConfig {
     pub home_directory: PathBuf,
     pub identity: NodeIdentity,
@@ -24,7 +27,13 @@ pub struct NodeConfig {
 mod execution;
 mod git;
 mod resources;
-pub use git::{Checkout, DirectoryState, Observation, WorktreeGit};
+pub use git::{Checkout, DirectoryState, ExecutionGitRunner, Observation, WorktreeGit};
+#[cfg(target_os = "linux")]
+mod managed;
+#[cfg(target_os = "linux")]
+pub use managed::{ManagedGitRunner, ProcessConfig, Shutdown};
+#[cfg(target_os = "linux")]
+pub type ManagedNode = Node<gitlancer::Git<ManagedGitRunner>>;
 pub use ora_node_db::{Command, DurableWrites, WriteGuard, WritePoint};
 use ora_node_protocol::*;
 
@@ -54,8 +63,10 @@ pub enum Error {
     Storage(#[from] ora_node_db::Error),
     #[error(transparent)]
     Validation(#[from] MessageValidationError),
-    #[error("node must reconcile pending executions before accepting new work")]
-    RecoveryPending,
+    #[error("node is stopping and cannot accept new work")]
+    Stopping,
+    #[error("Node shutdown cleanup is unverified: {0}")]
+    Shutdown(String),
     #[error("invalid Node configuration: {0}")]
     Configuration(String),
 }
@@ -73,19 +84,75 @@ pub struct Node<G = gitlancer::Git<gitlancer::CliGitRunner>, W = DurableWrites, 
 }
 
 impl Node {
-    /// Opens the existing direct-Git adapter; this is not yet a crash-safe host-managed composition.
-    /// Callers must not infer old Git termination from obtaining the Node database lock.
-    pub fn open(config: NodeConfig) -> Result<Self, Error> {
-        Self::open_with_dependencies(
+    /// Composes the explicitly configured host-backed Git adapter under the original Node database lease.
+    #[cfg(target_os = "linux")]
+    pub fn open(
+        config: NodeConfig,
+        process: ProcessConfig,
+        shutdown: Shutdown,
+    ) -> Result<ManagedNode, Error> {
+        if !config.home_directory.is_absolute()
+            || config
+                .home_directory
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return Err(Error::Configuration(
+                "Node data directory must be absolute without parent traversal".into(),
+            ));
+        }
+        if ora_utils::path::canonicalize_longest_existing_prefix(&config.home_directory)
+            == ora_utils::path::canonicalize_longest_existing_prefix(&process.host_directory)
+        {
+            return Err(Error::Configuration(
+                "Node and host require distinct state directories".into(),
+            ));
+        }
+        if config.home_directory.exists() {
+            // SAFETY: geteuid only reads process identity; validation never modifies an existing directory.
+            ora_utils::path::open_private_path(
+                &config.home_directory,
+                unsafe { libc::geteuid() },
+                ora_utils::path::TrustedPathKind::Directory,
+            )
+            .map_err(|e| Error::Configuration(e.to_string()))?;
+        }
+        let node = Self::open_with_dependencies(
             config,
             gitlancer::Git::new(gitlancer::CliGitRunner),
             DurableWrites,
             LocalClock,
+        )?;
+        // Secrets in explicitly supplied Git environments must remain behind an owner-private directory.
+        // Never chmod an injected existing path: it may be a user's broader home or another owner's data.
+        // SAFETY: geteuid only reads the current process identity.
+        ora_utils::path::open_private_path(
+            &node.home_directory,
+            unsafe { libc::geteuid() },
+            ora_utils::path::TrustedPathKind::Directory,
         )
+        .map_err(|e| Error::Configuration(e.to_string()))?;
+        let runner = ManagedGitRunner::new(node.database.process_journal()?, process, shutdown)
+            .map_err(|e| Error::Configuration(e.to_string()))?;
+        Ok(Node {
+            home_directory: node.home_directory,
+            database: node.database,
+            identity: node.identity,
+            repositories: node.repositories,
+            git: gitlancer::Git::new(runner),
+            clock: node.clock,
+            state: node.state,
+        })
     }
 }
 
 impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
+    /// Normal stop verifies process cleanup but leaves unfinished business reconciliation for restart.
+    pub fn shutdown(&mut self) -> Result<(), Error> {
+        self.git
+            .shutdown()
+            .map_err(|failure| Error::Shutdown(failure.message))
+    }
     /// Injects Git, real-SQLite write failures and time while retaining the same production state machine.
     pub fn open_with_dependencies(
         config: NodeConfig,
@@ -93,6 +160,11 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
         writes: W,
         clock: C,
     ) -> Result<Self, Error> {
+        if !config.home_directory.is_absolute() {
+            return Err(Error::Configuration(
+                "Node data directory must be an explicit absolute path".into(),
+            ));
+        }
         for (index, binding) in config.repositories.iter().enumerate() {
             if binding.repository.as_str().trim().is_empty()
                 || config.repositories[..index].iter().any(|b| {
@@ -105,7 +177,16 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
                 ));
             }
         }
-        std::fs::create_dir_all(&config.home_directory).map_err(ora_node_db::Error::from)?;
+        let mut directory = std::fs::DirBuilder::new();
+        directory.recursive(/*recursive*/ true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            directory.mode(/*mode*/ 0o700);
+        }
+        directory
+            .create(&config.home_directory)
+            .map_err(ora_node_db::Error::from)?;
         let database = NodeDatabase::open_with_guard(
             &config.home_directory.join("ora-node.sqlite3"),
             config.identity,

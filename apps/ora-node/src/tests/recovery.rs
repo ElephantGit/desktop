@@ -103,9 +103,9 @@ fn process_stops_before_and_after_create_keep_frozen_identity_and_base() {
     });
 }
 
-/// Ambiguous branch-only effects stay Unknown across repeated recovery and block new mutations.
+/// Owned branch-only effects retry under the original identity while retaining unrelated results.
 #[test]
-fn branch_only_creation_remains_unknown_and_preserves_other_results() {
+fn branch_only_creation_recovers_and_preserves_other_results() {
     traced(|| {
         let fixture = Fixture::new();
         let mut node = fixture.open();
@@ -127,19 +127,18 @@ fn branch_only_creation_remains_unknown_and_preserves_other_results() {
         fixture.faults.git.set(GitFault::None);
         let mut node = fixture.open();
         for _ in 0..2 {
-            assert_eq!(node.recover().unwrap(), NodeState::RecoveryPending);
+            assert_eq!(node.recover().unwrap(), NodeState::Ready);
         }
-        assert_eq!(
-            node.status(&query(&command)).unwrap().payload.state,
-            ExecutionState::Unknown
-        );
-        assert_eq!(node.submit(failed).unwrap().state, failure);
         assert!(matches!(
-            node.submit(removal(&command)),
-            Err(Error::RecoveryPending)
+            node.status(&query(&command)).unwrap().payload.state,
+            ExecutionState::Completed(WorktreeExecutionResult::Ready(_))
         ));
-        assert_eq!(node.pending_events().unwrap().len(), 1);
-        assert_eq!(*fixture.faults.calls.borrow(), vec!["create"]);
+        assert_eq!(node.submit(failed).unwrap().state, failure);
+        assert_eq!(node.pending_events().unwrap().len(), 2);
+        assert_eq!(
+            *fixture.faults.calls.borrow(),
+            vec!["create", "remove_branch", "create"]
+        );
         assert!(cli(&fixture.main, &["branch", "--format=%(refname:short)"]).contains("ora/task"));
     });
 }

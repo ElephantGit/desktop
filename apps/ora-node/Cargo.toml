@@ -14,9 +14,17 @@ ora-node-db = { workspace = true }
 ora-node-protocol = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tracing.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ora-process-client.workspace = true
+ora-process-protocol.workspace = true
+tokio = { workspace = true, features = ["rt", "net", "time", "signal", "macros"] }
+libc.workspace = true
 
 [dev-dependencies]
-tracing.workspace = true
 tracing-subscriber.workspace = true
 pretty_assertions.workspace = true
 tempfile.workspace = true

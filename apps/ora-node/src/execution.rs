@@ -5,6 +5,11 @@ use crate::{
 use ora_node_db::{Execution, Progress, ResourceState, Stage, Target};
 use ora_node_protocol::*;
 
+enum CreatePass {
+    Recovery,
+    AfterMutation,
+}
+
 impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
     /// Deduplicates before touching current configuration or Git; new mutations require durable acceptance.
     pub fn submit(&mut self, command: Command) -> Result<ExecutionStatus, Error> {
@@ -18,8 +23,8 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
                 state: record.progress.state(),
             });
         }
-        if self.state == NodeState::RecoveryPending {
-            return Err(Error::RecoveryPending);
+        if !self.git.accepting_work() {
+            return Err(Error::Stopping);
         }
         let target = match self.resolve(&command) {
             Ok(target) => target,
@@ -52,7 +57,9 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
         };
         // Any error from this point must leave recovery gating in place, including disk failures.
         self.state = NodeState::RecoveryPending;
-        self.drive(record)?;
+        let result = self.drive(record);
+        self.git.end_execution();
+        result?;
         if self.database.recoverable()?.is_empty() {
             self.state = NodeState::Ready;
         }
@@ -67,11 +74,16 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
     }
 
     /// Reconciles every incomplete execution under its original identity and frozen target.
-    /// Unknown evidence remains retryable and gates new mutations while queries and replay stay available.
+    /// Unknown evidence retains its resource reservations without gating unrelated new work.
     pub fn recover(&mut self) -> Result<NodeState, Error> {
         self.state = NodeState::RecoveryPending;
         for record in self.database.recoverable()? {
-            self.drive(record)?;
+            if !self.git.accepting_work() {
+                break;
+            }
+            let result = self.drive(record);
+            self.git.end_execution();
+            result?;
         }
         if self.database.recoverable()?.is_empty() {
             self.state = NodeState::Ready;
@@ -93,6 +105,14 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
             Progress::Running { stage, .. } | Progress::Unknown { stage, .. } => stage,
             Progress::Completed { .. } => return Ok(()),
         };
+        if let Err(reason) = self.git.begin_execution(&record) {
+            // No execution stage has begun for Accepted. Keep that durable proof if management
+            // registration fails; rewriting it to Unknown would strand an otherwise safe retry.
+            if record.progress == Progress::Accepted {
+                return Ok(());
+            }
+            return self.unknown(&record, stage, reason);
+        }
         let observation = match self
             .verify(&record.command, &target)
             .and_then(|()| self.git.observe(&target))
@@ -101,7 +121,7 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
             Err(reason) => return self.unknown(&record, stage, reason),
         };
         match &record.command {
-            Command::Ensure(_) => self.ensure(record, &target, observation),
+            Command::Ensure(_) => self.ensure(record, &target, observation, CreatePass::Recovery),
             Command::Remove(_) => self.remove(record, &target, observation),
         }
     }
@@ -109,9 +129,10 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
     /// Completes an owned valid checkout without mistaking normal task commits for failed creation.
     fn ensure(
         &mut self,
-        record: Execution,
+        mut record: Execution,
         target: &Target,
-        observed: Observation,
+        mut observed: Observation,
+        pass: CreatePass,
     ) -> Result<(), Error> {
         if let Some(checkout) = &observed.checkout
             && !observed.branch_elsewhere
@@ -134,6 +155,52 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
                     },
                 });
             return Ok(self.database.complete(&record, result)?);
+        }
+        if matches!(pass, CreatePass::Recovery)
+            && !matches!(record.progress, Progress::Accepted)
+            && observed.checkout.is_none()
+            && (observed.branch.as_ref() == Some(&target.base_commit)
+                || (observed.branch.is_none()
+                    && matches!(
+                        record.progress,
+                        Progress::Running {
+                            stage: Stage::CleanupCreation,
+                            ..
+                        } | Progress::Unknown {
+                            stage: Stage::CleanupCreation,
+                            ..
+                        }
+                    )))
+            && !observed.branch_elsewhere
+            && matches!(
+                observed.directory,
+                DirectoryState::Absent | DirectoryState::Empty
+            )
+        {
+            record = self.running(&record, Stage::CleanupCreation)?;
+            let cleanup = self
+                .verify(&record.command, target)
+                .and_then(|()| {
+                    if observed.branch.is_some() {
+                        self.git.remove_branch(target)
+                    } else {
+                        Ok(())
+                    }
+                })
+                .and_then(|()| {
+                    if observed.directory == DirectoryState::Empty {
+                        self.git.remove_empty_directory(target)
+                    } else {
+                        Ok(())
+                    }
+                });
+            if let Err(reason) = cleanup {
+                return self.unknown(&record, Stage::CleanupCreation, reason);
+            }
+            observed = match self.git.observe(target) {
+                Ok(observation) => observation,
+                Err(reason) => return self.unknown(&record, Stage::CleanupCreation, reason),
+            };
         }
         if !observed.absent() {
             return self.unknown(
@@ -168,7 +235,7 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
                 .complete(&running, self.failed(&record.command, reason))?);
         }
         // Re-enter only the observation path: non-absent evidence cannot issue another add.
-        self.ensure(running, target, after)
+        self.ensure(running, target, after, CreatePass::AfterMutation)
     }
 
     /// Removes checkout, residual empty directory and owned branch in separately persisted stages.
