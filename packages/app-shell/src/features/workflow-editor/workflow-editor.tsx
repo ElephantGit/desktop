@@ -100,9 +100,23 @@ import {
   useUpdateWorkflowDraft,
   useWorkflowDraft,
   useWorkflowLibrary,
+  useWorkflowVersionSnapshot,
   useWorkflowVersions,
 } from "../../state/data/workflows";
 import { WorkflowDraftSaveStatusLabel } from "./workflow-draft-save-status";
+import {
+  WorkflowImportDialog,
+  type WorkflowImportChoices,
+  type WorkflowImportState,
+} from "./workflow-import-dialog";
+import { WorkflowExportDialog } from "./workflow-export-dialog";
+import {
+  MAX_WORKFLOW_IMPORT_BYTES,
+  collectWorkflowDependencies,
+  importPublishVersion,
+  parseWorkflowImportFile,
+  workflowExportDocument,
+} from "./workflow-transfer";
 import { useWorkflowDraftAutosave } from "./use-workflow-draft-autosave";
 import { useWorkflowHistory } from "./use-workflow-history";
 import {
@@ -213,43 +227,6 @@ function workflowFromCanvasSnapshot(
     edges: graph.edges,
     viewport: graph.viewport,
   };
-}
-
-/** Produces a portable filename while retaining the workflow name for the save dialog. */
-function workflowExportFileName(name: string): string {
-  // `\p{Cc}` is the Unicode Control category; property escapes keep control
-  // characters out of the regex literal so no-control-regex stays satisfied.
-  const safeName = name.replace(/[<>:"/\\|?*\p{Cc}]/gu, " ").trim();
-  return `${safeName === "" ? "workflow" : safeName}.reactflow.json`;
-}
-
-/**
- * Picks a publish version for an imported file: prefer the filename stem (matching export
- * naming), then the workflow title, else let the backend mint an automatic version.
- */
-function importPublishVersion(
-  fileName: string,
-  workflowName: string,
-): string | null {
-  const stem = fileName
-    .replace(/\.reactflow\.json$/i, "")
-    .replace(/\.json$/i, "")
-    .trim();
-  const candidate = (stem !== "" ? stem : workflowName).trim();
-  if (
-    candidate === "" ||
-    candidate === "draft" ||
-    candidate === "." ||
-    candidate === ".." ||
-    candidate.length > 128 ||
-    [...candidate].some(
-      (character) =>
-        character === "/" || character === "\\" || character.charCodeAt(0) < 32,
-    )
-  ) {
-    return null;
-  }
-  return candidate;
 }
 
 /** Provides one React Flow store to the canvas and its sibling inspector. */
@@ -377,6 +354,21 @@ function WorkflowEditorContent({
   const [previewedVersion, setPreviewedVersion] =
     useState<MockWorkflowVersion | null>(null);
   const [publishDialogOpen, setPublishDialogOpen] = useState(false);
+  /** Open import dialog step; nothing is persisted until the preview is confirmed. */
+  const [importState, setImportState] = useState<WorkflowImportState | null>(
+    null,
+  );
+  const [importBusy, setImportBusy] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  /** Workflow whose export dialog is requested; it opens once that draft is mounted. */
+  const [exportRequestId, setExportRequestId] = useState<string | null>(null);
+  /** `null` exports the live draft; otherwise the named published version. */
+  const [exportVersion, setExportVersion] = useState<string | null>(null);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const markWorkflowImported = useWorkflowEditorStore(
+    (state) => state.markImported,
+  );
   const [globalVariablesDialogOpen, setGlobalVariablesDialogOpen] =
     useState(false);
   const [publishVersionName, setPublishVersionName] = useState("");
@@ -577,6 +569,70 @@ function WorkflowEditorContent({
         graph: { nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 } },
       })),
     [versionsQuery.data, i18n.resolvedLanguage],
+  );
+
+  const exportVersionQuery = useWorkflowVersionSnapshot(
+    exportRequestId,
+    exportVersion,
+  );
+  /** Plugin references of the export source, resolved against local catalogs. */
+  const exportDependencies = useMemo(() => {
+    if (exportRequestId === null) {
+      return [];
+    }
+    const nodes =
+      exportVersion === null
+        ? (workflow?.nodes ?? [])
+        : exportVersionQuery.data === undefined
+          ? []
+          : parseWorkflowGraph(exportVersionQuery.data.graph).nodes;
+    return collectWorkflowDependencies(
+      nodes,
+      pluginsQuery.data ?? [],
+      skillsQuery.data ?? [],
+    );
+  }, [
+    exportRequestId,
+    exportVersion,
+    exportVersionQuery.data,
+    pluginsQuery.data,
+    skillsQuery.data,
+    workflow?.nodes,
+  ]);
+  /** The exact document export will write, shown in the dialog's structure preview. */
+  const exportPreviewJson = useMemo(() => {
+    if (exportRequestId === null || workflow === null) {
+      return null;
+    }
+    if (exportVersion === null) {
+      return JSON.stringify(workflowExportDocument(workflow, null), null, 2);
+    }
+    if (exportVersionQuery.data === undefined) {
+      return null;
+    }
+    const envelope = parseWorkflowGraph(exportVersionQuery.data.graph);
+    return JSON.stringify(
+      workflowExportDocument(workflow, {
+        ...envelope,
+        globalVariables: normalizeWorkflowGlobalVariables(
+          envelope.globalVariables,
+        ),
+      }),
+      null,
+      2,
+    );
+  }, [exportRequestId, exportVersion, exportVersionQuery.data, workflow]);
+  /** Plugin references of the previewed import file. */
+  const importDependencies = useMemo(
+    () =>
+      importState?.stage === "preview"
+        ? collectWorkflowDependencies(
+            importState.workflow.nodes,
+            pluginsQuery.data ?? [],
+            skillsQuery.data ?? [],
+          )
+        : [],
+    [importState, pluginsQuery.data, skillsQuery.data],
   );
 
   /** Formatted last-edit time of the draft (workflow_snapshots.updated_at). */
@@ -1053,29 +1109,75 @@ function WorkflowEditorContent({
     }
   }
 
-  /** Parses and validates an exported workflow before persisting it as a new workflow. */
-  async function importWorkflow(file: File): Promise<boolean> {
+  /** Opens the import dialog on its file-selection step. */
+  function openImportDialog(): void {
     setManagerError(null);
-    let imported: DemoWorkflow;
+    setImportError(null);
+    setImportState({ stage: "pick" });
+  }
+
+  /**
+   * Reads a chosen file into a preview or a failure explanation. Size is checked before
+   * reading so an accidental large file is never loaded into memory.
+   */
+  async function readImportFile(file: File): Promise<void> {
+    const info = { name: file.name, size: file.size };
+    setImportError(null);
+    if (file.size > MAX_WORKFLOW_IMPORT_BYTES) {
+      setImportState({
+        stage: "failure",
+        file: info,
+        failure: { reason: "fileTooLarge" },
+      });
+      return;
+    }
+    let text: string;
     try {
-      imported = JSON.parse(await file.text()) as DemoWorkflow;
+      text = await file.text();
     } catch {
-      setManagerError(t("settings.workflow.importError"));
-      return false;
+      setImportState({
+        stage: "failure",
+        file: info,
+        failure: { reason: "invalidJson", location: null },
+      });
+      return;
     }
-    const name = imported.name.trim();
-    if (name === "") {
-      setManagerError(t("settings.workflow.importError"));
-      return false;
+    const parsed = parseWorkflowImportFile(text);
+    setImportState(
+      parsed.ok
+        ? {
+            stage: "preview",
+            file: info,
+            workflow: parsed.workflow,
+            suggestedVersion: importPublishVersion(
+              file.name,
+              parsed.workflow.name.trim(),
+            ),
+          }
+        : { stage: "failure", file: info, failure: parsed.failure },
+    );
+  }
+
+  /** Persists the previewed workflow as a new library entry, optionally publishing it. */
+  async function confirmImport(choices: WorkflowImportChoices): Promise<void> {
+    if (importState?.stage !== "preview") {
+      return;
     }
-    const saved = await autosave.flush({ force: true });
-    if (!saved) {
-      return false;
-    }
+    const imported = importState.workflow;
+    setImportBusy(true);
+    setImportError(null);
     try {
+      const saved = await autosave.flush({ force: true });
+      if (!saved) {
+        setImportError(
+          useWorkflowEditorStore.getState().managerError ??
+            t("settings.workflow.saveError"),
+        );
+        return;
+      }
       const definition = normalizeWorkflowDefinition({
         id: imported.id,
-        name: imported.name,
+        name: choices.name,
         description: imported.description,
         updatedAt: imported.updatedAt,
         viewport: imported.viewport,
@@ -1086,7 +1188,7 @@ function WorkflowEditorContent({
         ),
       });
       const result = await createWorkflowMutation.mutateAsync({
-        name,
+        name: choices.name,
         graph: serializeWorkflowGraph({
           nodes: definition.nodes,
           edges: definition.edges,
@@ -1101,38 +1203,105 @@ function WorkflowEditorContent({
       setHydratedWorkflowId(null);
       setWorkflow(null);
       setSelectedWorkflowId(result.workflow.id);
+      setImportState(null);
+      markWorkflowImported(result.workflow.id);
+      if (!choices.publish) {
+        toast.success(
+          t("settings.workflow.transfer.importDraftSuccess", {
+            name: choices.name,
+          }),
+        );
+        return;
+      }
       // Import should leave a runnable published snapshot, not only an editable draft.
       const published = await publishWorkflowMutation.mutateAsync({
         workflowId: result.workflow.id,
-        version: importPublishVersion(file.name, name),
+        version: choices.version,
       });
       toast.success(
         t("settings.workflow.importPublishSuccess", {
-          name,
+          name: choices.name,
           version: published.snapshot.version,
         }),
       );
-      return true;
     } catch (cause) {
-      setManagerError(localizeContractError(cause, t));
-      return false;
+      const message = localizeContractError(cause, t);
+      // Once the dialog has closed, the sidebar alert is the only visible surface.
+      setImportError(message);
+      setManagerError(message);
+    } finally {
+      setImportBusy(false);
     }
   }
 
-  /** Serializes the live React Flow snapshot and sends it through the host save flow. */
-  async function exportWorkflow(): Promise<void> {
-    const snapshot = commitCurrentWorkflowSnapshot();
-    if (snapshot === null) {
+  /** Opens the export dialog for the mounted draft. */
+  function openExportDialog(): void {
+    if (workflow === null) {
       return;
     }
-    setManagerError(null);
+    setExportVersion(null);
+    setExportError(null);
+    setExportRequestId(workflow.id);
+  }
+
+  /** Switches to a sidebar row (flushing the open draft) and then requests its export. */
+  async function exportLibraryWorkflow(workflowId: string): Promise<void> {
+    await selectWorkflow(workflowId);
+    // A failed flush keeps the previous selection; only open for the requested row.
+    if (useWorkflowEditorStore.getState().selectedWorkflowId !== workflowId) {
+      return;
+    }
+    setExportVersion(null);
+    setExportError(null);
+    setExportRequestId(workflowId);
+  }
+
+  /** Serializes the chosen source and sends it through the host save flow. */
+  async function exportWorkflow(fileName: string): Promise<void> {
+    if (workflow === null) {
+      return;
+    }
+    setExportBusy(true);
+    setExportError(null);
     try {
-      await platform.saveTextFile({
-        defaultFileName: workflowExportFileName(snapshot.name),
-        content: `${JSON.stringify(snapshot, null, 2)}\n`,
+      let exported: DemoWorkflow;
+      if (exportVersion === null) {
+        const snapshot = commitCurrentWorkflowSnapshot();
+        if (snapshot === null) {
+          return;
+        }
+        exported = snapshot;
+      } else {
+        const envelope = parseWorkflowGraph(
+          exportVersionQuery.data?.graph ??
+            (
+              await client.workflow.getVersion({
+                workflowId: workflow.id,
+                version: exportVersion,
+              })
+            ).snapshot.graph,
+        );
+        exported = workflowExportDocument(workflow, {
+          ...envelope,
+          globalVariables: normalizeWorkflowGlobalVariables(
+            envelope.globalVariables,
+          ),
+        });
+      }
+      const written = await platform.saveTextFile({
+        defaultFileName: fileName,
+        content: `${JSON.stringify(exported, null, 2)}\n`,
       });
+      if (written) {
+        toast.success(
+          t("settings.workflow.transfer.exportSuccess", { name: fileName }),
+        );
+        setExportRequestId(null);
+      }
     } catch {
-      setManagerError(t("settings.workflow.exportError"));
+      setExportError(t("settings.workflow.exportError"));
+    } finally {
+      setExportBusy(false);
     }
   }
 
@@ -1656,7 +1825,8 @@ function WorkflowEditorContent({
       copy: copyWorkflow,
       rename: renameWorkflow,
       delete: deleteWorkflow,
-      importFile: importWorkflow,
+      openImport: openImportDialog,
+      exportFile: exportLibraryWorkflow,
       leave: leaveEditor,
     };
   });
@@ -1674,8 +1844,9 @@ function WorkflowEditorContent({
         Promise.resolve(false),
       delete: (workflowId) =>
         libraryActionsRef.current?.delete(workflowId) ?? Promise.resolve(),
-      importFile: (file) =>
-        libraryActionsRef.current?.importFile(file) ?? Promise.resolve(false),
+      openImport: () => libraryActionsRef.current?.openImport(),
+      exportFile: (workflowId) =>
+        libraryActionsRef.current?.exportFile(workflowId) ?? Promise.resolve(),
       leave: () => libraryActionsRef.current?.leave() ?? Promise.resolve(),
     });
     return () => {
@@ -1774,7 +1945,7 @@ function WorkflowEditorContent({
             variant="outline"
             size="sm"
             disabled={workflow === null}
-            onClick={() => void exportWorkflow()}
+            onClick={openExportDialog}
           >
             <IconDownload />
             {t("settings.workflow.exportWorkflow")}
@@ -2048,6 +2219,48 @@ function WorkflowEditorContent({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {importState !== null && (
+        <WorkflowImportDialog
+          state={importState}
+          dependencies={importDependencies}
+          busy={importBusy}
+          error={importError}
+          onFile={(file) => void readImportFile(file)}
+          onChooseAnother={() => setImportState({ stage: "pick" })}
+          onCancel={() => {
+            setImportState(null);
+            setImportError(null);
+          }}
+          onConfirm={(choices) => void confirmImport(choices)}
+        />
+      )}
+      {exportRequestId !== null &&
+        workflow !== null &&
+        workflow.id === exportRequestId && (
+          <WorkflowExportDialog
+            key={exportRequestId}
+            workflowName={workflow.name}
+            versions={versionHistory.map((version) => ({
+              version: version.version,
+              createdAt: version.createdAt,
+              active: draftQuery.data?.published?.version === version.version,
+            }))}
+            draftSavedAt={draftUpdatedAt}
+            selectedVersion={exportVersion}
+            dependencies={exportDependencies}
+            previewJson={exportPreviewJson}
+            busy={exportBusy}
+            error={
+              exportError ??
+              (exportVersionQuery.error === null
+                ? null
+                : localizeContractError(exportVersionQuery.error, t))
+            }
+            onSelectVersion={setExportVersion}
+            onCancel={() => setExportRequestId(null)}
+            onExport={(fileName) => void exportWorkflow(fileName)}
+          />
+        )}
     </main>
   );
 }
