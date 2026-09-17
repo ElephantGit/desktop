@@ -3387,6 +3387,7 @@ name = "ora-node-db"
 version = "0.0.0"
 dependencies = [
  "ora-node-protocol",
+ "ora-process-protocol",
  "pretty_assertions",
  "rusqlite",
  "serde",

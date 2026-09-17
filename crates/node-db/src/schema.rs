@@ -41,7 +41,7 @@ pub(super) fn initialize(
         "user_version",
         |row| row.get(/*idx*/ 0),
     )?;
-    if app != APPLICATION_ID || version != 1 {
+    if app != APPLICATION_ID || !matches!(version, 1 | 2) {
         return Err(Error::InvalidSchema);
     }
     let check: String = connection.pragma_query_value(
@@ -55,6 +55,9 @@ pub(super) fn initialize(
     let expected = Connection::open_in_memory()?;
     expected.execute_batch(METADATA)?;
     expected.execute_batch(include_str!("schema.sql"))?;
+    if version == 2 {
+        expected.execute_batch(include_str!("process.sql"))?;
+    }
     if schema_objects(connection)? != schema_objects(&expected)? {
         return Err(Error::InvalidSchema);
     }
@@ -74,6 +77,16 @@ pub(super) fn initialize(
         || matches!(identity, NodeIdentity::Require(expected) if expected != &id)
     {
         return Err(Error::NodeMismatch);
+    }
+    if version == 1 {
+        let tx = connection.transaction()?;
+        tx.execute_batch(include_str!("process.sql"))?;
+        tx.pragma_update(
+            /*schema_name*/ None,
+            "user_version",
+            /*pragma_value*/ 2,
+        )?;
+        tx.commit()?;
     }
     Ok(id)
 }

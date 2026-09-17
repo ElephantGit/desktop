@@ -109,6 +109,7 @@ pub struct Target {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Stage {
     Create,
+    CleanupCreation,
     RemoveWorktree,
     RemoveBranch,
 }
@@ -179,6 +180,7 @@ pub enum ResourceState {
 /// Testable persistence boundaries; implementations may refuse a write before it commits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WritePoint {
+    Process,
     Accept,
     Progress,
     Complete,

@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used)]
 use super::*;
 use pretty_assertions::assert_eq;
+mod process;
 
 /// Reopening preserves identity, while one live owner excludes all other connections.
 #[test]

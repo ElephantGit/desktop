@@ -64,6 +64,13 @@ impl<G: WriteGuard> NodeDatabase<G> {
                 if resource.is_some() {
                     return Err(Error::ResourceConflict);
                 }
+                let mut paths = tx.prepare("SELECT path FROM resources WHERE active=1")?;
+                for path in paths.query_map([], |row| row.get::<_, String>(/*idx*/ 0))? {
+                    let path = std::path::PathBuf::from(path?);
+                    if path.starts_with(&target.path) || target.path.starts_with(&path) {
+                        return Err(Error::ResourceConflict);
+                    }
+                }
                 let conflict: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM resources WHERE active=1 AND (workspace=?1 OR path=?2 OR (repository=?3 AND branch=?4)))", params![spec.workspace_id.as_str(), target.path.to_str(), target.main_path.to_str(), target.branch.as_str()], |r| r.get(/*idx*/ 0))?;
                 if conflict {
                     return Err(Error::ResourceConflict);
@@ -181,7 +188,8 @@ impl<G: WriteGuard> NodeDatabase<G> {
         } = &progress
             && (observer.node_id != self.node_id
                 || observer.incarnation_id.as_str().trim().is_empty()
-                || matches!(record.command, Command::Ensure(_)) != (*stage == Stage::Create))
+                || matches!(record.command, Command::Ensure(_))
+                    != matches!(stage, Stage::Create | Stage::CleanupCreation))
         {
             return Err(Error::InvalidTransition);
         }

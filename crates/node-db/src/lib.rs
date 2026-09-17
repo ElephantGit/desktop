@@ -1,15 +1,18 @@
 //! Independent Node storage. The open database owns the process-wide execution lease.
 mod execution;
 mod model;
+mod process;
 mod schema;
 pub use execution::owns;
 pub use model::*;
+pub use process::{ProcessAttempt, ProcessJournal};
 
 use ora_node_protocol::NodeId;
 use rusqlite::Connection;
 use std::{
     fs::{File, OpenOptions},
     path::Path,
+    sync::Arc,
 };
 use thiserror::Error;
 
@@ -43,7 +46,7 @@ pub enum Error {
 }
 
 /// Explicit identity policy for bootstrap versus reconnecting a registered Node.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum NodeIdentity {
     Discover,
     Require(NodeId),
@@ -51,11 +54,11 @@ pub enum NodeIdentity {
 
 /// Holds the SQLite connection and an OS lease released automatically on process exit.
 pub struct NodeDatabase<G = DurableWrites> {
-    guard: G,
+    guard: Arc<G>,
     connection: Connection,
     node_id: NodeId,
     // Lock the database inode itself so alternate spellings cannot acquire another lease.
-    _lease: Lease,
+    _lease: Arc<Lease>,
 }
 
 impl NodeDatabase<DurableWrites> {
@@ -96,10 +99,10 @@ impl<G: WriteGuard> NodeDatabase<G> {
         connection.pragma_update(/*schema_name*/ None, "foreign_keys", "ON")?;
         connection.pragma_update(/*schema_name*/ None, "synchronous", "FULL")?;
         Ok(Self {
-            guard,
+            guard: Arc::new(guard),
             connection,
             node_id,
-            _lease: lease,
+            _lease: Arc::new(lease),
         })
     }
 
