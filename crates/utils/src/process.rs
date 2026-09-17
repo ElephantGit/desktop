@@ -1,5 +1,10 @@
 use std::process::Command;
 
+#[cfg(target_os = "linux")]
+mod child_identity;
+#[cfg(target_os = "linux")]
+pub use child_identity::LinuxChildIdentity;
+
 /// Configures a background child so it does not surface a console window on Windows.
 pub fn hide_console_window(command: &mut Command) {
     #[cfg(windows)]

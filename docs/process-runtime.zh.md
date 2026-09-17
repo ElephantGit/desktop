@@ -7,10 +7,11 @@
 现有 `ora-process`、`ora-reaper`、Git 和插件入口保持不变。
 
 Linux 另已加入独立 [Helper 部署预检与认证检查服务](process-helper.zh.md)，不启用工作负载启动，也不构成平台 adapter。
+供可信 helper 代码使用的底层执行前启动门禁已加入，但未开放 IPC，仍待真实特权验收。
 
 ## 所有权与行为
 
-- `ora-process-protocol` 拥有本地域类型：运行身份、精确启动参数、纳管选择、停止意图、直接退出事实和清理证据，尚未定义线协议编码。
+- `ora-process-protocol` 拥有本地域类型：运行身份、精确启动参数、纳管选择、停止意图、直接退出事实和清理证据，以及 helper 只读检查协议类型；host／guardian 线协议编码尚未定义。
 - `ora-process-runtime::ScopeRuntime<P>` 拥有单个 Scope 的准入、运行记录与停止期限。
   `Platform` 提供已验证能力、创建时纳管、观测和单 Run 信号。本批尚无 OS adapter；测试通过这一边界注入平台事实。
 - 创建 Scope 时冻结实际保证。必须强但能力不足时拒绝；明确要求尽力时不能静默提升为强模式。

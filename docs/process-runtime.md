@@ -7,12 +7,14 @@ The current increment provides an in-memory lifecycle kernel, **not a production
 Existing `ora-process`, `ora-reaper`, Git and plugin entry points are unchanged.
 
 Linux also has an independent [helper deployment preflight and authenticated inspection service](process-helper.md). Its checks
-do not enable workload launch or constitute a platform adapter.
+do not enable workload launch or constitute a platform adapter. A low-level pre-exec launch gate now
+exists for trusted helper code; it is not exposed over IPC and awaits privileged acceptance testing.
 
 ## Ownership and behavior
 
 - `ora-process-protocol` owns local domain types: run identity, exact launch specification, containment
-  selection, stop intent, direct exit facts and cleanup evidence. It does not yet define wire encoding.
+  selection, stop intent, direct exit facts and cleanup evidence, plus the helper's inspection-only
+  wire types. Host/guardian wire encoding is not yet defined.
 - `ora-process-runtime::ScopeRuntime<P>` owns one scope's admission, run records and stop deadlines.
   `Platform` supplies verified capabilities, creation-time containment, observations and per-run signals.
   There is no OS adapter in this increment; tests inject platform facts through this boundary.

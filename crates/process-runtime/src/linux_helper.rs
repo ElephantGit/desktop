@@ -3,10 +3,13 @@ use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 
 use ora_utils::path::{TrustedPathKind, open_trusted_path};
+use ora_utils::process::LinuxChildIdentity;
 use serde::Deserialize;
 
+mod launch;
 mod management;
 mod service;
+pub use launch::spawn_linux_helper_workload;
 pub use service::serve_linux_helper;
 
 /// Administrator-owned deployment policy, never accepted from a workload launch request.
@@ -29,9 +32,10 @@ impl LinuxHelperConfig {
         if config.version != 1 {
             return Err("unsupported helper deployment version".into());
         }
+        LinuxChildIdentity::new(config.workload_uid, config.workload_gid)
+            .map_err(|error| error.to_string())?;
         if config.manager_uid == 0
-            || config.workload_uid == 0
-            || config.workload_gid == 0
+            || config.manager_uid == u32::MAX
             || config.manager_uid == config.workload_uid
         {
             return Err("helper requires distinct non-root manager and workload identities".into());
