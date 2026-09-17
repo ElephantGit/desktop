@@ -33,6 +33,27 @@ Linux 已支持[有界内存结果捕获](process-linux-rootless.zh.md#有界结
 持久接受、授权、租约、宿主／guardian 进程、其余平台 adapter、完整 I/O、恢复、资源交接和生产接入均待实现。
 本批不改变文件系统布局，不代表阶段 1 完成，也不证明任何 OS 级纳管保证。
 
+## Guardian 启动基础
+
+已批准的[无特权 Guardian 启动决策](../specs/decisions/node/process/recovery/20260917-rootless-guardian-bootstrap-and-reconnect.md)
+已实现第一项基础能力：`ora_utils::fs::LinuxFileLock`。它接收已打开的普通文件，以非阻塞方式尝试
+独占加锁，竞争失败返回 `WouldBlock`。克隆复制同一个持锁的打开文件描述；`into_file()` 用于
+显式交接给子进程，不经过释放再重抢。描述符默认启用 close-on-exec。
+并发的其他 fork 在 exec 前仍可能短暂持有副本，因此关闭本地持有者不承诺立即可以重取锁；
+调用方必须观测实际加锁结果。
+
+Drop 只关闭描述符，故意不显式解锁，否则可能同时释放子进程共享的锁；依据是 Linux 的
+[flock 生命周期语义](https://man7.org/linux/man-pages/man2/flock.2.html)。调用方仍负责保留原 inode、
+可信路径解析及实际本地文件系统能力验证。此工具不创建／删除文件，不认证继承描述符，也不证明
+数据耐久或业务清理完成。它可以给尚未加锁的文件加锁，因此不是 bootstrap 资格验证接口。
+同用户攻击者、网络文件系统及其他平台不在已验证范围。
+
+`cargo test -p ora-utils --test linux_file_lock` 验证锁竞争、复制后的生命周期、文件内容不变、
+close-on-exec（含显式 pre-exec 屏障），以及 exec 后持锁者在启动方被外部强杀后仍保有独占资格。测试通过 pidfd 固定并
+终止剩余持锁者，然后验证可以重新取得锁。测试子进程不是 guardian 或宿主实现。
+状态目录准入、持久创建意图、描述符认证、bootstrap、guardian app 和 Ready／重连接口仍待接入；
+没有新增远程业务启动端点。
+
 ## 验证
 
 运行 `cargo test -p ora-process-runtime` 和
