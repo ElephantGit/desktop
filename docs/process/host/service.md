@@ -1,9 +1,9 @@
 # Trusted-local process host
 
-English | [中文](process-host.zh.md)
+English | [中文](service.zh.md)
 
-The Linux `ora-process-host` app owns the [host journal and coordinator](process-host-state.md).
-It accepts durable Run/Stop/Close intent over local IPC; each original [guardian](process-guardian.md)
+The Linux `ora-process-host` app owns the [host journal and coordinator](storage.md).
+It accepts durable Run/Stop/Close intent over local IPC; each original [guardian](../guardian.md)
 continues independently of the host or requesting Node connection. No root, helper, token or key is required.
 This is a cooperative same-user deployment, not authentication against malicious local programs.
 

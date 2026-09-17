@@ -1,10 +1,10 @@
 # 进程宿主 Scope 与 Run 意图日志
 
-[English](process-host-state.md) | 中文
+[English](storage.md) | 中文
 
 Linux `ora_process_runtime::HostState` 已负责持久化 Scope／Run 意图与一次性
-[独立 guardian 启动](process-guardian.zh.md)，由[宿主 app](process-host.zh.md) 组合自动协调。
-它是已批准[guardian 启动决策](../specs/decisions/node/process/recovery/20260917-rootless-guardian-bootstrap-and-reconnect.md)
+[独立 guardian 启动](../guardian.zh.md)，由[宿主 app](service.zh.md) 组合自动协调。
+它是已批准[guardian 启动决策](../../../specs/decisions/node/process/recovery/20260917-rootless-guardian-bootstrap-and-reconnect.md)
 的部分实现，无需 root、helper、cgroup 委派或服务安装。现有 Git／插件入口及业务数据库政策不变。
 
 ## 显式定位与所有权
@@ -112,7 +112,7 @@ Start／Stop／Close 不依赖请求连接继续推进。每个 Scope 最多一�
 代次耗尽、冲突修复及精确 v1 至 v5 升级（含拒绝时旧令牌和代次不变）。Run 测试覆盖重启发现、Scope／参数不变、提交失败、帧上限及索引负载损坏。强杀 fixture 改变 child 的 HOME 和 cwd，仍使用同一显式状态路径。
 测试在测试用户 home 下建立私有临时目录；生产代码不会从该环境变量推导路径。
 
-真实 app 的启动、拒绝、启动方强杀及发现证据见 [guardian 启动](process-guardian.zh.md)。
+真实 app 的启动、拒绝、启动方强杀及发现证据见 [guardian 启动](../guardian.zh.md)。
 其中已包含持久宿主接管与 guardian 侧 Run 接受；协调测试覆盖派发前取消、恢复后真实副作用去重、
 guardian 消失后事实保留，以及失联 Scope 不阻断独立工作。host app 已实现，Git／Node 接入仍待实现；
 Controller 授权已推迟，没有 ADR 被标为 implemented。

@@ -1,10 +1,10 @@
 # 无需 root 的 Linux 进程跟踪
 
-[English](process-linux-rootless.md) | 中文
+[English](rootless.md) | 中文
 
 `ora_process_runtime::LinuxBestEffort` 是接入 `ScopeRuntime` 的首个真实 Linux
 adapter。不需要 root、sudo、特权 helper、cgroup 委派、服务安装或独立业务账号；业务沿用调用方身份。
-[特权 helper 路线](process-helper.zh.md) 保留，但当前不优先推进。
+[特权 helper 路线](helper.zh.md) 保留，但当前不优先推进。
 
 ## 准入与所有权
 
@@ -72,5 +72,5 @@ pidfd 避免向复用的 PID 错发信号，但不能让发现完备，也不能
 共享读取器测试为 `cargo test -p ora-utils --test pipe_capture`，覆盖零／恰好／超限容量、偏移和写端
 仍存活时的取消。线程／描述符耗尽及读取错误恢复仍有验收缺口。
 
-持久宿主／guardian 所有权、崩溃恢复、I/O 交接和生产入口仍未实现，详见[运行体系状态](process-runtime.zh.md)。
+持久宿主／guardian 所有权、崩溃恢复、I/O 交接和生产入口仍未实现，详见[运行体系状态](../runtime.zh.md)。
 这些测试不完成强纳管 ADR，也不能从 Linux 结果推导 Windows／macOS 支持。

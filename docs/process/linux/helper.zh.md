@@ -1,13 +1,13 @@
 # Linux 进程 Helper 部署与管理
 
-[English](process-helper.md) | 中文
+[English](helper.md) | 中文
 
 独立特权 helper 方向已记录在
-[Linux 后续 ADR](../specs/decisions/node/process/containment/linux/20260917-independent-privileged-helper.md)。
+[Linux 后续 ADR](../../../specs/decisions/node/process/containment/linux/20260917-independent-privileged-helper.md)。
 当前可执行文件支持部署预检和**带认证的只读检查监听服务**，没有启动 API、服务安装器或 guardian 接入，
 不宣称强纳管能力。
 
-此路线暂存于当前阶段，开发优先推进[完全无需 root 的尽力清理 adapter](process-linux-rootless.zh.md)。
+此路线暂存于当前阶段，开发优先推进[完全无需 root 的尽力清理 adapter](rootless.zh.md)。
 既有 helper 代码保留；无特权 adapter 不要求部署此服务。
 
 ## 构建与配置

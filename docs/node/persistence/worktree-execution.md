@@ -24,7 +24,7 @@ pending: `Node::open` still uses direct Git, with no durable Scope/Run associati
 handoff. The selected policy is to terminate old Git, finish BestEffort cleanup and only then reconcile
 the affected resources; unverified cleanup keeps conflicting work blocked, not the whole Node.
 Do not use the Node database lock as evidence that old Git stopped. The independent
-[process host](../../process-host.md) is available but is not wired into Node yet.
+[process host](../../process/host/service.md) is available but is not wired into Node yet.
 
 Node IPC and Controller result takeover remain later steps. Trusted-local operation is the current
 scope; authentication, secret tokens, leases and privileged Strong containment are deferred, not

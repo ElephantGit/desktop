@@ -1,14 +1,14 @@
 # Process runtime implementation status
 
-English | [中文](process-runtime.zh.md)
+English | [中文](runtime.zh.md)
 
-The [approved process ADRs](../specs/decisions/node/process/README.md) are being implemented incrementally.
+The [approved process ADRs](../../specs/decisions/node/process/README.md) are being implemented incrementally.
 The current increment connects the in-memory lifecycle kernel and
-[rootless Linux best-effort adapter](process-linux-rootless.md) through a
-[trusted local guardian Run loop](process-guardian.md). It is **not yet integrated into production business launchers**.
+[rootless Linux best-effort adapter](linux/rootless.md) through a
+[trusted local guardian Run loop](guardian.md). It is **not yet integrated into production business launchers**.
 Existing `ora-process`, `ora-reaper`, Git and plugin entry points are unchanged.
 
-Linux also has an independent [helper deployment preflight and authenticated inspection service](process-helper.md). Its checks
+Linux also has an independent [helper deployment preflight and authenticated inspection service](linux/helper.md). Its checks
 do not enable workload launch or constitute a platform adapter. A low-level pre-exec launch gate now
 exists for trusted helper code; it is not exposed over IPC and awaits privileged acceptance testing.
 
@@ -41,12 +41,12 @@ Calls are serialized through mutable ownership. The caller must drive `reconcile
 Platform methods must be bounded and must retain stable attempt identities, including after uncertain
 spawn outcomes. Dropping the kernel does not provide crash recovery.
 
-Linux now supports [bounded volatile result capture](process-linux-rootless.md#bounded-result-capture),
+Linux now supports [bounded volatile result capture](linux/rootless.md#bounded-result-capture),
 with independent readers and per-run limits; pipe EOF is separate from process cleanup.
-Host creation intent now has an opt-in [durable journal](process-host-state.md) under an explicitly supplied
-dedicated directory and [independent guardian bootstrap/Ready discovery](process-guardian.md).
+Host creation intent now has an opt-in [durable journal](host/storage.md) under an explicitly supplied
+dedicated directory and [independent guardian bootstrap/Ready discovery](guardian.md).
 Guardian-side durable Run acceptance and polling/output/force-stop now work for trusted local callers.
-Authorization and leases are deferred. Host Run intent, restart enumeration, automatic coordination, durable query projection and [the host app](process-host.md) are implemented. Remaining
+Authorization and leases are deferred. Host Run intent, restart enumeration, automatic coordination, durable query projection and [the host app](host/service.md) are implemented. Remaining
 platform adapters, full I/O, runtime recovery, resource handoff and production integration remain unimplemented.
 This increment does not complete implementation phase 1 or prove any OS-level containment guarantee.
 
@@ -60,7 +60,7 @@ rollback, checkpoint and reopening a file-backed database. This is a dependency 
 not guardian crash-durability evidence; the existing application database schema and its
 `synchronous=NORMAL` policy are unchanged. Host and guardian journals independently enable `FULL`.
 
-The approved [rootless guardian bootstrap decision](../specs/decisions/node/process/recovery/20260917-rootless-guardian-bootstrap-and-reconnect.md)
+The approved [rootless guardian bootstrap decision](../../specs/decisions/node/process/recovery/20260917-rootless-guardian-bootstrap-and-reconnect.md)
 now has its first building block: `ora_utils::fs::LinuxFileLock`. It accepts an already opened
 regular file, attempts exclusive acquisition without waiting, and returns `WouldBlock` for contention.
 Cloning duplicates the locked open file description; `into_file()` transfers it for explicit child
@@ -80,8 +80,8 @@ adversaries, network filesystems and other platforms are not certified.
 file contents, close-on-exec (including an explicit pre-exec barrier), and an exec'd holder retaining exclusion after its launcher is killed
 externally. The surviving holder is identified and killed through a pidfd; acquisition must become
 possible again. The child test fixture is not a guardian or host implementation. State-directory
-admission and persistent creation intent now have a [host-owned implementation](process-host-state.md),
-with independent external-kill tests of the journal owner. [Real-app bootstrap tests](process-guardian.md)
+admission and persistent creation intent now have a [host-owned implementation](host/storage.md),
+with independent external-kill tests of the journal owner. [Real-app bootstrap tests](guardian.md)
 now additionally verify inherited qualification, journal-before-Ready and original-instance discovery
 after launcher death. Durable host takeover fences both session inspections and local Run execution.
 Controller authorization and stdin remain deferred; no network Run endpoint is exposed.
@@ -93,5 +93,5 @@ Run `cargo test -p ora-process-runtime` and
 Controlled integration tests exercise the public runtime interface with injected platform facts and
 time. Rootless Linux tests additionally exercise real children and descendants with readiness
 handshakes and bounded polling. Neither mutates the test runner's environment. Evidence remains
-`Partial` in the [core case index](../specs/test-cases/node/process/README.md); crashes, persistence,
+`Partial` in the [core case index](../../specs/test-cases/node/process/README.md); crashes, persistence,
 exhaustive identity races and strong platform permission boundaries still require direct verification.

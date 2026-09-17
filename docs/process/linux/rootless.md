@@ -1,11 +1,11 @@
 # Rootless Linux process tracking
 
-English | [中文](process-linux-rootless.zh.md)
+English | [中文](rootless.zh.md)
 
 `ora_process_runtime::LinuxBestEffort` provides the first real Linux
 adapter for `ScopeRuntime`. It needs no root, sudo, privileged helper, cgroup delegation,
 service installation or separate workload account. Workloads retain the caller's identity.
-The privileged [helper route](process-helper.md) is preserved but is not the current priority.
+The privileged [helper route](helper.md) is preserved but is not the current priority.
 
 ## Admission and ownership
 
@@ -88,5 +88,5 @@ are `cargo test -p ora-utils --test pipe_capture`; they cover zero/exact/excess 
 cancellation with a live writer. Thread/descriptor exhaustion and read-error recovery remain gaps.
 
 Durable host/guardian ownership, crash recovery, I/O handoff and production entry points remain
-unimplemented. See the [runtime status](process-runtime.md). No strong-containment ADR is completed
+unimplemented. See the [runtime status](../runtime.md). No strong-containment ADR is completed
 by these tests, and Linux results do not establish Windows/macOS support.

@@ -15,7 +15,7 @@ R1 仍待完成：导入代码仍使用全 Node 门禁，创建只留下分支�
 不是认可的目标行为。R4 仍待完成：`Node::open` 仍直接调用 Git，没有持久 Scope／Run 关联及
 旧进程交接。已选策略是终止旧 Git、完成 BestEffort 收尾后才对相关资源对账；无法确认收尾时
 继续阻塞冲突工作，而不是整个 Node。取得 Node 数据库锁不证明旧 Git 已停止。
-独立 [process host](../../process-host.zh.md) 已可用，但尚未接入 Node。
+独立 [process host](../../process/host/service.zh.md) 已可用，但尚未接入 Node。
 
 Node IPC、Controller 结果接管属于后续步骤。当前信任本机调用方；认证、秘密令牌、租约及
 特权 Strong 已推迟，不作为闭环前置。现有 Backend 写入入口不变，本次不改变 ADR 状态。

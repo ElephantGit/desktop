@@ -1,9 +1,9 @@
 # 可信本机进程宿主
 
-[English](process-host.md) | 中文
+[English](service.md) | 中文
 
-Linux `ora-process-host` app 持有[宿主日志与协调器](process-host-state.zh.md)，通过本机 IPC
-接受持久 Run／Stop／Close 意图；原 [guardian](process-guardian.zh.md) 独立于宿主及请求方 Node
+Linux `ora-process-host` app 持有[宿主日志与协调器](storage.zh.md)，通过本机 IPC
+接受持久 Run／Stop／Close 意图；原 [guardian](../guardian.zh.md) 独立于宿主及请求方 Node
 连接存续。不需要 root、helper、令牌或密钥。这是同用户合作进程部署，不认证恶意本机程序。
 
 ## 部署与连接

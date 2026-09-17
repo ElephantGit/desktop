@@ -1,6 +1,6 @@
 # Rootless guardian and trusted local management
 
-English | [中文](process-guardian.zh.md)
+English | [中文](guardian.zh.md)
 
 The current deployment trusts the local Node and management programs, as explicitly directed by Eric.
 Guardian management uses no secret tokens, signing keys or Controller authorization. Private paths and
@@ -10,7 +10,7 @@ Host instance identities and durable epochs prevent stale cooperating instances 
 ## Independent ownership
 
 The caller explicitly provides a dedicated state directory and trusted executable to
-[HostState](process-host-state.md). No HOME inference, root helper or service installation is required.
+[HostState](host/storage.md). No HOME inference, root helper or service installation is required.
 Host creation intent and a consumed launch record commit before exec. A dedicated socketpair delivers
 bootstrap identity; the original exclusive scope flock is inherited without unlocking and reacquiring.
 The child enters its own session, clears its environment and closes unintended descriptors at exec.
@@ -90,6 +90,6 @@ Run app tests cover exact replay, exit/output, lost Start replies, pre/post-exec
 host SIGKILL takeover with Run discovery from the host journal, force/close and guardian SIGKILL with a surviving workload that holds no scope lock.
 
 Controller authorization and leases are deferred. Host coordination and durable query projections are implemented;
-[the host app](process-host.md) exposes them over local IPC. Remaining work includes
+[the host app](host/service.md) exposes them over local IPC. Remaining work includes
 stdin, durable output, Node/Git/plugin integration and guardian-death recovery. Strong containment,
 service-manager survival, physical power loss and other-platform support are not established.

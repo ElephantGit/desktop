@@ -13,7 +13,7 @@ use pretty_assertions::assert_eq;
 
 /// Opt-in deployment proof: the workload observes dropped credentials and its assigned cgroup.
 #[test]
-#[ignore = "requires an explicitly provisioned root/cgroup v2 environment; see docs/process-helper.md"]
+#[ignore = "requires an explicitly provisioned root/cgroup v2 environment; see docs/process/linux/helper.md"]
 fn launch_enters_cgroup_drops_authority_and_rejects_migration()
 -> Result<(), Box<dyn std::error::Error>> {
     let config_path = PathBuf::from(std::env::var_os("ORA_PROCESS_HELPER_TEST_CONFIG").ok_or(

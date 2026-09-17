@@ -1,6 +1,6 @@
 # 无特权 Guardian 与可信本机管理
 
-[English](process-guardian.md) | 中文
+[English](guardian.md) | 中文
 
 按 Eric 的明确要求，当前信任本机 Node 和管理程序，不使用秘密令牌、签名密钥或 Controller 授权。
 私有路径与内核 peer UID 检查防止意外跨用户访问，不隔离恶意同 UID 程序。
@@ -8,7 +8,7 @@
 
 ## 独立所有权
 
-调用方向 [HostState](process-host-state.zh.md) 显式提供专用状态目录和可信可执行文件。
+调用方向 [HostState](host/storage.zh.md) 显式提供专用状态目录和可信可执行文件。
 不读取 HOME，不要求 root helper 或服务安装。宿主先提交创建意图和已消耗的启动记录，再 exec。
 专用 socketpair 传递 bootstrap 身份；原 Scope 独占 flock 直接继承，不先解锁再重抢。
 子进程进入独立 session，清空环境，exec 时关闭非显式描述符；命令行只有 --bootstrap。
@@ -76,5 +76,5 @@ Runtime 测试覆盖执行队列检查、持久化失败与锁生命周期；Hos
 Run 真实 app 测试覆盖精确重放、退出／输出、Start 回复丢失、exec 前后存储失败、host SIGKILL
 后从 host 日志找回 Run 并接管、强停／关闭，以及 guardian SIGKILL 后工作负载仍活着但不持有 Scope 锁。
 
-Controller 授权和租约已推迟。host 自动协调与持久查询投影已通过[宿主 app](process-host.zh.md) 提供本机 IPC；stdin、持久输出、
+Controller 授权和租约已推迟。host 自动协调与持久查询投影已通过[宿主 app](host/service.zh.md) 提供本机 IPC；stdin、持久输出、
 Node／Git／插件接入和 guardian 死亡恢复仍未完成。强纳管、服务管理器下存续、物理断电与其他平台支持尚未证明。

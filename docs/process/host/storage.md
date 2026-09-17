@@ -1,10 +1,10 @@
 # Process host scope and Run intent journal
 
-English | [中文](process-host-state.zh.md)
+English | [中文](storage.zh.md)
 
 Linux `ora_process_runtime::HostState` owns durable Scope/Run intent and one-shot
-[independent guardian bootstrap](process-guardian.md). The [host app](process-host.md) composes it with automatic coordination. It implements part of the approved
-[guardian bootstrap decision](../specs/decisions/node/process/recovery/20260917-rootless-guardian-bootstrap-and-reconnect.md).
+[independent guardian bootstrap](../guardian.md). The [host app](service.md) composes it with automatic coordination. It implements part of the approved
+[guardian bootstrap decision](../../../specs/decisions/node/process/recovery/20260917-rootless-guardian-bootstrap-and-reconnect.md).
 It requires no root, helper, cgroup delegation or service installation. Existing Git/plugin entry
 points and application database policy are unchanged.
 
@@ -142,7 +142,7 @@ explicit state path. Tests use a private temporary fixture under the test user's
 code does not derive a path from that environment variable.
 
 Real-app bootstrap, refusal, launcher-kill and discovery evidence is documented under
-[guardian bootstrap](process-guardian.md), including durable host takeover and guardian-side Run acceptance.
+[guardian bootstrap](../guardian.md), including durable host takeover and guardian-side Run acceptance.
 Coordinator tests cover cancellation before dispatch, real side-effect deduplication after recovery,
 durable facts after guardian loss and independent progress past an unavailable Scope. The host app is implemented;
 Git/Node composition remains unfinished; Controller authorization is deferred. No ADR is marked implemented.

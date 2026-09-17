@@ -1,13 +1,13 @@
 # 进程运行体系实现状态
 
-[English](process-runtime.md) | 中文
+[English](runtime.md) | 中文
 
-[已批准的进程 ADR](../specs/decisions/node/process/README.md) 正在分批实施。
-当前已将内存态生命周期内核和[无需 root 的 Linux 尽力清理 adapter](process-linux-rootless.zh.md)
-接通为[可信本机 guardian Run 闭环](process-guardian.zh.md)，**尚未接入生产业务启动入口**。
+[已批准的进程 ADR](../../specs/decisions/node/process/README.md) 正在分批实施。
+当前已将内存态生命周期内核和[无需 root 的 Linux 尽力清理 adapter](linux/rootless.zh.md)
+接通为[可信本机 guardian Run 闭环](guardian.zh.md)，**尚未接入生产业务启动入口**。
 现有 `ora-process`、`ora-reaper`、Git 和插件入口保持不变。
 
-Linux 另已加入独立 [Helper 部署预检与认证检查服务](process-helper.zh.md)，不启用工作负载启动，也不构成平台 adapter。
+Linux 另已加入独立 [Helper 部署预检与认证检查服务](linux/helper.zh.md)，不启用工作负载启动，也不构成平台 adapter。
 供可信 helper 代码使用的底层执行前启动门禁已加入，但未开放 IPC，仍待真实特权验收。
 
 ## 所有权与行为
@@ -30,11 +30,11 @@ Linux 另已加入独立 [Helper 部署预检与认证检查服务](process-help
 定时器、重试退避或基于 Drop 的清理。平台方法必须有界，并在启动未知时仍保留稳定尝试身份。
 丢弃内核不提供崩溃恢复。
 
-Linux 已支持[有界内存结果捕获](process-linux-rootless.zh.md#有界结果捕获)，读取器独立推进，限额属于各 Run；
+Linux 已支持[有界内存结果捕获](linux/rootless.zh.md#有界结果捕获)，读取器独立推进，限额属于各 Run；
 管道 EOF 与进程清理分别表达。
-宿主创建意图已提供可选的[持久日志](process-host-state.zh.md)，仅使用显式传入的专用目录。
-另已支持[独立 guardian 启动与 Ready 发现](process-guardian.zh.md)，以及可信本机调用方的 guardian 侧 Run
-持久接受、查询、输出和强停。授权与租约已推迟；host Run 意图、重启枚举、自动协调、持久查询投影及[宿主 app](process-host.zh.md) 已实现；其余平台 adapter、
+宿主创建意图已提供可选的[持久日志](host/storage.zh.md)，仅使用显式传入的专用目录。
+另已支持[独立 guardian 启动与 Ready 发现](guardian.zh.md)，以及可信本机调用方的 guardian 侧 Run
+持久接受、查询、输出和强停。授权与租约已推迟；host Run 意图、重启枚举、自动协调、持久查询投影及[宿主 app](host/service.zh.md) 已实现；其余平台 adapter、
 完整 I/O、运行恢复、资源交接和生产接入均待实现。
 本批不代表阶段 1 完成，也不证明任何 OS 级纳管保证。
 
@@ -47,7 +47,7 @@ Workspace 已升级为捆绑 `rusqlite` 0.40.2／SQLite 3.53.2，包含
 这是依赖前置条件，不是 guardian 崩溃耐久证据；现有业务数据库 schema 和
 `synchronous=NORMAL` 政策不变，host 与 guardian journal 已分别启用 `FULL`。
 
-已批准的[无特权 Guardian 启动决策](../specs/decisions/node/process/recovery/20260917-rootless-guardian-bootstrap-and-reconnect.md)
+已批准的[无特权 Guardian 启动决策](../../specs/decisions/node/process/recovery/20260917-rootless-guardian-bootstrap-and-reconnect.md)
 已实现第一项基础能力：`ora_utils::fs::LinuxFileLock`。它接收已打开的普通文件，以非阻塞方式尝试
 独占加锁，竞争失败返回 `WouldBlock`。克隆复制同一个持锁的打开文件描述；`into_file()` 用于
 显式交接给子进程，不经过释放再重抢。描述符默认启用 close-on-exec。
@@ -64,8 +64,8 @@ Drop 只关闭描述符，故意不显式解锁，否则可能同时释放子进
 `cargo test -p ora-utils --test linux_file_lock` 验证锁竞争、复制后的生命周期、文件内容不变、
 close-on-exec（含显式 pre-exec 屏障），以及 exec 后持锁者在启动方被外部强杀后仍保有独占资格。测试通过 pidfd 固定并
 终止剩余持锁者，然后验证可以重新取得锁。测试子进程不是 guardian 或宿主实现。
-状态目录准入与持久创建意图已提供[宿主所有的实现](process-host-state.zh.md)，并独立测试日志持有者被外部强杀。
-[真实 app 启动测试](process-guardian.zh.md) 另已验证继承资格、日志先于 Ready 以及启动方死亡后的原实例发现。
+状态目录准入与持久创建意图已提供[宿主所有的实现](host/storage.zh.md)，并独立测试日志持有者被外部强杀。
+[真实 app 启动测试](guardian.zh.md) 另已验证继承资格、日志先于 Ready 以及启动方死亡后的原实例发现。
 持久宿主接管已同时拦截旧会话查询和本地 Run 执行。Controller 授权与 stdin 暂未接入，没有网络 Run 启动端点。
 
 ## 验证
@@ -74,5 +74,5 @@ close-on-exec（含显式 pre-exec 屏障），以及 exec 后持锁者在启动
 `cargo clippy -p ora-process-protocol -p ora-process-runtime --all-targets -- -D warnings`。
 受控集成测试通过公开运行时接口注入平台事实与时间；Linux 无特权测试另通过就绪握手和有界轮询验证
 真实子进程及后代，两者均不修改测试运行器的环境变量。
-[核心用例索引](../specs/test-cases/node/process/README.md) 仍将这些证据记为 `Partial`；
+[核心用例索引](../../specs/test-cases/node/process/README.md) 仍将这些证据记为 `Partial`；
 崩溃、持久化、完整身份竞争和强纳管平台权限边界仍需直接验证。
