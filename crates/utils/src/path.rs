@@ -7,6 +7,7 @@
 
 mod containment;
 mod lexical;
+mod native_encoding;
 mod portable;
 mod strict;
 #[cfg(unix)]
@@ -14,6 +15,7 @@ mod trusted;
 
 pub use containment::{CanonicalPathRoot, PathContainmentError};
 pub use lexical::{canonicalize_longest_existing_prefix, normalize_absolute, normalize_relative};
+pub use native_encoding::{deserialize_native_path, serialize_native_path};
 pub use portable::{PortableRelativePath, PortableRelativePathError};
 pub use strict::{RelativePathLimits, StrictRelativePath, StrictRelativePathError};
 #[cfg(unix)]
