@@ -38,7 +38,9 @@ Calls are serialized through mutable ownership. The caller must drive `reconcile
 Platform methods must be bounded and must retain stable attempt identities, including after uncertain
 spawn outcomes. Dropping the kernel does not provide crash recovery.
 
-Durable acceptance, authorization, leases, host/guardian processes, remaining platform adapters, I/O, recovery,
+Linux now supports [bounded volatile result capture](process-linux-rootless.md#bounded-result-capture),
+with independent readers and per-run limits; pipe EOF is separate from process cleanup.
+Durable acceptance, authorization, leases, host/guardian processes, remaining platform adapters, full I/O, recovery,
 resource handoff and production integration remain unimplemented. No filesystem layout is changed.
 This increment does not complete implementation phase 1 or prove any OS-level containment guarantee.
 

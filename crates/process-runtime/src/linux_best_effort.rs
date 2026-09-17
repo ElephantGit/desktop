@@ -4,8 +4,11 @@ use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::process::{Child, Command, ExitStatus, Stdio};
 
 use ora_process_protocol::{ContainmentGuarantee, DirectProcessState, ExitOutcome, RunId, RunSpec};
+use ora_process_protocol::{OutputPolicy, OutputRead, OutputStream};
 use ora_utils::process::{LinuxPidFd, ProcessSignal, linux_process_snapshot};
 
+use crate::OutputPlatform;
+use crate::linux_output::CapturedOutput;
 use crate::{
     ContainmentObservation, Platform, PlatformCapabilities, PlatformError, PlatformObservation,
     SpawnError, StopSignal,
@@ -16,6 +19,13 @@ use crate::{
 /// No other component may reap its children. It is not a crash-recoverable guardian.
 pub struct LinuxBestEffort {
     runs: BTreeMap<RunId, Attempt>,
+    outputs: BTreeMap<RunId, CapturedOutput>,
+    io_support: IoSupport,
+}
+
+enum IoSupport {
+    DiscardOnly,
+    BoundedCapture,
 }
 
 enum Attempt {
@@ -36,8 +46,7 @@ enum RootHandle {
 }
 
 impl LinuxBestEffort {
-    /// Explicitly discards stdin/stdout/stderr for this first platform slice; never secretly
-    /// buffers unbounded output. Guardian-owned stream handoff will use a separate constructor.
+    /// Rejects capture requests before exec; use `with_bounded_output` for explicit capture.
     pub fn with_discarded_io() -> io::Result<Self> {
         LinuxPidFd::probe_current()?;
         for stat in linux_process_snapshot()? {
@@ -55,7 +64,32 @@ impl LinuxBestEffort {
         }
         Ok(Self {
             runs: BTreeMap::new(),
+            outputs: BTreeMap::new(),
+            io_support: IoSupport::DiscardOnly,
         })
+    }
+
+    /// Enables explicit per-run capture limits; stdin remains closed and no defaults are invented.
+    pub fn with_bounded_output() -> io::Result<Self> {
+        let mut adapter = Self::with_discarded_io()?;
+        adapter.io_support = IoSupport::BoundedCapture;
+        Ok(adapter)
+    }
+}
+
+impl OutputPlatform for LinuxBestEffort {
+    /// Completed cleanup does not discard bytes or manufacture EOF for an escaped pipe holder.
+    fn read_output(
+        &self,
+        run: RunId,
+        stream: OutputStream,
+        offset: usize,
+        max_bytes: usize,
+    ) -> Result<OutputRead, PlatformError> {
+        self.outputs
+            .get(&run)
+            .ok_or_else(|| PlatformError("run has no captured output".into()))?
+            .read(stream, offset, max_bytes)
     }
 }
 
@@ -82,6 +116,12 @@ impl Platform for LinuxBestEffort {
                 "rootless adapter cannot provide Strong".into(),
             ));
         }
+        if matches!(self.io_support, IoSupport::DiscardOnly) && spec.output != OutputPolicy::Discard
+        {
+            return Err(SpawnError::NotStarted(
+                "adapter only supports discarded output".into(),
+            ));
+        }
         let mut command = Command::new(&spec.program);
         command
             .args(&spec.args)
@@ -91,6 +131,9 @@ impl Platform for LinuxBestEffort {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+        if matches!(spec.output, OutputPolicy::Capture { .. }) {
+            command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        }
         // SAFETY: setsid and construction of a raw OS error are allocation-free after fork.
         unsafe {
             command.pre_exec(|| {
@@ -101,9 +144,19 @@ impl Platform for LinuxBestEffort {
                 }
             });
         }
-        let child = command
+        let mut child = command
             .spawn()
             .map_err(|error| SpawnError::NotStarted(error.to_string()))?;
+        if let OutputPolicy::Capture {
+            stdout_limit,
+            stderr_limit,
+        } = spec.output
+        {
+            self.outputs.insert(
+                run,
+                CapturedOutput::start(&mut child, stdout_limit, stderr_limit),
+            );
+        }
         let (root, result) = match LinuxPidFd::for_child(&child) {
             Ok(root) => (RootHandle::Pinned(root), Ok(())),
             // Retain the unreaped child even if descriptor acquisition fails after exec.
@@ -129,6 +182,10 @@ impl Platform for LinuxBestEffort {
 
     /// Completes only after exit preceded a fresh successful scan with no newly found identity.
     fn observe(&mut self, run: RunId) -> Result<PlatformObservation, PlatformError> {
+        let output_failed = self
+            .outputs
+            .get(&run)
+            .is_some_and(CapturedOutput::requires_stop);
         let attempt = self
             .runs
             .get_mut(&run)
@@ -139,6 +196,9 @@ impl Platform for LinuxBestEffort {
                 containment: ContainmentObservation::Empty,
             }),
             Attempt::Tracking(tracked) => {
+                if output_failed {
+                    tracked.stop = Some(StopSignal::Force);
+                }
                 let observation = (|| -> io::Result<_> {
                     let exit = tracked.root_handle()?.peek_child_exit()?;
                     let quiet_before = exit.is_some() && tracked.members_exited()?;

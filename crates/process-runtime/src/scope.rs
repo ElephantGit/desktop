@@ -59,6 +59,19 @@ pub struct ScopeRuntime<P> {
     state: ScopeState,
 }
 
+impl<P: crate::OutputPlatform> ScopeRuntime<P> {
+    /// Reads volatile output independently of direct exit or completed process cleanup.
+    pub fn read_output(
+        &self,
+        run: RunId,
+        stream: ora_process_protocol::OutputStream,
+        offset: usize,
+        max_bytes: usize,
+    ) -> Result<ora_process_protocol::OutputRead, PlatformError> {
+        self.platform.read_output(run, stream, offset, max_bytes)
+    }
+}
+
 impl<P: Platform> ScopeRuntime<P> {
     /// Freezes the actual guarantee before accepting any run into this scope.
     pub fn new(request: ContainmentRequest, platform: P) -> Result<Self, AdmissionError> {

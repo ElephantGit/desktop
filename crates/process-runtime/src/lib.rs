@@ -5,6 +5,8 @@ mod linux_best_effort;
 #[cfg(target_os = "linux")]
 mod linux_helper;
 #[cfg(target_os = "linux")]
+mod linux_output;
+#[cfg(target_os = "linux")]
 pub use linux_best_effort::LinuxBestEffort;
 mod platform;
 mod scope;
@@ -16,7 +18,7 @@ pub use linux_helper::{
 };
 
 pub use platform::{
-    ContainmentObservation, Platform, PlatformCapabilities, PlatformError, PlatformObservation,
-    SpawnError, StopSignal,
+    ContainmentObservation, OutputPlatform, Platform, PlatformCapabilities, PlatformError,
+    PlatformObservation, SpawnError, StopSignal,
 };
 pub use scope::{AdmissionError, ReconcileFailure, ScopeRuntime, StartError, StopError};

@@ -18,6 +18,7 @@ use super::load_deployment;
 /// admission, keep durable responsibility, drain all three pipes, reap the direct child and retain
 /// the cgroup until descendants are gone. An error does not prove the cgroup is safe to retire.
 /// This is deliberately not exposed by the management protocol and does not advertise Strong.
+/// As a raw pipe handoff, it does not enforce `RunSpec.output`; that policy belongs to its caller.
 pub fn spawn_linux_helper_workload(
     config_path: &Path,
     run_cgroup: &Path,

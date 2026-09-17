@@ -1,4 +1,17 @@
 use ora_process_protocol::{ContainmentGuarantee, DirectProcessState, RunId, RunSpec};
+use ora_process_protocol::{OutputRead, OutputStream};
+
+/// Optional output capability; does not expose the platform's mutable control authority.
+pub trait OutputPlatform: Platform {
+    /// Reads a bounded retained range; unknown, uncaptured and not-started runs return an error.
+    fn read_output(
+        &self,
+        run: RunId,
+        stream: OutputStream,
+        offset: usize,
+        max_bytes: usize,
+    ) -> Result<OutputRead, PlatformError>;
+}
 
 /// An operational failure retains the attempt's cleanup responsibility.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

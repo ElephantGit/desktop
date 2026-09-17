@@ -2,7 +2,7 @@
 
 English | [中文](process-linux-rootless.zh.md)
 
-`ora_process_runtime::LinuxBestEffort::with_discarded_io()` provides the first real Linux
+`ora_process_runtime::LinuxBestEffort` provides the first real Linux
 adapter for `ScopeRuntime`. It needs no root, sudo, privileged helper, cgroup delegation,
 service installation or separate workload account. Workloads retain the caller's identity.
 The privileged [helper route](process-helper.md) is preserved but is not the current priority.
@@ -19,8 +19,32 @@ procfs mounts or syscall policies can reject construction; rootless does not mea
 container or gVisor configuration is supported. Procfs must describe the caller's PID namespace.
 
 Every run starts a new session before exec. Its environment is exactly `RunSpec.env`, not an
-implicit inheritance of the host environment. This constructor explicitly discards all three
-standard streams; it is not yet suitable for Git/plugin integration that needs output or input.
+implicit inheritance of the host environment. `with_discarded_io()` discards all three standard
+streams and rejects capture requests before exec. `with_bounded_output()` additionally accepts
+`RunSpec.output = OutputPolicy::Capture { stdout_limit, stderr_limit }`. Stdin remains closed.
+
+## Bounded result capture
+
+Limits are explicit per-stream byte counts and part of exact RunSpec replay identity. Zero accepts
+only empty output; exactly the limit is not overflow. The default RunSpec policy remains `Discard`.
+Each captured pipe has an independent reader that progresses without output consumers or reconcile.
+Only the bounded prefix is retained; after overflow it continues draining without growing retention.
+Overflow or reader/setup failure requests force cleanup at the next `reconcile`, even when the
+descendant policy is `WaitForAll`. The caller must continue driving reconciliation; reader threads
+do not independently own process-control authority.
+
+`ScopeRuntime::read_output(run, stream, offset, max_bytes)` copies at most the requested bytes,
+without consuming them. It reports retained length, sticky truncation and `Open` / `Eof` / `Failed`.
+Offsets past the retained prefix are errors, not silent gaps. Query both streams: an EOF with
+truncation is incomplete, and a read failure is not EOF. Bytes are volatile, never a durable offset
+or a plugin-session recovery promise. Unknown, non-started and discarded runs have no capture.
+
+Direct exit, tracked cleanup and pipe EOF remain independent. A descendant can hold a pipe after
+direct exit; an escaped descendant may hold it even after best-effort cleanup. Closing stdout does
+not imply process exit. Output remains readable after cleanup until the scope/adapter is dropped.
+Drop cancels readers without waiting for pipe writers. This slice uses two reader threads per
+captured run and retains bounded data per run, not an aggregate scope quota or retirement policy.
+It does not implement plugin backpressure, log rotation, stdin, persistence or guardian handoff.
 
 The caller must drive `ScopeRuntime::reconcile` and exclusively own child reaping. No other
 thread or signal handler may reap these children or enable automatic reaping while tracking.
@@ -56,6 +80,12 @@ admission, replay without duplicate execution, direct exit with surviving descen
 notify/force escalation, captured-member `setsid`, and Drop's direct-child cleanup. Utility tests cover
 pidfd exit/reaping, stale proc observations and non-UTF-8 process names. They do not force actual
 numeric PID reuse or exhaust descriptors to verify post-launch acquisition recovery.
+
+`cargo test -p ora-process-runtime --test linux_output` covers independent binary streams, exact
+limits, replay conflicts, offset reads, dual-stream output beyond pipe capacity without a consumer,
+overflow termination and isolation, descendant-held pipes and EOF before exit. Shared reader tests
+are `cargo test -p ora-utils --test pipe_capture`; they cover zero/exact/excess capacity, offsets and
+cancellation with a live writer. Thread/descriptor exhaustion and read-error recovery remain gaps.
 
 Durable host/guardian ownership, crash recovery, I/O handoff and production entry points remain
 unimplemented. See the [runtime status](process-runtime.md). No strong-containment ADR is completed

@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use uuid::Uuid;
 
-use crate::{CleanupState, DirectProcessState};
+use crate::{CleanupState, DirectProcessState, OutputPolicy};
 
 /// A single launch attempt, independent of OS process and Node instance identities.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -47,6 +47,7 @@ pub struct RunSpec {
     pub cwd: PathBuf,
     pub env: BTreeMap<OsString, OsString>,
     pub descendants: DescendantPolicy,
+    pub output: OutputPolicy,
 }
 
 impl RunSpec {
@@ -62,6 +63,7 @@ impl RunSpec {
             cwd: cwd.into(),
             env: BTreeMap::new(),
             descendants,
+            output: OutputPolicy::Discard,
         }
     }
 }
