@@ -100,6 +100,7 @@ impl WorkflowRunEngineRepository for InMemoryRepository {
         &self,
         _run_id: &WorkflowRunId,
         _node_id: &str,
+        _iteration: Option<u32>,
     ) -> Result<Option<WorkflowNodeRun>, RepositoryError> {
         Ok(None)
     }

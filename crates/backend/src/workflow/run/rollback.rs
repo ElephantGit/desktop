@@ -9,7 +9,9 @@ use gitlancer::{
     CliGitRunner, Git, GitlancerError, RepoRoot, RestoreAllRequest, RestorePathsRequest,
     SnapshotWorktreeRequest,
 };
-use ora_application::{ApplicationError, FileChange, WorkflowRunEngineRepository};
+use ora_application::{
+    ApplicationError, FileChange, WorkflowGraph, WorkflowRunEngineRepository, resume_unit_owner_id,
+};
 use ora_contracts::{
     EmptyErrorParams, PreviewWorkflowRunResumeRequest, PreviewWorkflowRunResumeResponse,
     PublicError, ResumeFailedNodePreview, ResumeRollbackMode, ResumeWorkflowRunRequest,
@@ -29,6 +31,7 @@ pub(super) struct FailedNodeCheckpoint {
     pub checkpoint: Option<String>,
     pub checkpoint_error: Option<String>,
     pub node_file_changes: Vec<FileChange>,
+    pub resume_unit_node_id: Option<String>,
 }
 
 /// Derived rollback availability for one run, with failed nodes ordered by `started_at` ascending
@@ -39,6 +42,9 @@ pub(super) struct RollbackPlan {
     pub failed: Vec<FailedNodeCheckpoint>,
     pub checkpoint_available: bool,
     pub checkpoint_unavailable_reason: Option<&'static str>,
+    pub node_files_unavailable_reason: Option<&'static str>,
+    /// Commit oid used by `checkpoint` rollback (composite pre-loop checkpoint when applicable).
+    pub checkpoint_oid: Option<String>,
 }
 
 impl RollbackPlan {
@@ -51,9 +57,11 @@ impl RollbackPlan {
             && !self.failed.is_empty()
     }
 
-    /// Node-file rollback needs a checkpoint on every failed node.
+    /// Node-file rollback needs a checkpoint on every failed node and is unavailable inside a region.
     pub(super) fn node_files_available(&self) -> bool {
-        self.resumable() && self.failed.iter().all(|node| node.checkpoint.is_some())
+        self.resumable()
+            && self.node_files_unavailable_reason.is_none()
+            && self.failed.iter().all(|node| node.checkpoint.is_some())
     }
 }
 
@@ -77,6 +85,7 @@ pub(super) fn plan_rollback(
     let has_running_node = node_runs
         .iter()
         .any(|node_run| node_run.status == WorkflowNodeStatus::Running);
+    let graph = WorkflowGraph::parse(context.graph_json.as_str()).ok();
     let mut failed: Vec<FailedNodeCheckpoint> = node_runs
         .iter()
         .filter(|node_run| {
@@ -94,6 +103,9 @@ pub(super) fn plan_rollback(
                 checkpoint: payload.checkpoint,
                 checkpoint_error: payload.checkpoint_error,
                 node_file_changes: payload.file_changes,
+                resume_unit_node_id: graph
+                    .as_ref()
+                    .and_then(|graph| resume_unit_owner_id(graph, &node_run.node_id)),
             }
         })
         .collect();
@@ -103,26 +115,61 @@ pub(super) fn plan_rollback(
         (None, Some(_)) => Ordering::Greater,
         (None, None) => Ordering::Equal,
     });
-    let failed_ids: std::collections::HashSet<&str> =
-        failed.iter().map(|node| node.node_id.as_str()).collect();
     let resumable = matches!(
         context.run.status,
         WorkflowRunStatus::Failed | WorkflowRunStatus::Cancelled
     ) && !has_running_node
         && !failed.is_empty();
-    let node_files_available = resumable && failed.iter().all(|node| node.checkpoint.is_some());
-    let earliest_failed_started_at = failed.iter().find_map(|node| node.started_at);
-    let siblings_ran_after = earliest_failed_started_at.is_some_and(|earliest| {
+    let composite_unit = failed.iter().any(|node| node.resume_unit_node_id.is_some());
+    let mut unit_ids = std::collections::HashSet::new();
+    for node in &failed {
+        if let Some(owner) = node.resume_unit_node_id.as_deref() {
+            unit_ids.insert(owner.to_string());
+            if let Some(graph) = graph.as_ref()
+                && let Some(region) = graph.region(owner)
+            {
+                unit_ids.extend(region.member_ids.iter().cloned());
+            }
+        } else {
+            unit_ids.insert(node.node_id.clone());
+        }
+    }
+    let unit_started_at = failed.iter().find_map(|node| {
+        let owner = node.resume_unit_node_id.as_deref().unwrap_or(&node.node_id);
+        node_runs
+            .iter()
+            .find(|row| row.node_id == owner && row.iteration.is_none())
+            .and_then(|row| row.started_at)
+            .or(node.started_at)
+    });
+    let siblings_ran_after = unit_started_at.is_some_and(|earliest| {
         node_runs.iter().any(|node_run| {
-            !failed_ids.contains(node_run.node_id.as_str())
+            !unit_ids.contains(&node_run.node_id)
                 && node_run
                     .started_at
                     .is_some_and(|started_at| started_at > earliest)
         })
     });
+    let unit_checkpoint = failed.iter().find_map(|node| {
+        let owner = node.resume_unit_node_id.as_deref().unwrap_or(&node.node_id);
+        node_runs
+            .iter()
+            .find(|row| row.node_id == owner && row.iteration.is_none())
+            .and_then(|row| parse_node_payload(row.payload.as_deref()).checkpoint)
+            .or_else(|| node.checkpoint.clone())
+    });
+    let node_files_unavailable_reason = if !resumable {
+        None
+    } else if composite_unit {
+        Some("composite_region")
+    } else if failed.iter().any(|node| node.checkpoint.is_none()) {
+        Some("no_file_changes")
+    } else {
+        None
+    };
     let (checkpoint_available, checkpoint_unavailable_reason) = if !resumable {
         (false, Some("not_resumable"))
-    } else if !node_files_available {
+    } else if unit_checkpoint.is_none() {
         (false, Some("no_checkpoint"))
     } else if siblings_ran_after {
         (false, Some("siblings_ran_after_checkpoint"))
@@ -135,6 +182,8 @@ pub(super) fn plan_rollback(
         failed,
         checkpoint_available,
         checkpoint_unavailable_reason,
+        node_files_unavailable_reason,
+        checkpoint_oid: unit_checkpoint,
     })
 }
 
@@ -168,12 +217,14 @@ pub(super) fn preview(
                 .into_iter()
                 .map(to_contract_change)
                 .collect(),
+            resume_unit_node_id: node.resume_unit_node_id.clone(),
         })
         .collect();
     Ok(PreviewWorkflowRunResumeResponse {
         resumable: plan.resumable(),
         failed_nodes,
         node_files_available: plan.node_files_available(),
+        node_files_unavailable_reason: plan.node_files_unavailable_reason.map(str::to_string),
         checkpoint_available: plan.checkpoint_available,
         checkpoint_unavailable_reason: plan.checkpoint_unavailable_reason.map(str::to_string),
         current_snapshot_id: String::new(),
@@ -247,10 +298,7 @@ pub(super) fn apply_rollback(
             if !plan.checkpoint_available {
                 return Err(not_resumable());
             }
-            let Some(earliest) = plan.failed.first() else {
-                return Err(not_resumable());
-            };
-            let Some(checkpoint) = earliest.checkpoint.as_deref() else {
+            let Some(checkpoint) = plan.checkpoint_oid.as_deref() else {
                 return Err(not_resumable());
             };
             let pre_rollback = snapshot_pre_rollback(workspace_root, run_id, now)?;

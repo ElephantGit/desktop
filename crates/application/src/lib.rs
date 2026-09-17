@@ -83,7 +83,7 @@ pub use workflow_run::{
     WorkflowRunPayload, WorkflowRunPayloadError, WorkflowRunRepository,
     WorkflowRunWorkspaceInitializer, WorkflowValidationError, WorkflowVariablePool,
     WorkflowVariablePoolError, WorkspaceRepository, extract_json_object, plan_snapshot_switch,
-    render_variable_template, validate_against_schema,
+    render_variable_template, resume_clear_node_ids, resume_unit_owner_id, validate_against_schema,
 };
 pub use workspace_diff::{
     CommitWorkspaceChangesHandler, CommitWorkspaceGitRequest, GitWorkspaceDiffReader,

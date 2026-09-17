@@ -76,6 +76,13 @@ pub(super) fn resume_from_failure(
             payload
                 .condition_decisions
                 .retain(|node_id, _| !cleared_writers.contains(node_id.as_str()));
+            payload
+                .iteration_ledger
+                .retain(|owner, _| !cleared_writers.contains(owner.as_str()));
+            payload.iteration_condition_decisions.retain(|key, _| {
+                let node_id = key.split('#').next().unwrap_or(key);
+                !cleared_writers.contains(node_id)
+            });
             transaction.execute(
                 "UPDATE workflow_runs SET payload = ?2 WHERE id = ?1 AND is_deleted = 0",
                 params![run_id.as_ref(), serde_json::to_string(&payload)?],

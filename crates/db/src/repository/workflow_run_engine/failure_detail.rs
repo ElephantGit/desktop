@@ -7,15 +7,17 @@ use super::payload_json::{file_changes_json, merge_payload_keys};
 /// Error written to node runs and runs interrupted by a backend restart.
 pub(super) const INTERRUPTED_BY_RESTART: &str = r#"{"reason":"interrupted_by_restart"}"#;
 
-/// Counts prior soft-deleted attempts of this node in the same run.
+/// Counts prior soft-deleted attempts of this `(node_id, iteration)` pair in the same run.
 fn deleted_attempt_count(
     transaction: &Transaction<'_>,
     run_id: &str,
     node_id: &str,
+    iteration: Option<u32>,
 ) -> Result<u32, crate::DatabaseError> {
     let count: i64 = transaction.query_row(
-        "SELECT COUNT(*) FROM workflow_node_runs WHERE run_id = ?1 AND node_id = ?2 AND is_deleted = 1",
-        params![run_id, node_id],
+        "SELECT COUNT(*) FROM workflow_node_runs
+         WHERE run_id = ?1 AND node_id = ?2 AND is_deleted = 1 AND iteration IS ?3",
+        params![run_id, node_id, iteration],
         |row| row.get(0),
     )?;
     Ok(u32::try_from(count).unwrap_or(u32::MAX))
@@ -40,11 +42,12 @@ pub(super) fn persist_failed_node_run(
     node_run_id: &str,
     run_id: &str,
     node_id: &str,
+    iteration: Option<u32>,
     failure: &NodeFailure,
     current_payload: Option<&str>,
     now: i64,
 ) -> Result<(), crate::DatabaseError> {
-    let attempt = deleted_attempt_count(transaction, run_id, node_id)?.saturating_add(1);
+    let attempt = deleted_attempt_count(transaction, run_id, node_id, iteration)?.saturating_add(1);
     let detail = NodeFailureDetail {
         kind: failure.kind,
         message: failure.message.clone(),
@@ -95,7 +98,7 @@ pub(super) fn fail_orphaned_run(
     }
     let nodes = {
         let mut statement = transaction.prepare(
-            "SELECT id, node_id, payload FROM workflow_node_runs
+            "SELECT id, node_id, payload, iteration FROM workflow_node_runs
              WHERE run_id = ?1 AND status IN (?2, ?3) AND is_deleted = 0",
         )?;
         let rows = statement.query_map(
@@ -109,6 +112,7 @@ pub(super) fn fail_orphaned_run(
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<u32>>(3)?,
                 ))
             },
         )?;
@@ -118,12 +122,13 @@ pub(super) fn fail_orphaned_run(
         NodeFailureKind::InterruptedByRestart,
         INTERRUPTED_BY_RESTART,
     );
-    for (id, node_id, payload) in nodes {
+    for (id, node_id, payload, iteration) in nodes {
         persist_failed_node_run(
             transaction,
             &id,
             run_id.as_ref(),
             &node_id,
+            iteration,
             &failure,
             payload.as_deref(),
             now,

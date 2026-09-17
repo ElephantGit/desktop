@@ -36,6 +36,7 @@ const PREVIEW: PreviewWorkflowRunResumeResponse = {
     },
   ],
   nodeFilesAvailable: true,
+  nodeFilesUnavailableReason: null,
   checkpointAvailable: true,
   checkpointUnavailableReason: null,
   currentSnapshotId: "snap-1",
@@ -231,4 +232,53 @@ describe("ResumeRunDialog", () => {
     });
     runtime.dispose();
   });
+
+  it("announces the iteration composite as the restart unit", async () => {
+    await appI18n.changeLanguage("zh-CN");
+    const user = userEvent.setup();
+    const compositePreview: PreviewWorkflowRunResumeResponse = {
+      ...PREVIEW,
+      failedNodes: [
+        {
+          nodeId: "fix",
+          nodeRunId: "nr-fix-1",
+          startedAt: 40n,
+          checkpoint: "abc",
+          checkpointError: null,
+          nodeFileChanges: [],
+          changedSinceCheckpoint: [],
+          resumeUnitNodeId: "iter",
+        },
+      ],
+      nodeFilesAvailable: false,
+      nodeFilesUnavailableReason: "composite_region",
+    };
+    const { resumeFromFailure, onResumed, runtime } =
+      renderDialog(compositePreview);
+    expect(
+      await screen.findByText("迭代节点「iter」将从第一轮重新开始"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "失败发生在迭代节点内部，只能保留现状或整体回滚到迭代开始前的检查点",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("radio", { name: /只回滚失败节点改过的文件/ }),
+    ).toHaveAttribute("aria-disabled", "true");
+    const dialog = screen.getByRole("alertdialog");
+    await user.click(
+      within(dialog).getByRole("button", { name: "从失败处继续" }),
+    );
+    await waitFor(() => {
+      expect(resumeFromFailure).toHaveBeenCalledTimes(1);
+    });
+    expect(resumeFromFailure.mock.calls[0]?.[0]).toEqual({
+      runId: "run-1",
+      rollback: "keep",
+    });
+    expect(onResumed).toHaveBeenCalledTimes(1);
+    runtime.dispose();
+  });
 });
+

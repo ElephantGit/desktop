@@ -72,6 +72,49 @@ pub fn plan_snapshot_switch(
         new_pool.values.insert(selector.clone(), value.clone());
     }
     new_pool.revision = pool.revision.saturating_add(1);
+
+    let resume_unit_owners: HashSet<String> = node_runs
+        .iter()
+        .filter(|node_run| {
+            matches!(
+                node_run.status,
+                WorkflowNodeStatus::Failed | WorkflowNodeStatus::Cancelled
+            )
+        })
+        .filter_map(|node_run| super::region::resume_unit_owner_id(old_graph, &node_run.node_id))
+        .collect();
+    for node in old_graph.nodes() {
+        let Some(old_region) = old_graph.region(&node.id) else {
+            continue;
+        };
+        if resume_unit_owners.contains(&node.id) {
+            continue;
+        }
+        let succeeded = node_runs.iter().any(|row| {
+            row.node_id == node.id
+                && row.iteration.is_none()
+                && row.status == WorkflowNodeStatus::Succeeded
+        });
+        if !succeeded {
+            continue;
+        }
+        let old_members: HashSet<&str> = old_region.member_ids.iter().map(String::as_str).collect();
+        let new_members: HashSet<&str> = new_graph
+            .region(&node.id)
+            .map(|region| region.member_ids.iter().map(String::as_str).collect())
+            .unwrap_or_default();
+        let old_config = node.iteration_config.as_ref();
+        let new_config = new_graph
+            .node(&node.id)
+            .and_then(|node| node.iteration_config.as_ref());
+        if old_config != new_config || old_members != new_members {
+            return Err(incompatible(format!(
+                "iteration node {} changed after it completed",
+                node.id
+            )));
+        }
+    }
+
     Ok(SnapshotSwitchPlan {
         variable_pool: new_pool,
     })
@@ -396,5 +439,120 @@ mod tests {
             Some(&json!("from-a"))
         );
         assert!(!plan.variable_pool.values.contains_key("b.output"));
+    }
+
+    const ITER_MAX_10: &str = r#"{
+        "nodes": [
+            {"id":"start","data":{"kind":"start","inputVariables":[{"name":"prs","valueType":"array[object]"}]}},
+            {"id":"iter","data":{"kind":"iteration","iterationConfig":{
+                "iteratorSelector":["start","prs"],
+                "collectSelector":["fix","output"],
+                "errorStrategy":"fail",
+                "maxIterations":10
+            }}},
+            {"id":"fix","parentId":"iter","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"fix"}}},
+            {"id":"out","data":{"kind":"output"}}
+        ],
+        "edges": [
+            {"source":"start","target":"iter"},
+            {"source":"iter","target":"fix"},
+            {"source":"iter","target":"out"}
+        ]
+    }"#;
+
+    const ITER_MAX_20: &str = r#"{
+        "nodes": [
+            {"id":"start","data":{"kind":"start","inputVariables":[{"name":"prs","valueType":"array[object]"}]}},
+            {"id":"iter","data":{"kind":"iteration","iterationConfig":{
+                "iteratorSelector":["start","prs"],
+                "collectSelector":["fix","output"],
+                "errorStrategy":"fail",
+                "maxIterations":20
+            }}},
+            {"id":"fix","parentId":"iter","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"fix"}}},
+            {"id":"out","data":{"kind":"output"}}
+        ],
+        "edges": [
+            {"source":"start","target":"iter"},
+            {"source":"iter","target":"fix"},
+            {"source":"iter","target":"out"}
+        ]
+    }"#;
+
+    const ITER_EXTRA_MEMBER: &str = r#"{
+        "nodes": [
+            {"id":"start","data":{"kind":"start","inputVariables":[{"name":"prs","valueType":"array[object]"}]}},
+            {"id":"iter","data":{"kind":"iteration","iterationConfig":{
+                "iteratorSelector":["start","prs"],
+                "collectSelector":["fix","output"],
+                "errorStrategy":"fail",
+                "maxIterations":10
+            }}},
+            {"id":"fix","parentId":"iter","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"fix"}}},
+            {"id":"review","parentId":"iter","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"review"}}},
+            {"id":"out","data":{"kind":"output"}}
+        ],
+        "edges": [
+            {"source":"start","target":"iter"},
+            {"source":"iter","target":"fix"},
+            {"source":"fix","target":"review"},
+            {"source":"iter","target":"out"}
+        ]
+    }"#;
+
+    /// A succeeded iteration node that is not the resume unit cannot change after it completed.
+    #[test]
+    fn succeeded_iteration_config_change_is_incompatible() {
+        let old_graph = parse(ITER_MAX_10);
+        let new_graph = parse(ITER_MAX_20);
+        let pool = WorkflowVariablePool::from_graph(&old_graph);
+        let node_runs = vec![
+            node_run("start", "start", WorkflowNodeStatus::Succeeded),
+            node_run("iter", "iteration", WorkflowNodeStatus::Succeeded),
+            node_run("fix", "agent", WorkflowNodeStatus::Succeeded).in_iteration(Some(0)),
+            node_run("out", "output", WorkflowNodeStatus::Failed),
+        ];
+        assert_eq!(
+            plan_snapshot_switch(&old_graph, &new_graph, &node_runs, &pool).unwrap_err(),
+            SnapshotIncompatibility {
+                reason: "iteration node iter changed after it completed".to_string(),
+            }
+        );
+    }
+
+    /// Changing the member set of a succeeded composite is the same incompatibility.
+    #[test]
+    fn succeeded_iteration_member_set_change_is_incompatible() {
+        let old_graph = parse(ITER_MAX_10);
+        let new_graph = parse(ITER_EXTRA_MEMBER);
+        let pool = WorkflowVariablePool::from_graph(&old_graph);
+        let node_runs = vec![
+            node_run("start", "start", WorkflowNodeStatus::Succeeded),
+            node_run("iter", "iteration", WorkflowNodeStatus::Succeeded),
+            node_run("fix", "agent", WorkflowNodeStatus::Succeeded).in_iteration(Some(0)),
+            node_run("out", "output", WorkflowNodeStatus::Failed),
+        ];
+        assert_eq!(
+            plan_snapshot_switch(&old_graph, &new_graph, &node_runs, &pool).unwrap_err(),
+            SnapshotIncompatibility {
+                reason: "iteration node iter changed after it completed".to_string(),
+            }
+        );
+    }
+
+    /// A composite that is itself the resume unit may change freely because the loop restarts.
+    #[test]
+    fn resume_unit_iteration_config_change_is_compatible() {
+        let old_graph = parse(ITER_MAX_10);
+        let new_graph = parse(ITER_MAX_20);
+        let pool = WorkflowVariablePool::from_graph(&old_graph);
+        let node_runs = vec![
+            node_run("start", "start", WorkflowNodeStatus::Succeeded),
+            node_run("iter", "iteration", WorkflowNodeStatus::Failed),
+            node_run("fix", "agent", WorkflowNodeStatus::Succeeded).in_iteration(Some(0)),
+            node_run("fix", "agent", WorkflowNodeStatus::Failed).in_iteration(Some(1)),
+        ];
+        let plan = plan_snapshot_switch(&old_graph, &new_graph, &node_runs, &pool);
+        assert!(plan.is_ok(), "{plan:?}");
     }
 }

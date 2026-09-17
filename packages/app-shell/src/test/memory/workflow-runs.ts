@@ -156,6 +156,7 @@ export function workflowRunHandlers(
       resumable: true,
       failedNodes: [],
       nodeFilesAvailable: true,
+      nodeFilesUnavailableReason: null,
       checkpointAvailable: true,
       checkpointUnavailableReason: null,
       currentSnapshotId: "snap-1",

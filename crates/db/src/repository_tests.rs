@@ -1241,7 +1241,7 @@ fn find_last_failed_attempt_returns_the_latest_soft_deleted_failure() {
     );
 
     let latest = engine_repository
-        .find_last_failed_attempt(&run_id, "review")
+        .find_last_failed_attempt(&run_id, "review", None)
         .unwrap()
         .expect("soft-deleted failure");
     let parsed: serde_json::Value =
@@ -1283,7 +1283,7 @@ fn find_last_failed_attempt_returns_the_latest_soft_deleted_failure() {
         .unwrap();
     assert_eq!(
         engine_repository
-            .find_last_failed_attempt(&run_id, "ok")
+            .find_last_failed_attempt(&run_id, "ok", None)
             .unwrap(),
         None
     );
@@ -1298,7 +1298,158 @@ fn find_last_failed_attempt_returns_the_latest_soft_deleted_failure() {
         .unwrap();
     assert_eq!(
         engine_repository
-            .find_last_failed_attempt(&run_id, "live")
+            .find_last_failed_attempt(&run_id, "live", None)
+            .unwrap(),
+        None
+    );
+}
+
+/// Attempt numbers are scoped by `(run_id, node_id, iteration)`, so two rounds of the same
+/// member node count independently.
+#[test]
+fn deleted_attempt_count_is_scoped_by_node_id_and_iteration() {
+    let (temp_dir, pool) = bootstrapped_pool();
+    let engine_repository = SqliteWorkflowRunEngineRepository::new(pool.clone());
+    let run_id = seed_run(
+        &temp_dir,
+        &pool,
+        WorkflowRunStatus::Failed,
+        None,
+        Some("round failed".to_string()),
+        Some(20),
+        Some(30),
+    );
+    engine_repository
+        .start_ready_nodes(
+            &run_id,
+            &[
+                NodeRunToStart {
+                    id: WorkflowNodeRunId::new("nr-fix-0"),
+                    node_id: "fix".to_string(),
+                    node_type: "agent".to_string(),
+                    input: None,
+                    iteration: Some(0),
+                },
+                NodeRunToStart {
+                    id: WorkflowNodeRunId::new("nr-fix-1"),
+                    node_id: "fix".to_string(),
+                    node_type: "agent".to_string(),
+                    input: None,
+                    iteration: Some(1),
+                },
+            ],
+            40,
+        )
+        .unwrap();
+    engine_repository
+        .fail_node(
+            &WorkflowNodeRunId::new("nr-fix-0"),
+            NodeFailure::new(NodeFailureKind::Session, "round 0 failed"),
+            ora_application::FailurePropagation::Composite,
+            50,
+        )
+        .unwrap();
+    engine_repository
+        .fail_node(
+            &WorkflowNodeRunId::new("nr-fix-1"),
+            NodeFailure::new(NodeFailureKind::Session, "round 1 failed"),
+            ora_application::FailurePropagation::Composite,
+            60,
+        )
+        .unwrap();
+
+    let attempt = |node_run_id: &str| {
+        let payload = engine_repository
+            .list_node_runs(&run_id)
+            .unwrap()
+            .into_iter()
+            .find(|row| row.id.as_ref() == node_run_id)
+            .and_then(|row| row.payload)
+            .expect("payload");
+        serde_json::from_str::<serde_json::Value>(&payload).unwrap()["error_detail"]["attempt"]
+            .clone()
+    };
+    assert_eq!(attempt("nr-fix-0"), serde_json::json!(1));
+    assert_eq!(attempt("nr-fix-1"), serde_json::json!(1));
+
+    // Soft-delete both rounds so the next live rows see them as prior attempts.
+    engine_repository
+        .resume_from_failure(&run_id, &["fix".to_string()], 70)
+        .unwrap();
+    engine_repository
+        .start_ready_nodes(
+            &run_id,
+            &[
+                NodeRunToStart {
+                    id: WorkflowNodeRunId::new("nr-fix-0b"),
+                    node_id: "fix".to_string(),
+                    node_type: "agent".to_string(),
+                    input: None,
+                    iteration: Some(0),
+                },
+                NodeRunToStart {
+                    id: WorkflowNodeRunId::new("nr-fix-1b"),
+                    node_id: "fix".to_string(),
+                    node_type: "agent".to_string(),
+                    input: None,
+                    iteration: Some(1),
+                },
+            ],
+            80,
+        )
+        .unwrap();
+    engine_repository
+        .fail_node(
+            &WorkflowNodeRunId::new("nr-fix-0b"),
+            NodeFailure::new(NodeFailureKind::Session, "round 0 failed again"),
+            ora_application::FailurePropagation::Composite,
+            90,
+        )
+        .unwrap();
+    engine_repository
+        .fail_node(
+            &WorkflowNodeRunId::new("nr-fix-1b"),
+            NodeFailure::new(NodeFailureKind::Session, "round 1 failed again"),
+            ora_application::FailurePropagation::Run,
+            100,
+        )
+        .unwrap();
+
+    let live = engine_repository.list_node_runs(&run_id).unwrap();
+    let attempt_of = |id: &str| {
+        let payload = live
+            .iter()
+            .find(|row| row.id.as_ref() == id)
+            .and_then(|row| row.payload.as_deref())
+            .expect("payload");
+        serde_json::from_str::<serde_json::Value>(payload).unwrap()["error_detail"]["attempt"]
+            .clone()
+    };
+    assert_eq!(attempt_of("nr-fix-0b"), serde_json::json!(2));
+    assert_eq!(attempt_of("nr-fix-1b"), serde_json::json!(2));
+
+    engine_repository
+        .resume_from_failure(&run_id, &["fix".to_string()], 110)
+        .unwrap();
+    let round0 = engine_repository
+        .find_last_failed_attempt(&run_id, "fix", Some(0))
+        .unwrap()
+        .expect("round 0");
+    let round1 = engine_repository
+        .find_last_failed_attempt(&run_id, "fix", Some(1))
+        .unwrap()
+        .expect("round 1");
+    let parsed0: serde_json::Value =
+        serde_json::from_str(round0.payload.as_deref().unwrap()).unwrap();
+    let parsed1: serde_json::Value =
+        serde_json::from_str(round1.payload.as_deref().unwrap()).unwrap();
+    assert_eq!(parsed0["error_detail"]["attempt"], 2);
+    assert_eq!(parsed1["error_detail"]["attempt"], 2);
+    assert_eq!(round0.iteration, Some(0));
+    assert_eq!(round1.iteration, Some(1));
+    assert_eq!(
+        engine_repository
+            .find_last_failed_attempt(&run_id, "fix", None)
             .unwrap(),
         None
     );

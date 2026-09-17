@@ -139,6 +139,44 @@ impl NodeExecutor for WorkflowRunNodeExecutor {
             }
         });
     }
+
+    fn on_composite_node_started(
+        &self,
+        node_run_id: &WorkflowNodeRunId,
+        node: &WorkflowGraphNode,
+        context: &ExecutionContext,
+    ) {
+        let workspace_root = match self.agent_runtime.workspace_cwd(&context.workspace.id) {
+            Ok(root) => root,
+            Err(error) => {
+                ora_warn!(
+                    error = %error,
+                    workspace_id = %context.workspace.id,
+                    node_id = %node.id,
+                    "failed to resolve workspace cwd for composite checkpoint"
+                );
+                return;
+            }
+        };
+        let repository = SqliteWorkflowRunEngineRepository::new(self.pool.clone());
+        if let Err(error) = record_pre_node_checkpoint(
+            &repository,
+            &workspace_root,
+            &context.run.id,
+            &node.id,
+            node_run_id,
+            context.run.snapshot_id.as_ref(),
+            self.clock.now_timestamp_millis(),
+        ) {
+            ora_warn!(
+                error = %error,
+                run_id = %context.run.id,
+                node_id = %node.id,
+                node_run_id = %node_run_id,
+                "failed to record composite pre-node checkpoint"
+            );
+        }
+    }
 }
 
 /// The result of one driven agent node turn.
@@ -353,7 +391,12 @@ async fn drive_agent_node(
 
         // Assemble one explicit workflow handoff while preserving leading slash-command parsing.
         let node_runs = repository.list_node_runs(&context.run.id)?;
-        let previous = repository.find_last_failed_attempt(&context.run.id, &node.id)?;
+        let iteration = node_runs
+            .iter()
+            .find(|row| row.id == *node_run_id)
+            .and_then(|row| row.iteration);
+        let previous =
+            repository.find_last_failed_attempt(&context.run.id, &node.id, iteration)?;
         let previous_failure =
             previous_failure_for_injection(run_payload.inject_last_failure, previous.as_ref());
         let workspace_root = agent_runtime.workspace_cwd(&context.workspace.id)?;

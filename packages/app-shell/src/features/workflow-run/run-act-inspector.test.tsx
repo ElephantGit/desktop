@@ -77,6 +77,8 @@ function renderInspector(
     handlers?: TestHandlers;
     runStatus?: GraphWorkflowRunStatus;
     runSnapshotId?: string;
+    roundStates?: Record<string, GraphWorkflowNodeState[]>;
+    selectedRound?: number | null;
   } = {},
 ) {
   useWorkspaceSelectionStore
@@ -130,7 +132,8 @@ function renderInspector(
           nodeId="agent-1"
           data={options.data ?? AGENT_DATA}
           state={nodeState}
-          selectedRound={null}
+          roundStates={options.roundStates}
+          selectedRound={options.selectedRound ?? null}
           onRoundChange={() => undefined}
           artifacts={[]}
           revealedArtifactId={null}
@@ -435,5 +438,42 @@ describe("RunActInspector AI diagnosis", () => {
     expect(
       screen.getByRole("button", { name: "重新分析" }),
     ).toBeInTheDocument();
+  });
+
+  it("renders the selected round's error block and injected context", async () => {
+    await appI18n.changeLanguage("zh-CN");
+    const round0: GraphWorkflowNodeState = {
+      status: "succeeded",
+      iteration: 0,
+      errorMessage: undefined,
+    };
+    const round1: GraphWorkflowNodeState = {
+      status: "failed",
+      iteration: 1,
+      errorMessage: "round 2 exploded",
+      errorDetail: {
+        kind: "session",
+        message: "round 2 exploded",
+        sourceChain: [],
+        attempt: 1,
+        resumable: true,
+        injectsPreviousFailure: true,
+        recordedAt: 50,
+      },
+      injectedFailureContext: "## 上一次尝试（第 1 次）失败信息\n类型：会话失败",
+    };
+    renderInspector(round1, {
+      runStatus: "failed",
+      selectedRound: 1,
+      roundStates: { "agent-1": [round0, round1] },
+    });
+    expect(await screen.findByText("round 2 exploded")).toBeInTheDocument();
+    expect(screen.getByText("智能体会话失败")).toBeInTheDocument();
+    expect(
+      screen.getByText("本次尝试注入的上次失败信息"),
+    ).toBeInTheDocument();
+    expect(document.querySelector("pre")?.textContent).toBe(
+      "## 上一次尝试（第 1 次）失败信息\n类型：会话失败",
+    );
   });
 });

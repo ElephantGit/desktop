@@ -384,6 +384,9 @@ pub struct ResumeFailedNodePreview {
     pub node_file_changes: Vec<WorkflowFileChange>,
     /// Live diff of the worktree against this node's checkpoint (includes edits made after the failure).
     pub changed_since_checkpoint: Vec<WorkflowFileChange>,
+    /// Owning composite node id when this row belongs to an iteration resume unit.
+    #[ts(optional)]
+    pub resume_unit_node_id: Option<String>,
 }
 
 /// Describes whether a run can be resumed and which rollback modes are available.
@@ -396,6 +399,9 @@ pub struct PreviewWorkflowRunResumeResponse {
     pub failed_nodes: Vec<ResumeFailedNodePreview>,
     /// Every failed node has a checkpoint.
     pub node_files_available: bool,
+    /// `"no_file_changes"` when a failed node has no checkpoint / recorded changes;
+    /// `"composite_region"` when the resume unit is an iteration composite.
+    pub node_files_unavailable_reason: Option<String>,
     /// `node_files_available` and no sibling node run started after the earliest failed checkpoint.
     pub checkpoint_available: bool,
     /// `"no_checkpoint"` | `"siblings_ran_after_checkpoint"` | `"not_resumable"`.

@@ -152,6 +152,11 @@ export type PreviewWorkflowRunResumeResponse = {
    */
   nodeFilesAvailable: boolean;
   /**
+   * `"no_file_changes"` when a failed node has no checkpoint / recorded changes;
+   * `"composite_region"` when the resume unit is an iteration composite.
+   */
+  nodeFilesUnavailableReason: string | null;
+  /**
    * `node_files_available` and no sibling node run started after the earliest failed checkpoint.
    */
   checkpointAvailable: boolean;
@@ -204,6 +209,10 @@ export type ResumeFailedNodePreview = {
    * Live diff of the worktree against this node's checkpoint (includes edits made after the failure).
    */
   changedSinceCheckpoint: Array<WorkflowFileChange>;
+  /**
+   * Owning composite node id when this row belongs to an iteration resume unit.
+   */
+  resumeUnitNodeId?: string;
 };
 
 /**

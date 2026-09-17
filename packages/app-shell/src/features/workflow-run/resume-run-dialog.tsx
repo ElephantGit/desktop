@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import type { ResumeRollbackMode } from "@ora/contracts";
+import type { PreviewWorkflowRunResumeResponse, ResumeRollbackMode } from "@ora/contracts";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -34,6 +34,11 @@ const REASON_KEYS = {
   siblings_ran_after_checkpoint:
     "workflowRun.resume.reason.siblings_ran_after_checkpoint",
   not_resumable: "workflowRun.resume.reason.not_resumable",
+} as const;
+
+const NODE_FILES_REASON_KEYS = {
+  no_file_changes: "workflowRun.resume.rollbackUnavailable.no_file_changes",
+  composite_region: "workflowRun.resume.rollbackUnavailable.composite_region",
 } as const;
 
 const SNAPSHOT_REASON_KEYS = {
@@ -84,6 +89,10 @@ export function ResumeRunDialog({
   const previewData = preview.data;
   const checkpointReason = checkpointReasonText(
     previewData?.checkpointUnavailableReason,
+    t,
+  );
+  const nodeFilesReason = nodeFilesReasonText(
+    previewData?.nodeFilesUnavailableReason,
     t,
   );
 
@@ -167,6 +176,17 @@ export function ResumeRunDialog({
             })
           : null}
 
+        {previewData
+          ? uniqueResumeUnits(previewData.failedNodes).map((name) => (
+              <p
+                key={name}
+                className="mt-2 text-xs leading-5 text-muted-foreground"
+              >
+                {t("workflowRun.resume.compositeRestart", { name })}
+              </p>
+            ))
+          : null}
+
         {previewData?.publishedSnapshotId != null &&
         previewData.publishedSnapshotId !== previewData.currentSnapshotId ? (
           <label
@@ -228,7 +248,14 @@ export function ResumeRunDialog({
               className="mt-0.5"
               disabled={previewData !== undefined && !previewData.nodeFilesAvailable}
             />
-            <span>{t("workflowRun.resume.nodeFiles")}</span>
+            <span className="space-y-1">
+              <span className="block">{t("workflowRun.resume.nodeFiles")}</span>
+              {nodeFilesReason ? (
+                <span className="block text-xs text-muted-foreground">
+                  {nodeFilesReason}
+                </span>
+              ) : null}
+            </span>
           </label>
           <label
             className={`flex items-start gap-2 text-sm ${
@@ -290,6 +317,37 @@ export function ResumeRunDialog({
       </AlertDialogContent>
     </AlertDialog>
   );
+}
+
+/** Maps a node-files unavailability reason onto the matching translated explanation. */
+function nodeFilesReasonText(
+  reason: string | null | undefined,
+  t: TFunction,
+): string | null {
+  if (reason === "no_file_changes") {
+    return t(NODE_FILES_REASON_KEYS.no_file_changes);
+  }
+  if (reason === "composite_region") {
+    return t(NODE_FILES_REASON_KEYS.composite_region);
+  }
+  return null;
+}
+
+/** Unique composite ids that will restart from round 1. */
+function uniqueResumeUnits(
+  failedNodes: PreviewWorkflowRunResumeResponse["failedNodes"],
+): string[] {
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (const node of failedNodes) {
+    const owner = node.resumeUnitNodeId;
+    if (owner == null || owner === "" || seen.has(owner)) {
+      continue;
+    }
+    seen.add(owner);
+    names.push(owner);
+  }
+  return names;
 }
 
 /** Maps a backend availability reason onto the matching translated explanation. */

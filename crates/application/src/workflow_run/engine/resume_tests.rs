@@ -86,6 +86,7 @@ impl WorkflowRunEngineRepository for RecordingRepository {
         &self,
         _run_id: &WorkflowRunId,
         _node_id: &str,
+        _iteration: Option<u32>,
     ) -> Result<Option<WorkflowNodeRun>, RepositoryError> {
         Ok(None)
     }
@@ -309,6 +310,10 @@ impl WorkflowRunEngineRepository for RecordingRepository {
 }
 
 fn execution_context() -> ExecutionContext {
+    execution_context_with(GRAPH)
+}
+
+fn execution_context_with(graph_json: &str) -> ExecutionContext {
     ExecutionContext {
         run: WorkflowRun::new(
             WorkflowRunId::new("run-1"),
@@ -334,7 +339,7 @@ fn execution_context() -> ExecutionContext {
             WorkspaceLifecycle::Active,
             AuditFields::new(1, 1, false),
         ),
-        graph_json: GRAPH.to_string(),
+        graph_json: graph_json.to_string(),
     }
 }
 
@@ -362,9 +367,19 @@ fn engine(
     WorkflowRunEngine<RecordingRepository, SeqGen, ClockAt>,
     Arc<Mutex<Option<Vec<String>>>>,
 ) {
+    engine_with(node_runs, GRAPH)
+}
+
+fn engine_with(
+    node_runs: Vec<WorkflowNodeRun>,
+    graph_json: &str,
+) -> (
+    WorkflowRunEngine<RecordingRepository, SeqGen, ClockAt>,
+    Arc<Mutex<Option<Vec<String>>>>,
+) {
     let cleared = Arc::new(Mutex::new(None));
     let repository = RecordingRepository {
-        context: execution_context(),
+        context: execution_context_with(graph_json),
         node_runs,
         cleared: cleared.clone(),
     };
@@ -408,5 +423,56 @@ fn resume_from_failure_clears_failed_nodes_and_successors_not_siblings() {
     assert_eq!(
         *cleared.lock().expect("cleared lock"),
         Some(vec!["a".to_string(), "c".to_string(), "out".to_string()])
+    );
+}
+
+const ITERATION_GRAPH: &str = r#"{
+    "nodes": [
+        {"id":"start","data":{"kind":"start","inputVariables":[{"name":"prs","valueType":"array[object]"}]}},
+        {"id":"other","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"other"}}},
+        {"id":"iter","data":{"kind":"iteration","iterationConfig":{
+            "iteratorSelector":["start","prs"],
+            "collectSelector":["fix","output"],
+            "errorStrategy":"fail",
+            "maxIterations":10
+        }}},
+        {"id":"fix","parentId":"iter","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"fix"}}},
+        {"id":"out","data":{"kind":"output"}}
+    ],
+    "edges": [
+        {"source":"start","target":"other"},
+        {"source":"start","target":"iter"},
+        {"source":"iter","target":"fix"},
+        {"source":"iter","target":"out"}
+    ]
+}"#;
+
+/// A failed region member restarts the owning composite, every round of every member, and
+/// outer descendants; a succeeded outer sibling is left alone.
+#[test]
+fn resume_from_failure_clears_the_composite_unit_and_leaves_outer_siblings() {
+    let (engine, cleared) = engine_with(
+        vec![
+            node_run("nr-start", "start", WorkflowNodeStatus::Succeeded),
+            node_run("nr-other", "other", WorkflowNodeStatus::Succeeded),
+            node_run("nr-iter", "iter", WorkflowNodeStatus::Failed),
+            node_run("nr-fix-0", "fix", WorkflowNodeStatus::Succeeded).in_iteration(Some(0)),
+            node_run("nr-fix-1", "fix", WorkflowNodeStatus::Failed).in_iteration(Some(1)),
+        ],
+        ITERATION_GRAPH,
+    );
+    assert_eq!(
+        engine
+            .resume_from_failure(&WorkflowRunId::new("run-1"))
+            .unwrap(),
+        ResumeWorkflowRunResult::Resumed
+    );
+    assert_eq!(
+        *cleared.lock().expect("cleared lock"),
+        Some(vec![
+            "fix".to_string(),
+            "iter".to_string(),
+            "out".to_string()
+        ])
     );
 }

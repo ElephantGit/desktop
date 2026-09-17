@@ -15,6 +15,7 @@ mod failure;
 mod graph;
 mod handlers;
 mod iteration;
+mod node_executor;
 mod node_runtime;
 mod node_type;
 mod ports;
@@ -28,9 +29,7 @@ mod variable_template;
 mod variable_value;
 
 pub use agent_config::AgentMcp;
-pub use engine::{
-    EngineError, NodeExecutor, WorkflowRunCallback, WorkflowRunEngine, WorkflowValidationError,
-};
+pub use engine::WorkflowRunEngine;
 pub use failure::{NodeFailure, NodeFailureDetail, NodeFailureKind};
 pub use graph::{
     AgentConfig, AgentExecutor, AgentOutputContract, AgentSkill, GraphError,
@@ -40,6 +39,7 @@ pub use handlers::WorkflowRunControlHandler;
 pub use iteration::{
     CompositeRegion, IterationConfig, IterationErrorStrategy, IterationLedger, RoundOutcome,
 };
+pub use node_executor::{EngineError, NodeExecutor, WorkflowRunCallback, WorkflowValidationError};
 pub use node_type::{NodeType, UnknownNodeType};
 pub use ports::{
     AdvanceWorkflowRunResult, BindWorkflowNodeSessionResult, CancelWorkflowRunResult,
@@ -49,6 +49,7 @@ pub use ports::{
     WorkflowNodeRunIdGenerator, WorkflowRunEngineRepository, WorkflowRunInvalidationPublisher,
     WorkflowRunWorkspaceInitializer,
 };
+pub use region::{resume_clear_node_ids, resume_unit_owner_id};
 pub use skill_delivery::{
     AgentSkillDelivery, AgentSkillDeliveryError, AgentSkillDeliveryProvider,
     MaterializedSkillBinding, SkillDiscoveryRoots, SkillMaterializationReceipt, WorkflowRunPayload,

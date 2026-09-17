@@ -53,6 +53,12 @@ export const workflowRunTranslations = {
     "workflowRun.resume.reason.siblings_ran_after_checkpoint":
       "检查点之后有其他节点跑过，整体回滚会抹掉它们的成果",
     "workflowRun.resume.reason.not_resumable": "当前运行不能续跑",
+    "workflowRun.resume.rollbackUnavailable.composite_region":
+      "失败发生在迭代节点内部，只能保留现状或整体回滚到迭代开始前的检查点",
+    "workflowRun.resume.rollbackUnavailable.no_file_changes":
+      "失败节点没有记录可回滚的文件改动",
+    "workflowRun.resume.compositeRestart":
+      "迭代节点「{{name}}」将从第一轮重新开始",
     "workflowRun.resume.safetyNote": "回滚前会自动再存一个检查点，可以反悔。",
     "workflowRun.resume.loadingPreview": "正在读取改动…",
     "workflowRun.resume.previewFailed": "无法读取改动。",
@@ -357,6 +363,12 @@ export const workflowRunTranslations = {
     "workflowRun.resume.reason.siblings_ran_after_checkpoint":
       "Other nodes ran after the checkpoint; a full rollback would erase their work",
     "workflowRun.resume.reason.not_resumable": "This run cannot be resumed",
+    "workflowRun.resume.rollbackUnavailable.composite_region":
+      "The failure is inside an iteration; keep the worktree or roll back to the checkpoint taken before the iteration started",
+    "workflowRun.resume.rollbackUnavailable.no_file_changes":
+      "The failed node did not record file changes that can be rolled back",
+    "workflowRun.resume.compositeRestart":
+      'Iteration node "{{name}}" will restart from its first round',
     "workflowRun.resume.safetyNote":
       "A checkpoint is saved automatically before rollback, so you can undo.",
     "workflowRun.resume.loadingPreview": "Reading changes…",
