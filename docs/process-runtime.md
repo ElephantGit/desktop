@@ -22,7 +22,8 @@ Existing `ora-process`, `ora-reaper`, Git and plugin entry points are unchanged.
 - Direct exit and descendant cleanup are separate. The cleanup policy notifies descendants and forces
   them after its explicit grace period; wait-for-all leaves them managed until they exit or are stopped.
 - Signal delivery alone never proves cleanup. Failed observations and signals retain responsibility.
-  Confirmed exits survive temporary uncertainty; contradictory exit observations remain blocked.
+  Direct running/exit evidence confirms an uncertain launch without another spawn. Exit status may
+  become more precise but never less precise; contradictory launch/exit observations remain blocked.
 
 ## Caller obligations and remaining work
 

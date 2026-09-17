@@ -3,7 +3,8 @@ use std::time::Instant;
 
 use ora_process_protocol::{
     CleanupEvidence, CleanupState, ContainmentGuarantee, ContainmentRequest, DescendantPolicy,
-    DirectProcessState, LaunchFact, RunId, RunSnapshot, RunSpec, ScopeState, StopRequest,
+    DirectProcessState, ExitOutcome, LaunchFact, RunId, RunSnapshot, RunSpec, ScopeState,
+    StopRequest,
 };
 
 use crate::stop::StopPlan;
@@ -184,6 +185,13 @@ impl<P: Platform> ScopeRuntime<P> {
             }
             let result = (|| {
                 let observation = self.platform.observe(*id)?;
+                if record.snapshot.launch == LaunchFact::Started
+                    && observation.direct == DirectProcessState::NotStarted
+                {
+                    return Err(PlatformError(
+                        "platform observation contradicts a confirmed launch".into(),
+                    ));
+                }
                 if observation.containment == ContainmentObservation::Empty
                     && observation.direct == DirectProcessState::Running
                 {
@@ -191,26 +199,44 @@ impl<P: Platform> ScopeRuntime<P> {
                         "empty containment contains a running direct process".into(),
                     ));
                 }
-                // Uncertainty is missing evidence, not a retraction of an already observed exit.
-                if matches!(record.snapshot.direct, DirectProcessState::Exited(_))
-                    && observation.direct != DirectProcessState::Unknown
-                    && observation.direct != record.snapshot.direct
-                {
-                    return Err(PlatformError(
-                        "platform observation contradicts a confirmed direct exit".into(),
-                    ));
-                }
-                if !(matches!(record.snapshot.direct, DirectProcessState::Exited(_))
-                    && observation.direct == DirectProcessState::Unknown)
-                {
-                    record.snapshot.direct = observation.direct;
-                }
+                // Terminal evidence is monotonic: missing status may be refined, never retracted.
+                record.snapshot.direct = match (record.snapshot.direct, observation.direct) {
+                    (
+                        previous @ DirectProcessState::Exited(_),
+                        DirectProcessState::Unknown
+                        | DirectProcessState::Exited(ExitOutcome::Unknown),
+                    ) => previous,
+                    (
+                        DirectProcessState::Exited(ExitOutcome::Unknown),
+                        current @ DirectProcessState::Exited(_),
+                    ) => current,
+                    (previous @ DirectProcessState::Exited(_), current) => {
+                        if previous != current {
+                            return Err(PlatformError(
+                                "platform observation contradicts a confirmed direct exit".into(),
+                            ));
+                        }
+                        previous
+                    }
+                    (
+                        DirectProcessState::NotStarted
+                        | DirectProcessState::Running
+                        | DirectProcessState::Unknown,
+                        current,
+                    ) => current,
+                };
                 record.snapshot.cleanup = match observation.containment {
                     ContainmentObservation::Empty => CleanupState::Complete(evidence),
                     ContainmentObservation::Occupied | ContainmentObservation::Unknown => {
                         CleanupState::Pending
                     }
                 };
+                if matches!(
+                    observation.direct,
+                    DirectProcessState::Running | DirectProcessState::Exited(_)
+                ) {
+                    record.snapshot.launch = LaunchFact::Started;
+                }
                 if !matches!(record.snapshot.cleanup, CleanupState::Complete(_))
                     && matches!(record.snapshot.direct, DirectProcessState::Exited(_))
                     && let DescendantPolicy::Cleanup { grace } = record.spec.descendants
