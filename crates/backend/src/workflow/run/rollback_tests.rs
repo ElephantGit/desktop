@@ -48,8 +48,7 @@ const SIBLING_GRAPH: &str = r#"{"nodes":[
 
 const PRE_ROLLBACK_NOW: i64 = 99;
 
-type FixtureEngine =
-    WorkflowRunEngine<SqliteWorkflowRunEngineRepository, RecordingExecutor, SeqGen, ClockAt>;
+type FixtureEngine = WorkflowRunEngine<SqliteWorkflowRunEngineRepository, SeqGen, ClockAt>;
 
 struct FailedCFixture {
     _temp: TempDir,
@@ -181,6 +180,7 @@ fn fail_c_after_checkpoint(graph: &str) -> FailedCFixture {
     write_workspace_file(&workspace_root, "f2", "node-f2\n");
     engine
         .fail_node(
+            &run_id,
             &c_old,
             NodeFailure::new(NodeFailureKind::Session, "c failed")
                 .with_file_changes(recorded_changes()),
@@ -343,6 +343,7 @@ fn resume_checkpoint_rejects_when_siblings_ran_after() {
         set_started_at(&temp, b_id.as_ref(), 50);
         engine
             .fail_node(
+                &run_id,
                 &c_old,
                 NodeFailure::new(NodeFailureKind::Session, "c failed")
                     .with_file_changes(recorded_changes()),

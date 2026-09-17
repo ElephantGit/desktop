@@ -285,6 +285,7 @@ pub(super) fn resume_from_failure(
     agent_runtime: &AgentRuntimeManager,
     skills_root: &Path,
     engine: &ConcreteWorkflowRunControl,
+    transitions: &super::transitions::WorkflowRunTransitions,
     request: ResumeWorkflowRunRequest,
     now: i64,
 ) -> Result<ResumeWorkflowRunResponse, BackendError> {
@@ -309,7 +310,7 @@ pub(super) fn resume_from_failure(
         (_, None) => return Err(not_resumable()),
     };
     if let Some(workspace_root) = workspace_root.as_deref() {
-        super::snapshot_switch::switch_if_requested(
+        let switched = super::snapshot_switch::switch_if_requested(
             pool,
             skills_root,
             workspace_root,
@@ -317,6 +318,9 @@ pub(super) fn resume_from_failure(
             request.snapshot_id.as_deref(),
             now,
         )?;
+        if switched {
+            transitions.publish_run_invalidated(&run_id);
+        }
     }
     let ResumeWorkflowRunResponse { run, .. } = engine.resume_from_failure(request)?;
     Ok(ResumeWorkflowRunResponse {

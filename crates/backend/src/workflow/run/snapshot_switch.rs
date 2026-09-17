@@ -147,6 +147,8 @@ pub(super) fn apply_switch(
 }
 
 /// Applies `target` when it differs from the run's current snapshot.
+///
+/// Returns `true` when a snapshot switch committed so callers can publish a run invalidation.
 pub(super) fn switch_if_requested(
     pool: &RepositoryPool,
     skills_root: &Path,
@@ -154,13 +156,13 @@ pub(super) fn switch_if_requested(
     run_id: &WorkflowRunId,
     snapshot_id: Option<&str>,
     now: i64,
-) -> Result<(), BackendError> {
+) -> Result<bool, BackendError> {
     let Some(snapshot_id) = snapshot_id else {
-        return Ok(());
+        return Ok(false);
     };
     let context = load_context(pool, run_id)?;
     if snapshot_id == context.run.snapshot_id.as_ref() {
-        return Ok(());
+        return Ok(false);
     }
     let target = SqliteWorkflowRepository::new(pool.clone())
         .find_snapshot_by_id(&context.workflow.id, &WorkflowSnapshotId::new(snapshot_id))
@@ -179,7 +181,8 @@ pub(super) fn switch_if_requested(
         &target,
         plan,
         now,
-    )
+    )?;
+    Ok(true)
 }
 
 fn start_prerequisites_error(error: StartPrerequisitesError) -> ApplicationError {

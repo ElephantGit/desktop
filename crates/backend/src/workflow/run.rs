@@ -6,23 +6,24 @@ mod diagnosis;
 mod engine;
 mod executor;
 pub(crate) mod interactive;
+#[cfg(test)]
+mod iteration_tests;
 mod last_failure;
 mod operations;
 mod prerequisites;
 mod prompt;
 mod recovery;
-mod rollback;
-mod session_mcp;
-mod snapshot_switch;
-pub(crate) use session_mcp::WorkflowSessionMcpSelectionSource;
 #[cfg(test)]
 mod resume_tests;
+mod rollback;
 #[cfg(test)]
 mod rollback_tests;
+mod snapshot_switch;
 #[cfg(test)]
 mod snapshot_switch_tests;
 #[cfg(test)]
 mod test_fixture;
+mod transitions;
 mod worktree;
 
 pub(crate) use engine::build_workflow_run_engine;

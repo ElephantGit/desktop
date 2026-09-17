@@ -202,7 +202,7 @@ fn project_creation_keeps_missing_main_workspace_in_provisioning() {
 
 /// Verifies sessions can be stored and read with only their direct workspace foreign key.
 #[test]
-fn session_round_trip_uses_workspace_id() {
+fn session_round_trip_persists_workspace_and_mcp_selection() {
     let (temp_dir, pool) = bootstrapped_pool();
     let workspace_path = existing_workspace_path(&temp_dir);
     let project_repository =
@@ -231,6 +231,9 @@ fn session_round_trip_uses_workspace_id() {
         // An unrelated running session shares the workspace but must not block
         // deletion of this completed workflow run.
         SessionStatus::Running,
+        ora_domain::SessionMcpSelection::Explicit(std::collections::BTreeSet::from([
+            ora_domain::PluginId::parse("official/github").unwrap(),
+        ])),
         AuditFields::new(20, 20, false),
     );
 
@@ -278,6 +281,7 @@ fn standalone_session_list_excludes_workflow_node_sessions() {
         AgentRef::parse("ora-space.opencode").unwrap(),
         "provider-standalone",
         SessionStatus::Running,
+        ora_domain::SessionMcpSelection::Automatic,
         AuditFields::new(20, 20, false),
     );
     let workflow_session = Session::new(
@@ -286,6 +290,7 @@ fn standalone_session_list_excludes_workflow_node_sessions() {
         AgentRef::parse("ora-space.opencode").unwrap(),
         "provider-workflow",
         SessionStatus::Running,
+        ora_domain::SessionMcpSelection::Automatic,
         AuditFields::new(21, 21, false),
     );
     session_repository
@@ -347,6 +352,7 @@ fn standalone_session_list_excludes_workflow_node_sessions() {
                     node_id: "agent-1".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
+                    iteration: None,
                 },
                 40,
             )
@@ -386,6 +392,7 @@ fn bind_node_run_session_accepts_running_node_after_sibling_fails_the_run() {
                     node_id: "start".to_string(),
                     node_type: "start".to_string(),
                     input: None,
+                    iteration: None,
                 },
                 40,
             )
@@ -401,12 +408,14 @@ fn bind_node_run_session_accepts_running_node_after_sibling_fails_the_run() {
                     node_id: "a".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
+                    iteration: None,
                 },
                 NodeRunToStart {
                     id: WorkflowNodeRunId::new("nr-b"),
                     node_id: "b".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
+                    iteration: None,
                 },
             ],
             50,
@@ -417,6 +426,7 @@ fn bind_node_run_session_accepts_running_node_after_sibling_fails_the_run() {
         .fail_node(
             &WorkflowNodeRunId::new("nr-b"),
             NodeFailure::new(NodeFailureKind::PromptTemplate, "b prompt failed"),
+            ora_application::FailurePropagation::Run,
             60,
         )
         .unwrap();
@@ -449,6 +459,7 @@ fn bind_node_run_session_rejects_cancelled_node_run() {
                 node_id: "start".to_string(),
                 node_type: "start".to_string(),
                 input: None,
+                iteration: None,
             },
             40,
         )
@@ -461,6 +472,7 @@ fn bind_node_run_session_rejects_cancelled_node_run() {
                 node_id: "a".to_string(),
                 node_type: "agent".to_string(),
                 input: None,
+                iteration: None,
             }],
             50,
         )
@@ -736,6 +748,7 @@ fn resume_from_failure_clears_listed_writers_and_keeps_other_values() {
                 node_id: "review".to_string(),
                 node_type: "agent".to_string(),
                 input: None,
+                iteration: None,
             }],
             40,
         )
@@ -744,6 +757,7 @@ fn resume_from_failure_clears_listed_writers_and_keeps_other_values() {
         .fail_node(
             &WorkflowNodeRunId::new("nr-review"),
             NodeFailure::new(NodeFailureKind::Session, "review failed"),
+            ora_application::FailurePropagation::Run,
             50,
         )
         .unwrap();
@@ -808,6 +822,7 @@ fn resume_from_failure_rejects_a_run_with_a_running_node() {
                 node_id: "start".to_string(),
                 node_type: "start".to_string(),
                 input: None,
+                iteration: None,
             },
             40,
         )
@@ -821,12 +836,14 @@ fn resume_from_failure_rejects_a_run_with_a_running_node() {
                     node_id: "a".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
+                    iteration: None,
                 },
                 NodeRunToStart {
                     id: WorkflowNodeRunId::new("nr-b"),
                     node_id: "b".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
+                    iteration: None,
                 },
             ],
             50,
@@ -836,6 +853,7 @@ fn resume_from_failure_rejects_a_run_with_a_running_node() {
         .fail_node(
             &WorkflowNodeRunId::new("nr-a"),
             NodeFailure::new(NodeFailureKind::Session, "a failed"),
+            ora_application::FailurePropagation::Run,
             60,
         )
         .unwrap();
@@ -862,6 +880,7 @@ fn resume_from_failure_rejects_a_running_run() {
                 node_id: "start".to_string(),
                 node_type: "start".to_string(),
                 input: None,
+                iteration: None,
             },
             40,
         )
@@ -928,6 +947,7 @@ fn switch_run_snapshot_updates_snapshot_and_payload_only_for_terminal_runs() {
                 node_id: "start".to_string(),
                 node_type: "start".to_string(),
                 input: None,
+                iteration: None,
             },
             40,
         )
@@ -964,6 +984,7 @@ fn second_fail_node_does_not_overwrite_run_level_error() {
                 node_id: "start".to_string(),
                 node_type: "start".to_string(),
                 input: None,
+                iteration: None,
             },
             40,
         )
@@ -977,12 +998,14 @@ fn second_fail_node_does_not_overwrite_run_level_error() {
                     node_id: "a".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
+                    iteration: None,
                 },
                 NodeRunToStart {
                     id: WorkflowNodeRunId::new("nr-b"),
                     node_id: "b".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
+                    iteration: None,
                 },
             ],
             50,
@@ -993,6 +1016,7 @@ fn second_fail_node_does_not_overwrite_run_level_error() {
         .fail_node(
             &WorkflowNodeRunId::new("nr-a"),
             NodeFailure::new(NodeFailureKind::Session, "error-a"),
+            ora_application::FailurePropagation::Run,
             60,
         )
         .unwrap();
@@ -1005,6 +1029,7 @@ fn second_fail_node_does_not_overwrite_run_level_error() {
         .fail_node(
             &WorkflowNodeRunId::new("nr-b"),
             NodeFailure::new(NodeFailureKind::Session, "error-b"),
+            ora_application::FailurePropagation::Run,
             80,
         )
         .unwrap();
@@ -1040,6 +1065,7 @@ fn fail_node_writes_error_detail_and_preserves_existing_payload_keys() {
                 node_id: "review".to_string(),
                 node_type: "agent".to_string(),
                 input: None,
+                iteration: None,
             }],
             40,
         )
@@ -1056,6 +1082,7 @@ fn fail_node_writes_error_detail_and_preserves_existing_payload_keys() {
         .fail_node(
             &WorkflowNodeRunId::new("nr-review"),
             NodeFailure::new(NodeFailureKind::Session, "review failed"),
+            ora_application::FailurePropagation::Run,
             50,
         )
         .unwrap();
@@ -1096,6 +1123,7 @@ fn fail_node_increments_attempt_after_resume_from_failure() {
                 node_id: "review".to_string(),
                 node_type: "agent".to_string(),
                 input: None,
+                iteration: None,
             }],
             40,
         )
@@ -1104,6 +1132,7 @@ fn fail_node_increments_attempt_after_resume_from_failure() {
         .fail_node(
             &WorkflowNodeRunId::new("nr-review"),
             NodeFailure::new(NodeFailureKind::Session, "review failed"),
+            ora_application::FailurePropagation::Run,
             50,
         )
         .unwrap();
@@ -1121,6 +1150,7 @@ fn fail_node_increments_attempt_after_resume_from_failure() {
                 node_id: "review".to_string(),
                 node_type: "agent".to_string(),
                 input: None,
+                iteration: None,
             }],
             70,
         )
@@ -1129,6 +1159,7 @@ fn fail_node_increments_attempt_after_resume_from_failure() {
         .fail_node(
             &WorkflowNodeRunId::new("nr-review-2"),
             NodeFailure::new(NodeFailureKind::Session, "review failed again"),
+            ora_application::FailurePropagation::Run,
             80,
         )
         .unwrap();
@@ -1162,6 +1193,7 @@ fn find_last_failed_attempt_returns_the_latest_soft_deleted_failure() {
                 node_id: "review".to_string(),
                 node_type: "agent".to_string(),
                 input: None,
+                iteration: None,
             }],
             40,
         )
@@ -1170,6 +1202,7 @@ fn find_last_failed_attempt_returns_the_latest_soft_deleted_failure() {
         .fail_node(
             &WorkflowNodeRunId::new("nr-review"),
             NodeFailure::new(NodeFailureKind::Session, "review failed"),
+            ora_application::FailurePropagation::Run,
             50,
         )
         .unwrap();
@@ -1187,6 +1220,7 @@ fn find_last_failed_attempt_returns_the_latest_soft_deleted_failure() {
                 node_id: "review".to_string(),
                 node_type: "agent".to_string(),
                 input: None,
+                iteration: None,
             }],
             70,
         )
@@ -1195,6 +1229,7 @@ fn find_last_failed_attempt_returns_the_latest_soft_deleted_failure() {
         .fail_node(
             &WorkflowNodeRunId::new("nr-review-2"),
             NodeFailure::new(NodeFailureKind::Session, "review failed again"),
+            ora_application::FailurePropagation::Run,
             80,
         )
         .unwrap();
@@ -1223,12 +1258,14 @@ fn find_last_failed_attempt_returns_the_latest_soft_deleted_failure() {
                     node_id: "ok".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
+                    iteration: None,
                 },
                 NodeRunToStart {
                     id: WorkflowNodeRunId::new("nr-live"),
                     node_id: "live".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
+                    iteration: None,
                 },
             ],
             100,
@@ -1255,6 +1292,7 @@ fn find_last_failed_attempt_returns_the_latest_soft_deleted_failure() {
         .fail_node(
             &WorkflowNodeRunId::new("nr-live"),
             NodeFailure::new(NodeFailureKind::Session, "still live"),
+            ora_application::FailurePropagation::Run,
             120,
         )
         .unwrap();
@@ -1280,6 +1318,7 @@ fn record_node_checkpoint_merges_into_existing_payload() {
                 node_id: "review".to_string(),
                 node_type: "agent".to_string(),
                 input: None,
+                iteration: None,
             }],
             40,
         )
@@ -1325,6 +1364,7 @@ fn record_node_injected_failure_merges_into_existing_payload() {
                 node_id: "review".to_string(),
                 node_type: "agent".to_string(),
                 input: None,
+                iteration: None,
             }],
             40,
         )
@@ -1374,6 +1414,7 @@ fn record_node_ai_diagnosis_merges_into_existing_payload() {
                 node_id: "review".to_string(),
                 node_type: "agent".to_string(),
                 input: None,
+                iteration: None,
             }],
             40,
         )
@@ -1437,6 +1478,7 @@ fn record_node_checkpoint_writes_null_and_error_when_snapshot_fails() {
                 node_id: "review".to_string(),
                 node_type: "agent".to_string(),
                 input: None,
+                iteration: None,
             }],
             40,
         )
@@ -1482,12 +1524,14 @@ fn fail_node_writes_file_changes_in_the_same_shape_as_complete_node() {
                     node_id: "ok".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
+                    iteration: None,
                 },
                 NodeRunToStart {
                     id: WorkflowNodeRunId::new("nr-fail"),
                     node_id: "fail".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
+                    iteration: None,
                 },
             ],
             40,
@@ -1529,6 +1573,7 @@ fn fail_node_writes_file_changes_in_the_same_shape_as_complete_node() {
             &WorkflowNodeRunId::new("nr-fail"),
             NodeFailure::new(NodeFailureKind::Session, "review failed")
                 .with_file_changes(file_changes),
+            ora_application::FailurePropagation::Run,
             60,
         )
         .unwrap();
@@ -1569,6 +1614,7 @@ fn complete_node_merges_stop_reason_into_existing_checkpoint_payload() {
                 node_id: "review".to_string(),
                 node_type: "agent".to_string(),
                 input: None,
+                iteration: None,
             }],
             40,
         )
@@ -1626,6 +1672,7 @@ fn fail_orphaned_node_runs_writes_interrupted_by_restart_error_detail() {
                 node_id: "start".to_string(),
                 node_type: "start".to_string(),
                 input: None,
+                iteration: None,
             },
             40,
         )
@@ -1686,6 +1733,7 @@ fn deleting_workflow_run_does_not_delete_workspace_or_session() {
         AgentRef::parse("ora-space.opencode").unwrap(),
         "provider-session-1",
         SessionStatus::Stopped,
+        ora_domain::SessionMcpSelection::Automatic,
         ora_domain::AuditFields::new(20, 20, false),
     );
     session_repository.create_session(session.clone()).unwrap();
@@ -1778,6 +1826,7 @@ fn running_run_cannot_be_deleted() {
                     node_id: "agent-1".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
+                    iteration: None,
                 },
                 40,
             )
@@ -1932,6 +1981,7 @@ fn create_run_workspace_session(pool: &RepositoryPool, run_id: &WorkflowRunId) -
             AgentRef::parse("ora-space.opencode").unwrap(),
             "provider-bind",
             SessionStatus::Running,
+            ora_domain::SessionMcpSelection::Automatic,
             AuditFields::new(20, 20, false),
         ))
         .unwrap();

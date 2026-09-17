@@ -5,7 +5,7 @@ use rusqlite::{Transaction, params};
 use super::payload_json::{file_changes_json, merge_payload_keys};
 
 /// Error written to node runs and runs interrupted by a backend restart.
-const INTERRUPTED_BY_RESTART: &str = r#"{"reason":"interrupted_by_restart"}"#;
+pub(super) const INTERRUPTED_BY_RESTART: &str = r#"{"reason":"interrupted_by_restart"}"#;
 
 /// Counts prior soft-deleted attempts of this node in the same run.
 fn deleted_attempt_count(

@@ -245,6 +245,7 @@ async fn collect_diagnosis_text(
                 accumulator.consume(&update);
             }
             PromptSessionEvent::PermissionRequest(_) => {}
+            PromptSessionEvent::Retrying { .. } => {}
             PromptSessionEvent::Completed { .. } => {
                 completed = true;
                 break;
@@ -580,6 +581,7 @@ mod tests {
             .expect("agent node");
         engine
             .fail_node(
+                &run_id,
                 &agent.id,
                 NodeFailure::new(NodeFailureKind::Session, "boom"),
             )

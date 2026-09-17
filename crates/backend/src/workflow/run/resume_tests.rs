@@ -98,8 +98,7 @@ fn find_run(pool: &ora_db::RepositoryPool, run_id: &WorkflowRunId) -> ora_domain
         .unwrap()
 }
 
-type FixtureEngine =
-    WorkflowRunEngine<SqliteWorkflowRunEngineRepository, RecordingExecutor, SeqGen, ClockAt>;
+type FixtureEngine = WorkflowRunEngine<SqliteWorkflowRunEngineRepository, SeqGen, ClockAt>;
 
 fn complete(
     engine: &FixtureEngine,
@@ -134,6 +133,7 @@ fn resume_from_failure_redoes_failed_join_and_finishes() {
         let c_old = live(&after_ab, "c").id.clone();
         engine
             .fail_node(
+                &run_id,
                 &c_old,
                 NodeFailure::new(NodeFailureKind::Session, "c failed"),
             )
@@ -183,7 +183,11 @@ fn failed_run_does_not_dispatch_on_late_success_then_resume_clears_only_failed_b
         let a_id = live(&nodes, "a").id.clone();
         let b_id = live(&nodes, "b").id.clone();
         engine
-            .fail_node(&a_id, NodeFailure::new(NodeFailureKind::Session, "error-a"))
+            .fail_node(
+                &run_id,
+                &a_id,
+                NodeFailure::new(NodeFailureKind::Session, "error-a"),
+            )
             .unwrap();
         complete(&engine, &run_id, &b_id);
 

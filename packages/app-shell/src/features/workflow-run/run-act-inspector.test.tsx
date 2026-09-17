@@ -130,6 +130,8 @@ function renderInspector(
           nodeId="agent-1"
           data={options.data ?? AGENT_DATA}
           state={nodeState}
+          selectedRound={null}
+          onRoundChange={() => undefined}
           artifacts={[]}
           revealedArtifactId={null}
           onClose={() => undefined}

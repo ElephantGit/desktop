@@ -1,19 +1,15 @@
 use ora_application::{
     AdvanceWorkflowRunResult, BindWorkflowNodeSessionResult, CancelWorkflowRunResult,
-    ExecutionContext, FileChange, NodeFailure, NodeRunToStart, RepositoryError,
-    RestartWorkflowRunResult, ResumeWorkflowRunResult, StartWorkflowRunResult,
-    UpdateWorkflowRunInputResult, WorkflowRunEngineRepository, WorkflowRunPayload,
-    WorkflowVariablePool,
+    ExecutionContext, FailurePropagation, FileChange, IterationRoundContinuation, NodeFailure,
+    NodeRunToStart, RepositoryError, RestartWorkflowRunResult, ResumeWorkflowRunResult,
+    RoundOutcome, StartWorkflowRunResult, UpdateWorkflowRunInputResult,
+    WorkflowRunEngineRepository, WorkflowRunPayload,
 };
 use ora_domain::{
-    SessionId, WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRunId,
-    WorkflowRunStatus, WorkflowSnapshotId,
+    SessionId, SessionStatus, WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus,
+    WorkflowRunId, WorkflowRunStatus, WorkflowSnapshotId,
 };
 use rusqlite::{OptionalExtension, Row, Transaction, TransactionBehavior, params};
-
-use super::workflow_run::map_run_row;
-use super::workspace::{map_workspace_row, workspace_select_sql};
-use crate::repository::RepositoryPool;
 
 mod ai_diagnosis;
 mod bind;
@@ -21,13 +17,23 @@ mod cancel;
 mod current_nodes;
 mod failure_detail;
 mod finish;
+mod iteration;
+mod payload;
 mod payload_json;
 mod restart;
 mod resume;
 mod snapshot_switch;
 
+use super::workflow_run::map_run_row;
+use super::workspace::{map_workspace_row, workspace_select_sql};
+use crate::repository::RepositoryPool;
 use current_nodes::{current_nodes_from_state, current_nodes_to_state, rewrite_current_nodes};
-use failure_detail::{fail_orphaned_run, persist_failed_node_run};
+use failure_detail::{INTERRUPTED_BY_RESTART, fail_orphaned_run, persist_failed_node_run};
+use iteration::update_run_execution_state;
+use payload::{
+    mirror_run_input_into_pool, reset_run_execution_state, seed_system_variables,
+    update_task_input_in_payload,
+};
 use payload_json::merge_complete_payload;
 
 /// Persists workflow-run engine state transitions in SQLite.
@@ -264,7 +270,14 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                     insert_node_run(&transaction, run_id, node_run, now)?;
                 }
                 rewrite_current_nodes(&transaction, run_id, now, |current_nodes| {
-                    current_nodes.extend(node_runs.iter().map(|node_run| node_run.node_id.clone()));
+                    // Region rows never enter the outer anchor: the composite node stays the
+                    // anchor for its whole region (ADR "iteration composite runtime" Stage B).
+                    current_nodes.extend(
+                        node_runs
+                            .iter()
+                            .filter(|node_run| node_run.iteration.is_none())
+                            .map(|node_run| node_run.node_id.clone()),
+                    );
                 })?;
                 transaction.commit()?;
                 Ok(())
@@ -285,10 +298,10 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
             .with_connection_mut(|connection| {
                 let transaction =
                     Transaction::new(connection, TransactionBehavior::Immediate)?;
-                let Some((run_id, node_id, node_type, status, run_payload, node_payload)) =
+                let Some((run_id, node_id, node_type, status, iteration, run_payload, node_payload)) =
                     transaction
                         .query_row(
-                            "SELECT nr.run_id, nr.node_id, nr.node_type, nr.status, wr.payload, nr.payload
+                            "SELECT nr.run_id, nr.node_id, nr.node_type, nr.status, nr.iteration, wr.payload, nr.payload
                              FROM workflow_node_runs nr
                              JOIN workflow_runs wr ON wr.id = nr.run_id
                              WHERE nr.id = ?1 AND nr.is_deleted = 0 AND wr.is_deleted = 0",
@@ -299,8 +312,9 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                                     row.get::<_, String>(1)?,
                                     row.get::<_, String>(2)?,
                                     row.get::<_, i64>(3)?,
-                                    row.get::<_, Option<String>>(4)?,
+                                    row.get::<_, Option<u32>>(4)?,
                                     row.get::<_, Option<String>>(5)?,
+                                    row.get::<_, Option<String>>(6)?,
                                 ))
                             },
                         )
@@ -322,6 +336,7 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                     &run_id,
                     &node_id,
                     &node_type,
+                    iteration,
                     output.as_deref(),
                     structured_output.as_ref(),
                     run_payload.as_deref(),
@@ -353,6 +368,7 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
         &self,
         node_run_id: &WorkflowNodeRunId,
         failure: NodeFailure,
+        propagation: FailurePropagation,
         now: i64,
     ) -> Result<AdvanceWorkflowRunResult, RepositoryError> {
         self.pool
@@ -389,25 +405,75 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                     now,
                 )?;
                 let run_id = WorkflowRunId::new(run_id);
-                rewrite_current_nodes(&transaction, &run_id, now, |current_nodes| {
-                    current_nodes.clear();
-                    current_nodes.push(node_id.clone());
-                })?;
-                transaction.execute(
-                    "UPDATE workflow_runs SET run_status = ?2, error = ?3, finished_at = ?4, updated_at = ?4
-                     WHERE id = ?1 AND is_deleted = 0 AND run_status = ?5",
-                    params![
-                        run_id.as_ref(),
-                        WorkflowRunStatus::Failed.database_value(),
-                        failure.message,
-                        now,
-                        WorkflowRunStatus::Running.database_value(),
-                    ],
-                )?;
+                match propagation {
+                    FailurePropagation::Run => {
+                        rewrite_current_nodes(&transaction, &run_id, now, |current_nodes| {
+                            current_nodes.clear();
+                            current_nodes.push(node_id.clone());
+                        })?;
+                        // D2: only promote the run while it is still Running so a late sibling
+                        // failure cannot overwrite an already-terminal run.
+                        transaction.execute(
+                            "UPDATE workflow_runs SET run_status = ?2, error = ?3, finished_at = ?4, updated_at = ?4
+                             WHERE id = ?1 AND is_deleted = 0 AND run_status = ?5",
+                            params![
+                                run_id.as_ref(),
+                                WorkflowRunStatus::Failed.database_value(),
+                                failure.message,
+                                now,
+                                WorkflowRunStatus::Running.database_value(),
+                            ],
+                        )?;
+                    }
+                    // Composite absorption (ADR "iteration composite runtime" D6): only the row
+                    // fails; the run stays active so the owning runtime settles the failed
+                    // round and advances. Region rows never sit in the outer anchor, so the
+                    // retain keeps the anchor untouched.
+                    FailurePropagation::Composite => {
+                        rewrite_current_nodes(&transaction, &run_id, now, |current_nodes| {
+                            current_nodes.retain(|id| id != &node_id);
+                        })?;
+                    }
+                }
                 transaction.commit()?;
                 Ok(AdvanceWorkflowRunResult::Advanced)
             })
             .map_err(engine_repository_error_from_database)
+    }
+
+    fn start_iteration_round(
+        &self,
+        run_id: &WorkflowRunId,
+        owner_node_id: &str,
+        round: u32,
+        item: &serde_json::Value,
+        node_runs: &[NodeRunToStart],
+        now: i64,
+    ) -> Result<AdvanceWorkflowRunResult, RepositoryError> {
+        self.iteration_start_round(run_id, owner_node_id, round, item, node_runs, now)
+    }
+
+    fn settle_iteration_round(
+        &self,
+        run_id: &WorkflowRunId,
+        owner_node_id: &str,
+        round: u32,
+        entry: RoundOutcome,
+        continuation: IterationRoundContinuation,
+        now: i64,
+    ) -> Result<AdvanceWorkflowRunResult, RepositoryError> {
+        self.iteration_settle_round(run_id, owner_node_id, round, entry, continuation, now)
+    }
+
+    fn complete_iteration_node(
+        &self,
+        node_run_id: &WorkflowNodeRunId,
+        owner_node_id: &str,
+        exposed: &[(String, serde_json::Value)],
+        output: Option<String>,
+        now: i64,
+    ) -> Result<AdvanceWorkflowRunResult, RepositoryError> {
+        self.iteration_complete_node(node_run_id, owner_node_id, exposed, output, now)
     }
 
     fn record_node_checkpoint(
@@ -568,6 +634,49 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
             .map_err(engine_repository_error_from_database)
     }
 
+    fn fail_interrupted_node_runs(
+        &self,
+        run_id: &WorkflowRunId,
+        node_run_ids: &[WorkflowNodeRunId],
+        now: i64,
+    ) -> Result<(), RepositoryError> {
+        self.pool
+            .with_connection_mut(|connection| {
+                let transaction =
+                    Transaction::new(connection, TransactionBehavior::Immediate)?;
+                for node_run_id in node_run_ids {
+                    // Only a `Running` row can be an interrupted round row; anything else is a
+                    // late sweep over already-terminal state and stays untouched.
+                    transaction.execute(
+                        "UPDATE workflow_node_runs SET status = ?3, error = ?4, finished_at = ?5, updated_at = ?5
+                         WHERE id = ?1 AND run_id = ?2 AND status = ?6 AND is_deleted = 0",
+                        params![
+                            node_run_id.as_ref(),
+                            run_id.as_ref(),
+                            WorkflowNodeStatus::Failed.database_value(),
+                            INTERRUPTED_BY_RESTART,
+                            now,
+                            WorkflowNodeStatus::Running.database_value(),
+                        ],
+                    )?;
+                }
+                transaction.execute(
+                    "UPDATE sessions SET status = ?2, updated_at = ?3
+                     WHERE workspace_id = (SELECT workspace_id FROM workflow_runs WHERE id = ?1 AND is_deleted = 0)
+                       AND status = ?4 AND is_deleted = 0",
+                    params![
+                        run_id.as_ref(),
+                        SessionStatus::Stopped.database_value(),
+                        now,
+                        SessionStatus::Running.database_value(),
+                    ],
+                )?;
+                transaction.commit()?;
+                Ok(())
+            })
+            .map_err(engine_repository_error_from_database)
+    }
+
     fn fail_orphaned_node_runs(
         &self,
         run_ids: &[WorkflowRunId],
@@ -586,250 +695,6 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
     }
 }
 
-/// Commits public node values and private routing state with the node status transition.
-///
-/// Keeping Condition decisions outside the variable pool prevents scheduler implementation details
-/// from becoming selectable workflow data while preserving restart-safe branch projection.
-fn update_run_execution_state(
-    transaction: &Transaction<'_>,
-    run_id: &str,
-    node_id: &str,
-    node_type: &str,
-    output: Option<&str>,
-    structured_output: Option<&serde_json::Value>,
-    serialized_payload: Option<&str>,
-) -> Result<(), crate::DatabaseError> {
-    let Some(serialized_payload) = serialized_payload else {
-        return Ok(());
-    };
-    let mut payload: WorkflowRunPayload = serde_json::from_str(serialized_payload)?;
-    let mut changed = if node_type != "condition"
-        && let Some(output) = output
-    {
-        write_pool_variable(
-            &mut payload.variable_pool,
-            &format!("{node_id}.output"),
-            node_id,
-            serde_json::Value::String(output.to_string()),
-        )?
-    } else {
-        false
-    };
-    match node_type {
-        "start" => {}
-        "condition" => {
-            if let Some(output) = output {
-                changed |=
-                    payload.condition_decisions.get(node_id).map(String::as_str) != Some(output);
-                payload
-                    .condition_decisions
-                    .insert(node_id.to_string(), output.to_string());
-            }
-        }
-        "agent" => {
-            if let Some(structured) = structured_output {
-                changed |= write_pool_variable(
-                    &mut payload.variable_pool,
-                    &format!("{node_id}.structured_output"),
-                    node_id,
-                    structured.clone(),
-                )?;
-            }
-        }
-        _ => {}
-    }
-    if changed {
-        transaction.execute(
-            "UPDATE workflow_runs SET payload = ?2 WHERE id = ?1 AND is_deleted = 0",
-            params![run_id, serde_json::to_string(&payload)?],
-        )?;
-    }
-    Ok(())
-}
-
-/// Writes one pool variable through its declared owner, reporting whether the pool changed.
-fn write_pool_variable(
-    pool: &mut WorkflowVariablePool,
-    selector: &str,
-    writer: &str,
-    value: serde_json::Value,
-) -> Result<bool, rusqlite::Error> {
-    if !pool.catalog.contains_key(selector) {
-        return Ok(false);
-    }
-    pool.set(selector, writer, value)
-        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-    Ok(true)
-}
-
-/// Re-seeds the run's system globals each time it starts executing.
-///
-/// Restart clears computed pool values but keeps the catalog, so a fresh start must restore the
-/// `sys.*` seeds or prompts that reference them fail as unassigned on the second run.
-fn seed_system_variables(
-    pool: &mut WorkflowVariablePool,
-    workflow_id: &str,
-    now: i64,
-) -> Result<bool, rusqlite::Error> {
-    let mut changed = false;
-    changed |= write_pool_variable(
-        pool,
-        "sys.workflow_id",
-        "sys",
-        serde_json::Value::String(workflow_id.to_string()),
-    )?;
-    changed |= write_pool_variable(
-        pool,
-        "sys.timestamp",
-        "sys",
-        serde_json::Value::Number(now.into()),
-    )?;
-    Ok(changed)
-}
-
-/// Updates explicit Start variables while the run instruction remains in its dedicated column.
-fn update_task_input_in_payload(
-    serialized_payload: Option<&str>,
-    variables: &std::collections::BTreeMap<String, serde_json::Value>,
-) -> Result<Option<String>, crate::DatabaseError> {
-    let Some(serialized_payload) = serialized_payload else {
-        return Ok(None);
-    };
-    let mut payload: WorkflowRunPayload = serde_json::from_str(serialized_payload)?;
-    let start_writer = resolve_start_writer(&payload);
-    remove_legacy_instruction_aliases(&mut payload, start_writer.as_deref());
-    if let Some(start_writer) = start_writer.as_ref() {
-        for (name, value) in variables {
-            let selector = format!("{start_writer}.{name}");
-            let definition = payload
-                .variable_pool
-                .catalog
-                .get(&selector)
-                .ok_or_else(|| {
-                    rusqlite::Error::InvalidParameterName(format!(
-                        "undeclared Start variable {name}"
-                    ))
-                })?;
-            if &definition.writer != start_writer {
-                return Err(rusqlite::Error::InvalidParameterName(format!(
-                    "Start variable {name} is not editable"
-                ))
-                .into());
-            }
-            if value.is_null() {
-                payload.variable_pool.values.remove(&selector);
-            } else {
-                payload
-                    .variable_pool
-                    .set(&selector, start_writer, value.clone())
-                    .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-            }
-        }
-    } else if !variables.is_empty() {
-        return Err(rusqlite::Error::InvalidParameterName(
-            "run payload has no Start node owner".to_string(),
-        )
-        .into());
-    }
-    payload.variable_pool.revision = payload.variable_pool.revision.saturating_add(1);
-    Ok(Some(serde_json::to_string(&payload)?))
-}
-
-/// Mirrors an updated run instruction into the reserved `{start_id}.input` selector so prompt
-/// templates render the same text the dedicated run input column holds. Clearing the instruction
-/// unsets the selector; the declared variable itself stays available for future runs.
-fn mirror_run_input_into_pool(
-    serialized_payload: Option<&str>,
-    input: Option<&str>,
-) -> Result<Option<String>, crate::DatabaseError> {
-    let Some(serialized_payload) = serialized_payload else {
-        return Ok(None);
-    };
-    let mut payload: WorkflowRunPayload = serde_json::from_str(serialized_payload)?;
-    let Some(start_writer) = resolve_start_writer(&payload) else {
-        return Ok(Some(serialized_payload.to_string()));
-    };
-    let selector = format!("{start_writer}.input");
-    if !payload.variable_pool.catalog.contains_key(&selector) {
-        return Ok(Some(serialized_payload.to_string()));
-    }
-    let changed = match input {
-        Some(text) => payload
-            .variable_pool
-            .set(
-                &selector,
-                &start_writer,
-                serde_json::Value::String(text.to_string()),
-            )
-            .map(|()| true)
-            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?,
-        None => payload.variable_pool.values.remove(&selector).is_some(),
-    };
-    if changed {
-        payload.variable_pool.revision = payload.variable_pool.revision.saturating_add(1);
-    }
-    Ok(Some(serde_json::to_string(&payload)?))
-}
-
-/// Clears computed variables and branch decisions while retaining Start deployment values.
-fn reset_run_execution_state(
-    transaction: &Transaction<'_>,
-    run_id: &WorkflowRunId,
-    serialized_payload: Option<&str>,
-) -> Result<(), crate::DatabaseError> {
-    let Some(serialized_payload) = serialized_payload else {
-        return Ok(());
-    };
-    let mut payload: WorkflowRunPayload = serde_json::from_str(serialized_payload)?;
-    if payload.variable_pool.catalog.is_empty() && payload.condition_decisions.is_empty() {
-        return Ok(());
-    }
-    let start_writer = resolve_start_writer(&payload);
-    remove_legacy_instruction_aliases(&mut payload, start_writer.as_deref());
-    let pool = &mut payload.variable_pool;
-    // Explicit deployment variables survive restart; values produced during execution do not.
-    pool.values.retain(|selector, _| {
-        start_writer.as_ref().is_some_and(|writer| {
-            pool.catalog
-                .get(selector)
-                .is_some_and(|definition| &definition.writer == writer)
-        })
-    });
-    pool.revision = pool.revision.saturating_add(1);
-    payload.condition_decisions.clear();
-    transaction.execute(
-        "UPDATE workflow_runs SET payload = ?2 WHERE id = ?1 AND is_deleted = 0",
-        params![run_id.as_ref(), serde_json::to_string(&payload)?],
-    )?;
-    Ok(())
-}
-
-/// Resolves the Start variable owner, falling back to the legacy request declaration on upgrade.
-fn resolve_start_writer(payload: &WorkflowRunPayload) -> Option<String> {
-    payload.start_node_id.clone().or_else(|| {
-        payload
-            .variable_pool
-            .catalog
-            .iter()
-            .find_map(|(selector, definition)| {
-                selector
-                    .ends_with(".request")
-                    .then(|| definition.writer.clone())
-            })
-    })
-}
-
-/// Removes historical aliases that incorrectly represented the run instruction as variables.
-fn remove_legacy_instruction_aliases(payload: &mut WorkflowRunPayload, start_writer: Option<&str>) {
-    payload.variable_pool.catalog.remove("sys.task");
-    payload.variable_pool.values.remove("sys.task");
-    if let Some(start_writer) = start_writer {
-        let request_selector = format!("{start_writer}.request");
-        payload.variable_pool.catalog.remove(&request_selector);
-        payload.variable_pool.values.remove(&request_selector);
-    }
-}
-
 /// Inserts one node-run row in the `Running` status within the active transaction.
 fn insert_node_run(
     transaction: &Transaction<'_>,
@@ -838,8 +703,8 @@ fn insert_node_run(
     now: i64,
 ) -> Result<(), rusqlite::Error> {
     transaction.execute(
-        "INSERT INTO workflow_node_runs (id, run_id, node_id, node_type, session_id, status, input, output, error, payload, started_at, finished_at, created_at, updated_at, is_deleted)
-         VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, NULL, NULL, NULL, ?7, NULL, ?7, ?7, 0)",
+        "INSERT INTO workflow_node_runs (id, run_id, node_id, node_type, session_id, status, input, output, error, payload, iteration, started_at, finished_at, created_at, updated_at, is_deleted)
+         VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, NULL, NULL, NULL, ?7, ?8, NULL, ?8, ?8, 0)",
         params![
             node_run.id.as_ref(),
             run_id.as_ref(),
@@ -847,6 +712,7 @@ fn insert_node_run(
             &node_run.node_type,
             WorkflowNodeStatus::Running.database_value(),
             node_run.input.as_deref(),
+            node_run.iteration,
             now,
         ],
     )?;
@@ -865,15 +731,14 @@ fn require_row<T>(
 }
 
 /// Converts database failures into application-port errors.
-pub(super) fn engine_repository_error_from_database(
-    error: crate::DatabaseError,
-) -> RepositoryError {
+fn engine_repository_error_from_database(error: crate::DatabaseError) -> RepositoryError {
     RepositoryError::new(error)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ora_application::WorkflowVariablePool;
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
     use std::collections::BTreeMap;

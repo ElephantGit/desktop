@@ -108,9 +108,13 @@ impl WorkflowRunEngineRepository for RecordingRepository {
 
     fn find_node_run_by_id(
         &self,
-        _node_run_id: &WorkflowNodeRunId,
+        node_run_id: &WorkflowNodeRunId,
     ) -> Result<Option<WorkflowNodeRun>, RepositoryError> {
-        Ok(None)
+        Ok(self
+            .node_runs
+            .iter()
+            .find(|node| node.id == *node_run_id)
+            .cloned())
     }
 
     fn transition_node_run_status(
@@ -157,6 +161,42 @@ impl WorkflowRunEngineRepository for RecordingRepository {
         &self,
         _node_run_id: &WorkflowNodeRunId,
         _failure: super::NodeFailure,
+        _propagation: super::FailurePropagation,
+        _now: i64,
+    ) -> Result<AdvanceWorkflowRunResult, RepositoryError> {
+        Ok(AdvanceWorkflowRunResult::NotFound)
+    }
+
+    fn start_iteration_round(
+        &self,
+        _run_id: &WorkflowRunId,
+        _owner_node_id: &str,
+        _round: u32,
+        _item: &serde_json::Value,
+        _node_runs: &[NodeRunToStart],
+        _now: i64,
+    ) -> Result<AdvanceWorkflowRunResult, RepositoryError> {
+        Ok(AdvanceWorkflowRunResult::NotFound)
+    }
+
+    fn settle_iteration_round(
+        &self,
+        _run_id: &WorkflowRunId,
+        _owner_node_id: &str,
+        _round: u32,
+        _entry: super::RoundOutcome,
+        _continuation: super::IterationRoundContinuation,
+        _now: i64,
+    ) -> Result<AdvanceWorkflowRunResult, RepositoryError> {
+        Ok(AdvanceWorkflowRunResult::NotFound)
+    }
+
+    fn complete_iteration_node(
+        &self,
+        _node_run_id: &WorkflowNodeRunId,
+        _owner_node_id: &str,
+        _exposed: &[(String, serde_json::Value)],
+        _output: Option<String>,
         _now: i64,
     ) -> Result<AdvanceWorkflowRunResult, RepositoryError> {
         Ok(AdvanceWorkflowRunResult::NotFound)
@@ -257,6 +297,15 @@ impl WorkflowRunEngineRepository for RecordingRepository {
     ) -> Result<(), RepositoryError> {
         Ok(())
     }
+
+    fn fail_interrupted_node_runs(
+        &self,
+        _run_id: &WorkflowRunId,
+        _node_run_ids: &[WorkflowNodeRunId],
+        _now: i64,
+    ) -> Result<(), RepositoryError> {
+        Ok(())
+    }
 }
 
 fn execution_context() -> ExecutionContext {
@@ -310,7 +359,7 @@ fn node_run(id: &str, node_id: &str, status: WorkflowNodeStatus) -> WorkflowNode
 fn engine(
     node_runs: Vec<WorkflowNodeRun>,
 ) -> (
-    WorkflowRunEngine<RecordingRepository, NoopExecutor, SeqGen, ClockAt>,
+    WorkflowRunEngine<RecordingRepository, SeqGen, ClockAt>,
     Arc<Mutex<Option<Vec<String>>>>,
 ) {
     let cleared = Arc::new(Mutex::new(None));

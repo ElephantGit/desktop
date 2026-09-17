@@ -66,8 +66,7 @@ const V3_GRAPH: &str = r#"{"nodes":[
     {"source":"c","target":"output"}
 ]}"#;
 
-type FixtureEngine =
-    WorkflowRunEngine<SqliteWorkflowRunEngineRepository, RecordingExecutor, SeqGen, ClockAt>;
+type FixtureEngine = WorkflowRunEngine<SqliteWorkflowRunEngineRepository, SeqGen, ClockAt>;
 
 struct FailedCFixture {
     temp: TempDir,
@@ -184,6 +183,7 @@ fn fail_c() -> FailedCFixture {
     let c_old = live(&after_b, "c").id.clone();
     engine
         .fail_node(
+            &run_id,
             &c_old,
             NodeFailure::new(NodeFailureKind::StructuredOutput, "schema mismatch"),
         )
@@ -217,6 +217,7 @@ fn switch(fixture: &FailedCFixture, snapshot_id: &str) -> Result<(), BackendErro
         Some(snapshot_id),
         90,
     )
+    .map(|_| ())
 }
 
 fn preview_with_snapshots(

@@ -1,3 +1,4 @@
+use super::node_type::NodeType;
 use super::ports::FileChange;
 use serde::{Deserialize, Serialize};
 
@@ -131,6 +132,26 @@ pub struct NodeFailure {
 }
 
 impl NodeFailure {
+    /// Classifies a swift/composite runtime failure string into a structured `NodeFailure`.
+    ///
+    /// Lives here rather than in the scheduling core so `engine.rs` can stay free of
+    /// `NodeType::` literals (ADR "node runtime orchestration" D1).
+    pub(super) fn from_runtime(node_type: NodeType, message: String) -> Self {
+        let kind = match node_type {
+            NodeType::Condition => NodeFailureKind::ConditionEvaluation,
+            NodeType::Output if message.starts_with("multiple active output nodes:") => {
+                NodeFailureKind::MultipleOutputs
+            }
+            NodeType::Start
+            | NodeType::Output
+            | NodeType::Agent
+            | NodeType::Prompt
+            | NodeType::Tool
+            | NodeType::Iteration => NodeFailureKind::InvalidRunPayload,
+        };
+        Self::new(kind, message)
+    }
+
     /// Builds a failure with an empty source chain, no retained output, and no file changes.
     pub fn new(kind: NodeFailureKind, message: impl Into<String>) -> Self {
         Self {

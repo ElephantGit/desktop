@@ -366,7 +366,8 @@ pub(super) fn map_node_run_row(row: &Row<'_>) -> Result<WorkflowNodeRun, crate::
             row.get("updated_at")?,
             row.get::<_, i64>("is_deleted")? != 0,
         ),
-    ))
+    )
+    .in_iteration(row.get::<_, Option<u32>>("iteration")?))
 }
 
 /// Lists node-run rows of one run in stable ascending order.
@@ -375,7 +376,7 @@ pub(super) fn list_node_runs(
     run_id: &WorkflowRunId,
 ) -> Result<Vec<WorkflowNodeRun>, crate::DatabaseError> {
     let mut statement = connection.prepare(
-        "SELECT id, run_id, node_id, node_type, session_id, status, input, output, error, payload,
+        "SELECT id, run_id, node_id, node_type, session_id, status, input, output, error, payload, iteration,
                 started_at, finished_at, created_at, updated_at, is_deleted
          FROM workflow_node_runs
          WHERE run_id = ?1 AND is_deleted = 0
@@ -396,7 +397,7 @@ pub(super) fn find_last_failed_attempt(
     node_id: &str,
 ) -> Result<Option<WorkflowNodeRun>, crate::DatabaseError> {
     let mut statement = connection.prepare(
-        "SELECT id, run_id, node_id, node_type, session_id, status, input, output, error, payload,
+        "SELECT id, run_id, node_id, node_type, session_id, status, input, output, error, payload, iteration,
                 started_at, finished_at, created_at, updated_at, is_deleted
          FROM workflow_node_runs
          WHERE run_id = ?1 AND node_id = ?2 AND is_deleted = 1 AND status = ?3
@@ -420,7 +421,7 @@ pub(super) fn find_node_run_by_session_id(
     session_id: &SessionId,
 ) -> Result<Option<WorkflowNodeRun>, crate::DatabaseError> {
     let mut statement = connection.prepare(
-        "SELECT id, run_id, node_id, node_type, session_id, status, input, output, error, payload,
+        "SELECT id, run_id, node_id, node_type, session_id, status, input, output, error, payload, iteration,
                 started_at, finished_at, created_at, updated_at, is_deleted
          FROM workflow_node_runs
          WHERE session_id = ?1 AND is_deleted = 0
@@ -439,7 +440,7 @@ pub(super) fn find_node_run_by_id(
     node_run_id: &WorkflowNodeRunId,
 ) -> Result<Option<WorkflowNodeRun>, crate::DatabaseError> {
     let mut statement = connection.prepare(
-        "SELECT id, run_id, node_id, node_type, session_id, status, input, output, error, payload,
+        "SELECT id, run_id, node_id, node_type, session_id, status, input, output, error, payload, iteration,
                 started_at, finished_at, created_at, updated_at, is_deleted
          FROM workflow_node_runs
          WHERE id = ?1 AND is_deleted = 0",

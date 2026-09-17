@@ -134,9 +134,14 @@ impl WorkflowRunEngineRepository for InMemoryRepository {
 
     fn find_node_run_by_id(
         &self,
-        _node_run_id: &WorkflowNodeRunId,
+        node_run_id: &WorkflowNodeRunId,
     ) -> Result<Option<WorkflowNodeRun>, RepositoryError> {
-        Ok(None)
+        Ok(self
+            .lock()
+            .node_runs
+            .iter()
+            .find(|node| node.id == *node_run_id)
+            .cloned())
     }
 
     fn transition_node_run_status(
@@ -202,6 +207,7 @@ impl WorkflowRunEngineRepository for InMemoryRepository {
         &self,
         node_run_id: &WorkflowNodeRunId,
         failure: NodeFailure,
+        propagation: super::FailurePropagation,
         _now: i64,
     ) -> Result<AdvanceWorkflowRunResult, RepositoryError> {
         let mut state = self.lock();
@@ -217,8 +223,45 @@ impl WorkflowRunEngineRepository for InMemoryRepository {
         }
         node.status = WorkflowNodeStatus::Failed;
         node.error = Some(failure.message);
-        state.context.run.status = WorkflowRunStatus::Failed;
+        if propagation == super::FailurePropagation::Run {
+            state.context.run.status = WorkflowRunStatus::Failed;
+        }
         Ok(AdvanceWorkflowRunResult::Advanced)
+    }
+
+    fn start_iteration_round(
+        &self,
+        _run_id: &WorkflowRunId,
+        _owner_node_id: &str,
+        _round: u32,
+        _item: &serde_json::Value,
+        _node_runs: &[NodeRunToStart],
+        _now: i64,
+    ) -> Result<AdvanceWorkflowRunResult, RepositoryError> {
+        Ok(AdvanceWorkflowRunResult::NotFound)
+    }
+
+    fn settle_iteration_round(
+        &self,
+        _run_id: &WorkflowRunId,
+        _owner_node_id: &str,
+        _round: u32,
+        _entry: super::RoundOutcome,
+        _continuation: super::IterationRoundContinuation,
+        _now: i64,
+    ) -> Result<AdvanceWorkflowRunResult, RepositoryError> {
+        Ok(AdvanceWorkflowRunResult::NotFound)
+    }
+
+    fn complete_iteration_node(
+        &self,
+        _node_run_id: &WorkflowNodeRunId,
+        _owner_node_id: &str,
+        _exposed: &[(String, serde_json::Value)],
+        _output: Option<String>,
+        _now: i64,
+    ) -> Result<AdvanceWorkflowRunResult, RepositoryError> {
+        Ok(AdvanceWorkflowRunResult::NotFound)
     }
 
     fn record_node_checkpoint(
@@ -315,6 +358,15 @@ impl WorkflowRunEngineRepository for InMemoryRepository {
     ) -> Result<(), RepositoryError> {
         Ok(())
     }
+
+    fn fail_interrupted_node_runs(
+        &self,
+        _run_id: &WorkflowRunId,
+        _node_run_ids: &[WorkflowNodeRunId],
+        _now: i64,
+    ) -> Result<(), RepositoryError> {
+        Ok(())
+    }
 }
 
 fn execution_context(status: WorkflowRunStatus) -> ExecutionContext {
@@ -392,6 +444,7 @@ fn failed_run_binds_in_flight_sibling_and_does_not_dispatch_join() {
 
     engine
         .fail_node(
+            &run_id,
             &b_id,
             NodeFailure::new(NodeFailureKind::PromptTemplate, "b prompt failed"),
         )
