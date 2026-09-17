@@ -7,7 +7,7 @@ use rusqlite::{Connection, OpenFlags, params};
 use super::ProcessStateError;
 
 const APPLICATION_ID: i64 = 0x4f52_4148;
-const VERSION: i64 = 5;
+const VERSION: i64 = 6;
 const LEGACY_LAUNCH_SCHEMA: &str = "CREATE TABLE guardian_launches (
     scope TEXT PRIMARY KEY NOT NULL REFERENCES scope_intents(scope),
     credential BLOB NOT NULL CHECK (length(credential) = 32),
@@ -44,6 +44,8 @@ pub(super) fn initialize(
     transaction.execute_batch(super::runs::SCHEMA)?;
     transaction.execute_batch(super::control::STOP_SCHEMA)?;
     transaction.execute_batch(super::control::CLOSE_SCHEMA)?;
+    transaction.execute_batch(super::observations::RUN_SCHEMA)?;
+    transaction.execute_batch(super::observations::SCOPE_SCHEMA)?;
     transaction.execute(
         "INSERT INTO host_binding VALUES (1, ?1, ?2)",
         params![epoch_to_sql(binding.epoch)?, binding.instance.to_string()],
@@ -66,7 +68,7 @@ pub(super) fn inspect(
         "SELECT (SELECT application_id FROM pragma_application_id), (SELECT user_version FROM pragma_user_version)",
         [], |row| Ok((row.get::<_, i64>(/*idx*/ 0)?, row.get::<_, i64>(/*idx*/ 1)?)),
     )?;
-    if header.0 != APPLICATION_ID || !matches!(header.1, 1 | 2 | 3 | 4 | VERSION) {
+    if header.0 != APPLICATION_ID || !matches!(header.1, 1 | 2 | 3 | 4 | 5 | VERSION) {
         return Err(ProcessStateError::Rejected(
             "unknown journal identity or version",
         ));
@@ -88,7 +90,7 @@ pub(super) fn inspect(
             super::runs::SCHEMA,
             INTENT_SCHEMA,
         ]
-    } else {
+    } else if header.1 == 5 {
         vec![
             LAUNCH_SCHEMA,
             HOST_SCHEMA,
@@ -96,6 +98,17 @@ pub(super) fn inspect(
             super::control::STOP_SCHEMA,
             super::control::CLOSE_SCHEMA,
             INTENT_SCHEMA,
+        ]
+    } else {
+        vec![
+            LAUNCH_SCHEMA,
+            HOST_SCHEMA,
+            super::runs::SCHEMA,
+            super::observations::RUN_SCHEMA,
+            super::control::STOP_SCHEMA,
+            super::control::CLOSE_SCHEMA,
+            INTENT_SCHEMA,
+            super::observations::SCOPE_SCHEMA,
         ]
     };
     if definitions != expected {
@@ -156,8 +169,11 @@ pub(super) fn inspect(
     if header.1 >= 4 {
         super::runs::inspect(&connection)?;
     }
-    if header.1 == VERSION {
+    if header.1 >= 5 {
         super::control::inspect(&connection)?;
+    }
+    if header.1 == VERSION {
+        super::observations::inspect(&connection)?;
     }
     Ok((binding, header.1))
 }
@@ -184,9 +200,13 @@ pub(super) fn advance_binding(
         // Old guardians retain their own facts; do not invent host intents for historical Runs.
         transaction.execute_batch(super::runs::SCHEMA)?;
     }
-    if version < VERSION {
+    if version < 5 {
         transaction.execute_batch(super::control::STOP_SCHEMA)?;
         transaction.execute_batch(super::control::CLOSE_SCHEMA)?;
+    }
+    if version < VERSION {
+        transaction.execute_batch(super::observations::RUN_SCHEMA)?;
+        transaction.execute_batch(super::observations::SCOPE_SCHEMA)?;
         transaction.pragma_update(/*schema_name*/ None, "user_version", VERSION)?;
     }
     let changed = transaction.execute(

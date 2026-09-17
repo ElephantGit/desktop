@@ -13,6 +13,8 @@ use pretty_assertions::assert_eq;
 
 #[path = "host_state/control.rs"]
 mod control;
+#[path = "host_state/observations.rs"]
+mod observations;
 #[path = "host_state/runs.rs"]
 mod runs;
 
@@ -84,7 +86,7 @@ fn version_one_upgrade_preserves_intent_and_ownership() -> TestResult {
     drop(state);
     let old = rusqlite::Connection::open(path.join("host.sqlite"))?;
     old.execute_batch(
-        "DROP TABLE run_stop_intents; DROP TABLE scope_close_intents; DROP TABLE run_intents; DROP TABLE guardian_launches; PRAGMA user_version=1;",
+        "DROP TABLE run_observations; DROP TABLE scope_observations; DROP TABLE run_stop_intents; DROP TABLE scope_close_intents; DROP TABLE run_intents; DROP TABLE guardian_launches; PRAGMA user_version=1;",
     )?;
     drop(old);
 
@@ -100,7 +102,7 @@ fn version_one_upgrade_preserves_intent_and_ownership() -> TestResult {
     assert_eq!(
         database.query_row("PRAGMA user_version", [], |row| row
             .get::<_, i64>(/*idx*/ 0))?,
-        5
+        6
     );
     assert_eq!(fs::read_dir(path.join("scopes"))?.count(), 0);
     Ok(())
@@ -118,7 +120,7 @@ fn version_two_upgrade_preserves_consumed_launches() -> TestResult {
     drop(state);
     let old = rusqlite::Connection::open(path.join("host.sqlite"))?;
     old.execute_batch(
-        "DROP TABLE run_stop_intents; DROP TABLE scope_close_intents; DROP TABLE run_intents; DROP TABLE guardian_launches;
+        "DROP TABLE run_observations; DROP TABLE scope_observations; DROP TABLE run_stop_intents; DROP TABLE scope_close_intents; DROP TABLE run_intents; DROP TABLE guardian_launches;
 CREATE TABLE guardian_launches (
     scope TEXT PRIMARY KEY NOT NULL REFERENCES scope_intents(scope),
     credential BLOB NOT NULL CHECK (length(credential) = 32),

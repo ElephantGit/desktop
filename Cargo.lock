@@ -3580,6 +3580,7 @@ name = "ora-process-runtime"
 version = "0.0.0"
 dependencies = [
  "libc",
+ "ora-process-client",
  "ora-process-protocol",
  "ora-utils",
  "pretty_assertions",

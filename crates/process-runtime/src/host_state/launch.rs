@@ -21,6 +21,31 @@ use tokio::io::AsyncWriteExt;
 
 use super::{HostState, ProcessStateError};
 
+/// Owns only bootstrap delivery; dropping it never grants another launch attempt.
+pub(crate) struct GuardianLaunch {
+    access: GuardianAccess,
+    parent: tokio::net::UnixStream,
+    bootstrap: Vec<u8>,
+}
+
+impl GuardianLaunch {
+    /// Delivers outside host ownership's mutex so a slow guardian cannot stall other Scopes.
+    pub(crate) async fn deliver(mut self) -> Result<GuardianAccess, ProcessStateError> {
+        tokio::time::timeout(
+            Duration::from_secs(/*secs*/ 5),
+            self.parent.write_all(&self.bootstrap),
+        )
+        .await
+        .map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "guardian bootstrap delivery timed out",
+            )
+        })??;
+        Ok(self.access)
+    }
+}
+
 impl HostState {
     /// Retrieves the original identity for discovery, never permission to launch again.
     pub fn guardian_access(
@@ -56,6 +81,15 @@ impl HostState {
         scope: ScopeId,
         executable: &Path,
     ) -> Result<GuardianAccess, ProcessStateError> {
+        self.begin_guardian(scope, executable)?.deliver().await
+    }
+
+    /// Commits the launch boundary and spawns without retaining host ownership during socket I/O.
+    pub(crate) fn begin_guardian(
+        &mut self,
+        scope: ScopeId,
+        executable: &Path,
+    ) -> Result<GuardianLaunch, ProcessStateError> {
         if self.scope_close_requested(scope)? {
             return Err(ProcessStateError::Rejected("host Scope is closing"));
         }
@@ -116,7 +150,7 @@ impl HostState {
         File::open(&access.scope_dir)?.sync_all()?;
         let (parent, child) = UnixStream::pair()?;
         parent.set_nonblocking(/*nonblocking*/ true)?;
-        let mut parent = tokio::net::UnixStream::from_std(parent)?;
+        let parent = tokio::net::UnixStream::from_std(parent)?;
         let mut command = Command::new(executable);
         command
             .arg("--bootstrap")
@@ -140,18 +174,11 @@ impl HostState {
         sender
             .send(child)
             .map_err(|_| std::io::Error::other("guardian reaper unexpectedly unavailable"))?;
-        tokio::time::timeout(
-            Duration::from_secs(/*secs*/ 5),
-            parent.write_all(&bootstrap),
-        )
-        .await
-        .map_err(|_| {
-            std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "guardian bootstrap delivery timed out",
-            )
-        })??;
         // Ready is deliberately queried independently. Losing this result cannot trigger another exec.
-        Ok(access)
+        Ok(GuardianLaunch {
+            access,
+            parent,
+            bootstrap,
+        })
     }
 }

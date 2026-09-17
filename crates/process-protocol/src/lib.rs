@@ -15,6 +15,11 @@ pub use guardian_wire::{
 mod helper;
 mod host_run;
 pub use host_run::HostRunIntent;
+mod host;
+pub use host::{
+    HOST_WIRE_VERSION, HostCoordination, HostOperation, HostRejection, HostReply, HostRequest,
+    HostRunView, HostScopeView,
+};
 mod output;
 mod run;
 mod state;

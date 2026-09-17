@@ -32,7 +32,7 @@ that production composition is not implemented yet.
 
 Creation is intentionally fail-closed: interrupted initialization can leave a partial dedicated
 directory, which is preserved and rejected on recovery. Automatic repair is not provided; only the
-exact version-1 through version-4 journals have the migrations described below.
+exact version-1 through version-5 journals have the migrations described below.
 Do not delete lock files, replace the directory while owned, or remove records to bypass a failure.
 
 ## Durable facts, not launch authority
@@ -41,7 +41,7 @@ The host holds the original `host.lock` until its SQLite connection closes. Reco
 lock nonblockingly, then performs a read-only journal compatibility check, and only then commits a
 new host incarnation. Contention is an error, not permission to replace a lock or endpoint.
 
-The version-5 journal identifies itself with application ID `0x4f524148` and `user_version=5`, and
+The version-6 journal identifies itself with application ID `0x4f524148` and `user_version=6`, and
 checks its exact schema, integrity and persisted identities. It stores a positive host epoch with a
 host instance ID, plus each Scope's original guardian instance, creating host binding and
 `intent_recorded` phase. Epoch overflow is rejected; recovery never rewrites an intent's creating host.
@@ -67,7 +67,7 @@ block migration before any authority write or credential removal; their guardian
 original token protocol. Keep a compatible old host for them, or use a separate new state directory;
 never delete a Scope to bypass this check. For eligible journals, the obsolete credential column is removed while all
 consumed launch attempts are preserved. Historical SQLite free pages and backups are not securely
-erased. Unknown schemas fail closed, and old binaries reject version 5 rather than resetting it. Host recovery never writes guardian.sqlite.
+erased. Unknown schemas fail closed, and old binaries reject version 6 rather than resetting it. Host recovery never writes guardian.sqlite.
 
 The journal independently enables and verifies WAL plus `synchronous=FULL`; the linked SQLite mainline
 version must include the WAL-reset fix (at least 3.51.3). Transactions commit before returning new
@@ -115,14 +115,34 @@ An orphaned control reference blocks recovery before advancing host authority.
 
 ## Verification and remaining work
 
+`HostCoordinator` composes this journal with the guardian client. Its owner drives `tick()`;
+accepted Start/Stop/Close requests then progress without the requesting connection. Each Scope has
+at most one active exchange, with up to 32 independent Scope exchanges and round-robin scheduling.
+The cap limits concurrent transport work, not admission. Failed exchanges back off from hundreds of
+milliseconds to five seconds plus Scope-specific jitter, without exhausting cleanup responsibility.
+Neither socket I/O nor bootstrap delivery holds the host journal while awaiting a peer.
+
+Changed Run and Scope observations are persisted before queries expose them. `last_observed` is
+historical evidence, separate from `coordination`; recovery starts as Pending and guardian loss
+reports Unavailable without erasing earlier facts. No numeric PID or stored Running snapshot becomes
+launch or signal authority. A close before any guardian attempt completes locally without exec;
+otherwise the original guardian must answer. An unavailable guardian never becomes successful cleanup.
+
+Dropping the coordinator stops its transport tasks, not guardians. Accepted intent remains in SQLite;
+recovery rebinds and rediscovers the original instance. No same-Scope guardian relaunch is allowed.
+Version 5 gains empty observation tables, preserving its stop/close intents. Earlier versions migrate
+through the same exact schema checks; corrupt projections block recovery before authority advances.
+
 `cargo test -p ora-process-runtime --test host_state` exercises concurrent creation, lock contention,
 deduplication across restart, unchanged lock identity, lost caller state after external SIGKILL,
 missing/foreign files, path limits, permissions, links, version/schema/identity corruption, epoch
-exhaustion, conflict repair and the exact version-1 through version-4 upgrades, including unchanged legacy tokens and epochs on rejection. Run tests cover restart discovery,
+exhaustion, conflict repair and the exact version-1 through version-5 upgrades, including unchanged legacy tokens and epochs on rejection. Run tests cover restart discovery,
 immutable scope/parameter binding, failed commits, frame limits and corrupt indexed payloads. Crash fixtures override child HOME and cwd while using the same
 explicit state path. Tests use a private temporary fixture under the test user's home; production
 code does not derive a path from that environment variable.
 
 Real-app bootstrap, refusal, launcher-kill and discovery evidence is documented under
-[guardian bootstrap](process-guardian.md), including durable host takeover and guardian-side Run acceptance. Host intent and enumeration are implemented; automatic dispatch/reconciliation, a host query projection,
-production host composition and platform cleanup remain unfinished; Controller authorization is deferred. No ADR is marked implemented.
+[guardian bootstrap](process-guardian.md), including durable host takeover and guardian-side Run acceptance.
+Coordinator tests cover cancellation before dispatch, real side-effect deduplication after recovery,
+durable facts after guardian loss and independent progress past an unavailable Scope. A production
+host app and Git/Node composition remain unfinished; Controller authorization is deferred. No ADR is marked implemented.

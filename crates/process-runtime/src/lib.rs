@@ -5,6 +5,10 @@ mod host_state;
 #[cfg(target_os = "linux")]
 pub use host_state::HostState;
 #[cfg(target_os = "linux")]
+mod host;
+#[cfg(target_os = "linux")]
+pub use host::HostCoordinator;
+#[cfg(target_os = "linux")]
 mod guardian;
 #[cfg(target_os = "linux")]
 mod state_error;

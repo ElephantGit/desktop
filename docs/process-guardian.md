@@ -68,8 +68,8 @@ This is a real local guardian/client loop, not yet a production Node/host/busine
 
 ## Existing files and versions
 
-The host journal uses version 5 and the guardian journal version 4, each with its own Run ledger. Neither contains credential columns. Host recovery migrates
-the exact v1/v2/v3/v4 layouts transactionally, retaining original scopes, epochs, lock inodes and consumed
+The host journal uses version 6 and the guardian journal version 4, each with its own Run ledger. Neither contains credential columns. Host recovery migrates
+the exact v1/v2/v3/v4/v5 layouts transactionally, retaining original scopes, epochs, lock inodes and consumed
 launch attempts. Version-2 hosts with existing Scope directories are rejected before migration so
 compatible old binaries retain the original tokens and epoch. Use that compatible host or a separate
 new state directory; do not delete legacy scopes to force an upgrade. Removed historical token values
@@ -89,6 +89,7 @@ execution checks, persistence failure and lock lifetime. Host tests cover exact 
 Run app tests cover exact replay, exit/output, lost Start replies, pre/post-exec storage failure,
 host SIGKILL takeover with Run discovery from the host journal, force/close and guardian SIGKILL with a surviving workload that holds no scope lock.
 
-Controller authorization and leases are deferred. A production host app, automatic host dispatch/reconciliation and query projection,
+Controller authorization and leases are deferred. Host coordination and durable query projections are implemented;
+a production host app,
 stdin, durable output, Node/Git/plugin integration and guardian-death recovery remain unfinished. Strong containment,
 service-manager survival, physical power loss and other-platform support are not established.

@@ -70,7 +70,7 @@ fn version_three_upgrade_does_not_invent_historical_run_intents() -> TestResult 
     let intent = host.record_scope_intent(scope)?;
     drop(host);
     let legacy = rusqlite::Connection::open(path.join("host.sqlite"))?;
-    legacy.execute_batch("DROP TABLE run_stop_intents; DROP TABLE scope_close_intents; DROP TABLE run_intents; PRAGMA user_version=3;")?;
+    legacy.execute_batch("DROP TABLE run_observations; DROP TABLE scope_observations; DROP TABLE run_stop_intents; DROP TABLE scope_close_intents; DROP TABLE run_intents; PRAGMA user_version=3;")?;
     legacy.execute(
         "INSERT INTO guardian_launches VALUES (?1, 'launch_unknown')",
         [scope.to_string()],

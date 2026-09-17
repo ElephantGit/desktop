@@ -2,8 +2,9 @@
 
 mod control;
 mod journal;
-mod launch;
+pub(crate) mod launch;
 mod layout;
+mod observations;
 mod runs;
 
 use std::num::NonZeroU64;

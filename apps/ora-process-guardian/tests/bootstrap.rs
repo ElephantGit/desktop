@@ -1,5 +1,7 @@
 #![cfg(target_os = "linux")]
 
+#[path = "bootstrap/host.rs"]
+mod host;
 #[path = "bootstrap/management.rs"]
 mod management;
 #[path = "bootstrap/runs.rs"]

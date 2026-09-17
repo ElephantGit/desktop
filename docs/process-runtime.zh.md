@@ -34,7 +34,7 @@ Linux 已支持[有界内存结果捕获](process-linux-rootless.zh.md#有界结
 管道 EOF 与进程清理分别表达。
 宿主创建意图已提供可选的[持久日志](process-host-state.zh.md)，仅使用显式传入的专用目录。
 另已支持[独立 guardian 启动与 Ready 发现](process-guardian.zh.md)，以及可信本机调用方的 guardian 侧 Run
-持久接受、查询、输出和强停。授权与租约已推迟；host Run 意图与重启枚举已实现，自动派发／协调与查询投影、生产宿主 app、其余平台 adapter、
+持久接受、查询、输出和强停。授权与租约已推迟；host Run 意图、重启枚举、自动协调与持久查询投影已实现；生产宿主 app、其余平台 adapter、
 完整 I/O、运行恢复、资源交接和生产接入均待实现。
 本批不代表阶段 1 完成，也不证明任何 OS 级纳管保证。
 

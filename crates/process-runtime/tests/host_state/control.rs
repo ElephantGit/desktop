@@ -59,7 +59,7 @@ fn version_four_upgrade_and_failed_control_write_preserve_intent() -> TestResult
     drop(host);
     let connection = rusqlite::Connection::open(path.join("host.sqlite"))?;
     connection.execute_batch(
-        "DROP TABLE run_stop_intents; DROP TABLE scope_close_intents; PRAGMA user_version=4;",
+        "DROP TABLE run_observations; DROP TABLE scope_observations; DROP TABLE run_stop_intents; DROP TABLE scope_close_intents; PRAGMA user_version=4;",
     )?;
     drop(connection);
     let mut host = recover(&path)?;
