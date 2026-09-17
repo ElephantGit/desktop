@@ -168,6 +168,12 @@ where
         run_id: &WorkflowRunId,
     ) -> Result<ResumeWorkflowRunResult, EngineError> {
         let context = self.execution_context(run_id)?;
+        if !matches!(
+            context.run.status,
+            WorkflowRunStatus::Failed | WorkflowRunStatus::Cancelled
+        ) {
+            return Ok(ResumeWorkflowRunResult::NotResumable);
+        }
         let graph = WorkflowGraph::parse(&context.graph_json)?;
         let node_runs = self.repository.list_node_runs(run_id)?;
         let to_clear =
