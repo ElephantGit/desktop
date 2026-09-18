@@ -12,7 +12,7 @@ use super::start::{
     log_session_mcp_request,
 };
 use super::support::{agent_timed_out, map_acp_error, protocol_violation, session_event_overflow};
-use super::{RuntimeActor, SESSION_SETUP_TIMEOUT};
+use super::{RuntimeActor, session_setup_window};
 use crate::BackendError;
 use crate::session_setup::{LiveMcpState, SessionMcpSnapshot};
 use agent_client_protocol_schema::v1::{
@@ -146,7 +146,10 @@ impl RuntimeActor {
             )
             .await
             .map_err(map_acp_error)?;
-        let deadline = sleep(SESSION_SETUP_TIMEOUT);
+        // The restore reconnects the delivered MCP servers before responding, so its inactivity
+        // window widens with the snapshot just like `session/new` does.
+        let window = session_setup_window(snapshot);
+        let deadline = sleep(window);
         tokio::pin!(deadline);
         loop {
             tokio::select! {
@@ -158,7 +161,7 @@ impl RuntimeActor {
                         // The agent is reciting history Ora already owns. Draining it keeps the
                         // queue clear and proves the provider is still working.
                         self.observe_session_update(&update.update);
-                        deadline.as_mut().reset(Instant::now() + SESSION_SETUP_TIMEOUT);
+                        deadline.as_mut().reset(Instant::now() + window);
                     }
                     Some(SessionEvent::Permission(permission)) => {
                         let _ = client

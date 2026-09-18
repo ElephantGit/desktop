@@ -4,9 +4,11 @@ use super::interactive::CompletingNodeRuns;
 use super::transitions::WorkflowRunTransitions;
 use crate::git_cleanup::KeyedResourceLocks;
 use ora_application::{
-    Clock, ExecutionContext, NodeExecutor, ProjectRepository, SessionRepository, WorkflowGraphNode,
-    WorkflowNodeRunIdGenerator, WorkflowRepository, WorkflowRunEngine, WorkflowRunEngineRepository,
+    Clock, ExecutionContext, NodeExecutor, ProjectRepository, SessionRepository,
+    SkillMaterializationReceipt, WorkflowGraph, WorkflowGraphNode, WorkflowNodeRunIdGenerator,
+    WorkflowRepository, WorkflowRunEngine, WorkflowRunEngineRepository,
     WorkflowRunInvalidationPublisher, WorkflowRunPayload, WorkflowRunRepository,
+    WorkflowVariablePool,
 };
 use ora_contracts::WorkflowRunLocale;
 use ora_db::{
@@ -23,8 +25,8 @@ use ora_domain::{
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
 pub(crate) const AGENT_GRAPH: &str = r#"{"nodes":[
@@ -61,27 +63,53 @@ impl NodeExecutor for NoopExecutor {
         &self,
         _node_run_id: &WorkflowNodeRunId,
         _node: &WorkflowGraphNode,
+        _graph: &WorkflowGraph,
         _context: &ExecutionContext,
+        _scope_id: &ora_domain::WorkflowScopeId,
+        _variable_pool: &ora_application::WorkflowVariablePool,
     ) {
     }
 }
 
+/// Records production dispatch inputs while leaving completion under the test's control.
 #[derive(Clone, Default)]
 pub(crate) struct RecordingExecutor {
-    pub dispatches: Arc<std::sync::Mutex<Vec<String>>>,
+    records: Arc<Mutex<Vec<DispatchRecord>>>,
+    /// Node ids in dispatch order, for tests that only care which nodes were started.
+    pub dispatches: Arc<Mutex<Vec<String>>>,
+}
+
+/// The immutable facts a background executor receives for one dispatch.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DispatchRecord {
+    pub(crate) node_run_id: String,
+    pub(crate) node_id: String,
+    pub(crate) payload: Option<String>,
+}
+
+impl RecordingExecutor {
+    /// Shares a snapshot of all dispatches observed so far.
+    pub(crate) fn records(&self) -> Vec<DispatchRecord> {
+        self.records.lock().unwrap().clone()
+    }
 }
 
 impl NodeExecutor for RecordingExecutor {
     fn dispatch(
         &self,
-        _node_run_id: &WorkflowNodeRunId,
+        node_run_id: &WorkflowNodeRunId,
         node: &WorkflowGraphNode,
-        _context: &ExecutionContext,
+        _graph: &WorkflowGraph,
+        context: &ExecutionContext,
+        _scope_id: &ora_domain::WorkflowScopeId,
+        _variable_pool: &WorkflowVariablePool,
     ) {
-        self.dispatches
-            .lock()
-            .expect("dispatch log")
-            .push(node.id.clone());
+        self.records.lock().unwrap().push(DispatchRecord {
+            node_run_id: node_run_id.to_string(),
+            node_id: node.id.clone(),
+            payload: context.run.payload.clone(),
+        });
+        self.dispatches.lock().unwrap().push(node.id.clone());
     }
 }
 
@@ -225,18 +253,13 @@ pub(crate) fn seeded_pending_run(
         ))
         .unwrap();
     let run_id = WorkflowRunId::new("run-1");
-    // Real runs are created through the deployment handler, which always freezes a typed
-    // payload; without one, private routing state such as Condition decisions would never
-    // persist, so the fixture seeds the graph-derived pool exactly like deployment does.
-    let parsed_graph = ora_application::WorkflowGraph::parse(graph).expect("fixture graph parses");
-    let start_node_id = parsed_graph.start_node().map(|node| node.id.clone());
-    let payload = serde_json::to_string(&WorkflowRunPayload::with_variable_pool(
+    let parsed_graph = WorkflowGraph::parse(graph).unwrap();
+    let payload = WorkflowRunPayload::with_variable_pool(
         WorkflowRunLocale::EnUs,
-        Default::default(),
-        start_node_id,
-        ora_application::WorkflowVariablePool::from_graph(&parsed_graph),
-    ))
-    .unwrap();
+        SkillMaterializationReceipt::default(),
+        parsed_graph.start_node().map(|node| node.id.clone()),
+        WorkflowVariablePool::from_graph(&parsed_graph),
+    );
     let run = WorkflowRun::new(
         run_id.clone(),
         workspace.id,
@@ -248,7 +271,7 @@ pub(crate) fn seeded_pending_run(
         Some("kickoff".to_string()),
         None,
         None,
-        Some(payload),
+        Some(serde_json::to_string(&payload).unwrap()),
         None,
         None,
         AuditFields::new(30, 30, false),

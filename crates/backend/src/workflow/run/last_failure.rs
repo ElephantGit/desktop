@@ -104,6 +104,7 @@ mod tests {
         WorkflowNodeRun::new(
             WorkflowNodeRunId::new("nr-1"),
             WorkflowRunId::new("run-1"),
+            ora_domain::WorkflowScopeId::new("root:test"),
             "review",
             "agent",
             /*session_id*/ None,
@@ -196,6 +197,7 @@ mod tests {
         let previous = WorkflowNodeRun::new(
             WorkflowNodeRunId::new("nr-1"),
             WorkflowRunId::new("run-1"),
+            ora_domain::WorkflowScopeId::new("root:test"),
             "review",
             "agent",
             /*session_id*/ None,

@@ -10,7 +10,7 @@ use super::test_fixture::{
     NoopExecutor, SeqGen, bootstrap, init_git_workspace, seeded_pending_run,
 };
 use ora_application::{
-    ExecutionContext, NodeExecutor, NodeFailure, NodeFailureKind, WorkflowGraphNode,
+    ExecutionContext, NodeExecutor, NodeFailure, NodeFailureKind, WorkflowGraph, WorkflowGraphNode,
     WorkflowRunEngine, WorkflowRunEngineRepository, WorkflowRunPayload, WorkflowVariablePool,
 };
 use ora_contracts::{ResumeRollbackMode, WorkflowRunLocale};
@@ -760,7 +760,10 @@ impl NodeExecutor for CompositeCheckpointExecutor {
         &self,
         _node_run_id: &WorkflowNodeRunId,
         _node: &WorkflowGraphNode,
+        _graph: &WorkflowGraph,
         _context: &ExecutionContext,
+        _scope_id: &ora_domain::WorkflowScopeId,
+        _variable_pool: &WorkflowVariablePool,
     ) {
     }
 

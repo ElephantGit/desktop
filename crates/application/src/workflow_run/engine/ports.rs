@@ -4,8 +4,8 @@ use super::skill_delivery::SkillMaterializationReceipt;
 use crate::RepositoryError;
 use crate::workflow_run::engine::graph::WorkflowGraph;
 use ora_domain::{
-    SessionId, WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRun, WorkflowRunId,
-    WorkflowSnapshotId, Workspace,
+    SessionId, WorkflowExecutionScope, WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus,
+    WorkflowRun, WorkflowRunId, WorkflowScopeId, WorkflowSnapshotId, Workspace,
 };
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -19,6 +19,7 @@ use thiserror::Error;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeRunToStart {
     pub id: WorkflowNodeRunId,
+    pub scope_id: WorkflowScopeId,
     pub node_id: String,
     pub node_type: String,
     pub input: Option<String>,
@@ -79,14 +80,43 @@ pub struct FileChange {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionContext {
     pub run: WorkflowRun,
+    pub root_scope_id: WorkflowScopeId,
     pub workspace: Workspace,
     pub graph_json: String,
+}
+
+/// Initial durable facts for one newly-created Loop round.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoopRoundToStart {
+    pub id: WorkflowScopeId,
+    pub parent_loop_node_run_id: WorkflowNodeRunId,
+    pub round_index: u32,
+    pub state: String,
+    pub start_node_run: NodeRunToStart,
+}
+
+/// The atomic state change chosen after every child node in a Loop round is terminal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoopRoundAdvance {
+    /// Closes the current round and starts the next round from its Start node.
+    Continue { next: LoopRoundToStart },
+    /// Closes the round and publishes the configured values through the parent Loop node.
+    Succeed {
+        outputs: BTreeMap<String, serde_json::Value>,
+    },
+    /// Terminates the current round, parent Loop, and root run with one durable error.
+    Fail { error: String },
 }
 
 /// Supplies new node-run identifiers for the engine's scheduling waves.
 pub trait WorkflowNodeRunIdGenerator {
     /// Produces the identifier for a newly created node run.
     fn generate_node_run_id(&self) -> WorkflowNodeRunId;
+
+    /// Produces a distinct identity for a newly-created execution scope.
+    fn generate_scope_id(&self) -> WorkflowScopeId {
+        WorkflowScopeId::new(format!("scope:{}", self.generate_node_run_id()))
+    }
 }
 
 /// Publishes run invalidation events after run or node-run state transitions commit
@@ -232,6 +262,18 @@ pub trait WorkflowRunEngineRepository {
         iteration: Option<u32>,
     ) -> Result<Option<WorkflowNodeRun>, RepositoryError>;
 
+    /// Loads one Loop's active round, if it has already been created.
+    fn find_active_loop_round(
+        &self,
+        parent_loop_node_run_id: &WorkflowNodeRunId,
+    ) -> Result<Option<WorkflowExecutionScope>, RepositoryError>;
+
+    /// Lists node instances belonging to one root or round scope.
+    fn list_node_runs_in_scope(
+        &self,
+        scope_id: &WorkflowScopeId,
+    ) -> Result<Vec<WorkflowNodeRun>, RepositoryError>;
+
     /// Publishes a node's prepared Ora session while the node run is still `Running`.
     ///
     /// Design rule D2: a run that is already `Failed` still accepts bindings for its in-flight
@@ -298,6 +340,30 @@ pub trait WorkflowRunEngineRepository {
         node_runs: &[NodeRunToStart],
         now: i64,
     ) -> Result<(), RepositoryError>;
+
+    /// Creates a Loop round and its child Start node atomically while the parent is active.
+    fn start_loop_round(
+        &self,
+        run_id: &WorkflowRunId,
+        round: &LoopRoundToStart,
+        now: i64,
+    ) -> Result<(), RepositoryError>;
+
+    /// Starts child nodes without changing the root run's `current_nodes` anchor.
+    fn start_scope_ready_nodes(
+        &self,
+        scope_id: &WorkflowScopeId,
+        node_runs: &[NodeRunToStart],
+        now: i64,
+    ) -> Result<(), RepositoryError>;
+
+    /// Closes a drained Loop round and advances its parent atomically.
+    fn advance_loop_round(
+        &self,
+        scope_id: &WorkflowScopeId,
+        advance: &LoopRoundAdvance,
+        now: i64,
+    ) -> Result<AdvanceWorkflowRunResult, RepositoryError>;
 
     /// Marks one node-run succeeded, records its final assistant output, stop reason, and file
     /// changes, and removes it from `current_nodes`.

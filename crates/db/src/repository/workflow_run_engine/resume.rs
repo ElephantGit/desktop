@@ -2,7 +2,7 @@ use super::current_nodes::current_nodes_to_state;
 use super::engine_repository_error_from_database;
 use crate::repository::RepositoryPool;
 use ora_application::{RepositoryError, ResumeWorkflowRunResult, WorkflowRunPayload};
-use ora_domain::{WorkflowNodeStatus, WorkflowRunId, WorkflowRunStatus};
+use ora_domain::{WorkflowNodeStatus, WorkflowRunId, WorkflowRunStatus, WorkflowScopeStatus};
 use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params, params_from_iter};
 use std::collections::BTreeSet;
 
@@ -50,6 +50,40 @@ pub(super) fn resume_from_failure(
         let placeholders = std::iter::repeat_n("?", node_ids_to_clear.len())
             .collect::<Vec<_>>()
             .join(", ");
+        // A cleared Loop owner takes its rounds with it: the round scopes close and their
+        // child rows are soft-deleted, so the rerun starts from round 1 with no active round.
+        let owners_sql = format!(
+            "SELECT id FROM workflow_node_runs WHERE run_id = ? AND is_deleted = 0 AND node_id IN ({placeholders})"
+        );
+        let mut owner_parameters =
+            Vec::<rusqlite::types::Value>::with_capacity(node_ids_to_clear.len() + 1);
+        owner_parameters.push(run_id.as_ref().to_string().into());
+        owner_parameters.extend(node_ids_to_clear.iter().cloned().map(Into::into));
+        transaction.execute(
+            &format!(
+                "UPDATE workflow_node_runs SET is_deleted = 1, updated_at = ?
+                 WHERE is_deleted = 0 AND scope_id IN (
+                     SELECT id FROM workflow_execution_scopes
+                     WHERE parent_loop_node_run_id IN ({owners_sql}))"
+            ),
+            params_from_iter(
+                std::iter::once(rusqlite::types::Value::from(now)).chain(owner_parameters.iter().cloned()),
+            ),
+        )?;
+        transaction.execute(
+            &format!(
+                "UPDATE workflow_execution_scopes SET status = ?, updated_at = ?
+                 WHERE status IN (0, 1) AND parent_loop_node_run_id IN ({owners_sql})"
+            ),
+            params_from_iter(
+                [
+                    rusqlite::types::Value::from(WorkflowScopeStatus::Cancelled.database_value()),
+                    rusqlite::types::Value::from(now),
+                ]
+                .into_iter()
+                .chain(owner_parameters),
+            ),
+        )?;
         let sql = format!(
             "UPDATE workflow_node_runs SET is_deleted = 1, updated_at = ?
                      WHERE run_id = ? AND is_deleted = 0 AND node_id IN ({placeholders})"

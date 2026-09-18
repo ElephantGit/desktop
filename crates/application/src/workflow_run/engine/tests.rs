@@ -871,6 +871,7 @@ fn node_type_round_trips_all_variants() {
         ("condition", NodeType::Condition),
         ("tool", NodeType::Tool),
         ("output", NodeType::Output),
+        ("loop", NodeType::Loop),
     ] {
         let parsed = NodeType::from_str(value).unwrap();
         assert_eq!(parsed, expected);
@@ -887,7 +888,7 @@ fn node_type_rejects_unknown_values() {
 }
 
 #[test]
-fn node_type_reports_the_v1_supported_set() {
+fn node_type_reports_the_supported_set() {
     let supported: Vec<&str> = [
         NodeType::Start,
         NodeType::Agent,
@@ -895,12 +896,16 @@ fn node_type_reports_the_v1_supported_set() {
         NodeType::Condition,
         NodeType::Tool,
         NodeType::Output,
+        NodeType::Loop,
     ]
     .iter()
     .filter(|node_type| node_type.supported())
     .map(|node_type| node_type.as_str())
     .collect();
-    assert_eq!(supported, vec!["start", "agent", "condition", "output"]);
+    assert_eq!(
+        supported,
+        vec!["start", "agent", "condition", "output", "loop"]
+    );
 }
 
 // Executable architecture constraints (ADR "node runtime orchestration" D1/D2).
@@ -967,6 +972,12 @@ fn without_comment_lines(source: &str) -> String {
 /// enter scheduling only by registering a runtime.
 #[test]
 fn scheduling_core_contains_no_node_type_literals() {
+    for source in [
+        include_str!("engine/composite_scheduler.rs"),
+        include_str!("engine/loop_scheduler.rs"),
+    ] {
+        assert!(!without_comment_lines(source).contains("NodeType::"));
+    }
     let engine_source = without_comment_lines(&without_test_module(include_str!("engine.rs")));
     let scheduling_core = engine_source.replacen(
         function_body(&engine_source, "fn validate_executable_graph")

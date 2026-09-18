@@ -19,6 +19,7 @@ pub(crate) struct RequiredWorkflowSkill {
 /// Inputs required to turn one workflow node into a self-contained Agent prompt.
 pub(crate) struct WorkflowPromptRequest<'a> {
     pub(crate) node: &'a WorkflowGraphNode,
+    pub(crate) graph: Option<&'a WorkflowGraph>,
     pub(crate) worktree_root: &'a Path,
     pub(crate) role_content: Option<&'a str>,
     pub(crate) graph_json: &'a str,
@@ -51,11 +52,16 @@ pub(crate) fn assemble_workflow_prompt(request: WorkflowPromptRequest<'_>) -> Ve
         render_current_step(request.node, request.locale),
     );
 
-    if let Ok(graph) = WorkflowGraph::parse(request.graph_json) {
+    let parsed_graph = if request.graph.is_none() {
+        WorkflowGraph::parse(request.graph_json).ok()
+    } else {
+        None
+    };
+    if let Some(graph) = request.graph.or(parsed_graph.as_ref()) {
         push_text_block(
             &mut blocks,
             render_workflow_context(
-                &graph,
+                graph,
                 request.node,
                 request.run_input,
                 request.node_runs,
@@ -625,6 +631,7 @@ mod tests {
         WorkflowNodeRun::new(
             WorkflowNodeRunId::new(format!("node-run-{node_id}")),
             WorkflowRunId::new("run-1"),
+            ora_domain::WorkflowScopeId::new("root:run-1"),
             node_id,
             "agent",
             /*session_id*/ None,
@@ -678,6 +685,7 @@ mod tests {
         };
         let raw_texts = block_texts(assemble_workflow_prompt(WorkflowPromptRequest {
             node: &node,
+            graph: None,
             worktree_root: &worktree_root,
             role_content: Some("Be rigorous."),
             graph_json: "invalid",
@@ -784,6 +792,7 @@ mod tests {
         };
         let texts = block_texts(assemble_workflow_prompt(WorkflowPromptRequest {
             node: &node,
+            graph: None,
             worktree_root: Path::new("worktrees").join("run-1").as_path(),
             role_content: None,
             graph_json: "invalid",
@@ -847,6 +856,7 @@ mod tests {
         };
         let texts = block_texts(assemble_workflow_prompt(WorkflowPromptRequest {
             node: &node,
+            graph: None,
             worktree_root: Path::new("worktrees").join("run-1").as_path(),
             role_content: None,
             graph_json: GRAPH,
@@ -910,6 +920,7 @@ mod tests {
         };
         let texts = block_texts(assemble_workflow_prompt(WorkflowPromptRequest {
             node: &node,
+            graph: None,
             worktree_root: Path::new("worktrees").join("run-1").as_path(),
             role_content: None,
             graph_json: GRAPH,

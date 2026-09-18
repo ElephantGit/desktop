@@ -1,10 +1,12 @@
-import { createContext, memo, useContext, type ReactNode } from "react";
-import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
+import { createContext, memo, type ReactNode, useContext } from "react";
+import { Handle, type Node, type NodeProps, Position } from "@xyflow/react";
 import { useTranslation } from "react-i18next";
 import { IconSparkles } from "@tabler/icons-react";
 import { cn } from "@ora/ui";
 import {
   createMockWorkflowNodeType,
+  WORKFLOW_LOOP_NODE_HEIGHT,
+  WORKFLOW_LOOP_NODE_WIDTH,
   WORKFLOW_NODE_ANCHOR_Y,
   WORKFLOW_NODE_WIDTH,
 } from "@ora/workflow-mock";
@@ -16,6 +18,7 @@ import {
 import { RunStatusBadge } from "./run-status-mark";
 import { isNodeWorking, runStatusTone } from "./run-status-style";
 import { resolveRunOverviewSourceHandleIds } from "./run-overview-handles";
+import { RunOverviewIterationNode } from "./run-overview-iteration-node";
 import type {
   GraphWorkflowNodeState,
   WorkflowNodeData,
@@ -65,6 +68,8 @@ export const RunOverviewNode = memo(function RunOverviewNode({
   id,
   data,
   selected,
+  width,
+  height,
 }: NodeProps<Node<RunOverviewNodeData, "workflow">>) {
   const { i18n, t } = useTranslation();
   const { states, focusedNodeId, activeNodeIds, artifactCountByNode } =
@@ -86,6 +91,23 @@ export const RunOverviewNode = memo(function RunOverviewNode({
       ? formatRunClock(state.finishedAt, locale)
       : null;
   const hasTiming = startedLabel !== null || finishedLabel !== null;
+
+  if (data.kind === "iteration") {
+    return (
+      <RunOverviewIterationNode
+        id={id}
+        data={data}
+        state={state}
+        focused={focused}
+        peerActive={peerActive}
+        kindLabel={kindLabel}
+        artifactCount={artifactCount}
+        startedLabel={startedLabel}
+        finishedLabel={finishedLabel}
+      />
+    );
+  }
+
   const conditionSourceHandleIds = resolveRunOverviewSourceHandleIds(data);
 
   return (
@@ -97,7 +119,16 @@ export const RunOverviewNode = memo(function RunOverviewNode({
       kindLabel={kindLabel}
       density="run"
       selected={focused}
-      width={WORKFLOW_NODE_WIDTH * 0.92}
+      width={
+        data.kind === "loop"
+          ? (width ?? WORKFLOW_LOOP_NODE_WIDTH)
+          : WORKFLOW_NODE_WIDTH * 0.92
+      }
+      style={
+        data.kind === "loop"
+          ? { height: height ?? WORKFLOW_LOOP_NODE_HEIGHT }
+          : undefined
+      }
       titleAccessory={
         data.kind === "agent" ? (
           <AgentExecutionModeMark
@@ -184,7 +215,9 @@ export const RunOverviewNode = memo(function RunOverviewNode({
                 position={Position.Right}
                 className="!size-2 !border-0 !bg-transparent"
                 style={{
-                  top: `${((index + 1) / (conditionSourceHandleIds.length + 1)) * 100}%`,
+                  top: `${
+                    ((index + 1) / (conditionSourceHandleIds.length + 1)) * 100
+                  }%`,
                 }}
                 isConnectable={false}
               />

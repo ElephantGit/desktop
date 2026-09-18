@@ -53,6 +53,7 @@ pub(super) fn restart_run(
         // Reset computed values while preserving the separately stored run instruction and
         // the deployment values owned by the Start node.
         reset_run_execution_state(&transaction, run_id, payload.as_deref())?;
+        crate::repository::workflow_scope::restart_root_scope(&transaction, run_id, now)?;
         transaction.commit()?;
         Ok(RestartWorkflowRunResult::Restarted)
     })

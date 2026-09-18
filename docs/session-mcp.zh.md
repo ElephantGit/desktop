@@ -32,6 +32,10 @@ MCP 刷新、Skill Effect 变更和 Agent 替换共用 Agent Session Barrier，�
 
 Agent 适配器应把传入的 `mcpServers` 列表视为该会话的完整集合。Ora 保留共享 Agent 进程模型，不为每个会话创建独立 OpenCode 进程。OpenCode 截至 1.18.30 仍会在进程范围保留通过 ACP 注入的 MCP 注册，因此 Ora 虽然正确发送空列表，OpenCode 仍可能向当前会话暴露同一进程中较早会话注册的服务。该 provider 一致性缺口由 [OpenCode issue #32371](https://github.com/anomalyco/opencode/issues/32371) 跟踪。
 
+等待时长是非活跃窗口，并随投递内容放宽，因为连接投递的服务正是一个合规 setup 中最慢的部分：携带 MCP 服务的 `session/new` 或 `session/load` 最多等待 120 秒无响应（而不是 30 秒），期间 Agent 发出的 setup 通知会重置窗口（见[ACP Agent 运行时](agent-runtime.zh.md)）。
+
+ACP 1.6.0 不为 MCP 连接提供任何回执：`NewSessionResponse` 和 `LoadSessionResponse` 没有 MCP 状态字段，`SessionUpdate` 也没有 MCP 变体，因此 setup 成功只表示完整列表已被投递并接受，永远不表示 Agent 已完成连接。协议文档中的 session-setup 时序要求 Agent *先*连接投递的服务、*再*回答；先回答、后在后台连接的 Agent，可能在连接完成前就开始处理 prompt，且不产生任何 Host 可见信号。这个窗口属于 Agent 一致性责任：Gemini CLI 曾有完全相同的竞态（[gemini-cli #18893](https://github.com/google-gemini/gemini-cli/issues/18893)），其修复方式是让 prompt 处理等待 MCP 初始化完成（[#20205](https://github.com/google-gemini/gemini-cli/pull/20205)）；Claude Code 也在 [claude-code #83555](https://github.com/anthropics/claude-code/issues/83555) 跟踪同类首轮工具竞态。在不改变投递语义的前提下进行 Host 侧连接观察，是 `specs` 中另一项尚在提案阶段的决策。
+
 ## 安全与兼容
 
 设置值只能存在于配置存储、短暂的内存快照和发送给可信 Agent 的 ACP 消息中。不得进入 Effect、SQLite、工作区文件、日志、错误、UI DTO、版本摘要或 Agent 进程环境变量。日志只能包含上述不含秘密的版本身份信息。工作流只保存插件 ID 和开关。错误仅包含插件 ID、设置 ID、传输类型和稳定错误码。

@@ -249,7 +249,7 @@ fn session_round_trip_persists_workspace_and_mcp_selection() {
     );
 }
 
-/// Verifies ordinary session lists exclude sessions owned by workflow node execution.
+/// Verifies workflow session ownership survives completion, restart, and database reopening.
 #[test]
 fn standalone_session_list_excludes_workflow_node_sessions() {
     let (temp_dir, pool) = bootstrapped_pool();
@@ -349,6 +349,7 @@ fn standalone_session_list_excludes_workflow_node_sessions() {
                 &run_id,
                 &NodeRunToStart {
                     id: node_run_id.clone(),
+                    scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                     node_id: "agent-1".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
@@ -368,11 +369,65 @@ fn standalone_session_list_excludes_workflow_node_sessions() {
 
     assert_eq!(
         session_repository.list_sessions().unwrap(),
-        vec![standalone.clone(), workflow_session]
+        vec![standalone.clone(), workflow_session.clone()]
     );
     assert_eq!(
         session_repository.list_standalone_sessions().unwrap(),
-        vec![standalone]
+        vec![standalone.clone()]
+    );
+
+    assert_eq!(
+        engine_repository
+            .complete_node(
+                &node_run_id,
+                Some("Agent result".to_string()),
+                /*structured_output*/ None,
+                /*stop_reason*/ None,
+                Vec::new(),
+                /*now*/ 60,
+            )
+            .unwrap(),
+        ora_application::AdvanceWorkflowRunResult::Advanced
+    );
+    engine_repository
+        .finish_run(&run_id, Some("Agent result".to_string()), /*now*/ 70)
+        .unwrap();
+    assert_eq!(
+        session_repository.list_standalone_sessions().unwrap(),
+        vec![standalone.clone()]
+    );
+    assert_eq!(
+        engine_repository.restart_run(&run_id, /*now*/ 80).unwrap(),
+        RestartWorkflowRunResult::Restarted
+    );
+    // Restart retires the node row, but must not turn its retained conversation into a chat.
+    assert_eq!(
+        session_repository.list_standalone_sessions().unwrap(),
+        vec![standalone.clone()]
+    );
+    assert_eq!(
+        session_repository
+            .find_session(&workflow_session.id)
+            .unwrap(),
+        Some(workflow_session.clone())
+    );
+
+    let reopened_pool = with_trace_logging(|| {
+        DatabaseBootstrapper::new(FixedTimestampSource)
+            .bootstrap_repository_pool(
+                &DatabaseLocation::path(temp_dir.path().join("repositories.sqlite3")),
+                &default_migration_catalog().unwrap(),
+            )
+            .unwrap()
+    });
+    let reopened_sessions = SqliteSessionRepository::new(reopened_pool);
+    assert_eq!(
+        reopened_sessions.list_standalone_sessions().unwrap(),
+        vec![standalone.clone()]
+    );
+    assert_eq!(
+        reopened_sessions.list_sessions().unwrap(),
+        vec![standalone, workflow_session]
     );
 }
 
@@ -389,6 +444,7 @@ fn bind_node_run_session_accepts_running_node_after_sibling_fails_the_run() {
                 &run_id,
                 &NodeRunToStart {
                     id: WorkflowNodeRunId::new("nr-start"),
+                    scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                     node_id: "start".to_string(),
                     node_type: "start".to_string(),
                     input: None,
@@ -405,6 +461,7 @@ fn bind_node_run_session_accepts_running_node_after_sibling_fails_the_run() {
             &[
                 NodeRunToStart {
                     id: WorkflowNodeRunId::new("nr-a"),
+                    scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                     node_id: "a".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
@@ -412,6 +469,7 @@ fn bind_node_run_session_accepts_running_node_after_sibling_fails_the_run() {
                 },
                 NodeRunToStart {
                     id: WorkflowNodeRunId::new("nr-b"),
+                    scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                     node_id: "b".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
@@ -456,6 +514,7 @@ fn bind_node_run_session_rejects_cancelled_node_run() {
             &run_id,
             &NodeRunToStart {
                 id: WorkflowNodeRunId::new("nr-start"),
+                scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                 node_id: "start".to_string(),
                 node_type: "start".to_string(),
                 input: None,
@@ -469,6 +528,7 @@ fn bind_node_run_session_rejects_cancelled_node_run() {
             &run_id,
             &[NodeRunToStart {
                 id: WorkflowNodeRunId::new("nr-a"),
+                scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                 node_id: "a".to_string(),
                 node_type: "agent".to_string(),
                 input: None,
@@ -745,6 +805,7 @@ fn resume_from_failure_clears_listed_writers_and_keeps_other_values() {
             &run_id,
             &[NodeRunToStart {
                 id: WorkflowNodeRunId::new("nr-review"),
+                scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                 node_id: "review".to_string(),
                 node_type: "agent".to_string(),
                 input: None,
@@ -819,6 +880,7 @@ fn resume_from_failure_rejects_a_run_with_a_running_node() {
             &run_id,
             &NodeRunToStart {
                 id: WorkflowNodeRunId::new("nr-start"),
+                scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                 node_id: "start".to_string(),
                 node_type: "start".to_string(),
                 input: None,
@@ -833,6 +895,7 @@ fn resume_from_failure_rejects_a_run_with_a_running_node() {
             &[
                 NodeRunToStart {
                     id: WorkflowNodeRunId::new("nr-a"),
+                    scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                     node_id: "a".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
@@ -840,6 +903,7 @@ fn resume_from_failure_rejects_a_run_with_a_running_node() {
                 },
                 NodeRunToStart {
                     id: WorkflowNodeRunId::new("nr-b"),
+                    scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                     node_id: "b".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
@@ -877,6 +941,7 @@ fn resume_from_failure_rejects_a_running_run() {
             &run_id,
             &NodeRunToStart {
                 id: WorkflowNodeRunId::new("nr-start"),
+                scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                 node_id: "start".to_string(),
                 node_type: "start".to_string(),
                 input: None,
@@ -944,6 +1009,7 @@ fn switch_run_snapshot_updates_snapshot_and_payload_only_for_terminal_runs() {
             &running_id,
             &NodeRunToStart {
                 id: WorkflowNodeRunId::new("nr-start"),
+                scope_id: ora_domain::WorkflowScopeId::new(format!("root:{running_id}")),
                 node_id: "start".to_string(),
                 node_type: "start".to_string(),
                 input: None,
@@ -981,6 +1047,7 @@ fn second_fail_node_does_not_overwrite_run_level_error() {
             &run_id,
             &NodeRunToStart {
                 id: WorkflowNodeRunId::new("nr-start"),
+                scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                 node_id: "start".to_string(),
                 node_type: "start".to_string(),
                 input: None,
@@ -995,6 +1062,7 @@ fn second_fail_node_does_not_overwrite_run_level_error() {
             &[
                 NodeRunToStart {
                     id: WorkflowNodeRunId::new("nr-a"),
+                    scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                     node_id: "a".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
@@ -1002,6 +1070,7 @@ fn second_fail_node_does_not_overwrite_run_level_error() {
                 },
                 NodeRunToStart {
                     id: WorkflowNodeRunId::new("nr-b"),
+                    scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                     node_id: "b".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
@@ -1062,6 +1131,7 @@ fn fail_node_writes_error_detail_and_preserves_existing_payload_keys() {
             &run_id,
             &[NodeRunToStart {
                 id: WorkflowNodeRunId::new("nr-review"),
+                scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                 node_id: "review".to_string(),
                 node_type: "agent".to_string(),
                 input: None,
@@ -1120,6 +1190,7 @@ fn fail_node_increments_attempt_after_resume_from_failure() {
             &run_id,
             &[NodeRunToStart {
                 id: WorkflowNodeRunId::new("nr-review"),
+                scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                 node_id: "review".to_string(),
                 node_type: "agent".to_string(),
                 input: None,
@@ -1147,6 +1218,7 @@ fn fail_node_increments_attempt_after_resume_from_failure() {
             &run_id,
             &[NodeRunToStart {
                 id: WorkflowNodeRunId::new("nr-review-2"),
+                scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                 node_id: "review".to_string(),
                 node_type: "agent".to_string(),
                 input: None,
@@ -1190,6 +1262,7 @@ fn find_last_failed_attempt_returns_the_latest_soft_deleted_failure() {
             &run_id,
             &[NodeRunToStart {
                 id: WorkflowNodeRunId::new("nr-review"),
+                scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                 node_id: "review".to_string(),
                 node_type: "agent".to_string(),
                 input: None,
@@ -1217,6 +1290,7 @@ fn find_last_failed_attempt_returns_the_latest_soft_deleted_failure() {
             &run_id,
             &[NodeRunToStart {
                 id: WorkflowNodeRunId::new("nr-review-2"),
+                scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                 node_id: "review".to_string(),
                 node_type: "agent".to_string(),
                 input: None,
@@ -1255,6 +1329,7 @@ fn find_last_failed_attempt_returns_the_latest_soft_deleted_failure() {
             &[
                 NodeRunToStart {
                     id: WorkflowNodeRunId::new("nr-ok"),
+                    scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                     node_id: "ok".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
@@ -1262,6 +1337,7 @@ fn find_last_failed_attempt_returns_the_latest_soft_deleted_failure() {
                 },
                 NodeRunToStart {
                     id: WorkflowNodeRunId::new("nr-live"),
+                    scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                     node_id: "live".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
@@ -1325,6 +1401,7 @@ fn deleted_attempt_count_is_scoped_by_node_id_and_iteration() {
             &[
                 NodeRunToStart {
                     id: WorkflowNodeRunId::new("nr-fix-0"),
+                    scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                     node_id: "fix".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
@@ -1332,6 +1409,7 @@ fn deleted_attempt_count_is_scoped_by_node_id_and_iteration() {
                 },
                 NodeRunToStart {
                     id: WorkflowNodeRunId::new("nr-fix-1"),
+                    scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                     node_id: "fix".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
@@ -1382,6 +1460,7 @@ fn deleted_attempt_count_is_scoped_by_node_id_and_iteration() {
             &[
                 NodeRunToStart {
                     id: WorkflowNodeRunId::new("nr-fix-0b"),
+                    scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                     node_id: "fix".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
@@ -1389,6 +1468,7 @@ fn deleted_attempt_count_is_scoped_by_node_id_and_iteration() {
                 },
                 NodeRunToStart {
                     id: WorkflowNodeRunId::new("nr-fix-1b"),
+                    scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                     node_id: "fix".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
@@ -1466,6 +1546,7 @@ fn record_node_checkpoint_merges_into_existing_payload() {
             &run_id,
             &[NodeRunToStart {
                 id: WorkflowNodeRunId::new("nr-review"),
+                scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                 node_id: "review".to_string(),
                 node_type: "agent".to_string(),
                 input: None,
@@ -1512,6 +1593,7 @@ fn record_node_injected_failure_merges_into_existing_payload() {
             &run_id,
             &[NodeRunToStart {
                 id: WorkflowNodeRunId::new("nr-review"),
+                scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                 node_id: "review".to_string(),
                 node_type: "agent".to_string(),
                 input: None,
@@ -1562,6 +1644,7 @@ fn record_node_ai_diagnosis_merges_into_existing_payload() {
             &run_id,
             &[NodeRunToStart {
                 id: WorkflowNodeRunId::new("nr-review"),
+                scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                 node_id: "review".to_string(),
                 node_type: "agent".to_string(),
                 input: None,
@@ -1626,6 +1709,7 @@ fn record_node_checkpoint_writes_null_and_error_when_snapshot_fails() {
             &run_id,
             &[NodeRunToStart {
                 id: WorkflowNodeRunId::new("nr-review"),
+                scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                 node_id: "review".to_string(),
                 node_type: "agent".to_string(),
                 input: None,
@@ -1672,6 +1756,7 @@ fn fail_node_writes_file_changes_in_the_same_shape_as_complete_node() {
             &[
                 NodeRunToStart {
                     id: WorkflowNodeRunId::new("nr-ok"),
+                    scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                     node_id: "ok".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
@@ -1679,6 +1764,7 @@ fn fail_node_writes_file_changes_in_the_same_shape_as_complete_node() {
                 },
                 NodeRunToStart {
                     id: WorkflowNodeRunId::new("nr-fail"),
+                    scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                     node_id: "fail".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
@@ -1762,6 +1848,7 @@ fn complete_node_merges_stop_reason_into_existing_checkpoint_payload() {
             &run_id,
             &[NodeRunToStart {
                 id: WorkflowNodeRunId::new("nr-review"),
+                scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                 node_id: "review".to_string(),
                 node_type: "agent".to_string(),
                 input: None,
@@ -1820,6 +1907,7 @@ fn fail_orphaned_node_runs_writes_interrupted_by_restart_error_detail() {
             &run_id,
             &NodeRunToStart {
                 id: WorkflowNodeRunId::new("nr-start"),
+                scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                 node_id: "start".to_string(),
                 node_type: "start".to_string(),
                 input: None,
@@ -1974,6 +2062,7 @@ fn running_run_cannot_be_deleted() {
                 &run_id,
                 &NodeRunToStart {
                     id: WorkflowNodeRunId::new("node-run-1"),
+                    scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                     node_id: "agent-1".to_string(),
                     node_type: "agent".to_string(),
                     input: None,

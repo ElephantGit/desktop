@@ -3,7 +3,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::workflow::WorkflowRepository;
-use crate::workflow_run::mapper::{map_node_run, map_run, map_run_awaiting, map_run_summary};
+use crate::workflow_run::mapper::{
+    map_execution_scope, map_node_run, map_run, map_run_awaiting, map_run_summary,
+};
 use crate::workflow_run::{
     DeleteWorkflowRunResult, WorkflowRunCreateOutcome, WorkflowRunIdGenerator, WorkflowRunPayload,
     WorkflowRunRepository, WorkflowRunWorkspaceInitializer, WorkflowVariablePool,
@@ -319,6 +321,7 @@ where
             workspace_id: detail.workspace_id.to_string(),
             project_id: detail.project_id.to_string(),
             nodes: detail.nodes.into_iter().map(map_node_run).collect(),
+            scopes: Some(detail.scopes.into_iter().map(map_execution_scope).collect()),
             variables,
             condition_decisions,
         })

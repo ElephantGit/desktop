@@ -1,6 +1,7 @@
 //! Integration coverage for lazy session creation and plugin-owned model discovery.
 
 mod tests {
+    mod iteration;
     mod lifecycle;
     mod workflow_mcp;
     mod workflow_resume;

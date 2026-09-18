@@ -147,7 +147,8 @@ impl NodeFailure {
             | NodeType::Agent
             | NodeType::Prompt
             | NodeType::Tool
-            | NodeType::Iteration => NodeFailureKind::InvalidRunPayload,
+            | NodeType::Iteration
+            | NodeType::Loop => NodeFailureKind::InvalidRunPayload,
         };
         Self::new(kind, message)
     }

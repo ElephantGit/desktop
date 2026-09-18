@@ -295,6 +295,7 @@ mod tests {
         WorkflowNodeRun::new(
             ora_domain::WorkflowNodeRunId::new(format!("node-{node_id}")),
             ora_domain::WorkflowRunId::new("run-1"),
+            ora_domain::WorkflowScopeId::new("root:run-1"),
             node_id,
             "agent",
             None,
@@ -460,6 +461,7 @@ mod tests {
         let region_row = WorkflowNodeRun::new(
             ora_domain::WorkflowNodeRunId::new("fix-0"),
             ora_domain::WorkflowRunId::new("run-1"),
+            ora_domain::WorkflowScopeId::new("root:run-1"),
             "fix",
             "agent",
             None,

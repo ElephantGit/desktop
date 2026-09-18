@@ -1,13 +1,13 @@
 use ora_application::{
     AdvanceWorkflowRunResult, BindWorkflowNodeSessionResult, CancelWorkflowRunResult,
-    ExecutionContext, FailurePropagation, FileChange, IterationRoundContinuation, NodeFailure,
-    NodeRunToStart, RepositoryError, RestartWorkflowRunResult, ResumeWorkflowRunResult,
-    RoundOutcome, StartWorkflowRunResult, UpdateWorkflowRunInputResult,
-    WorkflowRunEngineRepository, WorkflowRunPayload,
+    ExecutionContext, FailurePropagation, FileChange, IterationRoundContinuation, LoopRoundAdvance,
+    LoopRoundExecutionState, LoopRoundToStart, NodeFailure, NodeRunToStart, RepositoryError,
+    RestartWorkflowRunResult, ResumeWorkflowRunResult, RoundOutcome, StartWorkflowRunResult,
+    UpdateWorkflowRunInputResult, WorkflowRunEngineRepository, WorkflowRunPayload,
 };
 use ora_domain::{
     SessionId, SessionStatus, WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus,
-    WorkflowRunId, WorkflowRunStatus, WorkflowSnapshotId,
+    WorkflowRunId, WorkflowRunStatus, WorkflowScopeId, WorkflowScopeStatus, WorkflowSnapshotId,
 };
 use rusqlite::{OptionalExtension, Row, Transaction, TransactionBehavior, params};
 
@@ -18,23 +18,24 @@ mod current_nodes;
 mod failure_detail;
 mod finish;
 mod iteration;
+mod loop_round;
 mod payload;
 mod payload_json;
 mod restart;
 mod resume;
+mod scoped_node;
 mod snapshot_switch;
 
 use super::workflow_run::map_run_row;
 use super::workspace::{map_workspace_row, workspace_select_sql};
 use crate::repository::RepositoryPool;
 use current_nodes::{current_nodes_from_state, current_nodes_to_state, rewrite_current_nodes};
-use failure_detail::{INTERRUPTED_BY_RESTART, fail_orphaned_run, persist_failed_node_run};
+use failure_detail::{INTERRUPTED_BY_RESTART, fail_orphaned_run};
 use iteration::update_run_execution_state;
 use payload::{
     mirror_run_input_into_pool, reset_run_execution_state, seed_system_variables,
     update_task_input_in_payload,
 };
-use payload_json::merge_complete_payload;
 
 /// Persists workflow-run engine state transitions in SQLite.
 ///
@@ -91,6 +92,7 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                     )?
                 };
                 Ok(Some(ExecutionContext {
+                    root_scope_id: super::workflow_scope::current_root_scope(connection, &run.id)?,
                     run,
                     workspace,
                     graph_json,
@@ -119,6 +121,28 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                 super::workflow_run::find_last_failed_attempt(
                     connection, run_id, node_id, iteration,
                 )
+            })
+            .map_err(engine_repository_error_from_database)
+    }
+
+    fn find_active_loop_round(
+        &self,
+        parent_loop_node_run_id: &WorkflowNodeRunId,
+    ) -> Result<Option<ora_domain::WorkflowExecutionScope>, RepositoryError> {
+        self.pool
+            .with_connection(|connection| {
+                super::workflow_scope::find_active_round(connection, parent_loop_node_run_id)
+            })
+            .map_err(engine_repository_error_from_database)
+    }
+
+    fn list_node_runs_in_scope(
+        &self,
+        scope_id: &WorkflowScopeId,
+    ) -> Result<Vec<WorkflowNodeRun>, RepositoryError> {
+        self.pool
+            .with_connection(|connection| {
+                super::workflow_run::list_node_runs_in_scope(connection, scope_id)
             })
             .map_err(engine_repository_error_from_database)
     }
@@ -288,6 +312,33 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
             .map_err(engine_repository_error_from_database)
     }
 
+    fn start_loop_round(
+        &self,
+        run_id: &WorkflowRunId,
+        round: &LoopRoundToStart,
+        now: i64,
+    ) -> Result<(), RepositoryError> {
+        loop_round::start(self, run_id, round, now)
+    }
+
+    fn start_scope_ready_nodes(
+        &self,
+        scope_id: &WorkflowScopeId,
+        node_runs: &[NodeRunToStart],
+        now: i64,
+    ) -> Result<(), RepositoryError> {
+        loop_round::start_ready_nodes(self, scope_id, node_runs, now)
+    }
+
+    fn advance_loop_round(
+        &self,
+        scope_id: &WorkflowScopeId,
+        advance: &LoopRoundAdvance,
+        now: i64,
+    ) -> Result<AdvanceWorkflowRunResult, RepositoryError> {
+        loop_round::advance(self, scope_id, advance, now)
+    }
+
     fn complete_node(
         &self,
         node_run_id: &WorkflowNodeRunId,
@@ -297,74 +348,15 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
         file_changes: Vec<FileChange>,
         now: i64,
     ) -> Result<AdvanceWorkflowRunResult, RepositoryError> {
-        self.pool
-            .with_connection_mut(|connection| {
-                let transaction =
-                    Transaction::new(connection, TransactionBehavior::Immediate)?;
-                let Some((run_id, node_id, node_type, status, iteration, run_payload, node_payload)) =
-                    transaction
-                        .query_row(
-                            "SELECT nr.run_id, nr.node_id, nr.node_type, nr.status, nr.iteration, wr.payload, nr.payload
-                             FROM workflow_node_runs nr
-                             JOIN workflow_runs wr ON wr.id = nr.run_id
-                             WHERE nr.id = ?1 AND nr.is_deleted = 0 AND wr.is_deleted = 0",
-                            params![node_run_id.as_ref()],
-                            |row| {
-                                Ok((
-                                    row.get::<_, String>(0)?,
-                                    row.get::<_, String>(1)?,
-                                    row.get::<_, String>(2)?,
-                                    row.get::<_, i64>(3)?,
-                                    row.get::<_, Option<u32>>(4)?,
-                                    row.get::<_, Option<String>>(5)?,
-                                    row.get::<_, Option<String>>(6)?,
-                                ))
-                            },
-                        )
-                        .optional()?
-                else {
-                    return Ok(AdvanceWorkflowRunResult::NotFound);
-                };
-                // A `Pending` node run is an awaiting interactive node and is completed the same
-                // way as a running one; any other status is a late or duplicate callback.
-                if !matches!(
-                    WorkflowNodeStatus::from_database_value(status)?,
-                    WorkflowNodeStatus::Running | WorkflowNodeStatus::Pending
-                ) {
-                    return Ok(AdvanceWorkflowRunResult::NotRunning);
-                }
-                let payload = merge_complete_payload(node_payload, stop_reason, file_changes)?;
-                update_run_execution_state(
-                    &transaction,
-                    &run_id,
-                    &node_id,
-                    &node_type,
-                    iteration,
-                    output.as_deref(),
-                    structured_output.as_ref(),
-                    run_payload.as_deref(),
-                )?;
-                // A Condition's selected branch is private scheduler state, not node output.
-                let persisted_output = (node_type != "condition").then_some(output).flatten();
-                transaction.execute(
-                    "UPDATE workflow_node_runs SET status = ?2, output = ?3, payload = ?4, finished_at = ?5, updated_at = ?5
-                     WHERE id = ?1 AND is_deleted = 0",
-                    params![
-                        node_run_id.as_ref(),
-                        WorkflowNodeStatus::Succeeded.database_value(),
-                        persisted_output,
-                        payload,
-                        now,
-                    ],
-                )?;
-                let run_id = WorkflowRunId::new(run_id);
-                rewrite_current_nodes(&transaction, &run_id, now, |current_nodes| {
-                    current_nodes.retain(|id| id != &node_id);
-                })?;
-                transaction.commit()?;
-                Ok(AdvanceWorkflowRunResult::Advanced)
-            })
-            .map_err(engine_repository_error_from_database)
+        scoped_node::complete(
+            self,
+            node_run_id,
+            output,
+            structured_output,
+            stop_reason,
+            file_changes,
+            now,
+        )
     }
 
     fn fail_node(
@@ -374,74 +366,7 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
         propagation: FailurePropagation,
         now: i64,
     ) -> Result<AdvanceWorkflowRunResult, RepositoryError> {
-        self.pool
-            .with_connection_mut(|connection| {
-                let transaction =
-                    Transaction::new(connection, TransactionBehavior::Immediate)?;
-                let Some((run_id, node_id, status, payload)) = transaction
-                    .query_row(
-                        "SELECT run_id, node_id, status, payload FROM workflow_node_runs WHERE id = ?1 AND is_deleted = 0",
-                        params![node_run_id.as_ref()],
-                        |row| {
-                            Ok((
-                                row.get::<_, String>(0)?,
-                                row.get::<_, String>(1)?,
-                                row.get::<_, i64>(2)?,
-                                row.get::<_, Option<String>>(3)?,
-                            ))
-                        },
-                    )
-                    .optional()?
-                else {
-                    return Ok(AdvanceWorkflowRunResult::NotFound);
-                };
-                if WorkflowNodeStatus::from_database_value(status)? != WorkflowNodeStatus::Running {
-                    return Ok(AdvanceWorkflowRunResult::NotRunning);
-                }
-                persist_failed_node_run(
-                    &transaction,
-                    node_run_id.as_ref(),
-                    &run_id,
-                    &node_id,
-                    &failure,
-                    payload.as_deref(),
-                    now,
-                )?;
-                let run_id = WorkflowRunId::new(run_id);
-                match propagation {
-                    FailurePropagation::Run => {
-                        rewrite_current_nodes(&transaction, &run_id, now, |current_nodes| {
-                            current_nodes.clear();
-                            current_nodes.push(node_id.clone());
-                        })?;
-                        // D2: only promote the run while it is still Running so a late sibling
-                        // failure cannot overwrite an already-terminal run.
-                        transaction.execute(
-                            "UPDATE workflow_runs SET run_status = ?2, error = ?3, finished_at = ?4, updated_at = ?4
-                             WHERE id = ?1 AND is_deleted = 0 AND run_status = ?5",
-                            params![
-                                run_id.as_ref(),
-                                WorkflowRunStatus::Failed.database_value(),
-                                failure.message,
-                                now,
-                                WorkflowRunStatus::Running.database_value(),
-                            ],
-                        )?;
-                    }
-                    // Composite absorption (ADR "iteration composite runtime" D6): only the row
-                    // fails; the run stays active so the owning runtime settles the failed
-                    // round and advances. Region rows never sit in the outer anchor, so the
-                    // retain keeps the anchor untouched.
-                    FailurePropagation::Composite => {
-                        rewrite_current_nodes(&transaction, &run_id, now, |current_nodes| {
-                            current_nodes.retain(|id| id != &node_id);
-                        })?;
-                    }
-                }
-                transaction.commit()?;
-                Ok(AdvanceWorkflowRunResult::Advanced)
-            })
-            .map_err(engine_repository_error_from_database)
+        scoped_node::fail(self, node_run_id, failure, propagation, now)
     }
 
     fn start_iteration_round(
@@ -706,8 +631,8 @@ fn insert_node_run(
     now: i64,
 ) -> Result<(), rusqlite::Error> {
     transaction.execute(
-        "INSERT INTO workflow_node_runs (id, run_id, node_id, node_type, session_id, status, input, output, error, payload, iteration, started_at, finished_at, created_at, updated_at, is_deleted)
-         VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, NULL, NULL, NULL, ?7, ?8, NULL, ?8, ?8, 0)",
+        "INSERT INTO workflow_node_runs (id, run_id, node_id, node_type, session_id, status, input, output, error, payload, iteration, started_at, finished_at, created_at, updated_at, is_deleted, scope_id)
+         VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, NULL, NULL, NULL, ?7, ?8, NULL, ?8, ?8, 0, ?9)",
         params![
             node_run.id.as_ref(),
             run_id.as_ref(),
@@ -717,6 +642,7 @@ fn insert_node_run(
             node_run.input.as_deref(),
             node_run.iteration,
             now,
+            node_run.scope_id.as_ref(),
         ],
     )?;
     Ok(())

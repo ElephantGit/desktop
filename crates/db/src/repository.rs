@@ -14,6 +14,7 @@ mod user_config;
 mod workflow;
 mod workflow_run;
 mod workflow_run_engine;
+mod workflow_scope;
 mod workspace;
 mod worktree;
 mod worktree_provisioning_lease;

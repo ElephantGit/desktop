@@ -170,6 +170,7 @@ fn assembled_prompt(
     let injected = previous_failure_for_injection(inject, previous);
     prompt_text(assemble_workflow_prompt(WorkflowPromptRequest {
         node: &node,
+        graph: None,
         worktree_root: worktree,
         role_content: None,
         graph_json: graph,

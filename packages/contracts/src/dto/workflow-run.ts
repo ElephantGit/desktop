@@ -85,6 +85,10 @@ export type GetWorkflowRunResponse = {
   projectId: string;
   nodes: Array<WorkflowNodeRun>;
   /**
+   * Loop round identities; internal variable pools and branch decisions remain private.
+   */
+  scopes?: Array<WorkflowExecutionScope>;
+  /**
    * Typed variable-pool projection; persistence metadata remains internal.
    */
   variables: Array<WorkflowRunVariable>;
@@ -274,6 +278,29 @@ export type UpdateWorkflowRunInputRequest = {
 export type UpdateWorkflowRunInputResponse = { run: WorkflowRun };
 
 /**
+ * Public Loop-round identity used to group repeated node definitions in run history.
+ */
+export type WorkflowExecutionScope = {
+  id: string;
+  runId: string;
+  parentLoopNodeRunId: string;
+  roundIndex: number;
+  status: WorkflowExecutionScopeStatus;
+  createdAt: bigint;
+  updatedAt: bigint;
+};
+
+/**
+ * Lifecycle state of one persisted Loop round.
+ */
+export type WorkflowExecutionScopeStatus =
+  | "pending"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+/**
  * One file's incremental change, matching the node payload `file_changes` shape.
  */
 export type WorkflowFileChange = {
@@ -298,6 +325,7 @@ export type WorkflowNodeAiDiagnosis = {
 export type WorkflowNodeRun = {
   id: string;
   runId: string;
+  scopeId: string;
   nodeId: string;
   nodeType: string;
   sessionId: string | null;

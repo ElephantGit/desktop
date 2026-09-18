@@ -7,6 +7,8 @@ use super::{
 };
 use crate::RepositoryError;
 use crate::project::Clock;
+use crate::workflow_run::engine::graph::WorkflowGraph;
+use crate::workflow_run::engine::variable_pool::WorkflowVariablePool;
 use ora_domain::{
     AuditFields, SessionId, WorkflowId, WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus,
     WorkflowRun, WorkflowRunId, WorkflowRunStatus, WorkflowSnapshotId, Workspace, WorkspaceId,
@@ -40,7 +42,10 @@ impl NodeExecutor for NoopExecutor {
         &self,
         _node_run_id: &WorkflowNodeRunId,
         _node: &WorkflowGraphNode,
+        _graph: &WorkflowGraph,
         _context: &ExecutionContext,
+        _scope_id: &ora_domain::WorkflowScopeId,
+        _variable_pool: &WorkflowVariablePool,
     ) {
     }
 }
@@ -82,6 +87,48 @@ impl InMemoryRepository {
 }
 
 impl WorkflowRunEngineRepository for InMemoryRepository {
+    fn find_active_loop_round(
+        &self,
+        _parent_loop_node_run_id: &WorkflowNodeRunId,
+    ) -> Result<Option<ora_domain::WorkflowExecutionScope>, RepositoryError> {
+        Ok(None)
+    }
+
+    fn list_node_runs_in_scope(
+        &self,
+        _scope_id: &ora_domain::WorkflowScopeId,
+    ) -> Result<Vec<WorkflowNodeRun>, RepositoryError> {
+        // Tests model a single root scope, so the scope listing is the run listing.
+        self.list_node_runs(&WorkflowRunId::new("run-1"))
+    }
+
+    fn start_loop_round(
+        &self,
+        _run_id: &WorkflowRunId,
+        _round: &crate::workflow_run::engine::ports::LoopRoundToStart,
+        _now: i64,
+    ) -> Result<(), RepositoryError> {
+        unreachable!("no Loop node in these graphs")
+    }
+
+    fn start_scope_ready_nodes(
+        &self,
+        _scope_id: &ora_domain::WorkflowScopeId,
+        _node_runs: &[NodeRunToStart],
+        _now: i64,
+    ) -> Result<(), RepositoryError> {
+        unreachable!("no Loop node in these graphs")
+    }
+
+    fn advance_loop_round(
+        &self,
+        _scope_id: &ora_domain::WorkflowScopeId,
+        _advance: &crate::workflow_run::engine::ports::LoopRoundAdvance,
+        _now: i64,
+    ) -> Result<AdvanceWorkflowRunResult, RepositoryError> {
+        unreachable!("no Loop node in these graphs")
+    }
+
     fn find_execution_context(
         &self,
         _run_id: &WorkflowRunId,
@@ -372,6 +419,7 @@ impl WorkflowRunEngineRepository for InMemoryRepository {
 
 fn execution_context(status: WorkflowRunStatus) -> ExecutionContext {
     ExecutionContext {
+        root_scope_id: ora_domain::WorkflowScopeId::new("root:test"),
         run: WorkflowRun::new(
             WorkflowRunId::new("run-1"),
             WorkspaceId::new("workspace-1"),
@@ -409,6 +457,7 @@ fn node_run(
     WorkflowNodeRun::new(
         WorkflowNodeRunId::new(id),
         WorkflowRunId::new("run-1"),
+        ora_domain::WorkflowScopeId::new("root:test"),
         node_id,
         node_type,
         None,

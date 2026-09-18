@@ -2,7 +2,7 @@ use super::current_nodes::current_nodes_to_state;
 use super::engine_repository_error_from_database;
 use crate::repository::RepositoryPool;
 use ora_application::{CancelWorkflowRunResult, RepositoryError};
-use ora_domain::{WorkflowNodeStatus, WorkflowRunId, WorkflowRunStatus};
+use ora_domain::{WorkflowNodeStatus, WorkflowRunId, WorkflowRunStatus, WorkflowScopeStatus};
 use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
 
 /// Cancels a running run: the run and its non-terminal node runs become `Cancelled`.
@@ -44,6 +44,16 @@ pub(super) fn cancel_run(
                 WorkflowRunStatus::Cancelled.database_value(),
                 now,
                 state,
+            ],
+        )?;
+        transaction.execute(
+            "UPDATE workflow_execution_scopes SET status = ?2, updated_at = ?3
+             WHERE run_id = ?1 AND parent_loop_node_run_id IS NOT NULL
+               AND status IN (0, 1)",
+            params![
+                run_id.as_ref(),
+                WorkflowScopeStatus::Cancelled.database_value(),
+                now,
             ],
         )?;
         transaction.commit()?;

@@ -1,5 +1,7 @@
 use ora_application::{NodeFailure, NodeFailureDetail, NodeFailureKind};
-use ora_domain::{SessionStatus, WorkflowNodeStatus, WorkflowRunId, WorkflowRunStatus};
+use ora_domain::{
+    SessionStatus, WorkflowNodeStatus, WorkflowRunId, WorkflowRunStatus, WorkflowScopeStatus,
+};
 use rusqlite::{Transaction, params};
 
 use super::payload_json::{file_changes_json, merge_payload_keys};
@@ -148,6 +150,16 @@ pub(super) fn fail_orphaned_run(
             INTERRUPTED_BY_RESTART,
             now,
             WorkflowRunStatus::Running.database_value(),
+        ],
+    )?;
+    transaction.execute(
+        "UPDATE workflow_execution_scopes SET status = ?2, updated_at = ?3
+         WHERE run_id = ?1 AND parent_loop_node_run_id IS NOT NULL
+           AND status IN (0, 1)",
+        params![
+            run_id.as_ref(),
+            WorkflowScopeStatus::Failed.database_value(),
+            now,
         ],
     )?;
     transaction.execute(

@@ -271,6 +271,7 @@ mod tests {
         WorkflowNodeRun::new(
             WorkflowNodeRunId::new(format!("nr-{node_id}")),
             WorkflowRunId::new("run-1"),
+            ora_domain::WorkflowScopeId::new("root:test"),
             node_id,
             node_type,
             None,

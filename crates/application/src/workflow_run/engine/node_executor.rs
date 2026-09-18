@@ -5,11 +5,11 @@
 
 use crate::RepositoryError;
 use crate::workflow_run::engine::failure::NodeFailure;
-use crate::workflow_run::engine::graph::GraphError;
-use crate::workflow_run::engine::graph::WorkflowGraphNode;
+use crate::workflow_run::engine::graph::{GraphError, WorkflowGraph, WorkflowGraphNode};
 use crate::workflow_run::engine::node_type::NodeType;
 use crate::workflow_run::engine::ports::{ExecutionContext, FileChange};
-use ora_domain::{WorkflowNodeRunId, WorkflowRunId};
+use crate::workflow_run::engine::variable_pool::WorkflowVariablePool;
+use ora_domain::{WorkflowNodeRunId, WorkflowRunId, WorkflowScopeId};
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -25,7 +25,10 @@ pub trait NodeExecutor: Send + Sync {
         &self,
         node_run_id: &WorkflowNodeRunId,
         node: &WorkflowGraphNode,
+        graph: &WorkflowGraph,
         context: &ExecutionContext,
+        scope_id: &WorkflowScopeId,
+        variable_pool: &WorkflowVariablePool,
     );
 
     /// Records a pre-node git checkpoint when a composite node-run becomes `Running`.
@@ -50,9 +53,13 @@ impl NodeExecutor for SharedNodeExecutor {
         &self,
         node_run_id: &WorkflowNodeRunId,
         node: &WorkflowGraphNode,
+        graph: &WorkflowGraph,
         context: &ExecutionContext,
+        scope_id: &WorkflowScopeId,
+        variable_pool: &WorkflowVariablePool,
     ) {
-        self.0.dispatch(node_run_id, node, context);
+        self.0
+            .dispatch(node_run_id, node, graph, context, scope_id, variable_pool);
     }
 
     fn on_composite_node_started(
@@ -130,4 +137,6 @@ pub enum EngineError {
     Validation(#[from] WorkflowValidationError),
     #[error("workflow run repository operation failed")]
     Repository(#[from] RepositoryError),
+    #[error("workflow Loop state cannot be serialized: {message}")]
+    LoopState { message: String },
 }
