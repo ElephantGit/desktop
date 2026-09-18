@@ -10,6 +10,8 @@ pub(crate) mod interactive;
 mod iteration_tests;
 mod last_failure;
 #[cfg(test)]
+mod loop_resume_tests;
+#[cfg(test)]
 mod mixed_scope_tests;
 mod operations;
 mod prerequisites;
