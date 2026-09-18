@@ -4,6 +4,7 @@ import type {
   WorkflowGlobalVariable,
   WorkflowViewport,
 } from "./types";
+import { workflowContainerNodes } from "./container-layout";
 
 /** The persisted graph envelope: editor geometry plus optional metadata. */
 export interface WorkflowGraphEnvelope {
@@ -103,7 +104,9 @@ export function parseWorkflowGraph(graph: string): WorkflowGraphEnvelope {
   const envelope: WorkflowGraphEnvelope = {
     ...record,
     nodes: Array.isArray(record.nodes)
-      ? (record.nodes as WorkflowDefinitionNode[]).map(upgradeLegacyNodeKind)
+      ? workflowContainerNodes(
+          (record.nodes as WorkflowDefinitionNode[]).map(upgradeLegacyNodeKind),
+        )
       : [],
     edges: Array.isArray(record.edges)
       ? (record.edges as WorkflowDefinitionEdge[])

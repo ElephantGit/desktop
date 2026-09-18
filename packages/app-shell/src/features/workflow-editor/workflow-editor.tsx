@@ -79,7 +79,10 @@ import { availableSkills, useSkills } from "../../state/hooks/use-skills";
 import { useWorkflowAgentModels } from "../../state/hooks/use-workflow-agent-models";
 import { localizeContractError } from "../../i18n/contract-error";
 import { WorkflowCanvas } from "./workflow-canvas";
-import { organizeWorkflowNodes } from "./workflow-flow/layout";
+import {
+  organizeWorkflowNodes,
+  shouldPersistWorkflowNodeChanges,
+} from "./workflow-flow/layout";
 import type { WorkflowCanvasNode } from "./workflow-flow/types";
 import { WorkflowInspector } from "./workflow-inspector";
 import { WorkflowGlobalVariablesDialog } from "./workflow-global-variables-dialog";
@@ -1645,9 +1648,7 @@ function WorkflowEditorContent({
 
   /** Applies React Flow node changes directly to the active graph. */
   function changeNodes(changes: NodeChange<WorkflowCanvasNode>[]): void {
-    const persistable = changes.some(
-      (change) => change.type !== "select" && change.type !== "dimensions",
-    );
+    const persistable = shouldPersistWorkflowNodeChanges(changes);
     updateWorkflow(
       (current) => {
         const nextNodes = applyNodeChanges<WorkflowCanvasNode>(changes, [

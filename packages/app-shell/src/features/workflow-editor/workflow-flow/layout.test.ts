@@ -4,6 +4,7 @@ import { WORKFLOW_NODE_WIDTH, type WorkflowNodeData } from "@ora/workflow-mock";
 import {
   nodePositionAt,
   organizeWorkflowNodes,
+  shouldPersistWorkflowNodeChanges,
   snapNodePosition,
 } from "./layout";
 
@@ -31,6 +32,28 @@ describe("workflow-flow layout", () => {
 
   it("aligns new node positions to the canvas grid", () => {
     expect(snapNodePosition({ x: 253, y: 207 })).toEqual({ x: 260, y: 200 });
+  });
+
+  it("persists explicit resize completion without treating measurement as an edit", () => {
+    expect(
+      shouldPersistWorkflowNodeChanges([
+        {
+          id: "loop",
+          type: "dimensions",
+          dimensions: { width: 800, height: 420 },
+        },
+      ]),
+    ).toBe(false);
+    expect(
+      shouldPersistWorkflowNodeChanges([
+        {
+          id: "loop",
+          type: "dimensions",
+          dimensions: { width: 800, height: 420 },
+          resizing: false,
+        },
+      ]),
+    ).toBe(true);
   });
 
   it("places dependency layers left-to-right and preserves branch order", () => {

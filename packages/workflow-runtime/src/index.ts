@@ -62,6 +62,7 @@ export {
 } from "./run-projection";
 export { workflowPathNodes, workflowPathOrder } from "./workflow-path-order";
 export { computeInactiveNodes } from "./branch-projection";
+export { workflowContainerNodes } from "./container-layout";
 
 export type {
   WorkflowHostRepository,

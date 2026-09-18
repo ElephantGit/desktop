@@ -5,6 +5,7 @@ import type {
   WorkflowPosition,
   WorkflowViewport,
 } from "./types";
+import { workflowContainerNodes } from "./container-layout";
 
 /** Stable validation failure that adapters can map to their transport error model. */
 export class WorkflowDefinitionValidationError extends Error {
@@ -26,6 +27,8 @@ export interface WorkflowDefinitionInputNode {
   deletable?: boolean;
   initialWidth?: number;
   initialHeight?: number;
+  width?: number;
+  height?: number;
 }
 
 export interface WorkflowDefinitionInputEdge {
@@ -55,6 +58,7 @@ export interface WorkflowDefinitionInput {
 export function normalizeWorkflowDefinition(
   input: WorkflowDefinitionInput,
 ): WorkflowDefinition {
+  const containerNodes = workflowContainerNodes(input.nodes);
   const definition: WorkflowDefinition = {
     id: input.id,
     name: input.name,
@@ -64,20 +68,20 @@ export function normalizeWorkflowDefinition(
     ...(input.globalVariables === undefined
       ? {}
       : { globalVariables: structuredClone([...input.globalVariables]) }),
-    nodes: input.nodes.map((node) => ({
-      id: node.id,
-      type: "workflow",
-      position: { ...node.position },
-      data: normalizeWorkflowNodeData(node.data),
-      ...(node.parentId === undefined ? {} : { parentId: node.parentId }),
-      ...(node.deletable === undefined ? {} : { deletable: node.deletable }),
-      ...(node.initialWidth === undefined
-        ? {}
-        : { initialWidth: node.initialWidth }),
-      ...(node.initialHeight === undefined
-        ? {}
-        : { initialHeight: node.initialHeight }),
-    })),
+    nodes: containerNodes.map((node) => {
+      const initialWidth = node.width ?? node.initialWidth;
+      const initialHeight = node.height ?? node.initialHeight;
+      return {
+        id: node.id,
+        type: "workflow",
+        position: { ...node.position },
+        data: normalizeWorkflowNodeData(node.data),
+        ...(node.parentId === undefined ? {} : { parentId: node.parentId }),
+        ...(node.deletable === undefined ? {} : { deletable: node.deletable }),
+        ...(initialWidth === undefined ? {} : { initialWidth }),
+        ...(initialHeight === undefined ? {} : { initialHeight }),
+      };
+    }),
     edges: input.edges.map((edge) => ({
       id: edge.id,
       source: edge.source,

@@ -1,4 +1,10 @@
-import type { Edge, Node, SnapGrid, XYPosition } from "@xyflow/react";
+import type {
+  Edge,
+  Node,
+  NodeChange,
+  SnapGrid,
+  XYPosition,
+} from "@xyflow/react";
 import {
   WORKFLOW_NODE_ANCHOR_Y,
   WORKFLOW_NODE_INITIAL_HEIGHT,
@@ -24,6 +30,19 @@ export function snapNodePosition(position: XYPosition): XYPosition {
     x: Math.round(position.x / WORKFLOW_SNAP_GRID[0]) * WORKFLOW_SNAP_GRID[0],
     y: Math.round(position.y / WORKFLOW_SNAP_GRID[1]) * WORKFLOW_SNAP_GRID[1],
   };
+}
+
+/** Ignores measurement noise while persisting user-driven moves and resizes. */
+export function shouldPersistWorkflowNodeChanges(
+  changes: readonly NodeChange[],
+): boolean {
+  return changes.some(
+    (change) =>
+      change.type !== "select" &&
+      (change.type !== "dimensions" ||
+        change.setAttributes !== undefined ||
+        change.resizing === false),
+  );
 }
 
 const WORKFLOW_LAYOUT_COLUMN_GAP = 120;
