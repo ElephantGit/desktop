@@ -35,7 +35,11 @@ pub use repository::{CloneConfig, CloneSsh};
 #[cfg(target_os = "linux")]
 mod managed;
 #[cfg(target_os = "linux")]
+mod service;
+#[cfg(target_os = "linux")]
 pub use managed::{ManagedGitRunner, ProcessConfig, Shutdown};
+#[cfg(target_os = "linux")]
+pub use service::{IpcConfig, ServiceConfig, serve};
 #[cfg(target_os = "linux")]
 pub type ManagedNode = Node<gitlancer::Git<ManagedGitRunner>>;
 pub use ora_node_db::{Command, DurableWrites, WriteGuard, WritePoint};

@@ -37,6 +37,25 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
         &mut self,
         command: CloneRepositoryMessage,
     ) -> Result<ExecutionStatus, Error> {
+        let (status, fresh) = self.reserve_clone(&command)?;
+        if let Some(record) = fresh {
+            self.drive_clone(record)?;
+            self.refresh_clone_state()?;
+            return Ok(ExecutionStatus {
+                node: self.identity.clone(),
+                state: self
+                    .database
+                    .execution_state(&command.operation_id, &command.execution_id)?,
+            });
+        }
+        Ok(status)
+    }
+
+    /// Separates durable admission from blocking Git so revoking a session never waits for a clone.
+    pub(crate) fn reserve_clone(
+        &mut self,
+        command: &CloneRepositoryMessage,
+    ) -> Result<(ExecutionStatus, Option<CloneExecution>), Error> {
         command.validate()?;
         if command.payload.spec.node_id != self.identity.node_id {
             return Err(ora_node_db::Error::NodeMismatch.into());
@@ -45,13 +64,16 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
             .database
             .find_clone(&command.operation_id, &command.execution_id)?
         {
-            if record.command != command {
+            if record.command != *command {
                 return Err(ora_node_db::Error::IdentityConflict.into());
             }
-            return Ok(ExecutionStatus {
-                node: self.identity.clone(),
-                state: record.progress.state(),
-            });
+            return Ok((
+                ExecutionStatus {
+                    node: self.identity.clone(),
+                    state: record.progress.state(),
+                },
+                None,
+            ));
         }
         if !self.git.accepting_work() {
             return Err(Error::Stopping);
@@ -66,16 +88,15 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
             root: config.repository_root.clone(),
             path: config.repository_root.join(id),
         };
-        let record = self.database.accept_clone(&command, &target)?;
+        let record = self.database.accept_clone(command, &target)?;
         self.state = NodeState::RecoveryPending;
-        self.drive_clone(record)?;
-        self.refresh_clone_state()?;
-        Ok(ExecutionStatus {
-            node: self.identity.clone(),
-            state: self
-                .database
-                .execution_state(&command.operation_id, &command.execution_id)?,
-        })
+        Ok((
+            ExecutionStatus {
+                node: self.identity.clone(),
+                state: record.progress.state(),
+            },
+            Some(record),
+        ))
     }
 
     /// Reconciles original clone attempts without blocking independently reserved destinations.

@@ -3,11 +3,11 @@
 English | [中文](runtime.zh.md)
 
 > The current objective is [cloning a specified repository and branch](minimal-loop.md). The runtime below
-> describes existing Worktree execution, not an available clone command or completed new loop.
+> includes Worktree recovery and managed clone, not a completed Client-facing loop.
 
 The Linux `ora-node` executable owns one explicitly configured Node database, recovers pending
-Worktree executions and handles normal shutdown. It installs **no Controller IPC**, accepts no new
-commands from stdin or files, and does not switch existing Backend writers. Embedding callers use
+Worktree/clone executions and handles normal shutdown. Optional [local Controller IPC](local-ipc.md)
+accepts clone commands; stdin/configuration files are not command channels. It does not switch existing Backend writers. Embedding callers use
 `Node::open(config, process_config, shutdown)` and the existing typed Node methods.
 
 ## Deployment

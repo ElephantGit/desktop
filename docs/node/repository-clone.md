@@ -4,7 +4,7 @@ English | [中文](repository-clone.zh.md)
 
 Linux Node exposes `configure_clone`, `submit_clone` and `recover_clones` to its embedding caller.
 The standalone executable accepts an optional `clone` deployment section and recovers already accepted
-clones. It does not accept new commands through files, stdin or external IPC, and Backend is unchanged.
+clones. Optional [local IPC](local-ipc.md) accepts new clone commands; files and stdin are not command channels, and Backend is unchanged.
 
 ```json
 {

@@ -19,6 +19,7 @@ http-reqwest = [
     "dep:time",
 ]
 validation = ["dep:sha2", "dep:quick-xml"]
+local-ipc = ["dep:tokio", "tokio/net", "tokio/time"]
 rust-source = ["dep:proc-macro2", "dep:syn"]
 
 [dependencies]

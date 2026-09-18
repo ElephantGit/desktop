@@ -3,8 +3,8 @@
 [English](repository-clone.md) | 中文
 
 Linux Node 为嵌入调用方提供 `configure_clone`、`submit_clone` 和 `recover_clones`。
-独立可执行程序接受可选 `clone` 部署配置并恢复已受理的 clone；不通过文件、stdin 或对外 IPC
-接收新命令，也未切换 Backend 写入入口。
+独立可执行程序接受可选 `clone` 部署配置并恢复已受理的 clone；可通过[本机 IPC](local-ipc.zh.md)
+接收新 clone 命令，文件和 stdin 不是命令通道，也未切换 Backend 写入入口。
 
 ```json
 {

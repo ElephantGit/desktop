@@ -2,11 +2,11 @@
 
 [English](runtime.md) | 中文
 
-> 当前目标已调整为[clone 指定仓库与分支](minimal-loop.zh.md)。下文描述已有 Worktree 运行入口，
-> 不表示独立 Node 已提供 clone 命令或新闭环。
+> 当前目标已调整为[clone 指定仓库与分支](minimal-loop.zh.md)。下文覆盖 Worktree 恢复与受管 clone，
+> 不表示 Client 可观察的完整闭环已完成。
 
-Linux `ora-node` 可执行程序持有显式配置的 Node 数据库，恢复待处理的 Worktree 执行并处理正常停止。
-它**不安装 Controller IPC**，不从 stdin 或文件接收新命令，也不切换既有 Backend 写入入口。
+Linux `ora-node` 可执行程序持有显式配置的 Node 数据库，恢复待处理的 Worktree／clone 执行并处理正常停止。
+可选[本机 Controller IPC](local-ipc.zh.md)接受新 clone 命令；stdin 和配置文件不是命令通道，也不切换既有 Backend 写入入口。
 进程内调用方使用 `Node::open(config, process_config, shutdown)` 及原有类型化 Node 方法。
 
 ## 部署

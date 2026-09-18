@@ -20,6 +20,9 @@ mod ssh;
 #[path = "repository_commit.rs"]
 mod commit;
 
+#[path = "repository_ipc.rs"]
+mod ipc;
+
 /// Provides explicit trusted TLS configuration without modifying process environment or user Git config.
 fn configuration(fixture: &Fixture, server: &HttpsRepository) -> CloneConfig {
     let root = fixture.path().join("clones");
