@@ -31,6 +31,8 @@ use ora_plugin_manager::{
 };
 use ora_plugin_manifest::{PackAgentRef, PluginKind, PluginManifest};
 use ora_plugin_registry::RegistryIndex;
+#[cfg(test)]
+use ora_utils::http::{DownloadSource, LocalFileDownloader};
 use ora_utils::http::{HttpDownload, Progress, ProgressCallback, S3Config};
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -44,10 +46,14 @@ pub(super) struct PackMemberRelease {
 }
 
 /// The preflight result: members to install in declaration order plus members already installed.
+///
+/// It also carries the source the preflight resolved against, because both the member installs and
+/// the ownership journal commit need that source after resolution.
 #[derive(Debug)]
 pub(super) struct PackPreflight {
     applicable: Vec<PackMemberRelease>,
     already_installed: Vec<String>,
+    source: ora_plugin_registry::RegistrySource,
 }
 
 // The accessors exist for in-crate tests; production code in this module reads the fields
@@ -184,11 +190,76 @@ impl PluginApi {
         s3_config: Option<S3Config>,
         progress: Option<ProgressCallback>,
     ) -> Result<InstallPluginResponse, BackendError> {
-        let source = self.owning_registry_source(&namespace).await?;
-        let preflight = self.preflight_pack(&manifest, &namespace, &source)?;
+        let preflight = self.preflight_pack(
+            &manifest,
+            &namespace,
+            &self.owning_registry_source(&namespace).await?,
+        )?;
         let installer = self.marketplace_installer(use_proxy, s3_config).await?;
+        self.finish_pack_install(
+            request, manifest, namespace, preflight, &installer, progress,
+        )
+        .await
+    }
+
+    /// Runs pack installation through the production orchestration with local transfer sources.
+    ///
+    /// This exists only for offline qualification tests: registry resolution, preflight, digest
+    /// verification, member finalization, rollback, and ownership recording are unchanged.
+    #[cfg(test)]
+    pub(super) async fn install_pack_from_local_releases(
+        &self,
+        request: InstallPluginRequest,
+        manifest: PluginManifest,
+        namespace: PluginNamespace,
+        progress: Option<ProgressCallback>,
+    ) -> Result<InstallPluginResponse, BackendError> {
+        let mut preflight = self.preflight_pack(
+            &manifest,
+            &namespace,
+            &self.owning_registry_source(&namespace).await?,
+        )?;
+        for member in preflight.applicable_mut() {
+            let Some(artifact) = self.local_marketplace_release(&member.plugin_id) else {
+                continue;
+            };
+            let digest = *member.release.sha256();
+            member.release = match member.release.target().cloned() {
+                Some(target) => {
+                    ResolvedReleaseSource::targeted(DownloadSource::Local(artifact), digest, target)
+                }
+                None => ResolvedReleaseSource::universal(DownloadSource::Local(artifact), digest),
+            };
+        }
+        self.finish_pack_install(
+            request,
+            manifest,
+            namespace,
+            preflight,
+            &Installer::new(LocalFileDownloader),
+            progress,
+        )
+        .await
+    }
+
+    /// Completes an already-resolved pack install and commits only its resulting ownership facts.
+    async fn finish_pack_install<D>(
+        &self,
+        request: InstallPluginRequest,
+        manifest: PluginManifest,
+        namespace: PluginNamespace,
+        preflight: PackPreflight,
+        installer: &Installer<D>,
+        progress: Option<ProgressCallback>,
+    ) -> Result<InstallPluginResponse, BackendError>
+    where
+        D: HttpDownload,
+    {
+        // The member run consumes the preflight, so the source attribution for the ownership
+        // journal is captured from it first.
+        let source_url = preflight.source.canonical_url().to_owned();
         let (outcome, ledger) = self
-            .install_members(&namespace, preflight, &installer, progress)
+            .install_members(&namespace, preflight, installer, progress)
             .await?;
         let pack_id = self.pack_member_id(&namespace, manifest.name().as_str())?;
         match &outcome {
@@ -208,7 +279,7 @@ impl PluginApi {
             // A complete run records ownership; a run whose rollback failed records its
             // residual members as the durable recovery evidence (D3-D).
             _ => {
-                self.record_pack_run(&pack_id, source.canonical_url(), &ledger)?;
+                self.record_pack_run(&pack_id, &source_url, &ledger)?;
             }
         }
         ora_info!(plugin_id = %request.plugin_id, outcome = ?outcome, "installed marketplace pack");
@@ -330,6 +401,7 @@ impl PluginApi {
         Ok(PackPreflight {
             applicable,
             already_installed,
+            source: source.clone(),
         })
     }
 

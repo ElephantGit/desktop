@@ -95,8 +95,6 @@ impl PluginApi {
     /// The pack root record is deleted only after every journal relationship has been released;
     /// a member uninstall that fails keeps its journal row and stops the run, and a retry
     /// re-plans from the surviving journal.
-    /// single-plugin uninstall chain, preserved members keep their packages, and the ownership
-    /// journal releases one relationship at a time so a mid-run failure leaves a retryable state.
     pub(crate) async fn uninstall_pack(
         &self,
         pack_id: &str,

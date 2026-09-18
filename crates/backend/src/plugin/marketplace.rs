@@ -16,8 +16,10 @@ use ora_logging::ora_info;
 use ora_plugin_manager::{HostTarget, InstallError, Installer, UpdateError, select_release};
 use ora_plugin_manifest::{PluginKind, PluginManifest};
 use ora_plugin_registry::RegistryIndex;
+#[cfg(test)]
+use ora_utils::http::{DownloadSource, LocalFileDownloader};
 use ora_utils::http::{
-    ProgressCallback, ProxyConfig, ReqwestDownloader, S3AwareDownloader, S3Config,
+    HttpDownload, ProgressCallback, ProxyConfig, ReqwestDownloader, S3AwareDownloader, S3Config,
 };
 
 impl PluginApi {
@@ -54,11 +56,58 @@ impl PluginApi {
         // A pack is an orchestration entry: it resolves like any listing but expands into member
         // installs instead of a release download (extension-pack decision D5).
         if matches!(manifest.kind(), PluginKind::Pack) {
+            #[cfg(test)]
+            if self.has_local_pack_release(&manifest, &namespace)? {
+                return self
+                    .install_pack_from_local_releases(request, manifest, namespace, progress)
+                    .await;
+            }
             return self
                 .install_pack(request, manifest, namespace, use_proxy, s3_config, progress)
                 .await;
         }
         let release_source = self.select_marketplace_release(&manifest)?;
+        #[cfg(test)]
+        if let Some(artifact) =
+            self.local_marketplace_release_for_manifest(&manifest, &namespace)?
+        {
+            let release_source = local_release_source(release_source, artifact);
+            return self
+                .install_resolved_package(
+                    request,
+                    manifest,
+                    namespace,
+                    release_source,
+                    &Installer::new(LocalFileDownloader),
+                    progress,
+                )
+                .await;
+        }
+        let installer = self.marketplace_installer(use_proxy, s3_config).await?;
+        self.install_resolved_package(
+            request,
+            manifest,
+            namespace,
+            release_source,
+            &installer,
+            progress,
+        )
+        .await
+    }
+
+    /// Installs one already-resolved ordinary package through the shared production finalization.
+    async fn install_resolved_package<D>(
+        &self,
+        request: InstallPluginRequest,
+        manifest: PluginManifest,
+        namespace: PluginNamespace,
+        release_source: ora_plugin_manager::ResolvedReleaseSource,
+        installer: &Installer<D>,
+        progress: Option<ProgressCallback>,
+    ) -> Result<InstallPluginResponse, BackendError>
+    where
+        D: HttpDownload,
+    {
         match release_source.download() {
             ora_utils::http::DownloadSource::Url(url) => {
                 ora_info!(plugin_id = %request.plugin_id, url = %url, "installing marketplace plugin");
@@ -70,7 +119,6 @@ impl PluginApi {
                 ora_info!(plugin_id = %request.plugin_id, key = %key, "installing marketplace plugin from object store");
             }
         }
-        let installer = self.marketplace_installer(use_proxy, s3_config).await?;
         match progress {
             Some(progress) => {
                 installer
@@ -139,6 +187,47 @@ impl PluginApi {
             ));
         }
         let release_source = self.select_marketplace_release(&manifest)?;
+        #[cfg(test)]
+        if let Some(artifact) =
+            self.local_marketplace_release_for_manifest(&manifest, &namespace)?
+        {
+            let release_source = local_release_source(release_source, artifact);
+            return self
+                .update_resolved_package(
+                    request,
+                    manifest,
+                    namespace,
+                    release_source,
+                    &Installer::new(LocalFileDownloader),
+                    progress,
+                )
+                .await;
+        }
+        let installer = self.marketplace_installer(use_proxy, s3_config).await?;
+        self.update_resolved_package(
+            request,
+            manifest,
+            namespace,
+            release_source,
+            &installer,
+            progress,
+        )
+        .await
+    }
+
+    /// Updates one already-resolved ordinary package through the shared lifecycle finalization.
+    async fn update_resolved_package<D>(
+        &self,
+        request: UpdatePluginRequest,
+        manifest: PluginManifest,
+        namespace: PluginNamespace,
+        release_source: ora_plugin_manager::ResolvedReleaseSource,
+        installer: &Installer<D>,
+        progress: Option<ProgressCallback>,
+    ) -> Result<UpdatePluginResponse, BackendError>
+    where
+        D: HttpDownload,
+    {
         match release_source.download() {
             ora_utils::http::DownloadSource::Url(url) => {
                 ora_info!(plugin_id = %request.plugin_id, url = %url, "updating marketplace plugin");
@@ -158,7 +247,6 @@ impl PluginApi {
             })
             .await
             .map_err(BackendError::from)?;
-        let installer = self.marketplace_installer(use_proxy, s3_config).await?;
         match progress {
             Some(progress) => {
                 installer
@@ -240,6 +328,38 @@ impl PluginApi {
             .map_err(|error| self.map_install_error("failed to select plugin release", error))
     }
 
+    /// Returns whether a pack has any test-local member transfer overrides.
+    #[cfg(test)]
+    fn has_local_pack_release(
+        &self,
+        manifest: &PluginManifest,
+        namespace: &PluginNamespace,
+    ) -> Result<bool, BackendError> {
+        let Some(pack) = manifest.pack() else {
+            return Ok(false);
+        };
+        for member in pack.members() {
+            let member_id = PluginId::new(namespace.clone(), member.identifier().as_str())
+                .map_err(|error| BackendError::internal("invalid pack member id", error))?;
+            if self.local_marketplace_release(&member_id).is_some() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Resolves the test-local transfer override for an ordinary marketplace manifest.
+    #[cfg(test)]
+    fn local_marketplace_release_for_manifest(
+        &self,
+        manifest: &PluginManifest,
+        namespace: &PluginNamespace,
+    ) -> Result<Option<std::path::PathBuf>, BackendError> {
+        let plugin_id = PluginId::new(namespace.clone(), manifest.name().as_str())
+            .map_err(|error| BackendError::internal("invalid marketplace plugin id", error))?;
+        Ok(self.local_marketplace_release(&plugin_id))
+    }
+
     /// Maps installer failures that describe host incompatibility onto the public contract error.
     pub(super) fn map_install_error(
         &self,
@@ -292,5 +412,25 @@ impl PluginApi {
             ReqwestDownloader::new(download_proxy),
             s3_config,
         )))
+    }
+}
+
+/// Replaces only the selected transfer locator while preserving digest and target verification.
+#[cfg(test)]
+fn local_release_source(
+    source: ora_plugin_manager::ResolvedReleaseSource,
+    artifact: std::path::PathBuf,
+) -> ora_plugin_manager::ResolvedReleaseSource {
+    let digest = *source.sha256();
+    match source.target().cloned() {
+        Some(target) => ora_plugin_manager::ResolvedReleaseSource::targeted(
+            DownloadSource::Local(artifact),
+            digest,
+            target,
+        ),
+        None => ora_plugin_manager::ResolvedReleaseSource::universal(
+            DownloadSource::Local(artifact),
+            digest,
+        ),
     }
 }

@@ -14,6 +14,7 @@ export function invalidatePluginQueries(
   return Promise.all([
     invalidateInstalledPlugins(queryClient),
     invalidateAvailablePlugins(queryClient),
+    invalidatePackInstallations(queryClient),
   ]);
 }
 

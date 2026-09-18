@@ -1,10 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import type {
-  AvailablePlugin,
-  InstalledPlugin,
-  InstallOutcome,
-} from "@ora/contracts";
+import type { AvailablePlugin, InstalledPlugin } from "@ora/contracts";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -20,7 +16,6 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
   Button,
-  toast,
 } from "@ora/ui";
 import {
   IconArrowBigUpLines,
@@ -37,6 +32,7 @@ import { useUpdatePlugin } from "../../state/hooks/use-update-plugin";
 import { MarkdownDocument } from "../chat/markdown-message";
 import { PluginDownloadProgress } from "./plugin-download-progress";
 import { PluginLogo } from "./plugin-logo";
+import { showPluginInstallOutcome } from "./plugin-install-feedback";
 
 /** The marketplace detail page: breadcrumb back navigation plus the listing's rendered README. */
 export function PluginReadmeView({
@@ -132,15 +128,9 @@ function PluginDetailAction({
   const failInstall = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.installFailed"));
   };
-  const succeedInstall = (response: { outcome: InstallOutcome }) => {
-    toast.success(
-      response.outcome.state === "installed_with_command_conflict"
-        ? t("settings.plugins.installCommandConflict", {
-            pluginId: response.outcome.conflictPluginId,
-          })
-        : t("settings.plugins.installSuccess"),
-    );
-  };
+  const succeedInstall = (response: {
+    outcome: Parameters<typeof showPluginInstallOutcome>[0];
+  }) => showPluginInstallOutcome(response.outcome, t);
   const failUpdate = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.updateFailed"));
   };

@@ -11,6 +11,7 @@ import {
   AlertDialogTitle,
 } from "@ora/ui";
 import { useContractsClient } from "../../contracts-client-context";
+import { localizeContractError } from "../../i18n/contract-error";
 
 /**
  * Ownership-aware pack uninstall confirmation: the plan's remove/preserve/already-missing
@@ -40,6 +41,11 @@ export function PackUninstallConfirm({
 
   const computed = plan.data?.plan;
   const removable = computed?.remove ?? [];
+  const planUnavailable =
+    plan.isLoading ||
+    plan.isError ||
+    computed === null ||
+    computed === undefined;
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -53,6 +59,19 @@ export function PackUninstallConfirm({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div className="max-h-64 space-y-3 overflow-y-auto text-sm">
+          {plan.isLoading && (
+            <p className="text-muted-foreground">
+              {t("settings.plugins.packUninstallPlanLoading")}
+            </p>
+          )}
+          {plan.isError && (
+            <p className="text-destructive">
+              {t("settings.plugins.packUninstallPlanFailed")}
+              <span className="mt-1 block text-muted-foreground">
+                {localizeContractError(plan.error, t)}
+              </span>
+            </p>
+          )}
           {removable.length > 0 && (
             <section>
               <h4 className="mb-1 font-medium">
@@ -100,11 +119,10 @@ export function PackUninstallConfirm({
         <AlertDialogFooter>
           <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
           <AlertDialogAction
-            disabled={busy}
+            disabled={busy || planUnavailable}
             onClick={(event) => {
               event.preventDefault();
               onConfirm();
-              onOpenChange(false);
             }}
           >
             {t("settings.plugins.packUninstallConfirm")}

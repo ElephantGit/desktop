@@ -1,10 +1,8 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { TFunction } from "i18next";
 import type {
   AvailablePlugin,
-  InstallOutcome,
   InstalledPlugin,
   PackInstallationStatus,
   PackMemberReconciliationState,
@@ -51,6 +49,7 @@ import { PluginReadmeView } from "./plugin-readme-view";
 import { PluginConfigurationEditor } from "./plugin-configuration-editor";
 import type { PluginConfigurationNavigationGuard } from "./plugin-configuration-editor";
 import { PluginDownloadProgress } from "./plugin-download-progress";
+import { showPluginInstallOutcome } from "./plugin-install-feedback";
 
 /** The registry kind order shown in the marketplace, mirroring the contracts docs. */
 const MARKETPLACE_KIND_ORDER = [
@@ -111,6 +110,13 @@ export function PluginsSettings({
         pluginId: packId,
         dataDisposition: "delete" as const,
       }),
+    onSuccess: () => {
+      toast.success(t("settings.plugins.packUninstallSuccess"));
+      setUninstallingPack(null);
+    },
+    onError: (cause) => {
+      showContractError(cause, t("settings.plugins.uninstallFailed"));
+    },
     onSettled: async () => {
       await invalidatePackInstallations(queryClient);
       await invalidateInstalledPlugins(queryClient);
@@ -198,12 +204,10 @@ export function PluginsSettings({
         { path },
         {
           onSuccess: (response) =>
-            toast.success(
-              installOutcomeMessage(
-                response.outcome,
-                t,
-                "settings.plugins.importSuccess",
-              ),
+            showPluginInstallOutcome(
+              response.outcome,
+              t,
+              "settings.plugins.importSuccess",
             ),
           onError: (cause) =>
             showContractError(cause, t("settings.plugins.importFailed")),
@@ -380,7 +384,6 @@ export function PluginsSettings({
           }}
           onConfirm={() => {
             uninstallPackMutation.mutate(uninstallingPack);
-            setUninstallingPack(null);
           }}
           busy={uninstallPackMutation.isPending}
         />
@@ -502,20 +505,9 @@ function AvailablePluginCard({
   const failInstall = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.installFailed"));
   };
-  const succeedInstall = (response: { outcome: InstallOutcome }) => {
-    if (response.outcome.state === "pack_installed") {
-      const feedback = packInstallFeedback(response.outcome, t);
-      toast.success(feedback.title, { description: feedback.description });
-      return;
-    }
-    toast.success(
-      installOutcomeMessage(
-        response.outcome,
-        t,
-        "settings.plugins.installSuccess",
-      ),
-    );
-  };
+  const succeedInstall = (response: {
+    outcome: Parameters<typeof showPluginInstallOutcome>[0];
+  }) => showPluginInstallOutcome(response.outcome, t);
   const failUpdate = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.updateFailed"));
   };
@@ -670,64 +662,4 @@ function CompletedInstallIcon({
       />
     </span>
   );
-}
-
-/** Maps a typed install outcome to the toast the settings surface already shows. */
-function installOutcomeMessage(
-  outcome: InstallOutcome,
-  t: TFunction,
-  successKey:
-    "settings.plugins.installSuccess" | "settings.plugins.importSuccess",
-): string {
-  if (outcome.state === "installed_with_command_conflict") {
-    return t("settings.plugins.installCommandConflict", {
-      pluginId: outcome.conflictPluginId,
-    });
-  }
-  return t(successKey);
-}
-
-/**
- * Builds the toast title and description for a pack install outcome: the journal-backed
- * per-member facts (installed, skipped, failed, rollback residual) drive every sentence, so the
- * frontend never re-derives ownership.
- */
-function packInstallFeedback(
-  outcome: Extract<InstallOutcome, { state: "pack_installed" }>,
-  t: TFunction,
-): { title: string; description: string } {
-  const parts: string[] = [];
-  if (outcome.members.length > 0) {
-    parts.push(
-      t("settings.plugins.packInstalledMembers", {
-        count: outcome.members.length,
-      }),
-    );
-  }
-  if (outcome.skipped.length > 0) {
-    parts.push(
-      t("settings.plugins.packSkippedMembers", {
-        count: outcome.skipped.length,
-      }),
-    );
-  }
-  const failed = outcome.failed;
-  if (failed !== null) {
-    parts.push(
-      t("settings.plugins.packFailedMember", {
-        pluginId: failed.pluginId,
-      }),
-    );
-    for (const rollbackFailure of failed.rollbackFailures) {
-      parts.push(
-        t("settings.plugins.packRollbackFailedMember", {
-          pluginId: rollbackFailure.pluginId,
-        }),
-      );
-    }
-  }
-  return {
-    title: t("settings.plugins.packInstallTitle"),
-    description: parts.join(" "),
-  };
 }

@@ -195,6 +195,9 @@ pub(crate) struct PluginApi {
     /// Secret-free wakeup that asks live Sessions to re-read Desired MCP.
     mcp_wakeup: OnceLock<Arc<dyn Fn() + Send + Sync>>,
     clock: SystemClock,
+    /// Test-only transport substitution for production-entry marketplace qualification.
+    #[cfg(test)]
+    local_marketplace_releases: Mutex<BTreeMap<String, PathBuf>>,
 }
 
 impl PluginApi {
@@ -257,7 +260,31 @@ impl PluginApi {
             effect_reconcile: OnceLock::new(),
             mcp_wakeup: OnceLock::new(),
             clock,
+            #[cfg(test)]
+            local_marketplace_releases: Mutex::new(BTreeMap::new()),
         })
+    }
+
+    /// Substitutes one marketplace package's transfer source with a local artifact in tests.
+    ///
+    /// Resolution, host selection, digest verification, installation, finalization, and runtime
+    /// coordination remain on the production path; only the network transfer is kept offline.
+    #[cfg(test)]
+    pub(crate) fn use_local_marketplace_release(&self, plugin_id: &str, artifact: PathBuf) {
+        self.local_marketplace_releases
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(plugin_id.to_owned(), artifact);
+    }
+
+    /// Returns the local transfer override registered for one marketplace package in tests.
+    #[cfg(test)]
+    pub(crate) fn local_marketplace_release(&self, plugin_id: &PluginId) -> Option<PathBuf> {
+        self.local_marketplace_releases
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&plugin_id.canonical())
+            .cloned()
     }
 
     /// Connects the Effect worker's wake handle once it exists.

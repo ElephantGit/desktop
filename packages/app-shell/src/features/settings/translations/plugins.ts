@@ -20,6 +20,7 @@ export const pluginTranslations = {
     "settings.plugins.packMemberVersionChanged": "已变更至 {{version}}",
     "settings.plugins.packMemberMissing": "缺失",
     "settings.plugins.packInstallTitle": "集合包安装完成",
+    "settings.plugins.packInstallFailedTitle": "集合包安装失败",
     "settings.plugins.packInstalledMembers": "已安装 {{count}} 个成员",
     "settings.plugins.packSkippedMembers": "跳过 {{count}} 个已存在成员",
     "settings.plugins.packFailedMember": "{{pluginId}} 安装失败",
@@ -36,6 +37,9 @@ export const pluginTranslations = {
       "{{member}}（已被独立修改）将保留",
     "settings.plugins.packUninstallAlreadyMissing": "以下成员已不存在",
     "settings.plugins.packUninstallConfirm": "确认卸载",
+    "settings.plugins.packUninstallPlanLoading": "正在计算卸载范围…",
+    "settings.plugins.packUninstallPlanFailed": "无法加载集合包卸载计划。",
+    "settings.plugins.packUninstallSuccess": "集合包已卸载",
     "errors.marketplace_s3_credentials_required":
       "启用 S3 签名获取时，请填写 Access Key ID 和 Secret Access Key。",
     "errors.marketplace_artifact_retrieval_field_invalid":
@@ -322,6 +326,7 @@ export const pluginTranslations = {
     "settings.plugins.packMemberVersionChanged": "changed to {{version}}",
     "settings.plugins.packMemberMissing": "missing",
     "settings.plugins.packInstallTitle": "Pack installed",
+    "settings.plugins.packInstallFailedTitle": "Pack installation failed",
     "settings.plugins.packInstalledMembers": "Installed {{count}} members",
     "settings.plugins.packSkippedMembers": "Skipped {{count}} existing members",
     "settings.plugins.packFailedMember": "{{pluginId}} failed to install",
@@ -339,6 +344,10 @@ export const pluginTranslations = {
     "settings.plugins.packUninstallAlreadyMissing":
       "The following members are already missing",
     "settings.plugins.packUninstallConfirm": "Uninstall",
+    "settings.plugins.packUninstallPlanLoading": "Calculating uninstall scope…",
+    "settings.plugins.packUninstallPlanFailed":
+      "Unable to load the pack uninstall plan.",
+    "settings.plugins.packUninstallSuccess": "Pack uninstalled",
     "errors.marketplace_s3_credentials_required":
       "Enter an Access Key ID and Secret Access Key to enable S3 signed retrieval.",
     "errors.marketplace_artifact_retrieval_field_invalid":
