@@ -41,7 +41,11 @@ export function projectRunPathStructure(
 
   return workflowPathOrder(definition).flatMap<RunPathStage>((nodeId) => {
     const node = nodeById.get(nodeId);
-    if (node === undefined || node.parentId !== undefined) {
+    if (
+      node === undefined ||
+      (node.parentId !== undefined &&
+        nodeById.get(node.parentId)?.data.kind === "iteration")
+    ) {
       return [];
     }
     const members = membersByRegion.get(nodeId);

@@ -1,6 +1,7 @@
 import { Fragment, memo, useState } from "react";
 import {
   Handle,
+  NodeResizer,
   Position,
   useReactFlow,
   type Node,
@@ -14,6 +15,8 @@ import {
   createMockWorkflowNodeType,
   isWorkflowConditionComparisonComplete,
   resolveConditionCases,
+  WORKFLOW_LOOP_NODE_HEIGHT,
+  WORKFLOW_LOOP_NODE_WIDTH,
   WORKFLOW_NODE_ANCHOR_Y,
   WORKFLOW_NODE_WIDTH,
   type WorkflowNodeData,
@@ -42,6 +45,9 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
   data,
   deletable,
   selected,
+  draggable,
+  width,
+  height,
   parentId,
   positionAbsoluteX,
   positionAbsoluteY,
@@ -79,121 +85,142 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
   }
 
   return (
-    <WorkflowNodeCardShell
-      data-workflow-node=""
-      data-workflow-node-id={id}
-      data-x={String(Math.round(positionAbsoluteX))}
-      data-y={String(Math.round(positionAbsoluteY))}
-      kind={data.kind}
-      title={data.title}
-      description={data.description}
-      kindLabel={id}
-      density="editor"
-      selected={selected}
-      width={
-        data.kind === "condition" ? CONDITION_NODE_WIDTH : WORKFLOW_NODE_WIDTH
-      }
-      titleAccessory={
-        data.kind === "agent" ? (
-          <AgentExecutionModeMark
-            interactive={data.agentConfig?.interactive === true}
-          />
-        ) : undefined
-      }
-      ariaLabel={`${t("settings.workflow.nodeSuffix", { type: nodeKindLabel })}: ${data.title}`}
-      frameClassName={cn(
-        parentId !== undefined && "group/iteration-member",
-        isConnectionCandidate && "border-ring/60 shadow-md ring-2 ring-ring/10",
-      )}
-      details={
-        data.kind === "condition" ? (
-          <ConditionNodeDetails data={data} locale={locale} />
-        ) : (
-          <WorkflowNodeParameterSummary data={data} />
-        )
-      }
-      detailsClassName={data.kind === "condition" ? "space-y-2" : undefined}
-      headerEnd={
-        selected && deletable ? (
-          <button
-            type="button"
-            className="nodrag nopan flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label={t("settings.workflow.deleteNamed", {
-              name: data.title,
-            })}
-            onClick={() => {
-              void deleteElements({ nodes: [{ id }] });
-            }}
-          >
-            <IconTrash className="size-3.5" />
-          </button>
-        ) : undefined
-      }
-      targetHandle={
-        <Handle
-          type="target"
-          position={Position.Left}
-          data-workflow-input={id}
-          aria-label={t("settings.workflow.connectTo", { name: data.title })}
-          className={cn(
-            "workflow-port workflow-port-input !size-2.5 !border-0 !bg-transparent",
-            isInputCandidate && "workflow-port-candidate",
-          )}
-          style={{ top: WORKFLOW_NODE_ANCHOR_Y }}
+    <>
+      {data.kind === "loop" && (
+        <NodeResizer
+          isVisible={selected && draggable}
+          minWidth={480}
+          minHeight={260}
+          handleClassName="!size-2.5 !border !border-ring !bg-background"
+          lineClassName="!border-ring/60"
         />
-      }
-      sourceHandle={
-        data.kind === "condition" ? (
-          <>
-            {conditionCases.map((conditionCase, index) => (
+      )}
+      <WorkflowNodeCardShell
+        data-workflow-node=""
+        data-workflow-node-id={id}
+        data-x={String(Math.round(positionAbsoluteX))}
+        data-y={String(Math.round(positionAbsoluteY))}
+        kind={data.kind}
+        title={data.title}
+        description={data.description}
+        kindLabel={id}
+        density="editor"
+        selected={selected}
+        width={
+          data.kind === "loop"
+            ? (width ?? WORKFLOW_LOOP_NODE_WIDTH)
+            : data.kind === "condition"
+              ? CONDITION_NODE_WIDTH
+              : WORKFLOW_NODE_WIDTH
+        }
+        style={
+          data.kind === "loop"
+            ? { height: height ?? WORKFLOW_LOOP_NODE_HEIGHT }
+            : undefined
+        }
+        titleAccessory={
+          data.kind === "agent" ? (
+            <AgentExecutionModeMark
+              interactive={data.agentConfig?.interactive === true}
+            />
+          ) : undefined
+        }
+        ariaLabel={`${t("settings.workflow.nodeSuffix", { type: nodeKindLabel })}: ${data.title}`}
+        frameClassName={cn(
+          parentId !== undefined && "group/iteration-member",
+          isConnectionCandidate &&
+            "border-ring/60 shadow-md ring-2 ring-ring/10",
+        )}
+        details={
+          data.kind === "condition" ? (
+            <ConditionNodeDetails data={data} locale={locale} />
+          ) : (
+            <WorkflowNodeParameterSummary data={data} />
+          )
+        }
+        detailsClassName={data.kind === "condition" ? "space-y-2" : undefined}
+        headerEnd={
+          selected && deletable ? (
+            <button
+              type="button"
+              className="nodrag nopan flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label={t("settings.workflow.deleteNamed", {
+                name: data.title,
+              })}
+              onClick={() => {
+                void deleteElements({ nodes: [{ id }] });
+              }}
+            >
+              <IconTrash className="size-3.5" />
+            </button>
+          ) : undefined
+        }
+        targetHandle={
+          <Handle
+            type="target"
+            position={Position.Left}
+            data-workflow-input={id}
+            aria-label={t("settings.workflow.connectTo", { name: data.title })}
+            className={cn(
+              "workflow-port workflow-port-input !size-2.5 !border-0 !bg-transparent",
+              isInputCandidate && "workflow-port-candidate",
+            )}
+            style={{ top: WORKFLOW_NODE_ANCHOR_Y }}
+          />
+        }
+        sourceHandle={
+          data.kind === "condition" ? (
+            <>
+              {conditionCases.map((conditionCase, index) => (
+                <IterationOutputPort
+                  key={conditionCase.id}
+                  nodeId={id}
+                  handleId={conditionCase.id}
+                  top={conditionHandleTop(conditionCases, index)}
+                  connectLabel={`${t("settings.workflow.connectFrom", { name: data.title })} · ${conditionCase.id}`}
+                  plusLabel={t("settings.workflow.iteration.appendBranch", {
+                    branch: conditionCase.id,
+                  })}
+                  insertion={iterationActions.outputInsertion(
+                    id,
+                    conditionCase.id,
+                  )}
+                  isOutputCandidate={isOutputCandidate}
+                />
+              ))}
               <IterationOutputPort
-                key={conditionCase.id}
                 nodeId={id}
-                handleId={conditionCase.id}
-                top={conditionHandleTop(conditionCases, index)}
-                connectLabel={`${t("settings.workflow.connectFrom", { name: data.title })} · ${conditionCase.id}`}
+                handleId="else"
+                top={conditionHandleTop(conditionCases, conditionCases.length)}
+                connectLabel={`${t("settings.workflow.connectFrom", { name: data.title })} · else`}
                 plusLabel={t("settings.workflow.iteration.appendBranch", {
-                  branch: conditionCase.id,
+                  branch: "ELSE",
                 })}
-                insertion={iterationActions.outputInsertion(
-                  id,
-                  conditionCase.id,
-                )}
+                insertion={iterationActions.outputInsertion(id, "else")}
                 isOutputCandidate={isOutputCandidate}
               />
-            ))}
+            </>
+          ) : (
             <IterationOutputPort
               nodeId={id}
-              handleId="else"
-              top={conditionHandleTop(conditionCases, conditionCases.length)}
-              connectLabel={`${t("settings.workflow.connectFrom", { name: data.title })} · else`}
-              plusLabel={t("settings.workflow.iteration.appendBranch", {
-                branch: "ELSE",
+              top={WORKFLOW_NODE_ANCHOR_Y}
+              connectLabel={t("settings.workflow.connectFrom", {
+                name: data.title,
               })}
-              insertion={iterationActions.outputInsertion(id, "else")}
+              plusLabel={t("settings.workflow.iteration.appendOutput", {
+                name: data.title,
+              })}
+              insertion={
+                parentId !== undefined
+                  ? iterationActions.outputInsertion(id)
+                  : null
+              }
               isOutputCandidate={isOutputCandidate}
             />
-          </>
-        ) : (
-          <IterationOutputPort
-            nodeId={id}
-            top={WORKFLOW_NODE_ANCHOR_Y}
-            connectLabel={t("settings.workflow.connectFrom", {
-              name: data.title,
-            })}
-            plusLabel={t("settings.workflow.iteration.appendOutput", {
-              name: data.title,
-            })}
-            insertion={
-              parentId !== undefined
-                ? iterationActions.outputInsertion(id)
-                : null
-            }
-            isOutputCandidate={isOutputCandidate}
-          />
-        )
-      }
-    />
+          )
+        }
+      />
+    </>
   );
 });
 

@@ -28,6 +28,8 @@ import {
   MAX_WORKFLOW_ZOOM,
   MIN_WORKFLOW_ZOOM,
 } from "../workflow-node-chrome/viewport";
+import { projectLoopRoundNodeStates } from "./loop-round-state";
+import { createRunOverviewNodes } from "./run-overview-layout";
 import { resolveOverviewFocusedId, resolveTheaterFocus } from "./run-focus";
 import {
   RunOverviewNode,
@@ -209,16 +211,17 @@ export function RunOverviewCanvas({
   const containerRef = useRef<HTMLDivElement>(null);
   const userAdjustedRef = useRef(false);
   const snapshot = run.definitionSnapshot;
-  const nodeStates = run.nodeStates;
+  const nodeStates = useMemo(() => projectLoopRoundNodeStates(run, {}), [run]);
+  const visibleRun = useMemo(() => ({ ...run, nodeStates }), [run, nodeStates]);
   const focus = useMemo(
-    () => resolveTheaterFocus(run, focusedNodeId),
-    [run, focusedNodeId],
+    () => resolveTheaterFocus(visibleRun, focusedNodeId),
+    [visibleRun, focusedNodeId],
   );
   // Terminal + no pin: do not paint Theater's fallback as selected —
   // Theater shows the result act for the same state.
   const overviewFocusedId = useMemo(
-    () => resolveOverviewFocusedId(run, focusedNodeId),
-    [run, focusedNodeId],
+    () => resolveOverviewFocusedId(visibleRun, focusedNodeId),
+    [visibleRun, focusedNodeId],
   );
   const artifactCountByNode = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -238,7 +241,7 @@ export function RunOverviewCanvas({
   }, [snapshot.nodes]);
 
   const nodes = useMemo((): Node<RunOverviewNodeData, "workflow">[] => {
-    return snapshot.nodes.map((node) => {
+    return createRunOverviewNodes(snapshot, nodeStates).map((node) => {
       const isIteration = node.data.kind === "iteration";
       const width = Math.max(
         WORKFLOW_ITERATION_NODE_WIDTH,
@@ -255,7 +258,12 @@ export function RunOverviewCanvas({
         draggable: false,
         connectable: false,
         deletable: false,
-        zIndex: isIteration ? 0 : node.parentId === undefined ? 1 : 2,
+        zIndex:
+          isIteration || node.data.kind === "loop"
+            ? 0
+            : node.parentId === undefined
+              ? 1
+              : 2,
         ...(isIteration ? { style: { width, height } } : {}),
         data: {
           ...node.data,
@@ -269,7 +277,7 @@ export function RunOverviewCanvas({
         },
       };
     });
-  }, [memberCountByIteration, snapshot.nodes, nodeStates]);
+  }, [memberCountByIteration, snapshot, nodeStates]);
 
   const edges = useMemo((): Edge[] => {
     return snapshot.edges.map((edge) => {

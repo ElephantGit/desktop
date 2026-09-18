@@ -39,6 +39,7 @@ import {
   WORKFLOW_FLOW_EDGE_TYPE,
   WORKFLOW_FLOW_NODE_TYPE,
   WORKFLOW_SNAP_GRID,
+  containWorkflowCanvasNodes,
   nodePositionAt,
   snapNodePosition,
 } from "./layout";
@@ -238,17 +239,21 @@ function WorkflowCanvasInner({
         .filter((node) => node.data.kind === "iteration")
         .map((node) => node.id),
     );
-    const executableNodes = nodes.map((node) => ({
+    const executableNodes = containWorkflowCanvasNodes(nodes).map((node) => ({
       ...node,
       // parentId is persisted graph structure; React Flow constraints are presentation only.
-      ...(node.parentId !== undefined && iterationIds.has(node.parentId)
+      ...(node.data.containerId !== undefined ||
+      (node.parentId !== undefined && iterationIds.has(node.parentId))
         ? { extent: "parent" as const, expandParent: true }
         : { extent: undefined, expandParent: undefined }),
       // Notes reserve the bottom layer, while selected executable nodes keep
       // React Flow's usual elevation over their executable peers.
-      zIndex: node.selected
-        ? WORKFLOW_SELECTED_NODE_Z_INDEX
-        : WORKFLOW_NODE_Z_INDEX,
+      zIndex:
+        node.data.kind === "loop"
+          ? 0
+          : node.selected
+            ? WORKFLOW_SELECTED_NODE_Z_INDEX
+            : WORKFLOW_NODE_Z_INDEX,
       ...(node.parentId !== undefined && collapsedIterations.has(node.parentId)
         ? { hidden: true }
         : {}),

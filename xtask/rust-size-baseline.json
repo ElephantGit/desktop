@@ -7,8 +7,8 @@
     },
     "crates/db/src/repository/workflow_run_engine.rs": {
       "owner": "ora-db",
-      "lines": 932,
-      "split_plan": "Composite-region transactions live in workflow_run_engine/iteration.rs and run-payload state maintenance in workflow_run_engine/payload.rs. Next extraction candidate: the boot-sweep operations, keeping the repository interface and transaction scopes intact with real SQLite tests."
+      "lines": 879,
+      "split_plan": "Group run-state transitions, node/history rows and artifact persistence into private repository modules. Preserve the existing transaction scopes and repository interface, with real SQLite transition tests accompanying extraction."
     }
   }
 }

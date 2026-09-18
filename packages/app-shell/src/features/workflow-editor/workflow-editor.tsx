@@ -51,6 +51,7 @@ import { WindowControls } from "../../components/window-controls";
 import { useUiStore } from "../../state/stores/ui-store";
 import {
   createMockWorkflowCapabilities,
+  createMockWorkflowLoopGroup,
   createMockWorkflowNode,
   deriveWorkflowVariableCatalog,
   normalizeWorkflowGlobalVariables,
@@ -79,7 +80,10 @@ import { availableSkills, useSkills } from "../../state/hooks/use-skills";
 import { useWorkflowAgentModels } from "../../state/hooks/use-workflow-agent-models";
 import { localizeContractError } from "../../i18n/contract-error";
 import { WorkflowCanvas } from "./workflow-canvas";
-import { organizeWorkflowNodes } from "./workflow-flow/layout";
+import {
+  organizeWorkflowNodes,
+  shouldPersistWorkflowNodeChanges,
+} from "./workflow-flow/layout";
 import type { WorkflowCanvasNode } from "./workflow-flow/types";
 import { WorkflowInspector } from "./workflow-inspector";
 import { applyIterationDragRules } from "./workflow-iteration-containment";
@@ -1464,6 +1468,45 @@ function WorkflowEditorContent({
       ...(currentWorkflow.annotations ?? []).map((node) => node.id),
       ...currentWorkflow.edges.map((edge) => edge.id),
     ]);
+    if (kind === "loop") {
+      const group = createMockWorkflowLoopGroup({
+        sequence,
+        position,
+        locale,
+        agentConfig: capabilities.defaultAgentConfig,
+      });
+      const loop = group.nodes[0]!;
+      updateWorkflow(
+        (current) => ({
+          ...current,
+          nodes: [
+            ...current.nodes.map((candidate) => ({
+              ...candidate,
+              selected: false,
+            })),
+            ...group.nodes.map((candidate) => ({
+              ...candidate,
+              selected: candidate.id === loop.id,
+            })),
+          ],
+          edges: [...current.edges, ...group.edges],
+        }),
+        {
+          history: {
+            event: "node.add",
+            meta: {
+              nodeIds: group.nodes.map((candidate) => candidate.id),
+              edgeIds: group.edges.map((edge) => edge.id),
+              subject: loop.data.title,
+              nodeTitle: loop.data.title,
+              nodeKind: kind,
+            },
+          },
+        },
+      );
+      expandInspector();
+      return;
+    }
     const node = createMockWorkflowNode({
       kind,
       sequence,
@@ -1950,13 +1993,7 @@ function WorkflowEditorContent({
 
   /** Applies React Flow node changes directly to the active graph. */
   function changeNodes(changes: NodeChange<WorkflowCanvasNode>[]): void {
-    const persistable = changes.some(
-      (change) =>
-        change.type !== "select" &&
-        // Plain dimension measurements stay ephemeral, but an active resize
-        // gesture is an authored edit that must autosave like a node move.
-        (change.type !== "dimensions" || change.resizing === true),
-    );
+    const persistable = shouldPersistWorkflowNodeChanges(changes);
     const removedNodeIds = new Set(
       changes
         .filter((change) => change.type === "remove")

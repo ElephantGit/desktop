@@ -14,6 +14,10 @@ mod engine;
 mod graph;
 mod handlers;
 mod iteration;
+mod loop_bindings;
+mod loop_config;
+mod loop_graph;
+mod loop_round;
 mod node_runtime;
 mod node_type;
 mod ports;
@@ -36,13 +40,16 @@ pub use handlers::WorkflowRunControlHandler;
 pub use iteration::{
     CompositeRegion, IterationConfig, IterationErrorStrategy, IterationLedger, RoundOutcome,
 };
+pub use loop_config::{LoopConfig, LoopInitialValue, LoopVariable};
+pub use loop_round::{LoopRoundDecision, LoopRoundError, LoopRoundExecutionState};
 pub use node_type::{NodeType, UnknownNodeType};
 pub use ports::{
     AdvanceWorkflowRunResult, BindWorkflowNodeSessionResult, CancelWorkflowRunResult,
-    ExecutionContext, FailurePropagation, FileChange, IterationRoundContinuation,
-    NoRunInvalidations, NodeRunToStart, RestartWorkflowRunResult, StartPrerequisitesError,
-    StartWorkflowRunResult, UpdateWorkflowRunInputResult, WorkflowNodeRunIdGenerator,
-    WorkflowRunEngineRepository, WorkflowRunInvalidationPublisher, WorkflowRunWorkspaceInitializer,
+    ExecutionContext, FailurePropagation, FileChange, IterationRoundContinuation, LoopRoundAdvance,
+    LoopRoundToStart, NoRunInvalidations, NodeRunToStart, RestartWorkflowRunResult,
+    StartPrerequisitesError, StartWorkflowRunResult, UpdateWorkflowRunInputResult,
+    WorkflowNodeRunIdGenerator, WorkflowRunEngineRepository, WorkflowRunInvalidationPublisher,
+    WorkflowRunWorkspaceInitializer,
 };
 pub use skill_delivery::{
     AgentSkillDelivery, AgentSkillDeliveryError, AgentSkillDeliveryProvider,

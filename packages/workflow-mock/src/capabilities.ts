@@ -24,6 +24,8 @@ export type WorkflowConfigField =
   | "failureStrategy"
   | "maxAttempts"
   | "exitCondition"
+  | "maxIterations"
+  | "loopInitialValue"
   | "iteration";
 
 export interface WorkflowAgentModel {
@@ -136,6 +138,7 @@ export function createMockWorkflowCapabilities(
     createMockWorkflowNodeType("start", locale),
     createMockWorkflowNodeType("agent", locale),
     createMockWorkflowNodeType("condition", locale),
+    createMockWorkflowNodeType("loop", locale),
     createMockWorkflowNodeType("iteration", locale),
     createMockWorkflowNodeType("output", locale),
   ];
@@ -306,7 +309,7 @@ export function createMockWorkflowNodeType(
           locale === "zh-CN"
             ? "重复执行直到满足条件"
             : "Repeat until the exit condition is met",
-        configFields: ["maxAttempts", "exitCondition"],
+        configFields: ["maxIterations", "loopInitialValue"],
         supportedScopes: ["workflow"],
       };
     case "iteration":

@@ -140,6 +140,9 @@ export const workflowRunTranslations = {
     "workflowRun.inspector.saveDraft": "保存",
     "workflowRun.inspector.savingDraft": "保存中…",
     "workflowRun.inspector.discardDraft": "放弃",
+    "workflowRun.loopRounds.title": "循环轮次",
+    "workflowRun.loopRounds.round": "第 {{round}} 轮",
+    "workflowRun.loopRounds.empty": "循环开始后会在这里显示每轮节点状态。",
     "workflowRun.artifacts.title": "成果",
     "workflowRun.artifacts.countBadge": "{{count}} 个成果",
     "workflowRun.artifacts.empty": "该步骤产出后会显示在这里。",
@@ -374,6 +377,10 @@ export const workflowRunTranslations = {
     "workflowRun.inspector.saveDraft": "Save",
     "workflowRun.inspector.savingDraft": "Saving…",
     "workflowRun.inspector.discardDraft": "Discard",
+    "workflowRun.loopRounds.title": "Loop rounds",
+    "workflowRun.loopRounds.round": "Round {{round}}",
+    "workflowRun.loopRounds.empty":
+      "Per-round node states will appear here after the Loop starts.",
     "workflowRun.artifacts.title": "Outcomes",
     "workflowRun.artifacts.countBadge": "{{count}} outcomes",
     "workflowRun.artifacts.empty":
