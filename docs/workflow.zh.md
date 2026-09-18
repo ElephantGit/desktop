@@ -184,7 +184,7 @@ Start 表单控件与变量类型分离：文本、段落、选择框、数字�
 
 `WorkflowRun` 固定引用发布版本的 `snapshot_id`，保存运行名称与工作区。`WorkflowNodeRun` 只为实际开始的节点创建记录并保存作用域归属，未开始状态由前端对比图与记录推导。`WorkflowExecutionScope` 保存 Loop 父执行、轮次索引、生命周期与私有轮次状态。
 
-运行与节点均使用 `Pending | Running | Succeeded | Failed | Cancelled`。交互节点等待后续输入时持久化为 `Pending`；公共契约将存在等待节点的运行投影为 `AwaitingInput`。终态节点会话只读，后端拒绝新提示词。节点会话可按 ID 读取，但不会出现在普通聊天列表中。
+运行与节点均使用 `Pending | Running | Succeeded | Failed | Cancelled`。交互节点等待后续输入时持久化为 `Pending`；公共契约将存在等待节点的运行投影为 `AwaitingInput`。终态节点会话只读，后端拒绝新提示词。节点会话可按 ID 读取，但不会出现在普通聊天列表中。过滤依据包括重跑时被软删除的节点记录：工作流完成、重跑或应用重启都不会改变会话归属，保留的节点会话历史不会成为普通聊天。
 
 ### 创建与快照固定
 
