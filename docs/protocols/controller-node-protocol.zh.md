@@ -2,8 +2,8 @@
 
 [English](controller-node-protocol.md) | 中文
 
-> 最小闭环已调整为[clone 指定仓库与分支](../node/minimal-loop.zh.md)。本文仍描述现有 Worktree
-> 协议；clone 消息、结果与能力协商尚未实现，不能直接沿用已有 Main Workspace 的业务前置。
+> 最小闭环已调整为[clone 指定仓库与分支](../node/minimal-loop.zh.md)。clone 请求 framing 和输入校验
+> 已实现，结果、能力协商及执行尚未接通；clone 不依赖已有 Main Workspace。
 
 `ora-node-protocol` 定义 Controller–Node 会话消息和 Worktree 执行的 version 1 wire 契约，
 提供类型化消息和带校验的异步 frame codec。Transport、会话编排、Git 操作和持久执行由消费端负责。
@@ -28,6 +28,25 @@ payload 类型。`*Message` 结构明确声明各消息必需和可选的 metada
 `WorktreeExecutionResult`，未来应由第二种执行能力的实际需求推动结果抽象。各消息继续显式
 声明 correlation 字段并共享身份校验，不提取 `ExecutionCorrelation` 包装结构，从而无需
 Serde flatten 就能直接看出适用字段。
+
+## 首个 clone 请求
+
+`CloneRepositoryMessage`（`clone_repository`）携带 `operation_id`、`execution_id`、可选
+`request_id`，以及只含 `node_id`、`repository`、`branch` 的 `payload.spec`。
+`domain/repository.rs` 拥有源地址政策，`message/repository.rs` 拥有信封校验。
+
+`CloneRepositoryUrl::parse` 和反序列化只接受小写显式 `https://` 或 `ssh://`、带主机和仓库路径的
+URL；拒绝空白、反斜杠、query／fragment、密码及 HTTPS userinfo，允许 SSH 用户名。
+保留地址原始拼写用于去重。Debug 隐去地址，解析错误不回显输入；序列化仍保留源地址供执行和
+持久化使用，不能将序列化消息直接记录到日志。凭据属于部署数据。
+
+Codec 收发均使用 `ora-utils::GitBranchName` 校验短分支名，另拒绝 `HEAD`；执行仍须验证远端
+分支存在，不能接受同名 tag 替代。clone payload／spec 拒绝未知字段，包括目标目录、凭据和
+任意 Git 选项；外层信封仍允许扩展字段。
+
+version 1 framing 和 Worktree 编码不变，旧 codec 会拒绝新消息类型。当前 Node 尚未声明或
+执行 clone；结果、能力协商及持久执行接通前不能派发。这一步不改数据库布局、IPC listener
+或 Backend 写入入口。
 
 ## 使用 codec
 

@@ -1,4 +1,5 @@
 mod execution;
+mod repository;
 mod session;
 mod validation;
 mod worktree;
@@ -7,6 +8,7 @@ pub use execution::{
     EventAck, EventAckMessage, ExecutionState, ExecutionStatus, ExecutionStatusMessage,
     GetExecutionStatus, GetExecutionStatusMessage,
 };
+pub use repository::{CloneRepository, CloneRepositoryMessage};
 use serde::{Deserialize, Serialize};
 pub use session::{
     Heartbeat, HeartbeatMessage, Hello, HelloAccepted, HelloAcceptedMessage, HelloMessage,
@@ -25,6 +27,7 @@ pub use worktree::{
 #[serde(tag = "message_type", rename_all = "snake_case")]
 pub enum ControllerToNodeMessage {
     Hello(HelloMessage),
+    CloneRepository(CloneRepositoryMessage),
     EnsureWorktree(EnsureWorktreeMessage),
     RemoveWorktree(RemoveWorktreeMessage),
     GetExecutionStatus(GetExecutionStatusMessage),
@@ -36,6 +39,7 @@ impl ValidateMessage for ControllerToNodeMessage {
     fn validate(&self) -> Result<(), MessageValidationError> {
         match self {
             Self::Hello(message) => message.validate(),
+            Self::CloneRepository(message) => message.validate(),
             Self::EnsureWorktree(message) => message.validate(),
             Self::RemoveWorktree(message) => message.validate(),
             Self::GetExecutionStatus(message) => message.validate(),

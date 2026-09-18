@@ -8,7 +8,8 @@
 **clone 指定仓库的指定分支**。沿用本机 Desktop–Controller–Node 分工：调用方指定仓库和分支，
 Controller 协调，Node 在执行环境完成 clone，结果回到调用方可观察的状态。
 
-此文记录方向，不是可运行 clone 接口说明。最小执行契约已获批，具体 wire 和存储设计仍待完成；本次不改代码。
+此文记录方向，不是可运行 clone 接口说明。最小执行契约已获批，请求 framing 和输入校验已实现；
+结果、能力与持久执行仍待接通。
 
 ## 已有基础与差距
 
@@ -39,5 +40,5 @@ Controller 协调，Node 在执行环境完成 clone，结果回到调用方可�
 [clone 根决策](../../specs/decisions/node/repository/0-clone-selected-repository-branch.md)与
 [最小执行契约](../../specs/decisions/node/repository/20260918-minimal-clone-execution-contract.md)已于 2026-09-18
 获批（approved），确认范围、输入、目录、内容和恢复政策。
-核心测试义务已登记，clone 实现证据仍为 Missing；批准不表示功能已实现。
+核心测试义务已有部分输入 codec 证据，执行证据仍为 Missing；批准不表示功能已实现。
 本次不启动 clone，不迁移用户目录，不接通 IPC，也不切换 Backend 写入入口。

@@ -4,6 +4,8 @@ use thiserror::Error;
 /// Explains why a decoded or outbound typed message violates protocol invariants.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum MessageValidationError {
+    #[error("clone branch must be a literal short branch name, not HEAD or a revision expression")]
+    InvalidCloneBranch,
     #[error("unsupported protocol version {actual}; expected {expected}")]
     UnsupportedProtocolVersion { actual: u16, expected: u16 },
     #[error("protocol field {field} must not be empty")]

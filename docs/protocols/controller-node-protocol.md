@@ -3,8 +3,8 @@
 English | [中文](controller-node-protocol.zh.md)
 
 > The minimal loop now targets [cloning a specified repository and branch](../node/minimal-loop.md).
-> This document describes the existing Worktree protocol. Clone messages, results and capability negotiation
-> are not implemented; the existing Main Workspace precondition must not be carried over implicitly.
+> Clone request framing and input validation are implemented. Results, capability negotiation and execution
+> are not yet connected; clone does not inherit the existing Main Workspace precondition.
 
 `ora-node-protocol` defines the version 1 wire contract for Controller–Node session messages and
 Worktree execution. It provides typed messages and a validated asynchronous frame codec. Transport,
@@ -34,6 +34,27 @@ results retain their invariants in `domain/worktree.rs`. Execution's `Completed`
 contains `WorktreeExecutionResult`; another execution capability should motivate any future result
 abstraction. Correlation fields stay explicit on each envelope, with shared identity checks rather
 than an `ExecutionCorrelation` wrapper; this keeps applicable fields visible without Serde flatten.
+
+## Initial clone request
+
+`CloneRepositoryMessage` (`clone_repository`) carries `operation_id`, `execution_id`, optional
+`request_id`, and `payload.spec` containing only `node_id`, `repository`, and `branch`.
+`domain/repository.rs` owns source policy; `message/repository.rs` owns envelope validation.
+
+`CloneRepositoryUrl::parse` and deserialization accept explicit lowercase `https://` or `ssh://`
+URLs with a host and repository path. They reject whitespace, backslashes, query/fragment components,
+passwords and HTTPS userinfo; SSH usernames are allowed. Source spelling is preserved for deduplication.
+Debug redacts the address and parse errors do not echo input. Serialization retains the source for
+execution and persistence, so serialized messages must not be logged. Credentials are deployment data.
+
+Both codec directions validate a short branch using `ora-utils::GitBranchName`, additionally rejecting
+`HEAD`. Execution must still verify a remote branch exists rather than accepting a same-named tag.
+Clone payload/spec reject unknown fields, including destination, credentials and arbitrary Git options;
+the outer envelope retains extension tolerance.
+
+Version 1 framing and Worktree encodings remain unchanged; older codecs reject the new message type.
+No Node currently advertises or executes clone. Do not dispatch it until results, capability negotiation
+and durable execution are connected. This step changes no database layout, IPC listener or Backend writer.
 
 ## Using the codec
 

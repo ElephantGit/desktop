@@ -10,7 +10,7 @@ Desktop–Controller–Node split remains: the caller specifies the repository a
 coordinates, Node performs the clone in its execution environment, and the caller can observe the result.
 
 This records direction, not an available clone API. The minimal execution contract is approved;
-concrete wire and storage designs remain to be completed. This change does not implement them.
+clone request framing and input validation are implemented. Results, capabilities and storage remain to be connected.
 
 ## Existing foundations and gaps
 
@@ -45,5 +45,5 @@ process cleanup has not been implemented. It is neither current code behavior no
 The [clone root decision](../../specs/decisions/node/repository/0-clone-selected-repository-branch.md)
 and [minimal execution contract](../../specs/decisions/node/repository/20260918-minimal-clone-execution-contract.md)
 were approved on 2026-09-18, confirming scope, input, destination, content and recovery policies. Core verification obligations
-are registered with Missing evidence; approval does not mean implementation. This change performs no clone,
+have partial input-codec evidence; execution evidence remains Missing. This change performs no clone,
 user-directory migration, IPC integration or Backend writer cutover.

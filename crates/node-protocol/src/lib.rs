@@ -9,7 +9,8 @@ mod identity;
 mod message;
 
 pub use domain::{
-    BranchName, CommitId, GitRef, MainWorkspaceBinding, NodePath, RepositoryRef,
+    BranchName, CloneExecutionSpec, CloneRepositoryUrl, CommitId, GitRef,
+    InvalidCloneRepositoryUrl, MainWorkspaceBinding, NodePath, RepositoryRef,
     WorktreeExecutionResult, WorktreeExecutionSpec, WorktreeFacts, WorktreeFailed, WorktreeFailure,
     WorktreeFailureCode, WorktreePathPolicy, WorktreeReady, WorktreeRemovalFailed,
     WorktreeRemovalOutcome, WorktreeRemoved,
@@ -24,11 +25,11 @@ pub use identity::{
     WorktreeId,
 };
 pub use message::{
-    ControllerToNodeMessage, EnsureWorktree, EnsureWorktreeMessage, EventAck, EventAckMessage,
-    ExecutionState, ExecutionStatus, ExecutionStatusMessage, GetExecutionStatus,
-    GetExecutionStatusMessage, Heartbeat, HeartbeatMessage, Hello, HelloAccepted,
-    HelloAcceptedMessage, HelloMessage, MessageValidationError, NodeCapability,
-    NodeToControllerMessage, RemoveWorktree, RemoveWorktreeMessage, ValidateMessage,
-    WorktreeFailedMessage, WorktreeReadyMessage, WorktreeRemovalFailedMessage,
-    WorktreeRemovedMessage,
+    CloneRepository, CloneRepositoryMessage, ControllerToNodeMessage, EnsureWorktree,
+    EnsureWorktreeMessage, EventAck, EventAckMessage, ExecutionState, ExecutionStatus,
+    ExecutionStatusMessage, GetExecutionStatus, GetExecutionStatusMessage, Heartbeat,
+    HeartbeatMessage, Hello, HelloAccepted, HelloAcceptedMessage, HelloMessage,
+    MessageValidationError, NodeCapability, NodeToControllerMessage, RemoveWorktree,
+    RemoveWorktreeMessage, ValidateMessage, WorktreeFailedMessage, WorktreeReadyMessage,
+    WorktreeRemovalFailedMessage, WorktreeRemovedMessage,
 };
