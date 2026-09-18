@@ -13,7 +13,8 @@ use ora_contracts::{
     AppEvent, GetPluginConfigurationRequest, ImportPluginRequest, ListMcpHealthRequest,
     ListMcpHealthResponse, McpHealthErrorCode, McpHealthStatus, McpHealthUnknownReason,
     PluginConfigurationCompleteness, PluginSettingValue, ProbeMcpHealthRequest,
-    SavePluginConfigurationRequest, UninstallPluginRequest,
+    ResetPluginConfigurationMode, ResetPluginConfigurationRequest, SavePluginConfigurationRequest,
+    UninstallPluginRequest,
 };
 use ora_db::{DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog};
 use ora_scheduler::Scheduler;
@@ -889,10 +890,33 @@ const HEALTHY_STDIO_CONFIG: &str = r#"{
     }
 }"#;
 
-/// Respawned as a child under the `fake-server-ok.exe` name, acts as a well-behaved MCP server.
+/// A runnable MCP server that records every start, gated by a required Setting.
+///
+/// The required Setting keeps the member ineligible until a complete save, so a test can count how
+/// many times that save actually started the process.
+const COUNTING_STDIO_CONFIG: &str = r#"{
+    "schemaVersion": 1,
+    "settings": {
+        "apiKey": {
+            "type": "string",
+            "title": "API key",
+            "description": "Credential gating the member",
+            "required": true
+        }
+    },
+    "transport": {
+        "type": "stdio",
+        "command": "assets/fake-server-count.exe",
+        "args": ["--exact", "plugin::operations::health_tests::fake_mcp_stdio_server", "--nocapture"]
+    }
+}"#;
+
+/// Respawned as a child under the `fake-server-<mode>.exe` name, acts as a well-behaved MCP server.
 ///
 /// The mode comes from this process's own file name so a plugin package needs no environment
-/// plumbing; under the test binary's normal name the function is a no-op pass.
+/// plumbing; under the test binary's normal name the function is a no-op pass. The `count` mode
+/// additionally appends one line to `starts.log` beside the executable, which lets a test prove how
+/// many times a trigger actually started the server.
 #[test]
 fn fake_mcp_stdio_server() {
     use std::io::{BufRead, Write};
@@ -902,8 +926,19 @@ fn fake_mcp_stdio_server() {
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or_default();
-    if stem.strip_prefix("fake-server-").is_none() {
+    let Some(mode) = stem.strip_prefix("fake-server-") else {
         return;
+    };
+    if mode == "count" {
+        if let Some(directory) = exe.parent() {
+            if let Ok(mut log) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(directory.join("starts.log"))
+            {
+                let _ = writeln!(log, "start");
+            }
+        }
     }
     let stdin = std::io::stdin();
     let mut reader = stdin.lock();
@@ -986,6 +1021,149 @@ fn healthy_stdio_mcp_imports_as_healthy() {
                         },
                         status: McpHealthStatus::Healthy,
                     }]
+                );
+            });
+    });
+}
+
+/// Saving a complete configuration starts the server exactly once and never retries on its own.
+#[test]
+fn save_probes_exactly_once_without_automatic_retry() {
+    ora_logging::with_trace_logging(|| {
+        let temporary = TempDir::new().expect("temp directory");
+        let pool = test_pool(temporary.path());
+        let (plugins, _hub) = test_plugins(temporary.path(), &pool);
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime")
+            .block_on(async {
+                let archive = temporary.path().join("counting-mcp.orax");
+                let server = std::fs::read(std::env::current_exe().expect("test binary"))
+                    .expect("read test binary");
+                write_mcp_orax_with_command(
+                    &archive,
+                    "counting-mcp",
+                    COUNTING_STDIO_CONFIG,
+                    "assets/fake-server-count.exe",
+                    &server,
+                );
+                let plugin_id = plugins
+                    .import(ImportPluginRequest {
+                        path: archive.to_string_lossy().into_owned(),
+                    })
+                    .await
+                    .expect("import counting MCP")
+                    .plugin_id;
+                let starts_log = temporary
+                    .path()
+                    .join("plugins/installed/local/counting-mcp/0.1.0/assets/starts.log");
+
+                // Incomplete required Settings never probe, so the server has not started yet.
+                tokio::time::sleep(Duration::from_millis(150)).await;
+                assert!(
+                    !starts_log.exists(),
+                    "an ineligible member must not be probed"
+                );
+
+                let details = plugins
+                    .get_configuration(GetPluginConfigurationRequest {
+                        plugin_id: plugin_id.clone(),
+                    })
+                    .expect("configuration")
+                    .configuration;
+                plugins
+                    .save_configuration(SavePluginConfigurationRequest {
+                        plugin_id: plugin_id.clone(),
+                        expected_revision: details.revision,
+                        declaration_fingerprint: details.declaration_fingerprint,
+                        values: std::collections::BTreeMap::from([(
+                            "apiKey".to_string(),
+                            PluginSettingValue::String("super-secret-key".into()),
+                        )]),
+                        preserve_setting_ids: Vec::new(),
+                    })
+                    .expect("save configuration");
+                let listed = wait_for_card_health(&plugins, &plugin_id).await;
+                assert_eq!(
+                    listed.entries[0].status,
+                    McpHealthStatus::Healthy,
+                    "the counting server is well behaved"
+                );
+
+                // Give an automatic retry time to appear before asserting that there is none.
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                let starts = std::fs::read_to_string(&starts_log).unwrap_or_default();
+                assert_eq!(
+                    starts.lines().count(),
+                    1,
+                    "save must probe once and never retry: {starts:?}"
+                );
+            });
+    });
+}
+
+/// Reset All makes the member ineligible again, so its Host health row disappears everywhere.
+#[test]
+fn reset_configuration_drops_the_health_row() {
+    ora_logging::with_trace_logging(|| {
+        let temporary = TempDir::new().expect("temp directory");
+        let pool = test_pool(temporary.path());
+        let (plugins, _hub) = test_plugins(temporary.path(), &pool);
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime")
+            .block_on(async {
+                let plugin_id = import_mcp(
+                    &plugins,
+                    temporary.path(),
+                    "resettable-mcp",
+                    SECRET_ENV_STDIO_CONFIG,
+                )
+                .await;
+                let details = plugins
+                    .get_configuration(GetPluginConfigurationRequest {
+                        plugin_id: plugin_id.clone(),
+                    })
+                    .expect("configuration")
+                    .configuration;
+                let saved = plugins
+                    .save_configuration(SavePluginConfigurationRequest {
+                        plugin_id: plugin_id.clone(),
+                        expected_revision: details.revision,
+                        declaration_fingerprint: details.declaration_fingerprint.clone(),
+                        values: std::collections::BTreeMap::from([(
+                            "apiKey".to_string(),
+                            PluginSettingValue::String("super-secret-key".into()),
+                        )]),
+                        preserve_setting_ids: Vec::new(),
+                    })
+                    .expect("save configuration")
+                    .configuration;
+                wait_for_card_health(&plugins, &plugin_id).await;
+
+                plugins
+                    .reset_configuration(ResetPluginConfigurationRequest {
+                        plugin_id: plugin_id.clone(),
+                        declaration_fingerprint: details.declaration_fingerprint,
+                        reset: ResetPluginConfigurationMode::ResetAll {
+                            expected_revision: saved.revision,
+                        },
+                    })
+                    .expect("reset configuration");
+
+                // Clearing the Settings drops the member back to ineligible, so the old identity
+                // must not keep presenting a health row.
+                let listed = plugins
+                    .list_mcp_health(ListMcpHealthRequest { cwd: None })
+                    .expect("list after reset");
+                assert!(
+                    listed
+                        .entries
+                        .iter()
+                        .all(|entry| entry.identity.plugin_id != plugin_id),
+                    "reset must remove the health row: {listed:?}"
                 );
             });
     });

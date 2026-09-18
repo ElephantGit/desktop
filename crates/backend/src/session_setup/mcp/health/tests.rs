@@ -496,6 +496,53 @@ fn explicit_empty_selection_has_no_members_or_backfill() {
     });
 }
 
+/// A non-empty Explicit whitelist backfills only its own members, binding the real Session cwd.
+#[test]
+fn explicit_selection_backfills_only_its_whitelist() {
+    with_scoped_trace(async {
+        let fixture = Fixture::new();
+        let selected = unrunnable_stdio_member(&fixture, "selected-tool");
+        let unselected = unrunnable_stdio_member(&fixture, "unselected-tool");
+        let catalog = FakeCatalog::new(vec![
+            selected.candidate.clone(),
+            unselected.candidate.clone(),
+        ]);
+        let configurations = complete_configurations(&[selected.clone(), unselected.clone()]);
+        let (store, _) = store();
+        let selection =
+            SessionMcpSelection::Explicit(BTreeSet::from([selected.candidate.plugin_id.clone()]));
+        store.clone().spawn_session_observation(
+            catalog.clone(),
+            configurations.clone(),
+            selection,
+            SessionId::new("session-explicit"),
+            fixture.package_root.clone(),
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // The whitelisted member is probed with the Session's real cwd and fails to spawn.
+        assert_eq!(
+            store.status_for(&McpHealthIdentity::for_member(
+                &selected,
+                Some(fixture.package_root.as_path())
+            )),
+            McpHealthStatus::Unhealthy {
+                error_code: McpHealthErrorCode::McpSpawnFailed
+            }
+        );
+        // A member the Session never selected is never probed, even though it is eligible.
+        assert_eq!(
+            store.status_for(&McpHealthIdentity::for_member(
+                &unselected,
+                Some(fixture.package_root.as_path())
+            )),
+            McpHealthStatus::Unknown {
+                reason: McpHealthUnknownReason::NotProbed
+            }
+        );
+    });
+}
+
 /// Invalidating one plugin drops every identity of it and tells clients to re-query.
 #[test]
 fn invalidation_clears_plugin_identities_and_publishes() {

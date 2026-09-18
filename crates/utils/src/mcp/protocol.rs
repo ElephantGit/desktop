@@ -181,4 +181,12 @@ mod tests {
         );
         assert!(initialized_notification().get("id").is_none());
     }
+
+    /// The hard timeout must stay far below a session-setup budget, so a probe can never pose as
+    /// setup and block the path that owns the 30s window.
+    #[test]
+    fn default_probe_timeout_stays_well_below_a_session_setup_budget() {
+        let budget = std::time::Duration::from_secs(30);
+        assert!(super::DEFAULT_PROBE_TIMEOUT < budget / 3);
+    }
 }
