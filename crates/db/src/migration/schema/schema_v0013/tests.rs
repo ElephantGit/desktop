@@ -4,6 +4,79 @@ use ora_logging::with_trace_logging;
 use pretty_assertions::assert_eq;
 use rusqlite::{Connection, params};
 
+/// Adopting the fork's colliding version retains active scopes and installs upstream columns.
+#[test]
+fn adopts_legacy_loop_version_without_rolling_back_history() {
+    with_trace_logging(|| {
+        let (mut connection, latest, _) = fixture();
+        let before_loop = MigrationCatalog::new(
+            latest
+                .target_versions()
+                .iter()
+                .filter(|version| **version < "0011")
+                .map(|version| latest.migration(version).unwrap().clone())
+                .collect(),
+        )
+        .unwrap();
+        reconcile_database_versions(&mut connection, &before_loop, &TestClock::new(2)).unwrap();
+        let scopes = latest.migration("0013").unwrap();
+        let old_sql = scopes.up_sql().replace(
+            "ON workflow_node_runs(scope_id, node_id, COALESCE(iteration, -1))",
+            "ON workflow_node_runs(scope_id, node_id)",
+        );
+        connection.execute_batch(&old_sql).unwrap();
+        connection
+            .execute(
+                "INSERT INTO migrations VALUES ('0011', ?1, ?2, 3)",
+                params![old_sql, scopes.down_sql()],
+            )
+            .unwrap();
+        connection.execute_batch(r#"
+            INSERT INTO workflow_node_runs (id, run_id, node_id, node_type, status, created_at, updated_at)
+            VALUES ('loop', 'run', 'loop', 'loop', 1, 3, 3);
+            INSERT INTO workflow_execution_scopes (id, run_id, parent_loop_node_run_id, round_index, status, state, created_at, updated_at)
+            VALUES ('round', 'run', 'loop', 1, 1, '{"draft":"keep"}', 3, 3);
+            INSERT INTO workflow_node_runs (id, run_id, scope_id, node_id, node_type, status, output, created_at, updated_at)
+            VALUES ('writer', 'run', 'round', 'writer', 'agent', 1, 'partial', 3, 3);
+        "#).unwrap();
+        for _ in 0..2 {
+            reconcile_database_versions(&mut connection, &latest, &TestClock::new(4)).unwrap();
+            crate::migration::reconcile_database(&mut connection, &latest, &TestClock::new(5))
+                .unwrap();
+        }
+        let retained: (String, i64, String, i64, Option<u32>) = connection.query_row(
+            "SELECT scope.state, scope.status, node.output, node.status, node.iteration
+             FROM workflow_execution_scopes scope JOIN workflow_node_runs node ON node.scope_id = scope.id
+             WHERE node.id = 'writer'", [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        ).unwrap();
+        assert_eq!(
+            retained,
+            (r#"{"draft":"keep"}"#.into(), 1, "partial".into(), 1, None)
+        );
+        let versions = connection
+            .prepare("SELECT version FROM migrations ORDER BY version")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(versions, latest.target_versions());
+        connection
+            .prepare("SELECT mcp_selection FROM sessions")
+            .unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM workflow_scope_downgrade_archive",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
+    });
+}
+
 /// Uses the production catalog and startup reconciler, including persisted downgrade statements.
 fn fixture() -> (Connection, MigrationCatalog, MigrationCatalog) {
     let latest = default_migration_catalog().unwrap();
@@ -11,7 +84,7 @@ fn fixture() -> (Connection, MigrationCatalog, MigrationCatalog) {
         .target_versions()
         .iter()
         .copied()
-        .filter(|version| *version < "0011")
+        .filter(|version| *version < "0013")
         .collect();
     let previous = MigrationCatalog::new(
         versions

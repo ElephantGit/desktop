@@ -2,7 +2,7 @@
 
 English | [中文](workflow-execution-scopes.zh.md)
 
-Migration `0011` adds execution identity for the [Loop implementation](workflow-loop-plan.md). It does not enable Loop scheduling.
+Migration `0013` adds execution identity for the [Loop implementation](workflow-loop-plan.md). It does not enable Loop scheduling.
 
 `workflow_execution_scopes` stores roots and individual rounds. A root has no parent, round index, status, or state blob; its current execution state continues to belong to the existing run payload. A round has a parent Loop NodeRun, a one-based index from 1 to 100, a lifecycle status, and JSON state. `workflow_run_root_scopes` identifies the current root for each run. Historical roots remain after restart.
 

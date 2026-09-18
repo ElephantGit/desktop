@@ -571,6 +571,7 @@ mod tests {
             }),
             condition_config: None,
             output_config: None,
+            iteration_config: None,
         };
         let raw_texts = block_texts(assemble_workflow_prompt(WorkflowPromptRequest {
             node: &node,
@@ -676,6 +677,7 @@ mod tests {
             }),
             condition_config: None,
             output_config: None,
+            iteration_config: None,
         };
         let texts = block_texts(assemble_workflow_prompt(WorkflowPromptRequest {
             node: &node,

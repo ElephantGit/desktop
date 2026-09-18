@@ -20,7 +20,7 @@ Stdio 映射为 ACP `McpServer::Stdio`，并重新检查命令是否为当前插
 
 运行中的会话仅在内存中保存 Desired 与 Active MCP 版本。安装、更新、卸载插件，以及保存、清除、恢复插件设置时，都会发送不包含凭据的唤醒通知。空闲会话立即通过 `session/load` 刷新；正在处理请求的会话在当前轮次结束后刷新。刷新期间阻止新请求进入。成功后推进 Active；刷新中出现更新的 Desired 时保留待处理状态。失败只阻塞当前会话，下次发送时重试，不继续使用过期配置。已停止的会话不在后台刷新。
 
-工作流会话在首次创建、恢复、重建和刷新时均保留节点选择。Actor 重新创建后，通过现有节点运行与会话的关联，读取运行所引用的发布快照。关联的执行数据缺失或无效时直接报错，不回退为自动发现。修改草稿不会影响已有运行的选择。
+工作流会话在首次创建时把节点选择直接持久化到 Session 行，并在恢复、重建、切换 Agent 和刷新时读取该值。恢复过程不再通过节点运行关联反推权限，因此关联缺失或成为孤儿数据时，也不会把显式选择扩大为自动发现。由于尚无用户使用此处的 MCP 授权，迁移 `0011` 将所有历史会话统一设为空显式选择，不读取工作流关联或快照。因此，已有普通聊天也不会自动发现 MCP。新建普通会话由业务代码明确选择自动发现；新建工作流会话保存节点的显式选择。修改草稿不会影响已有运行的选择。
 
 选中插件的版本和设置仍是实时输入，继续使用现有安全刷新边界。白名单以外的插件变化不会改变当前会话的 Desired 版本。编辑器开关用于配置后续运行，不用于即时修改正在运行的会话。
 
@@ -32,8 +32,13 @@ MCP 刷新、Skill Effect 变更和 Agent 替换共用 Agent Session Barrier，�
 
 Agent 适配器应把传入的 `mcpServers` 列表视为该会话的完整集合。Ora 保留共享 Agent 进程模型，不为每个会话创建独立 OpenCode 进程。OpenCode 截至 1.18.30 仍会在进程范围保留通过 ACP 注入的 MCP 注册，因此 Ora 虽然正确发送空列表，OpenCode 仍可能向当前会话暴露同一进程中较早会话注册的服务。该 provider 一致性缺口由 [OpenCode issue #32371](https://github.com/anomalyco/opencode/issues/32371) 跟踪。
 
+等待时长是非活跃窗口，并随投递内容放宽，因为连接投递的服务正是一个合规 setup 中最慢的部分：携带 MCP 服务的 `session/new` 或 `session/load` 最多等待 120 秒无响应（而不是 30 秒），期间 Agent 发出的 setup 通知会重置窗口（见[ACP Agent 运行时](agent-runtime.zh.md)）。
+
+ACP 1.6.0 不为 MCP 连接提供任何回执：`NewSessionResponse` 和 `LoadSessionResponse` 没有 MCP 状态字段，`SessionUpdate` 也没有 MCP 变体，因此 setup 成功只表示完整列表已被投递并接受，永远不表示 Agent 已完成连接。协议文档中的 session-setup 时序要求 Agent *先*连接投递的服务、*再*回答；先回答、后在后台连接的 Agent，可能在连接完成前就开始处理 prompt，且不产生任何 Host 可见信号。这个窗口属于 Agent 一致性责任：Gemini CLI 曾有完全相同的竞态（[gemini-cli #18893](https://github.com/google-gemini/gemini-cli/issues/18893)），其修复方式是让 prompt 处理等待 MCP 初始化完成（[#20205](https://github.com/google-gemini/gemini-cli/pull/20205)）；Claude Code 也在 [claude-code #83555](https://github.com/anthropics/claude-code/issues/83555) 跟踪同类首轮工具竞态。在不改变投递语义的前提下进行 Host 侧连接观察，是 `specs` 中另一项尚在提案阶段的决策。
+
 ## 安全与兼容
 
 设置值只能存在于配置存储、短暂的内存快照和发送给可信 Agent 的 ACP 消息中。不得进入 Effect、SQLite、工作区文件、日志、错误、UI DTO、版本摘要或 Agent 进程环境变量。日志只能包含上述不含秘密的版本身份信息。工作流只保存插件 ID 和开关。错误仅包含插件 ID、设置 ID、传输类型和稳定错误码。
 
 Ora 不会为 MCP 创建、修改或删除 `.mcp.json`、OpenCode JSON/JSONC、所有权旁文件、Git 排除文件或其他工作区路径。已有用户 MCP 文件保持原样。本实现没有从未发布的文件物化方案迁移的步骤。
+因此，安装 MCP 只表示把它加入全局可选目录；工作流节点的显式选择才是 Session 级授权决定。

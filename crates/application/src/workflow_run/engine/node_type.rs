@@ -5,9 +5,9 @@ use thiserror::Error;
 /// Identifies the executable kind of one workflow node.
 ///
 /// Naming mirrors the backend column `workflow_node_runs.node_type`; the wire field that produces
-/// this value is React Flow's `data.kind`. `Start`, `Agent`, `Condition`, and `Output` are
-/// executable; the remaining variants are recognized so the parser can reject graphs that contain
-/// them instead of silently skipping or downgrading them.
+/// this value is React Flow's `data.kind`. `Start`, `Agent`, `Condition`, `Output`, and
+/// `Iteration` are executable; the remaining variants are recognized so the parser can reject
+/// graphs that contain them instead of silently skipping or downgrading them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeType {
     Start,
@@ -17,6 +17,9 @@ pub enum NodeType {
     Tool,
     Output,
     Loop,
+    /// The foreach composite runtime: drives its region once per array element
+    /// (ADR "iteration composite runtime" D1).
+    Iteration,
 }
 
 /// Returned when a wire node-type string has no registered variant.
@@ -35,6 +38,7 @@ impl NodeType {
             Self::Tool => "tool",
             Self::Output => "output",
             Self::Loop => "loop",
+            Self::Iteration => "iteration",
         }
     }
 
@@ -45,8 +49,22 @@ impl NodeType {
     pub fn supported(self) -> bool {
         matches!(
             self,
-            Self::Start | Self::Agent | Self::Condition | Self::Output | Self::Loop
+            Self::Start
+                | Self::Agent
+                | Self::Condition
+                | Self::Output
+                | Self::Loop
+                | Self::Iteration
         )
+    }
+
+    /// Returns whether this node type owns a composite region whose rows a restart must hand
+    /// back to its runtime instead of failing them (ADR "node runtime orchestration" D4).
+    ///
+    /// Only composite kinds answer `true`; the boot sweep and reconcile logic use this instead
+    /// of node-type literals so new composite runtimes extend recovery by their kind alone.
+    pub fn is_composite(self) -> bool {
+        matches!(self, Self::Iteration)
     }
 }
 
@@ -62,6 +80,7 @@ impl FromStr for NodeType {
             "tool" => Ok(Self::Tool),
             "output" => Ok(Self::Output),
             "loop" => Ok(Self::Loop),
+            "iteration" => Ok(Self::Iteration),
             _ => Err(UnknownNodeType(value.to_string())),
         }
     }

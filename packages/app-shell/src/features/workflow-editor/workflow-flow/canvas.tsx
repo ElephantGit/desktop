@@ -226,6 +226,27 @@ function WorkflowCanvasInner({
   >(null);
   const { deleteElements, fitView, screenToFlowPosition, setViewport } =
     useReactFlow<WorkflowCanvasNode, Edge>();
+  // Collapsed iteration frames hide their region members: the members stay in the
+  // graph (the frozen structure is authoritative); only the canvas presentation folds.
+  const collapsedIterations = useMemo(() => {
+    const collapsed = new Set<string>();
+    for (const node of nodes) {
+      if (node.data.kind === "iteration" && node.data.collapsed === true) {
+        collapsed.add(node.id);
+      }
+    }
+    return collapsed;
+  }, [nodes]);
+  // Region member counts feed the iteration frames' collapsed summary badge.
+  const memberCountByIteration = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const node of nodes) {
+      if (node.parentId !== undefined) {
+        counts.set(node.parentId, (counts.get(node.parentId) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [nodes]);
   const canvasNodes = useMemo<WorkflowCanvasNode[]>(
     () => [
       ...annotations.map((annotation) => ({
@@ -242,9 +263,21 @@ function WorkflowCanvasInner({
             : node.selected
               ? WORKFLOW_SELECTED_NODE_Z_INDEX
               : WORKFLOW_NODE_Z_INDEX,
+        ...(node.parentId !== undefined &&
+        collapsedIterations.has(node.parentId)
+          ? { hidden: true }
+          : {}),
+        ...(node.data.kind === "iteration"
+          ? {
+              data: {
+                ...node.data,
+                regionMemberCount: memberCountByIteration.get(node.id) ?? 0,
+              },
+            }
+          : {}),
       })),
     ],
-    [annotations, nodes],
+    [annotations, nodes, collapsedIterations, memberCountByIteration],
   );
   const reconnectingEdgeIdRef = useRef<string | null>(null);
   const edgeIdByDirectedPair = useMemo(() => {
@@ -259,7 +292,9 @@ function WorkflowCanvasInner({
     [nodes],
   );
 
-  /** Rejects self-loops, duplicate edges, and connections that cross Loop scope boundaries. */
+  /** Rejects self-loops, duplicate directed edges, and edges that cross an iteration
+   * region boundary in a direction the composite runtime cannot honor: a member's edge
+   * must stay inside its region, and only the owning iteration may enter its region. */
   function isValidConnection(connection: Connection | Edge): boolean {
     if (
       connection.source === null ||
@@ -271,6 +306,29 @@ function WorkflowCanvasInner({
     if (
       nodeContainerById.get(connection.source) !==
       nodeContainerById.get(connection.target)
+    ) {
+      return false;
+    }
+    const iterationIds = new Set(
+      nodes
+        .filter((node) => node.data.kind === "iteration")
+        .map((node) => node.id),
+    );
+    const parentIdOf = (nodeId: string): string | null => {
+      const parent = nodes.find((node) => node.id === nodeId)?.parentId;
+      return parent !== undefined && iterationIds.has(parent) ? parent : null;
+    };
+    const sourceOwner = parentIdOf(connection.source);
+    const targetOwner = parentIdOf(connection.target);
+    // A member's out-edge must stay inside its own region (region closure).
+    if (sourceOwner !== null && targetOwner !== sourceOwner) {
+      return false;
+    }
+    // Only the owning iteration may enter its region.
+    if (
+      targetOwner !== null &&
+      connection.source !== targetOwner &&
+      sourceOwner !== targetOwner
     ) {
       return false;
     }

@@ -2,15 +2,17 @@
 
 English | [中文](workflow-loop-plan.zh.md)
 
-Status: complete (P1–P5). Updated: 2026-09-16.
+Status: complete (P1–P5). Updated: 2026-09-18.
 
-Progress: schema-v2 containers, typed feedback, migration `0011`, durable scope scheduling, backend Session execution, generated contracts, editor authoring, isolated history projection, and Theater round inspection are implemented. The Loop scheduler now lives in its own private module; the main engine remains below the repository's production-code size target.
+Progress: schema-v2 containers, typed feedback, migration `0013`, durable scope scheduling, backend Session execution, generated contracts, editor authoring, isolated history projection, and Theater round inspection are implemented. Loop and foreach composite scheduling live in separate private modules and pass the repository's module-size gate.
+
+Upstream integration (2026-09-18): merged `ora-space/desktop` main at `f4b869a8`, retaining both Loop feedback scopes and foreach Iteration rounds. A mixed real-SQLite execution test verifies two rounds of each composite and the committed variables delivered to every Agent dispatch. Migration tests verify adoption of the old Loop `0011` without losing active rounds or output. Full `task test` passed: 1,480 app-shell tests, 70 workflow-runtime tests, Rust workspace tests, 83 Tauri tests, and 12 desktop integration tests; existing intentional ignores remain.
 
 Acceptance evidence: parser and round-operation tests cover scoped ownership, cycles, visibility, type errors, simultaneous feedback, early termination, and exact limits. Real-SQLite repository and backend suites cover atomic round advancement, history, restart generations, cancellation/failure settlement, recovery, and Session lifecycle. Frontend suites cover codec round trips, atomic Loop-group authoring/deletion, and scope-isolated history selection. The final `task test` run on 2026-09-16 passed contract and feature checks, all lint and architecture gates, all frontend suites (including 1,422 app-shell and 62 workflow-runtime tests), the Rust workspace, 83 Tauri tests with one intentional subprocess-only ignore, and 12 desktop integration tests.
 
 Round computation remains a pure operation: initial carried values, simultaneous typed feedback, termination before limit failure, and named exports. Fresh round pools import only globals and upstream outer values, retain inherited writer ownership, and omit previous child outputs. The durable scheduler consumes these operations and commits each next-round or parent-completion transition atomically.
 
-Migration `0011` introduces root/round identities, scope membership, and duplicate-dispatch constraints. Restart creates a fresh root in the existing repository transaction. Downgrade archives scope and node evidence, settles active Loop runs, and hides child instances from old flat readers; re-upgrade retains the archive without resuming old rounds. Typed repository operations now create, advance, settle, list, and recover these scopes. See [execution scope storage](workflow-execution-scopes.md).
+Migration `0013` introduces root/round identities, scope membership, and duplicate-dispatch constraints. Restart creates a fresh root in the existing repository transaction. Downgrade archives scope and node evidence, settles active Loop runs, and hides child instances from old flat readers; re-upgrade retains the archive without resuming old rounds. Typed repository operations now create, advance, settle, list, and recover these scopes. See [execution scope storage](workflow-execution-scopes.md).
 
 ## Goal and design baseline
 

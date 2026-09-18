@@ -38,11 +38,16 @@ Success advances Active revision; a newer Desired that arrives during load stays
 blocks only that Session, and the next prompt retries instead of using the old configuration.
 Stopped Sessions do not refresh in the background.
 
-A workflow Session retains its node-local selection through creation, restore, provider rebuild,
-and live refresh. After an actor is recreated, its selection comes from the existing node-run
-Session relationship and the run's published snapshot. Missing or invalid associated execution
-metadata fails closed rather than reverting to automatic discovery. Editing a draft cannot change
-an existing run's selection. Plugin package versions and configuration values remain live inputs;
+A workflow Session persists its node-local selection on the Session row at creation and retains it
+through restore, provider rebuild, Agent switching, and live refresh. Recovery reads that owned
+value directly; it never reconstructs authority from a node-run relationship, so missing or
+orphaned workflow metadata cannot widen an explicit selection to automatic discovery. Migration
+`0011` gives all existing Sessions an empty explicit selection without consulting workflow metadata,
+since MCP authorization has not yet been used by users. Existing ordinary chats therefore do not
+automatically discover MCPs either. New ordinary Sessions explicitly select automatic discovery;
+new workflow Sessions persist their node's explicit selection. Editing a draft cannot change an
+existing run's selection.
+Plugin package versions and configuration values remain live inputs;
 changes outside the allowlist do not change that Session's Desired revision. The editor switches
 configure later runs; they are not controls for changing a running Session.
 
@@ -65,6 +70,24 @@ so an empty list is delivered correctly but may not remove a server registered b
 Session in the same OpenCode process. This provider conformance gap is tracked upstream in
 [OpenCode issue #32371](https://github.com/anomalyco/opencode/issues/32371).
 
+Setup waits are inactivity windows that widen with delivery, because connecting the delivered
+servers is the slow part of a conforming setup: a `session/new` or `session/load` that carries MCP
+servers waits up to 120 seconds of silence instead of 30, and setup notifications the agent emits
+meanwhile rearm the window (see [ACP Agent Runtime](agent-runtime.md)).
+
+ACP 1.6.0 provides no receipt for MCP connections — `NewSessionResponse` and `LoadSessionResponse`
+carry no MCP status, and `SessionUpdate` has no MCP variant — so setup success means the complete
+list was delivered and accepted, never that the agent finished connecting. The protocol's
+documented session-setup sequence has the agent connect the delivered servers _before_ answering;
+an agent that answers first and connects in the background can serve a prompt that arrives before
+those connections complete, with no host-visible signal. That window is an agent conformance
+responsibility: Gemini CLI fixed the identical race by making prompt handling wait for MCP
+initialization ([gemini-cli #18893](https://github.com/google-gemini/gemini-cli/issues/18893), fixed in
+[#20205](https://github.com/google-gemini/gemini-cli/pull/20205)), and Claude Code tracks the same
+class of first-turn tool race in
+[claude-code #83555](https://github.com/anthropics/claude-code/issues/83555). Host-side connection
+observation without changing delivery semantics remains a separate proposed decision in `specs`.
+
 ## Security and compatibility
 
 Setting values may exist in the Configuration Store, a short-lived in-memory Snapshot, and the
@@ -76,3 +99,5 @@ stable code only.
 Ora does not create, modify, or delete `.mcp.json`, OpenCode JSON/JSONC, ownership sidecars, Git
 exclude files, or any other Workspace path for MCP. Existing user-authored MCP configuration is
 left untouched. There is no runtime migration off the unpublished file-materialization design.
+Installing an MCP therefore adds it to the global catalog only; a workflow node's explicit
+selection is the Session-level authorization decision.

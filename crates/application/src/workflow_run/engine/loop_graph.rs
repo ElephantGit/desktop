@@ -90,20 +90,30 @@ pub(super) fn parse_scoped_graph(source: &str) -> Result<WorkflowGraph, GraphErr
             return Err(GraphError::DuplicateNodeId { node_id: id.into() });
         }
         if node["data"]["kind"] == "loop" {
-            if owner.is_some() {
+            if owner.is_some() || node.get("parentId").is_some() {
                 return Err(invalid("nested Loops are not supported"));
             }
             let config = LoopConfig::parse(node["data"]["loopConfig"].clone())
                 .map_err(|reason| invalid(&format!("loop {id}: {reason}")))?;
             configs.insert(id.to_string(), config);
         }
+        if owner.is_some() && node["data"]["kind"] == "iteration" {
+            return Err(invalid("nested composite nodes are not supported"));
+        }
         // Renderer parentage is derived by the editor and must agree when serialized.
-        if let Some(parent) = node.get("parentId")
+        if owner.is_some()
+            && let Some(parent) = node.get("parentId")
             && parent.as_str() != owner.as_deref()
         {
             return Err(invalid("parentId disagrees with data.containerId"));
         }
-        scoped_nodes.entry(owner).or_default().push(node.clone());
+        let mut scoped_node = node.clone();
+        if owner.is_some()
+            && let Some(object) = scoped_node.as_object_mut()
+        {
+            object.remove("parentId");
+        }
+        scoped_nodes.entry(owner).or_default().push(scoped_node);
     }
     for owner in owners.values().flatten() {
         if !configs.contains_key(owner) {

@@ -2,7 +2,7 @@
 
 [English](workflow-execution-scopes.md) | 中文
 
-迁移 `0011` 为 [Loop 实现](workflow-loop-plan.zh.md)增加执行身份，但不开放 Loop 调度。
+迁移 `0013` 为 [Loop 实现](workflow-loop-plan.zh.md)增加执行身份，但不开放 Loop 调度。
 
 `workflow_execution_scopes` 存储根作用域与各轮次。根作用域没有父节点、轮次序号、状态或状态数据，其当前执行状态仍由现有 Run payload 持有。轮次作用域包含父 Loop NodeRun、从 1 到 100 的轮次序号、生命周期状态及 JSON 状态。`workflow_run_root_scopes` 指向每个运行的当前根作用域。重跑后保留历史根作用域。
 

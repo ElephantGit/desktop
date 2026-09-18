@@ -1,5 +1,6 @@
 //! Atomic persistence operations for isolated Loop rounds.
 
+use super::iteration::write_pool_variable;
 use super::*;
 
 /// Creates a round scope and its Start node in one transaction.

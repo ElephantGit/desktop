@@ -29,6 +29,7 @@ const AVAILABLE_NODE_KINDS = new Set<WorkflowNodeKind>([
   "agent",
   "condition",
   "loop",
+  "iteration",
   "output",
 ]);
 

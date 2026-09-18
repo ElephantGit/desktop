@@ -40,11 +40,18 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
   insert trigger. Project and task Workspace repositories create and seed the Scope within their
   write transaction using an injected audit clock. Existing Effect rows and authority are retained.
   Rollback restores recovery detection to the old column and reinstalls the Workspace trigger.
+- Migration `0011` persists the MCP selection owned by each Session. All existing Sessions
+  default to an empty explicit set because MCP authorization has not yet been used by users;
+  migration does not inspect workflow metadata. New Sessions explicitly persist their selection,
+  and rollback removes the column.
 - Target requests use pending, claimed, blocked, and retry-scheduled states. Generation and fencing
   establish authority; audit time never grants a claim or changes retry eligibility.
-- Migration `0011` adds workflow root/round identities and scoped node uniqueness. Its downgrade
+- Migration `0012` adds foreach iteration indices to node runs.
+- Migration `0013` adds workflow root/round identities and scoped node uniqueness. Its downgrade
   preserves scope/node evidence in an append-only archive while terminalizing active Loop runs;
   the archive survives re-upgrade. See [execution scope storage](../../../../docs/workflow-execution-scopes.md).
+- The unpublished Loop branch previously used `0011`. Startup recognizes its exact SQL snapshot,
+  installs upstream `0011`/`0012`, and adopts it as `0013` atomically, preserving live scope history.
 - Every Workspace has one Scope. Publishing a new Skill Source seeds existing Scopes; creating a
   Workspace seeds its new Scope from published Sources in the same transaction.
 

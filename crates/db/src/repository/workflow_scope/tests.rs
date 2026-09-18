@@ -55,6 +55,7 @@ fn restart_rotates_root_and_preserves_node_history() {
             .unwrap();
         assert_ne!(root, "root:run");
         let start = NodeRunToStart {
+            iteration: None,
             id: WorkflowNodeRunId::new("new-start"),
             scope_id: ora_domain::WorkflowScopeId::new(root.clone()),
             node_id: "start".into(),
@@ -62,6 +63,7 @@ fn restart_rotates_root_and_preserves_node_history() {
             input: None,
         };
         let stale = NodeRunToStart {
+            iteration: None,
             id: WorkflowNodeRunId::new("stale-start"),
             scope_id: ora_domain::WorkflowScopeId::new("root:run"),
             ..start.clone()
@@ -172,6 +174,7 @@ fn advances_loop_rounds_without_exposing_partial_child_state() {
             round_index: 1,
             state: round_state.into(),
             start_node_run: NodeRunToStart {
+                iteration: None,
                 id: WorkflowNodeRunId::new("round-1-start"),
                 scope_id: round_one_id.clone(),
                 node_id: "start".into(),
@@ -208,6 +211,7 @@ fn advances_loop_rounds_without_exposing_partial_child_state() {
             AdvanceWorkflowRunResult::Advanced
         );
         let child = NodeRunToStart {
+            iteration: None,
             id: WorkflowNodeRunId::new("round-1-child"),
             scope_id: round_one_id.clone(),
             node_id: "child".into(),
@@ -243,6 +247,7 @@ fn advances_loop_rounds_without_exposing_partial_child_state() {
             round_index: 2,
             state: round_state.into(),
             start_node_run: NodeRunToStart {
+                iteration: None,
                 id: WorkflowNodeRunId::new("round-2-start"),
                 scope_id: round_two_id.clone(),
                 node_id: "start".into(),
@@ -252,6 +257,7 @@ fn advances_loop_rounds_without_exposing_partial_child_state() {
         };
         let invalid_round_two = LoopRoundToStart {
             start_node_run: NodeRunToStart {
+                iteration: None,
                 scope_id: WorkflowScopeId::new("wrong-scope"),
                 ..round_two.start_node_run.clone()
             },
@@ -383,6 +389,7 @@ fn child_failure_settles_the_loop_scope() {
             round_index: 1,
             state: r#"{"variablePool":{"revision":0,"catalog":{},"values":{}},"conditionDecisions":{}}"#.into(),
             start_node_run: NodeRunToStart {
+            iteration: None,
                 id: WorkflowNodeRunId::new("round-start"),
                 scope_id: scope_id.clone(),
                 node_id: "start".into(),
@@ -404,6 +411,7 @@ fn child_failure_settles_the_loop_scope() {
             )
             .unwrap();
         let failed = NodeRunToStart {
+            iteration: None,
             id: WorkflowNodeRunId::new("failed-child"),
             scope_id: scope_id.clone(),
             node_id: "failed".into(),
@@ -411,6 +419,7 @@ fn child_failure_settles_the_loop_scope() {
             input: None,
         };
         let sibling = NodeRunToStart {
+            iteration: None,
             id: WorkflowNodeRunId::new("sibling-child"),
             scope_id: scope_id.clone(),
             node_id: "sibling".into(),
@@ -427,7 +436,13 @@ fn child_failure_settles_the_loop_scope() {
 
         assert_eq!(
             repository
-                .fail_node(&failed.id, "boom".into(), None, /*now*/ 5)
+                .fail_node(
+                    &failed.id,
+                    "boom".into(),
+                    None,
+                    ora_application::FailurePropagation::Run,
+                    /*now*/ 5
+                )
                 .unwrap(),
             AdvanceWorkflowRunResult::Advanced
         );

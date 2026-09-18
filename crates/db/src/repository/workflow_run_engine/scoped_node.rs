@@ -1,5 +1,6 @@
 //! Node completion and failure transactions shared by root and Loop scopes.
 
+use super::iteration::write_pool_variable;
 use super::*;
 
 /// Completes one node and writes its outputs to the owning execution scope.
@@ -16,10 +17,10 @@ pub(super) fn complete(
         .pool
         .with_connection_mut(|connection| {
             let transaction = Transaction::new(connection, TransactionBehavior::Immediate)?;
-            let Some((run_id, node_id, node_type, status, run_payload, scope_id, root_scope_id, scope_state)) = transaction
+            let Some((run_id, node_id, node_type, status, run_payload, scope_id, root_scope_id, scope_state, iteration)) = transaction
                 .query_row(
                     "SELECT nr.run_id, nr.node_id, nr.node_type, nr.status, wr.payload,
-                            nr.scope_id, root.scope_id, scope.state
+                            nr.scope_id, root.scope_id, scope.state, nr.iteration
                      FROM workflow_node_runs nr
                      JOIN workflow_runs wr ON wr.id = nr.run_id
                      JOIN workflow_run_root_scopes root ON root.run_id = nr.run_id
@@ -36,6 +37,7 @@ pub(super) fn complete(
                             row.get::<_, String>(5)?,
                             row.get::<_, String>(6)?,
                             row.get::<_, Option<String>>(7)?,
+                            row.get::<_, Option<u32>>(8)?,
                         ))
                     },
                 )
@@ -57,6 +59,7 @@ pub(super) fn complete(
                     &run_id,
                     &node_id,
                     &node_type,
+                    iteration,
                     output.as_deref(),
                     structured_output.as_ref(),
                     run_payload.as_deref(),
@@ -106,6 +109,7 @@ pub(super) fn fail(
     node_run_id: &WorkflowNodeRunId,
     error: String,
     output: Option<String>,
+    propagation: FailurePropagation,
     now: i64,
 ) -> Result<AdvanceWorkflowRunResult, RepositoryError> {
     repository
@@ -152,6 +156,13 @@ pub(super) fn fail(
                     now,
                 ],
             )?;
+            if propagation == FailurePropagation::Composite {
+                rewrite_current_nodes(&transaction, &WorkflowRunId::new(run_id), now, |nodes| {
+                    nodes.retain(|id| id != &node_id);
+                })?;
+                transaction.commit()?;
+                return Ok(AdvanceWorkflowRunResult::Advanced);
+            }
             transaction.execute(
                 "UPDATE workflow_node_runs SET status = ?2,
                         error = COALESCE(error, '{\"reason\":\"sibling_failed\"}'),
