@@ -145,7 +145,8 @@ impl Drop for RawTcpPeer {
 ///
 /// The stdio command is a regular file inside the package that no platform can execute — a missing
 /// interpreter for Unix and an unusable image for Windows — so both reach `mcp_spawn_failed`
-/// without depending on the host's installed programs.
+/// without depending on the host's installed programs. The archive marks it executable because
+/// Unix discovery requires that bit before a command may be declared at all.
 fn write_mcp_orax(path: &Path, identifier: &str, config: &str) {
     let manifest = format!(
         "resolver = 1\nidentifier = \"{identifier}\"\nnamespace = \"official\"\nkind = \"mcp\"\nversion = \"0.1.0\"\ndescription = \"MCP probe fixture\"\n"
@@ -161,7 +162,7 @@ fn write_mcp_orax(path: &Path, identifier: &str, config: &str) {
         .expect("config");
     writer.write_all(config.as_bytes()).expect("write config");
     writer
-        .start_file("assets/server", options)
+        .start_file("assets/server", options.unix_permissions(0o755))
         .expect("command file");
     writer
         .write_all(b"#!/nonexistent-ora-probe-interpreter\n")
@@ -179,28 +180,7 @@ async fn import_mcp(plugins: &Plugins, root: &Path, identifier: &str, config: &s
         })
         .await
         .expect("import MCP package");
-    make_command_executable(root, identifier);
     response.plugin_id
-}
-
-/// Grants the extracted command an execute bit where the platform requires one.
-fn make_command_executable(root: &Path, identifier: &str) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let command = root
-            .join("plugins/installed/official")
-            .join(identifier)
-            .join("0.1.0/assets/server");
-        if command.is_file() {
-            std::fs::set_permissions(&command, std::fs::Permissions::from_mode(0o755))
-                .expect("make command executable");
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (root, identifier);
-    }
 }
 
 /// Polls the card health view until the named plugin leaves `Unknown(not_probed)`.
