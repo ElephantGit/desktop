@@ -1,4 +1,5 @@
 //! Independent Node storage. The open database owns the process-wide execution lease.
+mod controller;
 mod execution;
 mod model;
 mod process;
@@ -34,6 +35,8 @@ pub enum Error {
     InvalidSchema,
     #[error("configured NodeId does not match the persistent identity")]
     NodeMismatch,
+    #[error("controller ownership mismatch or unclaimed historical execution")]
+    ControllerMismatch,
     #[error("execution identity conflict")]
     IdentityConflict,
     #[error("resource ownership conflict")]

@@ -13,7 +13,7 @@ The workspace's bundled SQLite version is shared; no older engine or host schema
 
 Opening a database holds an exclusive OS file lock for its lifetime. SQLite uses its default
 rollback journal and FULL synchronous writes. A new database receives application ID `0x4f52414e`
-and schema version 3. Exact version 1/2 schemas migrate transactionally after identity and integrity
+and schema version 4. Exact version 1/2/3 schemas migrate transactionally after identity and integrity
 validation, preserving executions, results and pending events. Existing empty files, foreign databases, unsupported versions, directories
 and corrupt databases are rejected without rebuilding them. The persistent NodeId survives
 reopening; each Node runtime generates a fresh NodeIncarnationId. An explicit identity mismatch
@@ -24,6 +24,12 @@ Version 3 adds `execution_identities`, `clone_executions`, `clone_outbox` and `p
 The common identity table prevents clone/Worktree key collisions. Process associations now reference
 that table; migration copies every original association without rewriting RunSpec or inventing outcomes.
 Old version-2 binaries reject version 3 before migration; downgrading does not reset or recreate this file.
+
+Version 4 adds a deployment-selected `controller_binding` and `execution_controllers`. The binding is
+immutable across restart; a different Controller is rejected. A trigger attributes only newly accepted
+clones in the acceptance transaction. Migration and retransmission never adopt unclaimed historical
+executions. Controller-scoped replay excludes those records without deleting their original outbox.
+Old version-3 binaries refuse version 4 rather than interpreting it as their own schema.
 Clone persistence is described in [repository acquisition](repository-acquisition.md).
 The complete command is stored separately from the resolved target, which freezes the canonical
 binding, authorized roots, task path, branch and base commit. Unique operation/execution identities

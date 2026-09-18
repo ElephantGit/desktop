@@ -11,7 +11,7 @@ guardian 分别拥有独立日志。OS 锁排除另一个 Node 数据库所有�
 SQLite 使用 workspace 统一的 bundled 版本，不导入旧引擎或 host schema。
 
 数据库打开期间持有独占 OS 文件锁。SQLite 使用默认 rollback journal 和 FULL 同步写入。
-新库的 application ID 为 `0x4f52414e`，schema version 为 3。精确 v1／v2 结构在身份与完整性校验后事务迁移，
+新库的 application ID 为 `0x4f52414e`，schema version 为 4。精确 v1／v2／v3 结构在身份与完整性校验后事务迁移，
 保留执行、结果与待确认事件。已有空文件、其他数据库、不支持的版本、
 目录和损坏数据库均拒绝打开，不自动重建。重开保留 NodeId，每个 Node 运行实例生成新的
 NodeIncarnationId；显式配置身份不匹配时初始化失败。
@@ -20,6 +20,10 @@ NodeIncarnationId；显式配置身份不匹配时初始化失败。
 v3 新增 `execution_identities`、`clone_executions`、`clone_outbox` 和 `process_outcomes`。
 共享身份表阻止 clone／Worktree 复用身份；进程关联改为引用该表，迁移保留原关联和 RunSpec，
 不编造退出结果。旧 v2 程序会在迁移前拒绝 v3，降级不重置或重建此文件。
+
+v4 新增部署指定的 `controller_binding` 和 `execution_controllers`。绑定跨重启保持，拒绝其他 Controller。
+触发器只在接受事务内为新 clone 记录归属；迁移和重传不认领无归属的历史执行。
+Controller 专属重放排除这些历史记录，但不删除原 outbox。旧 v3 程序拒绝 v4，不按旧 schema 误读。
 clone 持久边界见[仓库获取](repository-acquisition.zh.md)。
 完整命令与解析后的目标分别存储；目标冻结规范路径绑定、授权根、任务路径、分支和 base commit。
 operation／execution 唯一约束阻止身份改绑。Git 开始前预留 active 资源的 Workspace、路径和仓库内分支。

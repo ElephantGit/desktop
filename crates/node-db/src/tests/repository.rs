@@ -314,3 +314,47 @@ fn clone_acceptance_failure_leaves_no_identity_or_reservation() {
     );
     assert_eq!(db.recoverable_clones().unwrap(), vec![record]);
 }
+
+/// Migration binds only future acceptances; neither replay nor a new deployment adopts old responsibility.
+#[test]
+fn controller_binding_preserves_unclaimed_history_and_survives_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut db = NodeDatabase::open(&path, NodeIdentity::Discover).unwrap();
+    let (old, target) = clone_fixture(db.node_id(), dir.path());
+    let original = db.accept_clone(&old, &target).unwrap();
+    drop(db);
+    Connection::open(&path).unwrap().execute_batch("DROP TRIGGER bind_new_clone; DROP TABLE execution_controllers; DROP TABLE controller_binding; PRAGMA user_version=3;").unwrap();
+    let mut db = NodeDatabase::open(&path, NodeIdentity::Discover).unwrap();
+    let owner = ControllerId::new("owner");
+    db.bind_controller(&owner).unwrap();
+    assert_eq!(db.accept_clone(&old, &target).unwrap(), original);
+    assert!(matches!(
+        db.check_controller_execution(&owner, &old.operation_id, &old.execution_id),
+        Err(Error::ControllerMismatch)
+    ));
+    let mut new = old;
+    new.operation_id = OperationId::new("new");
+    new.execution_id = ExecutionId::new("new");
+    let target = CloneTarget {
+        repository_id: RepositoryId::new("new"),
+        path: dir.path().join("new"),
+        ..target
+    };
+    let accepted = db.accept_clone(&new, &target).unwrap();
+    db.check_controller_execution(&owner, &new.operation_id, &new.execution_id)
+        .unwrap();
+    drop(db);
+    let mut db = NodeDatabase::open(&path, NodeIdentity::Discover).unwrap();
+    db.bind_controller(&owner).unwrap();
+    assert!(matches!(
+        db.bind_controller(&ControllerId::new("other")),
+        Err(Error::ControllerMismatch)
+    ));
+    assert_eq!(
+        db.find_clone(&new.operation_id, &new.execution_id).unwrap(),
+        Some(accepted)
+    );
+    db.check_controller_execution(&owner, &new.operation_id, &new.execution_id)
+        .unwrap();
+}

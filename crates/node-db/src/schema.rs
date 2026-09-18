@@ -41,7 +41,7 @@ pub(super) fn initialize(
         "user_version",
         |row| row.get(/*idx*/ 0),
     )?;
-    if app != APPLICATION_ID || !matches!(version, 1..=3) {
+    if app != APPLICATION_ID || !matches!(version, 1..=4) {
         return Err(Error::InvalidSchema);
     }
     let check: String = connection.pragma_query_value(
@@ -60,6 +60,9 @@ pub(super) fn initialize(
     }
     if version >= 3 {
         expected.execute_batch(include_str!("repository.sql"))?;
+    }
+    if version >= 4 {
+        expected.execute_batch(include_str!("controller.sql"))?;
     }
     if schema_objects(connection)? != schema_objects(&expected)? {
         return Err(Error::InvalidSchema);
@@ -81,16 +84,19 @@ pub(super) fn initialize(
     {
         return Err(Error::NodeMismatch);
     }
-    if version < 3 {
+    if version < 4 {
         let tx = connection.transaction()?;
         if version == 1 {
             tx.execute_batch(include_str!("process.sql"))?;
         }
-        tx.execute_batch(include_str!("repository.sql"))?;
+        if version < 3 {
+            tx.execute_batch(include_str!("repository.sql"))?;
+        }
+        tx.execute_batch(include_str!("controller.sql"))?;
         tx.pragma_update(
             /*schema_name*/ None,
             "user_version",
-            /*pragma_value*/ 3,
+            /*pragma_value*/ 4,
         )?;
         tx.commit()?;
     }
