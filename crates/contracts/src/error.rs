@@ -81,6 +81,14 @@ pub struct TaskBaseBranchNotFoundParams {
     pub branch_name: String,
 }
 
+/// Names one extension pack member (or the pack itself) in a pack preflight failure.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "error.ts")]
+pub struct PackMemberParams {
+    pub plugin_id: String,
+}
+
 /// Addresses one stable validation failure to its Setting ID.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -139,6 +147,11 @@ pub enum PublicError {
     AgentNotFound(EmptyErrorParams),
     PluginNotFound(EmptyErrorParams),
     PluginHostIncompatible(EmptyErrorParams),
+    PackMemberDuplicate(PackMemberParams),
+    PackSelfReference(PackMemberParams),
+    PackMemberNotFound(PackMemberParams),
+    PackMemberNested(PackMemberParams),
+    PackNoApplicableMembers(PackMemberParams),
     MarketplaceS3CredentialsRequired(EmptyErrorParams),
     MarketplaceArtifactRetrievalFieldInvalid(MarketplaceArtifactRetrievalFieldInvalidParams),
     PluginConfigurationDeclarationInvalid(EmptyErrorParams),
@@ -257,6 +270,11 @@ impl PublicError {
             Self::AgentNotFound(_) => "agent_not_found",
             Self::PluginNotFound(_) => "plugin_not_found",
             Self::PluginHostIncompatible(_) => "plugin_host_incompatible",
+            Self::PackMemberDuplicate(_) => "pack_member_duplicate",
+            Self::PackSelfReference(_) => "pack_self_reference",
+            Self::PackMemberNotFound(_) => "pack_member_not_found",
+            Self::PackMemberNested(_) => "pack_member_nested",
+            Self::PackNoApplicableMembers(_) => "pack_no_applicable_members",
             Self::MarketplaceS3CredentialsRequired(_) => "marketplace_s3_credentials_required",
             Self::MarketplaceArtifactRetrievalFieldInvalid(_) => {
                 "marketplace_artifact_retrieval_field_invalid"
@@ -388,6 +406,7 @@ pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
     SkillFolderConflictParams::export_all(config)?;
     WorkflowSnapshotIncompatibleWithResumeParams::export_all(config)?;
     TaskBaseBranchNotFoundParams::export_all(config)?;
+    PackMemberParams::export_all(config)?;
     PluginConfigurationFieldError::export_all(config)?;
     PluginConfigurationValidationParams::export_all(config)?;
     MarketplaceArtifactRetrievalFieldInvalidParams::export_all(config)?;
@@ -400,9 +419,10 @@ pub(crate) fn export(config: &Config) -> Result<(), ExportError> {
 mod tests {
     use super::{
         ContractError, EmptyErrorParams, MarketplaceArtifactRetrievalFieldInvalidParams,
-        OpenLocationFailedParams, OpenLocationTarget, PluginConfigurationValidationParams,
-        PublicError, RequestId, SessionMcpSetupFailedParams, SkillFolderConflictParams,
-        TaskBaseBranchNotFoundParams, WorkflowSnapshotIncompatibleWithResumeParams,
+        OpenLocationFailedParams, OpenLocationTarget, PackMemberParams,
+        PluginConfigurationValidationParams, PublicError, RequestId, SessionMcpSetupFailedParams,
+        SkillFolderConflictParams, TaskBaseBranchNotFoundParams,
+        WorkflowSnapshotIncompatibleWithResumeParams,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -447,6 +467,21 @@ mod tests {
             PublicError::AgentNotFound(empty),
             PublicError::PluginNotFound(empty),
             PublicError::PluginHostIncompatible(empty),
+            PublicError::PackMemberDuplicate(PackMemberParams {
+                plugin_id: "official/ora-space.python-core".to_string(),
+            }),
+            PublicError::PackSelfReference(PackMemberParams {
+                plugin_id: "official/ora-space.python-extension-pack".to_string(),
+            }),
+            PublicError::PackMemberNotFound(PackMemberParams {
+                plugin_id: "official/ora-space.python-core".to_string(),
+            }),
+            PublicError::PackMemberNested(PackMemberParams {
+                plugin_id: "official/ora-space.nested-pack".to_string(),
+            }),
+            PublicError::PackNoApplicableMembers(PackMemberParams {
+                plugin_id: "official/ora-space.python-extension-pack".to_string(),
+            }),
             PublicError::MarketplaceS3CredentialsRequired(empty),
             PublicError::MarketplaceArtifactRetrievalFieldInvalid(
                 MarketplaceArtifactRetrievalFieldInvalidParams {
@@ -577,6 +612,11 @@ mod tests {
                 | PublicError::AgentNotFound(_)
                 | PublicError::PluginNotFound(_)
                 | PublicError::PluginHostIncompatible(_)
+                | PublicError::PackMemberDuplicate(_)
+                | PublicError::PackSelfReference(_)
+                | PublicError::PackMemberNotFound(_)
+                | PublicError::PackMemberNested(_)
+                | PublicError::PackNoApplicableMembers(_)
                 | PublicError::MarketplaceS3CredentialsRequired(_)
                 | PublicError::MarketplaceArtifactRetrievalFieldInvalid(_)
                 | PublicError::PluginConfigurationDeclarationInvalid(_)
@@ -685,7 +725,7 @@ mod tests {
     #[test]
     fn public_error_codes_match_serde_tags_for_every_variant() {
         let samples = public_error_samples();
-        assert_eq!(samples.len(), 105);
+        assert_eq!(samples.len(), 110);
 
         for error in samples {
             let serialized = serde_json::to_value(&error).unwrap();
