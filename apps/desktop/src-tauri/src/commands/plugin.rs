@@ -101,6 +101,20 @@ backend_command!(
     plugins.read_readme,
     "Reads one marketplace plugin's published README for its detail page."
 );
+backend_command!(
+    list_pack_installations,
+    ListPackInstallationsRequest,
+    ListPackInstallationsResponse,
+    plugins.list_pack_installations,
+    "Lists every recorded pack installation with its reconciled member states."
+);
+backend_command!(
+    pack_uninstall_plan,
+    PackUninstallPlanRequest,
+    PackUninstallPlanResponse,
+    plugins.pack_uninstall_plan,
+    "Computes the ownership-aware uninstall plan for one recorded pack."
+);
 
 backend_command!(
     list_marketplace_sources,

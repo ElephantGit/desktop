@@ -4,6 +4,8 @@ import {
   type MarketplaceSource,
   type InstalledPlugin,
   type InstallOutcome,
+  type PackInstallationStatus,
+  type PackUninstallPlan,
   type PluginConfigurationDetails,
   type PluginSettingValue,
 } from "@ora/contracts";
@@ -30,6 +32,12 @@ export interface PluginMemoryState {
    * `installed`; a conflict test supplies `installed_with_command_conflict`.
    */
   installOutcome?: InstallOutcome;
+  /** Ownership journal rows served by the pack presentation queries. */
+  packInstallations: PackInstallationStatus[];
+  /** Installable member packages keyed by their owning pack listing id. */
+  packMemberPlugins: Map<string, InstalledPlugin[]>;
+  /** Uninstall plans served by the pack plan query, keyed by pack id. */
+  packUninstallPlans: Map<string, PackUninstallPlan>;
 }
 
 /** Creates an independent plugins memory fixture. */
@@ -42,6 +50,9 @@ export function createPluginMemory(): PluginMemoryState {
     pluginReadmes: new Map(),
     availablePluginsUpdatedAt: 0n,
     marketplaceSources: [],
+    packInstallations: [],
+    packMemberPlugins: new Map(),
+    packUninstallPlans: new Map(),
   };
 }
 
@@ -76,6 +87,106 @@ function installedFromAvailable(available: AvailablePlugin): InstalledPlugin {
     kind: "agent",
     agentDisplayName: available.name,
   };
+}
+
+/** Applies the production Pack model: members enter the tree while the Pack enters the journal. */
+function installPack(
+  state: PluginMemoryState,
+  available: AvailablePlugin,
+): InstallOutcome {
+  const fixtures = state.packMemberPlugins.get(available.id) ?? [];
+  const configured = state.installOutcome;
+  if (configured?.state === "pack_installed" && configured.failed !== null) {
+    const residualIds = new Set(
+      configured.failed.rollbackFailures.map((failure) => failure.pluginId),
+    );
+    const residuals = fixtures.filter((member) => residualIds.has(member.id));
+    for (const member of residuals) {
+      if (
+        !state.installedPlugins.some((installed) => installed.id === member.id)
+      )
+        state.installedPlugins.push({ ...member });
+    }
+    if (residuals.length > 0) {
+      upsertPackInstallation(
+        state,
+        available,
+        residuals.map((member) => ({
+          memberId: member.id,
+          versionAtInstall: member.version,
+          ownership: "managed_by_pack" as const,
+          state: { state: "expected_and_present" as const },
+        })),
+      );
+    }
+    return configured;
+  }
+
+  const previous = state.packInstallations.find(
+    (pack) => pack.packId === available.id,
+  );
+  const installedMembers: Extract<
+    InstallOutcome,
+    { state: "pack_installed" }
+  >["members"] = [];
+  const skipped: string[] = [];
+  const statuses = fixtures.map((member) => {
+    const installed = state.installedPlugins.find(
+      (candidate) => candidate.id === member.id,
+    );
+    const historical = previous?.members.find(
+      (candidate) => candidate.memberId === member.id,
+    );
+    if (installed !== undefined) {
+      skipped.push(member.id);
+      return (
+        historical ?? {
+          memberId: member.id,
+          versionAtInstall: installed.version,
+          ownership: "pre_existing" as const,
+          state: { state: "expected_and_present" as const },
+        }
+      );
+    }
+    state.installedPlugins.push({ ...member });
+    installedMembers.push({
+      pluginId: member.id,
+      outcome: { state: "installed" },
+    });
+    return {
+      memberId: member.id,
+      versionAtInstall: member.version,
+      ownership: "managed_by_pack" as const,
+      state: { state: "expected_and_present" as const },
+    };
+  });
+  upsertPackInstallation(state, available, statuses);
+  return configured?.state === "pack_installed"
+    ? configured
+    : {
+        state: "pack_installed",
+        members: installedMembers,
+        skipped,
+        failed: null,
+      };
+}
+
+/** Replaces one Pack projection without materializing the Pack as an installed package. */
+function upsertPackInstallation(
+  state: PluginMemoryState,
+  available: AvailablePlugin,
+  members: PackInstallationStatus["members"],
+): void {
+  const next = {
+    packId: available.id,
+    sourceUrl: available.sourceUrl,
+    members,
+  };
+  const index = state.packInstallations.findIndex(
+    (pack) => pack.packId === available.id,
+  );
+  if (index === -1) state.packInstallations.push(next);
+  else state.packInstallations[index] = next;
 }
 
 /**
@@ -277,6 +388,25 @@ export function pluginHandlers(state: PluginMemoryState) {
       return { plugin };
     },
     uninstallPlugin: async (req) => {
+      const packIndex = state.packInstallations.findIndex(
+        (pack) => pack.packId === req.pluginId,
+      );
+      if (packIndex >= 0) {
+        const pack = state.packInstallations[packIndex];
+        for (const member of pack.members) {
+          if (member.ownership !== "managed_by_pack") continue;
+          const installedIndex = state.installedPlugins.findIndex(
+            (plugin) =>
+              plugin.id === member.memberId &&
+              plugin.version === member.versionAtInstall,
+          );
+          if (installedIndex >= 0)
+            state.installedPlugins.splice(installedIndex, 1);
+        }
+        state.packInstallations.splice(packIndex, 1);
+        state.packUninstallPlans.delete(req.pluginId);
+        return { pluginId: req.pluginId };
+      }
       const idx = state.installedPlugins.findIndex(
         (p) => p.id === req.pluginId,
       );
@@ -307,6 +437,12 @@ export function pluginHandlers(state: PluginMemoryState) {
       );
       if (!available)
         throw new Error(`available plugin ${req.pluginId} not found`);
+      if (available.kind === "pack") {
+        return {
+          pluginId: req.pluginId,
+          outcome: installPack(state, available),
+        };
+      }
       const outcome = state.installOutcome ?? {
         state: "installed" as const,
       };
@@ -331,6 +467,13 @@ export function pluginHandlers(state: PluginMemoryState) {
       installed.description = available.description;
       installed.logo = available.logo;
       return { pluginId: req.pluginId };
+    },
+    listPackInstallations: async () => ({
+      packs: [...state.packInstallations],
+    }),
+    packUninstallPlan: async (req) => {
+      const plan = state.packUninstallPlans.get(req.pluginId);
+      return { plan: plan ?? null };
     },
   } satisfies TestHandlers;
 }
