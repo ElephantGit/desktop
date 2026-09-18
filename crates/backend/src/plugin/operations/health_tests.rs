@@ -141,18 +141,24 @@ impl Drop for RawTcpPeer {
     }
 }
 
-/// Writes an MCP `.orax` archive with the given `assets/config.json` body.
+/// Writes an MCP `.orax` archive with the given `assets/config.json` body and command file.
 ///
-/// The stdio command is a regular file inside the package that no platform can execute — a missing
-/// interpreter for Unix and an unusable image for Windows — so both reach `mcp_spawn_failed`
-/// without depending on the host's installed programs. The archive marks it executable because
-/// Unix discovery requires that bit before a command may be declared at all.
-fn write_mcp_orax(path: &Path, identifier: &str, config: &str) {
+/// The stdio command starts as a regular file inside the package, so discovery accepts it; the
+/// caller chooses whether it is runnable.
+fn write_mcp_orax_with_command(
+    path: &Path,
+    identifier: &str,
+    config: &str,
+    command_name: &str,
+    command_bytes: &[u8],
+) {
     let manifest = format!(
         "resolver = 1\nidentifier = \"{identifier}\"\nnamespace = \"official\"\nkind = \"mcp\"\nversion = \"0.1.0\"\ndescription = \"MCP probe fixture\"\n"
     );
     let mut writer = ZipWriter::new(File::create(path).expect("create archive"));
-    let options = SimpleFileOptions::default();
+    // Store entries verbatim: the runnable command may be tens of megabytes, and deflating it
+    // would dominate the test for no benefit.
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     writer.start_file("orax.toml", options).expect("manifest");
     writer
         .write_all(manifest.as_bytes())
@@ -162,12 +168,23 @@ fn write_mcp_orax(path: &Path, identifier: &str, config: &str) {
         .expect("config");
     writer.write_all(config.as_bytes()).expect("write config");
     writer
-        .start_file("assets/server", options.unix_permissions(0o755))
+        .start_file(command_name, options.unix_permissions(0o755))
         .expect("command file");
-    writer
-        .write_all(b"#!/nonexistent-ora-probe-interpreter\n")
-        .expect("write command");
+    writer.write_all(command_bytes).expect("write command");
     writer.finish().expect("finish archive");
+}
+
+/// Writes an MCP `.orax` archive whose stdio command is a regular file no platform can execute — a
+/// missing interpreter for Unix and an unusable image for Windows — so both reach
+/// `mcp_spawn_failed` without depending on the host's installed programs.
+fn write_mcp_orax(path: &Path, identifier: &str, config: &str) {
+    write_mcp_orax_with_command(
+        path,
+        identifier,
+        config,
+        "assets/server",
+        b"#!/nonexistent-ora-probe-interpreter\n",
+    );
 }
 
 /// Imports one MCP archive and returns its canonical plugin id.
@@ -860,4 +877,116 @@ impl tracing::field::Visit for EventTextVisitor {
     fn record_f64(&mut self, field: &tracing::field::Field, value: f64) {
         self.record(field, value);
     }
+}
+
+/// A stdio MCP that respawns the test binary as a well-behaved MCP server (`ok` mode).
+const HEALTHY_STDIO_CONFIG: &str = r#"{
+    "schemaVersion": 1,
+    "transport": {
+        "type": "stdio",
+        "command": "assets/fake-server-ok.exe",
+        "args": ["--exact", "plugin::operations::health_tests::fake_mcp_stdio_server", "--nocapture"]
+    }
+}"#;
+
+/// Respawned as a child under the `fake-server-ok.exe` name, acts as a well-behaved MCP server.
+///
+/// The mode comes from this process's own file name so a plugin package needs no environment
+/// plumbing; under the test binary's normal name the function is a no-op pass.
+#[test]
+fn fake_mcp_stdio_server() {
+    use std::io::{BufRead, Write};
+
+    let exe = std::env::current_exe().expect("current exe");
+    let stem = exe
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or_default();
+    if stem.strip_prefix("fake-server-").is_none() {
+        return;
+    }
+    let stdin = std::io::stdin();
+    let mut reader = stdin.lock();
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    let mut line = String::new();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line).unwrap_or(0) == 0 {
+            return;
+        }
+        let id = match line.find("\"id\":") {
+            Some(index) => {
+                let rest = line[index + 5..].trim_start();
+                let end = rest
+                    .find(|c: char| !c.is_ascii_digit())
+                    .unwrap_or(rest.len());
+                if end == 0 {
+                    "1".to_string()
+                } else {
+                    rest[..end].to_string()
+                }
+            }
+            None => "1".to_string(),
+        };
+        if line.contains("\"method\":\"initialize\"") {
+            let _ = writeln!(
+                out,
+                "{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{{}}}}}}"
+            );
+        } else if line.contains("\"method\":\"tools/list\"") {
+            let _ = writeln!(
+                out,
+                "{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{{\"tools\":[]}}}}"
+            );
+        }
+        let _ = out.flush();
+    }
+}
+
+/// A runnable, well-behaved MCP imported through the product path reports Host `Healthy`.
+#[test]
+fn healthy_stdio_mcp_imports_as_healthy() {
+    ora_logging::with_trace_logging(|| {
+        let temporary = TempDir::new().expect("temp directory");
+        let pool = test_pool(temporary.path());
+        let (plugins, _hub) = test_plugins(temporary.path(), &pool);
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime")
+            .block_on(async {
+                let archive = temporary.path().join("healthy-mcp.orax");
+                let server = std::fs::read(std::env::current_exe().expect("test binary"))
+                    .expect("read test binary");
+                write_mcp_orax_with_command(
+                    &archive,
+                    "healthy-mcp",
+                    HEALTHY_STDIO_CONFIG,
+                    "assets/fake-server-ok.exe",
+                    &server,
+                );
+                let plugin_id = plugins
+                    .import(ImportPluginRequest {
+                        path: archive.to_string_lossy().into_owned(),
+                    })
+                    .await
+                    .expect("import healthy MCP")
+                    .plugin_id;
+                let listed = wait_for_card_health(&plugins, &plugin_id).await;
+                assert_eq!(
+                    listed.entries,
+                    vec![ora_contracts::McpHealthEntry {
+                        identity: ora_contracts::McpHealthIdentity {
+                            plugin_id: plugin_id.clone(),
+                            package_version: "0.1.0".to_string(),
+                            configuration_revision: 0,
+                            transport: ora_contracts::McpHealthTransport::Stdio,
+                            cwd: None,
+                        },
+                        status: McpHealthStatus::Healthy,
+                    }]
+                );
+            });
+    });
 }
