@@ -2,6 +2,9 @@
 
 [English](controller-node-protocol.md) | 中文
 
+> 最小闭环已调整为[clone 指定仓库与分支](../node/minimal-loop.zh.md)。本文仍描述现有 Worktree
+> 协议；clone 消息、结果与能力协商尚未实现，不能直接沿用已有 Main Workspace 的业务前置。
+
 `ora-node-protocol` 定义 Controller–Node 会话消息和 Worktree 执行的 version 1 wire 契约，
 提供类型化消息和带校验的异步 frame codec。Transport、会话编排、Git 操作和持久执行由消费端负责。
 

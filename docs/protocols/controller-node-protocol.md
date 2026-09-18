@@ -2,6 +2,10 @@
 
 English | [中文](controller-node-protocol.zh.md)
 
+> The minimal loop now targets [cloning a specified repository and branch](../node/minimal-loop.md).
+> This document describes the existing Worktree protocol. Clone messages, results and capability negotiation
+> are not implemented; the existing Main Workspace precondition must not be carried over implicitly.
+
 `ora-node-protocol` defines the version 1 wire contract for Controller–Node session messages and
 Worktree execution. It provides typed messages and a validated asynchronous frame codec. Transport,
 session orchestration, Git operations and durable execution belong to its consumers.

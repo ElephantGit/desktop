@@ -2,6 +2,9 @@
 
 English | [中文](worktree-execution.zh.md)
 
+> 2026-09-18: the current minimal loop is now [cloning a specified repository and branch](../minimal-loop.md).
+> This document retains implemented Worktree behavior and its original plan, not the next implementation sequence.
+
 This change implements Worktree execution and recovery in `apps/ora-node`, with independent local
 persistence in `crates/node-db`. Its in-process interface closes creation, removal, status, replay,
 and acknowledgement. Completed items are checked below; implementation choices and direct test

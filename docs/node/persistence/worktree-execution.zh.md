@@ -2,6 +2,9 @@
 
 [English](worktree-execution.md) | 中文
 
+> 2026-09-18：当前最小闭环已改为[clone 指定仓库与分支](../minimal-loop.zh.md)。
+> 本文保留 Worktree 已实现能力与原计划，不再代表首条闭环的后续实施顺序。
+
 ## 当前集成边界
 
 `node-db` 工作已导入 `node-process`，保留当前 workspace 的 SQLite 依赖和既有
