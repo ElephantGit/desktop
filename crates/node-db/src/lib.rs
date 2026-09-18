@@ -2,10 +2,13 @@
 mod execution;
 mod model;
 mod process;
+mod repository;
+mod repository_model;
 mod schema;
 pub use execution::owns;
 pub use model::*;
 pub use process::{ProcessAttempt, ProcessJournal};
+pub use repository_model::{CloneExecution, ClonePhase, CloneProgress, CloneTarget};
 
 use ora_node_protocol::NodeId;
 use rusqlite::Connection;

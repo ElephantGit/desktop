@@ -38,6 +38,71 @@ impl<G: WriteGuard> NodeDatabase<G> {
 }
 
 impl<G: WriteGuard> ProcessJournal<G> {
+    /// Registers a clone only after owned directory evidence was durably recorded.
+    pub fn manage_clone(&self, record: &crate::CloneExecution) -> Result<(), Error> {
+        let (input, target, progress): (String, String, String) = self.connection.query_row(
+            "SELECT input,target,progress FROM clone_executions WHERE execution=?1",
+            [record.command.execution_id.as_str()],
+            |r| Ok((r.get(/*idx*/ 0)?, r.get(/*idx*/ 1)?, r.get(/*idx*/ 2)?)),
+        )?;
+        if serde_json::from_str::<ora_node_protocol::CloneRepositoryMessage>(&input)?
+            != record.command
+            || serde_json::from_str::<crate::CloneTarget>(&target)? != record.target
+            || serde_json::from_str::<crate::CloneProgress>(&progress)? != record.progress
+        {
+            return Err(Error::IdentityConflict);
+        }
+        let exists: bool = self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM managed_executions WHERE execution=?1)",
+            [record.command.execution_id.as_str()],
+            |r| r.get(/*idx*/ 0),
+        )?;
+        if exists {
+            return Ok(());
+        }
+        if !matches!(
+            record.progress,
+            crate::CloneProgress::Pending(crate::ClonePhase::DirectoryCreated { .. })
+        ) {
+            return Err(Error::InvalidTransition);
+        }
+        self.guard.before_write(WritePoint::Process)?;
+        self.connection.execute(
+            "INSERT INTO managed_executions VALUES (?1)",
+            [record.command.execution_id.as_str()],
+        )?;
+        Ok(())
+    }
+
+    /// Persists only an observed exit code, without copying process output or credentials.
+    pub fn record_outcome(&self, run: RunId, exit_code: i32) -> Result<(), Error> {
+        self.guard.before_write(WritePoint::Process)?;
+        self.connection.execute(
+            "INSERT INTO process_outcomes VALUES (?1,?2) ON CONFLICT(run) DO NOTHING",
+            params![run.to_string(), exit_code],
+        )?;
+        let saved: i32 = self.connection.query_row(
+            "SELECT exit_code FROM process_outcomes WHERE run=?1",
+            [run.to_string()],
+            |r| r.get(/*idx*/ 0),
+        )?;
+        if saved != exit_code {
+            return Err(Error::IdentityConflict);
+        }
+        Ok(())
+    }
+
+    /// Retains original attempts even after cleanup so recovery can still query their terminal evidence.
+    pub fn attempts(&self, execution: &ExecutionId) -> Result<Vec<ProcessAttempt>, Error> {
+        self.connection
+            .prepare("SELECT data FROM process_attempts WHERE execution=?1 ORDER BY rowid")?
+            .query_map([execution.as_str()], |r| {
+                r.get::<_, Vec<u8>>(/*idx*/ 0)
+            })?
+            .map(|data| Ok(ora_process_protocol::decode_guardian_payload(&data?)?))
+            .collect()
+    }
+
     /// Lists unfinished associations so normal shutdown cannot overlook a prior ambiguous exchange.
     pub fn pending_executions(&self) -> Result<Vec<ExecutionId>, Error> {
         let mut query = self
@@ -82,11 +147,18 @@ impl<G: WriteGuard> ProcessJournal<G> {
     /// Records a unique attempt before sending CreateScope or Start; retry never invents a new ID.
     pub fn record(&self, attempt: &ProcessAttempt) -> Result<(), Error> {
         let unfinished: bool = self.connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM executions WHERE execution=?1 AND state!='completed')",
+            "SELECT EXISTS(SELECT 1 FROM executions WHERE execution=?1 AND state!='completed' UNION ALL SELECT 1 FROM clone_executions WHERE execution=?1 AND state!='completed' AND json_extract(progress, '$.evidence.phase')='dispatched')",
             [attempt.execution.as_str()],
             |row| row.get(/*idx*/ 0),
         )?;
         if !unfinished {
+            return Err(Error::InvalidTransition);
+        }
+        let repeated_clone: bool = self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM clone_executions JOIN process_attempts USING(execution) WHERE execution=?1)",
+            [attempt.execution.as_str()], |r| r.get(/*idx*/ 0),
+        )?;
+        if repeated_clone {
             return Err(Error::InvalidTransition);
         }
         self.guard.before_write(WritePoint::Process)?;

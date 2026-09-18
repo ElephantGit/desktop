@@ -13,13 +13,18 @@ The workspace's bundled SQLite version is shared; no older engine or host schema
 
 Opening a database holds an exclusive OS file lock for its lifetime. SQLite uses its default
 rollback journal and FULL synchronous writes. A new database receives application ID `0x4f52414e`
-and schema version 2. Exact version 1 schemas migrate transactionally after identity and integrity
+and schema version 3. Exact version 1/2 schemas migrate transactionally after identity and integrity
 validation, preserving executions, results and pending events. Existing empty files, foreign databases, unsupported versions, directories
 and corrupt databases are rejected without rebuilding them. The persistent NodeId survives
 reopening; each Node runtime generates a fresh NodeIncarnationId. An explicit identity mismatch
 fails initialization.
 
 `ora-node-db` owns `node_metadata`, `executions`, `resources`, `outbox`, `managed_executions` and `process_attempts`.
+Version 3 adds `execution_identities`, `clone_executions`, `clone_outbox` and `process_outcomes`.
+The common identity table prevents clone/Worktree key collisions. Process associations now reference
+that table; migration copies every original association without rewriting RunSpec or inventing outcomes.
+Old version-2 binaries reject version 3 before migration; downgrading does not reset or recreate this file.
+Clone persistence is described in [repository acquisition](repository-acquisition.md).
 The complete command is stored separately from the resolved target, which freezes the canonical
 binding, authorized roots, task path, branch and base commit. Unique operation/execution identities
 prevent rebinding. Active resources reserve workspace, path and repository-local branch before Git
@@ -45,6 +50,6 @@ cover exclusive ownership, file preservation, deduplication, reservations, rollb
 acknowledgement. Run `cargo test -p ora-node-db -p ora-node`.
 
 Opening also checks table/index definitions and foreign-key integrity; the schema identifier alone
-cannot authorize an unknown structure. A definitive no-effect creation failure retires reservations
+cannot authorize an unknown structure. A definitive no-effect Worktree creation failure retires reservations
 and releases active uniqueness while retaining execution deduplication and the failed result.
 Inconclusive executions continue to hold their reservations.

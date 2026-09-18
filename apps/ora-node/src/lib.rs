@@ -243,8 +243,7 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
         }
         let state = self
             .database
-            .find(&query.operation_id, &query.execution_id)?
-            .map_or(ExecutionState::Unknown, |r| r.progress.state());
+            .execution_state(&query.operation_id, &query.execution_id)?;
         Ok(ExecutionStatusMessage {
             protocol_version: CURRENT_PROTOCOL_VERSION,
             operation_id: query.operation_id.clone(),

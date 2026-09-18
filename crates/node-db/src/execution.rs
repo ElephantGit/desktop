@@ -9,6 +9,12 @@ impl<G: WriteGuard> NodeDatabase<G> {
         operation: &OperationId,
         execution: &ExecutionId,
     ) -> Result<Option<Execution>, Error> {
+        if self
+            .identity_kind(operation, execution)?
+            .is_some_and(|kind| kind != "worktree")
+        {
+            return Err(Error::IdentityConflict);
+        }
         let mut statement = self.connection.prepare(
             "SELECT input,target,progress FROM executions WHERE operation=?1 OR execution=?2",
         )?;
@@ -64,7 +70,7 @@ impl<G: WriteGuard> NodeDatabase<G> {
                 if resource.is_some() {
                     return Err(Error::ResourceConflict);
                 }
-                let mut paths = tx.prepare("SELECT path FROM resources WHERE active=1")?;
+                let mut paths = tx.prepare("SELECT path FROM resources WHERE active=1 UNION ALL SELECT path FROM clone_executions")?;
                 for path in paths.query_map([], |row| row.get::<_, String>(/*idx*/ 0))? {
                     let path = std::path::PathBuf::from(path?);
                     if path.starts_with(&target.path) || target.path.starts_with(&path) {
@@ -304,7 +310,7 @@ impl<G: WriteGuard> NodeDatabase<G> {
     pub fn pending_events(&self) -> Result<Vec<NodeToControllerMessage>, Error> {
         let mut statement = self
             .connection
-            .prepare("SELECT event FROM outbox ORDER BY rowid")?;
+            .prepare("SELECT event FROM outbox UNION ALL SELECT event FROM clone_outbox")?;
         let rows = statement.query_map([], |row| row.get::<_, String>(/*idx*/ 0))?;
         rows.map(|data| Ok(serde_json::from_str(&data?)?)).collect()
     }
@@ -314,6 +320,26 @@ impl<G: WriteGuard> NodeDatabase<G> {
         ack.validate()?;
         if ack.payload.node_id != self.node_id {
             return Err(Error::NodeMismatch);
+        }
+        if self
+            .identity_kind(&ack.operation_id, &ack.execution_id)?
+            .as_deref()
+            == Some("clone")
+        {
+            let record = self
+                .find_clone(&ack.operation_id, &ack.execution_id)?
+                .ok_or(Error::InvalidAck)?;
+            if ack.sequence != Sequence::new(/*value*/ 1)
+                || !matches!(record.progress, CloneProgress::Completed(_))
+            {
+                return Err(Error::InvalidAck);
+            }
+            self.guard.before_write(WritePoint::Acknowledge)?;
+            self.connection.execute(
+                "DELETE FROM clone_outbox WHERE execution=?1",
+                [ack.execution_id.as_str()],
+            )?;
+            return Ok(());
         }
         let record = self
             .find(&ack.operation_id, &ack.execution_id)?

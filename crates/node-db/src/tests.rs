@@ -2,6 +2,8 @@
 use super::*;
 use pretty_assertions::assert_eq;
 mod process;
+mod repository;
+mod repository_migration;
 
 /// Reopening preserves identity, while one live owner excludes all other connections.
 #[test]
