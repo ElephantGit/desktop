@@ -62,7 +62,8 @@ Normal Controller shutdown closes sessions, not accepted Node executions.
 ## Verification and remaining scope
 
 Real SQLite tests cover acceptance, exclusive ownership, transaction failure, query/event ordering,
-duplicate takeover and conflicting facts. A framed-session test covers bounded Unknown retransmission.
+duplicate takeover and conflicting facts. Framed-session tests cover bounded Unknown retransmission
+and rejection of a wrong Node identity or missing clone capability before dispatch.
 The independent Controller–Node–host/guardian test performs real HTTPS clone, intercepts Ack, kills
 Controller after durable takeover, restarts it offline, then checks original result, exact Ack, cleared
 Node outbox and one mutation Run. Node's own IPC tests additionally cover Node restart and event replay.

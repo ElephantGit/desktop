@@ -56,7 +56,8 @@ Client 入口接通前通过 Rust 接口受理，不直接修改 SQLite。
 ## 验证与保留范围
 
 真实 SQLite 测试覆盖接受、独占、事务失败、查询／事件乱序、重复接管和冲突事实；
-framed 会话测试覆盖 Unknown 重传有界。独立 Controller–Node–host／guardian 测试执行真实 HTTPS clone，
+framed 会话测试覆盖 Unknown 重传有界，以及错误 Node 身份或缺少 clone 能力时在派发前拒绝。
+独立 Controller–Node–host／guardian 测试执行真实 HTTPS clone，
 截住 Ack 后在持久接管之后强杀 Controller，再离线重启，检查原结果、精确 Ack、Node outbox 清空和唯一变更 Run。
 Node 自身 IPC 测试另覆盖 Node 重启与事件重放。
 

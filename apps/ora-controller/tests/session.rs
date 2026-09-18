@@ -11,6 +11,97 @@ use std::{
 };
 use tokio::{net::UnixListener, time::timeout};
 
+/// A reachable socket is not sufficient authority to dispatch a previously accepted command.
+#[test]
+fn mismatched_node_or_missing_clone_capability_rejects_before_dispatch() {
+    ora_logging::with_trace_logging(|| {
+        for (node_id, capabilities) in [
+            (
+                NodeId::new("other-node"),
+                vec![NodeCapability::RepositoryClone],
+            ),
+            (NodeId::new("node"), vec![NodeCapability::WorktreeExecution]),
+        ] {
+            let root = tempfile::Builder::new()
+                .permissions(fs::Permissions::from_mode(/*mode*/ 0o700))
+                .tempdir_in(std::env::var_os("HOME").unwrap())
+                .unwrap();
+            let mut controller =
+                Controller::open(&root.path().join("controller"), ControllerId::new("owner"))
+                    .unwrap();
+            let command = controller
+                .accept_clone(
+                    RequestId::new("request"),
+                    CloneExecutionSpec {
+                        node_id: NodeId::new("node"),
+                        repository: CloneRepositoryUrl::parse("https://example.com/repo").unwrap(),
+                        branch: BranchName::new("main"),
+                    },
+                )
+                .unwrap();
+            fs::create_dir(root.path().join("node")).unwrap();
+            let target = NodeEndpoint {
+                node_id: NodeId::new("node"),
+                endpoint: root.path().join("node").join("control.sock"),
+            };
+            let owner = Arc::new(Mutex::new(controller));
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    let listener = UnixListener::bind(&target.endpoint).unwrap();
+                    let settings = SessionConfig {
+                        io_timeout_ms: 1000,
+                        query_interval_ms: 20,
+                    };
+                    let peer = async {
+                        let (mut stream, _) = listener.accept().await.unwrap();
+                        assert!(matches!(
+                            read_controller_message(&mut stream).await.unwrap(),
+                            Some(ControllerToNodeMessage::Hello(_))
+                        ));
+                        write_node_message(
+                            &mut stream,
+                            &NodeToControllerMessage::HelloAccepted(HelloAcceptedMessage {
+                                protocol_version: CURRENT_PROTOCOL_VERSION,
+                                payload: HelloAccepted {
+                                    selected_version: CURRENT_PROTOCOL_VERSION,
+                                    node: NodeRuntimeIdentity {
+                                        node_id,
+                                        incarnation_id: NodeIncarnationId::new("current"),
+                                    },
+                                    capabilities,
+                                },
+                            }),
+                        )
+                        .await
+                        .unwrap();
+                        // EOF, not a status query or clone command, proves rejection preceded dispatch.
+                        assert_eq!(
+                            timeout(
+                                Duration::from_secs(/*secs*/ 2),
+                                read_controller_message(&mut stream)
+                            )
+                            .await
+                            .unwrap()
+                            .unwrap(),
+                            None
+                        );
+                    };
+                    let (result, ()) = tokio::join!(run_session(&owner, &target, &settings), peer);
+                    assert!(result.is_err());
+                });
+            let owner = owner.lock().unwrap();
+            assert_eq!(
+                owner.commands(&target.node_id).unwrap(),
+                vec![command.clone()]
+            );
+            assert_eq!(owner.result(&command.execution_id).unwrap(), None);
+        }
+    });
+}
+
 /// Repeated Unknown replies retain responsibility without an unbounded immediate retransmission loop.
 #[test]
 fn uncertain_execution_retransmits_at_most_once_per_connection() {
