@@ -382,6 +382,7 @@ where
                         }
                         if propagation == FailurePropagation::Composite {
                             // The absorbed failure settles as a failed round on the next pass.
+                            completed_swift = true;
                             continue;
                         }
                         return Ok(());
@@ -488,6 +489,10 @@ where
                 .execute_composite_plan(run_id, graph, context, node_run, node_runs, plan, now)?;
             if started.is_some() {
                 self.run_events.publish_run_invalidated(run_id);
+                // Round start commits the item/index bindings before an async runtime renders its
+                // prompt. Reload the context so dispatch observes those committed values rather
+                // than the payload from the planning wave.
+                let dispatch_context = self.execution_context(run_id)?;
                 // Dispatch the rows this plan started to their background drivers.
                 if let Some((_, started_runs)) = started {
                     for planned in &started_runs {
@@ -495,7 +500,7 @@ where
                             && let Some(RegisteredNodeRuntime::Async(runtime)) =
                                 self.runtimes.runtime(started_node.node_type)
                         {
-                            runtime.dispatch(&planned.id, started_node, context);
+                            runtime.dispatch(&planned.id, started_node, &dispatch_context);
                         }
                     }
                 }
@@ -585,6 +590,13 @@ where
                         IterationRoundContinuation::Fail { error }
                     }
                 };
+                let started_runs = match &continuation {
+                    IterationRoundContinuation::StartNextRound { node_runs, .. } => {
+                        node_runs.clone()
+                    }
+                    IterationRoundContinuation::Complete { .. }
+                    | IterationRoundContinuation::Fail { .. } => Vec::new(),
+                };
                 let result = self.repository.settle_iteration_round(
                     run_id,
                     &node_run.node_id,
@@ -593,8 +605,12 @@ where
                     continuation,
                     now,
                 )?;
-                Ok(matches!(result, AdvanceWorkflowRunResult::Advanced)
-                    .then_some((None, Vec::new())))
+                Ok(
+                    matches!(result, AdvanceWorkflowRunResult::Advanced).then_some((
+                        started_runs.first().and_then(|node_run| node_run.iteration),
+                        started_runs,
+                    )),
+                )
             }
             CompositeAdvancePlan::CompleteNode { exposed, output } => {
                 let result = self.repository.complete_iteration_node(

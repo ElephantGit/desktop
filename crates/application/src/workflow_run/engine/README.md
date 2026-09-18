@@ -130,7 +130,10 @@ node-run transition — engine or interactive — publishes one event. `ora-db` 
   (`item`/`index`) commit with the round's first rows in one transaction, ledger entries commit
   with their continuation in one transaction, and already-settled rounds are append-only. The
   exposed variables (`output: array[T]`, `entries: array[object]`, `failed_count: number`) are
-  derived from the ledger at completion and never change type with the error strategy.
+  derived from the ledger at completion and never change type with the error strategy. After a
+  round transaction commits, the scheduler reloads the execution context before dispatching async
+  nodes; this keeps prompt assembly and node placement aligned with the newly persisted round
+  bindings even when the repository returns snapshots by value.
 - An iteration node's own failures (non-array source, exceeded safety ceiling, exposed-variable
   write failures) always propagate to run failure; only failures inside the region can be
   absorbed by a `continue` strategy, and a branch that bypasses the collect target settles that

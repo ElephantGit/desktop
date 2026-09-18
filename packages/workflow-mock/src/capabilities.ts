@@ -55,6 +55,18 @@ export interface WorkflowNodeType {
   label: string;
   description: string;
   configFields: WorkflowConfigField[];
+  /** Editor scopes in which this node kind can be authored. */
+  supportedScopes: WorkflowNodeScope[];
+}
+
+export type WorkflowNodeScope = "workflow" | "iteration";
+
+/** Returns whether a capability declaration allows a node in the requested editor scope. */
+export function supportsWorkflowNodeScope(
+  nodeType: WorkflowNodeType,
+  scope: WorkflowNodeScope,
+): boolean {
+  return nodeType.supportedScopes.includes(scope);
 }
 
 const DEFAULT_AGENT_MODEL: WorkflowAgentModel = {
@@ -231,6 +243,7 @@ export function createMockWorkflowNodeType(
         description:
           locale === "zh-CN" ? "定义工作流输入" : "Define workflow inputs",
         configFields: ["initialPrompt"],
+        supportedScopes: ["workflow"],
       };
     case "agent":
       return {
@@ -241,6 +254,7 @@ export function createMockWorkflowNodeType(
             ? "交给模型自主执行"
             : "Delegate autonomous work to a model",
         configFields: ["agent"],
+        supportedScopes: ["workflow", "iteration"],
       };
     case "condition":
       return {
@@ -251,6 +265,7 @@ export function createMockWorkflowNodeType(
             ? "根据规则选择路径"
             : "Route execution based on rules",
         configFields: ["condition"],
+        supportedScopes: ["workflow", "iteration"],
       };
     case "tool":
       return {
@@ -259,6 +274,7 @@ export function createMockWorkflowNodeType(
         description:
           locale === "zh-CN" ? "调用终端或插件" : "Call a terminal or plugin",
         configFields: ["tool"],
+        supportedScopes: ["workflow"],
       };
     case "junction":
       return {
@@ -269,6 +285,7 @@ export function createMockWorkflowNodeType(
             ? "等待多个执行分支完成"
             : "Wait for multiple branches to complete",
         configFields: ["waitStrategy", "failureStrategy"],
+        supportedScopes: ["workflow"],
       };
     case "human":
       return {
@@ -279,6 +296,7 @@ export function createMockWorkflowNodeType(
             ? "等待人工决策后继续"
             : "Pause for a human decision",
         configFields: ["approvalPrompt"],
+        supportedScopes: ["workflow"],
       };
     case "loop":
       return {
@@ -289,6 +307,7 @@ export function createMockWorkflowNodeType(
             ? "重复执行直到满足条件"
             : "Repeat until the exit condition is met",
         configFields: ["maxAttempts", "exitCondition"],
+        supportedScopes: ["workflow"],
       };
     case "iteration":
       return {
@@ -299,6 +318,7 @@ export function createMockWorkflowNodeType(
             ? "对数组逐项执行区域内节点"
             : "Run the region once per array element",
         configFields: ["iteration"],
+        supportedScopes: ["workflow"],
       };
     case "subflow":
       return {
@@ -309,6 +329,7 @@ export function createMockWorkflowNodeType(
             ? "封装复杂业务步骤"
             : "Encapsulate a complex business step",
         configFields: [],
+        supportedScopes: ["workflow"],
       };
     case "output":
       return {
@@ -317,6 +338,7 @@ export function createMockWorkflowNodeType(
         description:
           locale === "zh-CN" ? "返回最终结果" : "Return the final result",
         configFields: [],
+        supportedScopes: ["workflow"],
       };
   }
 }
