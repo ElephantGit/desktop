@@ -303,6 +303,12 @@ impl McpHealthStore {
                     return;
                 }
             };
+            // Installing, updating, or reconfiguring a member changes the card view even when the
+            // probe produces no stored result: a workspace-context member short-circuits to
+            // `Unknown(context_missing)` and would otherwise never publish on its own, leaving its
+            // row hidden behind a cached list. Announce the identity before probing so clients
+            // re-query the moment the member becomes eligible.
+            self.publish_changed(&plugin_id);
             let identity = McpHealthIdentity::for_member(&member, /*cwd*/ None);
             let _ = self
                 .ensure_probed(&member, &identity, ProbeReuse::Cached)

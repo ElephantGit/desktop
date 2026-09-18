@@ -358,6 +358,56 @@ fn workspace_context_mcp_stays_context_missing_on_the_card() {
     });
 }
 
+/// Importing a workspace-context MCP announces its identity so the card re-queries and renders the
+/// `Unknown(context_missing)` row even though no probe result is ever stored for it.
+#[test]
+fn importing_a_workspace_context_mcp_announces_a_card_health_change() {
+    ora_logging::with_trace_logging(|| {
+        let temporary = TempDir::new().expect("temp directory");
+        let pool = test_pool(temporary.path());
+        let (plugins, hub) = test_plugins(temporary.path(), &pool);
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime")
+            .block_on(async {
+                let mut events = hub.subscribe();
+                assert_eq!(
+                    events.recv().await.expect("ready").expect("event"),
+                    AppEvent::Ready
+                );
+                let plugin_id = import_mcp(
+                    &plugins,
+                    temporary.path(),
+                    "workspace-mcp-event",
+                    WORKSPACE_CONTEXT_STDIO_CONFIG,
+                )
+                .await;
+                // The card view is a separate query: without this event its cached list would stay
+                // stale and the context-missing row would never appear.
+                let mut saw_changed = false;
+                for _ in 0..64 {
+                    match tokio::time::timeout(Duration::from_millis(200), events.recv()).await {
+                        Ok(Some(Ok(event))) => {
+                            if event
+                                == (AppEvent::McpHealthChanged {
+                                    plugin_id: plugin_id.clone(),
+                                })
+                            {
+                                saw_changed = true;
+                            }
+                        }
+                        Ok(Some(Err(_))) | Ok(None) | Err(_) => break,
+                    }
+                }
+                assert!(
+                    saw_changed,
+                    "becoming eligible must announce a card health change"
+                );
+            });
+    });
+}
+
 /// Required Settings keep a member out of probing until a complete save qualifies it.
 #[test]
 fn incomplete_settings_are_not_probed_until_a_complete_save() {
