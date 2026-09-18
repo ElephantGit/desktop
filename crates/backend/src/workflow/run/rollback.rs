@@ -11,7 +11,7 @@ use gitlancer::{
 };
 use ora_application::{
     ApplicationError, FileChange, NodeType, WorkflowGraph, WorkflowRepository,
-    WorkflowRunEngineRepository, resume_unit_owner_id,
+    WorkflowRunEngineRepository, resume_unit_owner_id, running_row_blocks_resume,
 };
 use ora_contracts::{
     EmptyErrorParams, PreviewWorkflowRunResumeRequest, PreviewWorkflowRunResumeResponse,
@@ -86,9 +86,10 @@ pub(super) fn plan_rollback(
     let node_runs = repository
         .list_node_runs(run_id)
         .map_err(|error| BackendError::internal("failed to list node runs for rollback", error))?;
-    let has_running_node = node_runs
-        .iter()
-        .any(|node_run| node_run.status == WorkflowNodeStatus::Running);
+    let has_running_node = node_runs.iter().any(|node_run| {
+        node_run.status == WorkflowNodeStatus::Running
+            && running_row_blocks_resume(&node_run.node_type)
+    });
     let graph = WorkflowGraph::parse(context.graph_json.as_str()).ok();
     let mut failed: Vec<FailedNodeCheckpoint> = node_runs
         .iter()

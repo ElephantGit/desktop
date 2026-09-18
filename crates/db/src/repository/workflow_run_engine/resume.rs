@@ -1,7 +1,9 @@
 use super::current_nodes::current_nodes_to_state;
 use super::engine_repository_error_from_database;
 use crate::repository::RepositoryPool;
-use ora_application::{RepositoryError, ResumeWorkflowRunResult, WorkflowRunPayload};
+use ora_application::{
+    RepositoryError, ResumeWorkflowRunResult, WorkflowRunPayload, running_row_blocks_resume,
+};
 use ora_domain::{WorkflowNodeStatus, WorkflowRunId, WorkflowRunStatus, WorkflowScopeStatus};
 use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params, params_from_iter};
 use std::collections::BTreeSet;
@@ -32,17 +34,23 @@ pub(super) fn resume_from_failure(
         {
             return Ok(ResumeWorkflowRunResult::NotResumable);
         }
-        let has_running_node: bool = transaction.query_row(
-            "SELECT EXISTS(
-                        SELECT 1 FROM workflow_node_runs
-                        WHERE run_id = ?1 AND status = ?2 AND is_deleted = 0
-                     )",
-            params![
-                run_id.as_ref(),
-                WorkflowNodeStatus::Running.database_value()
-            ],
-            |row| row.get(0),
-        )?;
+        // Container rows parked by the terminal run do not count as live work; see
+        // `running_row_blocks_resume`.
+        let has_running_node = transaction
+            .prepare(
+                "SELECT node_type FROM workflow_node_runs
+                 WHERE run_id = ?1 AND status = ?2 AND is_deleted = 0",
+            )?
+            .query_map(
+                params![
+                    run_id.as_ref(),
+                    WorkflowNodeStatus::Running.database_value()
+                ],
+                |row| row.get::<_, String>(0),
+            )?
+            .collect::<Result<Vec<_>, _>>()?
+            .iter()
+            .any(|node_type| running_row_blocks_resume(node_type));
         if has_running_node {
             return Ok(ResumeWorkflowRunResult::NotResumable);
         }

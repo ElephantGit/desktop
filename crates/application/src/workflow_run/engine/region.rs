@@ -4,9 +4,24 @@
 //! region-bookkeeping bulk; they still answer from persisted rows and graph topology only.
 
 use crate::workflow_run::engine::graph::WorkflowGraph;
+use crate::workflow_run::engine::node_type::NodeType;
 use crate::workflow_run::engine::ports::FailurePropagation;
 use ora_domain::{WorkflowNodeRun, WorkflowNodeStatus};
 use std::collections::BTreeSet;
+
+/// Whether a `Running` row of this wire node type stands for work in flight outside the
+/// scheduler, and therefore must finish before the run can resume.
+///
+/// Container rows (Iteration, Loop) are `Running` only while their region or round rows do the
+/// work, and those child rows block a resume on their own. A container parked by a run that
+/// went terminal has nothing in flight; refusing to resume on its account would leave the run
+/// stuck, because scheduling never advances a terminal run. An unknown type is treated as live
+/// work, the conservative answer.
+pub fn running_row_blocks_resume(node_type: &str) -> bool {
+    !node_type
+        .parse::<NodeType>()
+        .is_ok_and(|node_type| matches!(node_type, NodeType::Iteration | NodeType::Loop))
+}
 
 /// Resolves how a failure of the node with the given id propagates, structurally: any failure
 /// inside a composite region resolves to the owning composite node with `Composite` semantics

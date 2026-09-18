@@ -25,7 +25,7 @@ pub use engine::{
     WorkflowRunPayload, WorkflowRunPayloadError, WorkflowRunWorkspaceInitializer,
     WorkflowValidationError, WorkflowVariablePool, WorkflowVariablePoolError, extract_json_object,
     plan_snapshot_switch, render_variable_template, resume_clear_node_ids, resume_unit_owner_id,
-    validate_against_schema,
+    running_row_blocks_resume, validate_against_schema,
 };
 pub use handlers::{
     CreateWorkflowRunHandler, DeleteWorkflowRunHandler, GetWorkflowRunHandler,
