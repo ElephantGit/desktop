@@ -27,7 +27,10 @@ fn node_kill_and_immediate_restart_wait_for_old_git_cleanup() {
         replacement.terminate();
         let node = Node::open(fixture.config(), fixture.process(), Shutdown::default()).unwrap();
         let state = node.status(&query(&command)).unwrap().payload.state;
-        let ExecutionState::Completed(WorktreeExecutionResult::Ready(result)) = state else {
+        let ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+            WorktreeExecutionResult::Ready(result),
+        )) = state
+        else {
             panic!("creation not recovered")
         };
         assert_eq!(
@@ -116,7 +119,9 @@ fn shutdown_allows_git_to_finish_within_grace() {
         assert_eq!(node.recover().unwrap(), ora_node::NodeState::Ready);
         assert!(matches!(
             node.status(&query(&command)).unwrap().payload.state,
-            ExecutionState::Completed(WorktreeExecutionResult::Ready(_))
+            ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+                WorktreeExecutionResult::Ready(_)
+            ))
         ));
         node.shutdown().unwrap();
     });
@@ -167,7 +172,9 @@ fn guardian_loss_keeps_conflicting_recovery_unknown_but_allows_other_work() {
         };
         assert!(matches!(
             node.submit(ora_node::Command::Ensure(other)).unwrap().state,
-            ExecutionState::Completed(WorktreeExecutionResult::Ready(_))
+            ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+                WorktreeExecutionResult::Ready(_)
+            ))
         ));
         assert_eq!(
             node.status(&query(&command)).unwrap().payload.state,

@@ -121,7 +121,9 @@ fn cleanup_failure_does_not_block_unrelated_work_or_release_conflicting_resource
             }
             assert!(matches!(
                 node.submit(Command::Ensure(next)).unwrap().state,
-                ExecutionState::Completed(WorktreeExecutionResult::Ready(_))
+                ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+                    WorktreeExecutionResult::Ready(_)
+                ))
             ));
             assert_eq!(node.state(), NodeState::RecoveryPending);
             assert_eq!(
@@ -130,7 +132,9 @@ fn cleanup_failure_does_not_block_unrelated_work_or_release_conflicting_resource
             );
             assert!(matches!(
                 node.submit(removal(&original)).unwrap().state,
-                ExecutionState::Completed(WorktreeExecutionResult::RemovalFailed(_))
+                ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+                    WorktreeExecutionResult::RemovalFailed(_)
+                ))
             ));
             assert!(
                 cli(&fixture.main, &["branch", "--format=%(refname:short)"]).contains("ora/task")
@@ -138,7 +142,9 @@ fn cleanup_failure_does_not_block_unrelated_work_or_release_conflicting_resource
             assert_eq!(node.recover().unwrap(), NodeState::Ready);
             assert!(matches!(
                 node.status(&query(&original)).unwrap().payload.state,
-                ExecutionState::Completed(WorktreeExecutionResult::Ready(_))
+                ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+                    WorktreeExecutionResult::Ready(_)
+                ))
             ));
         }
     });
@@ -190,7 +196,7 @@ fn cleanup_crash_preserves_original_identity_and_frozen_base() {
         });
         assert_eq!(
             node.submit(command.clone()).unwrap().state,
-            ExecutionState::Completed(result.clone())
+            ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(result.clone()))
         );
         assert_eq!(node.pending_events().unwrap(), vec![command.event(result)]);
         assert_eq!(

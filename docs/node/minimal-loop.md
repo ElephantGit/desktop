@@ -10,7 +10,7 @@ Desktop–Controller–Node split remains: the caller specifies the repository a
 coordinates, Node performs the clone in its execution environment, and the caller can observe the result.
 
 This records direction, not an available clone API. The minimal execution contract is approved;
-clone request framing and input validation are implemented. Results, capabilities and storage remain to be connected.
+clone requests, results, status validation and capability declarations are implemented. Durable execution remains to be connected.
 
 ## Existing foundations and gaps
 
@@ -18,8 +18,8 @@ clone request framing and input validation are implemented. Results, capabilitie
   Linux host/guardian can run managed Git.
 - [Durable Worktree execution](persistence/worktree-execution.md) remains implemented, but is no longer
   the first end-to-end objective.
-- Current capability negotiation, terminal results and Node storage contain Worktree-specific constraints.
-  Clone needs explicit adaptation, not an existing Main Workspace requirement or a disguised EnsureWorktree.
+- Protocol results and declarations now support clone independently of Worktree. Node storage and runtime
+  still need clone-specific adaptation, without an existing Main Workspace requirement or disguised EnsureWorktree.
 - Node-facing IPC, Controller coordination and the new Client entry are not connected. Existing passing
   tests do not establish a clone loop.
 
@@ -45,5 +45,5 @@ process cleanup has not been implemented. It is neither current code behavior no
 The [clone root decision](../../specs/decisions/node/repository/0-clone-selected-repository-branch.md)
 and [minimal execution contract](../../specs/decisions/node/repository/20260918-minimal-clone-execution-contract.md)
 were approved on 2026-09-18, confirming scope, input, destination, content and recovery policies. Core verification obligations
-have partial input-codec evidence; execution evidence remains Missing. This change performs no clone,
+have partial request/result/handshake codec evidence; execution evidence remains Missing. This change performs no clone,
 user-directory migration, IPC integration or Backend writer cutover.

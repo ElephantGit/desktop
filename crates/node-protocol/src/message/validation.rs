@@ -4,6 +4,10 @@ use thiserror::Error;
 /// Explains why a decoded or outbound typed message violates protocol invariants.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum MessageValidationError {
+    #[error("clone result must belong to its requested Node")]
+    CloneTargetMismatch,
+    #[error("clone commit must be a full hexadecimal Git object ID")]
+    InvalidCloneCommit,
     #[error("clone branch must be a literal short branch name, not HEAD or a revision expression")]
     InvalidCloneBranch,
     #[error("unsupported protocol version {actual}; expected {expected}")]
@@ -18,8 +22,8 @@ pub enum MessageValidationError {
     EnvelopeVersionNotAdvertised { version: u16 },
     #[error("hello-accepted selected version {selected} differs from envelope version {envelope}")]
     SelectedVersionMismatch { selected: u16, envelope: u16 },
-    #[error("hello-accepted must advertise the worktree-execution capability")]
-    WorktreeCapabilityMissing,
+    #[error("hello-accepted must advertise at least one execution capability")]
+    NoExecutionCapabilities,
     #[error("hello-accepted advertises a capability more than once")]
     DuplicateCapability,
     #[error("completed result Node {result} differs from reporting Node {reporter}")]

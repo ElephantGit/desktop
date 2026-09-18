@@ -37,7 +37,9 @@ fn sqlite_failures_gate_mutations_and_recover_on_reopen() {
             }
             assert!(matches!(
                 node.status(&query(&command)).unwrap().payload.state,
-                ExecutionState::Completed(WorktreeExecutionResult::Ready(_))
+                ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+                    WorktreeExecutionResult::Ready(_)
+                ))
             ));
             assert_eq!(*fixture.faults.calls.borrow(), vec!["create"]);
             assert_eq!(node.pending_events().unwrap().len(), 1);
@@ -81,16 +83,18 @@ fn process_stops_before_and_after_create_keep_frozen_identity_and_base() {
             let result = node.status(&query(&command)).unwrap().payload.state;
             assert_eq!(
                 result,
-                ExecutionState::Completed(WorktreeExecutionResult::Ready(WorktreeReady {
-                    node: node.identity().clone(),
-                    workspace_id: command.spec().workspace_id.clone(),
-                    worktree_id: command.spec().worktree_id.clone(),
-                    facts: WorktreeFacts {
-                        path: NodePath::new(fixture.root.join("task").to_str().unwrap()),
-                        branch: command.spec().expected_branch.clone(),
-                        base_commit: CommitId::new(original_base.clone())
-                    }
-                }))
+                ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+                    WorktreeExecutionResult::Ready(WorktreeReady {
+                        node: node.identity().clone(),
+                        workspace_id: command.spec().workspace_id.clone(),
+                        worktree_id: command.spec().worktree_id.clone(),
+                        facts: WorktreeFacts {
+                            path: NodePath::new(fixture.root.join("task").to_str().unwrap()),
+                            branch: command.spec().expected_branch.clone(),
+                            base_commit: CommitId::new(original_base.clone())
+                        }
+                    })
+                ))
             );
             assert_eq!(
                 cli(&fixture.root.join("task"), &["rev-parse", "HEAD"]),
@@ -131,7 +135,9 @@ fn branch_only_creation_recovers_and_preserves_other_results() {
         }
         assert!(matches!(
             node.status(&query(&command)).unwrap().payload.state,
-            ExecutionState::Completed(WorktreeExecutionResult::Ready(_))
+            ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+                WorktreeExecutionResult::Ready(_)
+            ))
         ));
         assert_eq!(node.submit(failed).unwrap().state, failure);
         assert_eq!(node.pending_events().unwrap().len(), 2);
@@ -165,12 +171,14 @@ fn partial_removal_continues_only_the_owned_branch() {
         assert_eq!(node.recover().unwrap(), NodeState::Ready);
         assert_eq!(
             node.status(&query(&remove)).unwrap().payload.state,
-            ExecutionState::Completed(WorktreeExecutionResult::Removed(WorktreeRemoved {
-                node: node.identity().clone(),
-                workspace_id: command.spec().workspace_id.clone(),
-                worktree_id: command.spec().worktree_id.clone(),
-                outcome: WorktreeRemovalOutcome::Removed
-            }))
+            ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+                WorktreeExecutionResult::Removed(WorktreeRemoved {
+                    node: node.identity().clone(),
+                    workspace_id: command.spec().workspace_id.clone(),
+                    worktree_id: command.spec().worktree_id.clone(),
+                    outcome: WorktreeRemovalOutcome::Removed
+                })
+            ))
         );
         assert_eq!(
             *fixture.faults.calls.borrow(),
@@ -236,16 +244,18 @@ fn missing_checkout_still_cleans_branch_and_empty_owned_directory() {
             } else {
                 assert_eq!(
                     result,
-                    ExecutionState::Completed(WorktreeExecutionResult::Removed(WorktreeRemoved {
-                        node: node.identity().clone(),
-                        workspace_id: command.spec().workspace_id.clone(),
-                        worktree_id: command.spec().worktree_id.clone(),
-                        outcome: if residual == "none" {
-                            WorktreeRemovalOutcome::AlreadyAbsent
-                        } else {
-                            WorktreeRemovalOutcome::Removed
-                        }
-                    }))
+                    ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+                        WorktreeExecutionResult::Removed(WorktreeRemoved {
+                            node: node.identity().clone(),
+                            workspace_id: command.spec().workspace_id.clone(),
+                            worktree_id: command.spec().worktree_id.clone(),
+                            outcome: if residual == "none" {
+                                WorktreeRemovalOutcome::AlreadyAbsent
+                            } else {
+                                WorktreeRemovalOutcome::Removed
+                            }
+                        })
+                    ))
                 );
                 assert_eq!(
                     cli(&fixture.main, &["branch", "--format=%(refname:short)"]),

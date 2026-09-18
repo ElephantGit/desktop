@@ -3,8 +3,8 @@
 English | [中文](controller-node-protocol.zh.md)
 
 > The minimal loop now targets [cloning a specified repository and branch](../node/minimal-loop.md).
-> Clone request framing and input validation are implemented. Results, capability negotiation and execution
-> are not yet connected; clone does not inherit the existing Main Workspace precondition.
+> Clone requests, terminal results, status validation and capability declarations are implemented.
+> Durable clone execution and session orchestration are not connected; clone needs no existing Main Workspace.
 
 `ora-node-protocol` defines the version 1 wire contract for Controller–Node session messages and
 Worktree execution. It provides typed messages and a validated asynchronous frame codec. Transport,
@@ -30,9 +30,9 @@ They serialize into the existing flat envelope, with no business namespace or ex
 An absent Worktree `request_id` is omitted rather than serialized as null.
 
 `identity.rs` owns `NodeRuntimeIdentity` and its checks. Worktree inputs, facts, failures and terminal
-results retain their invariants in `domain/worktree.rs`. Execution's `Completed` still directly
-contains `WorktreeExecutionResult`; another execution capability should motivate any future result
-abstraction. Correlation fields stay explicit on each envelope, with shared identity checks rather
+results retain their invariants in `domain/worktree.rs`. Execution's `Completed` contains `ExecutionResult`,
+grouped into Worktree and Clone families; each business owns validation and origin identity.
+Correlation fields stay explicit on each envelope, with shared identity checks rather
 than an `ExecutionCorrelation` wrapper; this keeps applicable fields visible without Serde flatten.
 
 ## Initial clone request
@@ -53,8 +53,30 @@ Clone payload/spec reject unknown fields, including destination, credentials and
 the outer envelope retains extension tolerance.
 
 Version 1 framing and Worktree encodings remain unchanged; older codecs reject the new message type.
-No Node currently advertises or executes clone. Do not dispatch it until results, capability negotiation
-and durable execution are connected. This step changes no database layout, IPC listener or Backend writer.
+No running Node currently advertises or executes clone. Dispatch still requires a capable runtime and
+durable acceptance. This step changes no database layout, IPC listener or Backend writer.
+
+## Clone results and capabilities
+
+`CloneResultMessage` (`clone_result`) carries the original operation/execution IDs, optional request ID,
+an event sequence and `CloneExecutionResult`. Its disjoint `clone_ready` / `clone_failed` tags also appear
+under `ExecutionState::Completed(ExecutionResult::Clone(...))`; Worktree's old tags and persisted results
+remain unchanged. The common result enum delegates validation to the owning business.
+
+`CloneReady` includes the original spec, originating Node incarnation, `RepositoryId`, Node-scoped path
+and a full 40- or 64-digit hexadecimal commit ID. `CloneFailed` includes the same origin/spec, a structured
+failure code and `no_directory` or `retained { repository_id, path }` residue. `no_directory` means no
+owned directory, not that a conflicting user path is absent. Raw diagnostics are not accepted. Unknown
+outcomes stay nonterminal; wire validity cannot prove Git success or cleanup. Source availability,
+missing branch, destination conflict and operation failure are the initial definitive error categories.
+
+Events and Completed queries apply identical clone checks. Result NodeId must match the input target;
+the status reporter must match the result's persistent NodeId but may have a newer incarnation.
+Queries carry no event sequence and never acknowledge the retained event.
+
+`HelloAccepted` accepts `repository_clone`, `worktree_execution`, or both, without duplicates.
+The set must be nonempty. This only validates a declaration: session owners must still match the
+selected Node's capability before dispatch. No unsupported capability is advertised by the existing runtime.
 
 ## Using the codec
 
@@ -120,7 +142,7 @@ Names and enum tags use snake_case on the wire. For example, the JSON inside a H
 Both codec directions enforce envelope version 1. `Hello` advertises a nonempty, duplicate-free
 version list containing the envelope version; it may also advertise other versions.
 `HelloAccepted` selects the envelope version and advertises a duplicate-free capability set
-containing `worktree_execution`, currently the only defined capability. These checks establish
+containing at least one of `worktree_execution` and `repository_clone`. These checks establish
 message self-consistency. Matching the response to a previous Hello and enforcing handshake order
 require a session implementation. A heartbeat carries the current Node identity, not execution evidence.
 

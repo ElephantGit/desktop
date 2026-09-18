@@ -8,7 +8,7 @@ pub use execution::{
     EventAck, EventAckMessage, ExecutionState, ExecutionStatus, ExecutionStatusMessage,
     GetExecutionStatus, GetExecutionStatusMessage,
 };
-pub use repository::{CloneRepository, CloneRepositoryMessage};
+pub use repository::{CloneRepository, CloneRepositoryMessage, CloneResultMessage};
 use serde::{Deserialize, Serialize};
 pub use session::{
     Heartbeat, HeartbeatMessage, Hello, HelloAccepted, HelloAcceptedMessage, HelloMessage,
@@ -52,6 +52,7 @@ impl ValidateMessage for ControllerToNodeMessage {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "message_type", rename_all = "snake_case")]
 pub enum NodeToControllerMessage {
+    CloneResult(CloneResultMessage),
     HelloAccepted(HelloAcceptedMessage),
     Heartbeat(HeartbeatMessage),
     ExecutionStatus(ExecutionStatusMessage),
@@ -65,6 +66,7 @@ impl ValidateMessage for NodeToControllerMessage {
     /// Dispatches validation without introducing business rules into the codec.
     fn validate(&self) -> Result<(), MessageValidationError> {
         match self {
+            Self::CloneResult(message) => message.validate(),
             Self::HelloAccepted(message) => message.validate(),
             Self::Heartbeat(message) => message.validate(),
             Self::ExecutionStatus(message) => message.validate(),

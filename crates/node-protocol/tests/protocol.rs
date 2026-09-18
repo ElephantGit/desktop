@@ -6,6 +6,8 @@ mod execution;
 mod framing;
 #[path = "protocol/repository.rs"]
 mod repository;
+#[path = "protocol/repository_results.rs"]
+mod repository_results;
 #[path = "protocol/session.rs"]
 mod session;
 #[path = "protocol/support.rs"]

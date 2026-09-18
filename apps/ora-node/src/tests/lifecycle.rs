@@ -16,16 +16,18 @@ fn real_create_remove_replay_and_acknowledgement() {
             ready,
             ExecutionStatus {
                 node: node.identity().clone(),
-                state: ExecutionState::Completed(WorktreeExecutionResult::Ready(WorktreeReady {
-                    node: node.identity().clone(),
-                    workspace_id: command.spec().workspace_id.clone(),
-                    worktree_id: command.spec().worktree_id.clone(),
-                    facts: WorktreeFacts {
-                        path: NodePath::new(fixture.root.join("task").to_str().unwrap()),
-                        branch: command.spec().expected_branch.clone(),
-                        base_commit: CommitId::new(base)
-                    }
-                }))
+                state: ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+                    WorktreeExecutionResult::Ready(WorktreeReady {
+                        node: node.identity().clone(),
+                        workspace_id: command.spec().workspace_id.clone(),
+                        worktree_id: command.spec().worktree_id.clone(),
+                        facts: WorktreeFacts {
+                            path: NodePath::new(fixture.root.join("task").to_str().unwrap()),
+                            branch: command.spec().expected_branch.clone(),
+                            base_commit: CommitId::new(base)
+                        }
+                    })
+                ))
             }
         );
         let events = node.pending_events().unwrap();
@@ -79,12 +81,14 @@ fn real_create_remove_replay_and_acknowledgement() {
         let remove = removal(&command);
         assert_eq!(
             node.submit(remove).unwrap().state,
-            ExecutionState::Completed(WorktreeExecutionResult::Removed(WorktreeRemoved {
-                node: node.identity().clone(),
-                workspace_id: command.spec().workspace_id.clone(),
-                worktree_id: command.spec().worktree_id.clone(),
-                outcome: WorktreeRemovalOutcome::Removed
-            }))
+            ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+                WorktreeExecutionResult::Removed(WorktreeRemoved {
+                    node: node.identity().clone(),
+                    workspace_id: command.spec().workspace_id.clone(),
+                    worktree_id: command.spec().worktree_id.clone(),
+                    outcome: WorktreeRemovalOutcome::Removed
+                })
+            ))
         );
         assert!(!task.exists());
         assert_eq!(
@@ -126,13 +130,15 @@ fn invalid_paths_bindings_and_unowned_resources_never_mutate_git() {
             };
             assert!(matches!(
                 node.submit(Command::Ensure(command)).unwrap().state,
-                ExecutionState::Completed(WorktreeExecutionResult::Failed(WorktreeFailed {
-                    failure: WorktreeFailure {
-                        code: WorktreeFailureCode::PathOutsideAuthorizedRoot,
+                ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+                    WorktreeExecutionResult::Failed(WorktreeFailed {
+                        failure: WorktreeFailure {
+                            code: WorktreeFailureCode::PathOutsideAuthorizedRoot,
+                            ..
+                        },
                         ..
-                    },
-                    ..
-                }))
+                    })
+                ))
             ));
             assert_eq!(*fixture.faults.calls.borrow(), Vec::<&str>::new());
             assert_eq!(node.pending_events().unwrap().len(), 1);
@@ -142,7 +148,9 @@ fn invalid_paths_bindings_and_unowned_resources_never_mutate_git() {
         let command = fixture.ensure(&node);
         assert!(matches!(
             node.submit(removal(&command)).unwrap().state,
-            ExecutionState::Completed(WorktreeExecutionResult::RemovalFailed(_))
+            ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+                WorktreeExecutionResult::RemovalFailed(_)
+            ))
         ));
         let Command::Ensure(mut invalid) = command else {
             unreachable!()
@@ -192,7 +200,9 @@ fn existing_targets_and_main_workspace_are_protected() {
             }
             assert!(matches!(
                 node.submit(Command::Ensure(message)).unwrap().state,
-                ExecutionState::Completed(WorktreeExecutionResult::Failed(_))
+                ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+                    WorktreeExecutionResult::Failed(_)
+                ))
             ));
             assert_eq!(*fixture.faults.calls.borrow(), Vec::<&str>::new());
             assert!(fixture.main.join(".git").is_dir());
@@ -218,7 +228,9 @@ fn static_symlink_escape_is_rejected() {
         let command = fixture.ensure(&node);
         assert!(matches!(
             node.submit(command).unwrap().state,
-            ExecutionState::Completed(WorktreeExecutionResult::Failed(_))
+            ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+                WorktreeExecutionResult::Failed(_)
+            ))
         ));
         assert_eq!(*fixture.faults.calls.borrow(), Vec::<&str>::new());
         assert!(outside.path().is_dir());
@@ -253,7 +265,9 @@ fn duplicate_inputs_and_resource_conflicts_preserve_original_result() {
         changed.operation_id = OperationId::new("other-operation");
         assert!(matches!(
             node.submit(Command::Ensure(changed)).unwrap().state,
-            ExecutionState::Completed(WorktreeExecutionResult::Failed(_))
+            ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+                WorktreeExecutionResult::Failed(_)
+            ))
         ));
         assert_eq!(node.submit(command).unwrap(), result);
         assert_eq!(*fixture.faults.calls.borrow(), vec!["create"]);
@@ -279,12 +293,14 @@ fn branch_cleanup_uses_exact_local_names_even_with_ambiguous_tags() {
         );
         assert_eq!(
             node.submit(removal(&command)).unwrap().state,
-            ExecutionState::Completed(WorktreeExecutionResult::Removed(WorktreeRemoved {
-                node: node.identity().clone(),
-                workspace_id: command.spec().workspace_id.clone(),
-                worktree_id: command.spec().worktree_id.clone(),
-                outcome: WorktreeRemovalOutcome::Removed
-            }))
+            ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+                WorktreeExecutionResult::Removed(WorktreeRemoved {
+                    node: node.identity().clone(),
+                    workspace_id: command.spec().workspace_id.clone(),
+                    worktree_id: command.spec().worktree_id.clone(),
+                    outcome: WorktreeRemovalOutcome::Removed
+                })
+            ))
         );
         assert_eq!(
             cli(
@@ -314,13 +330,15 @@ fn inconsistent_main_registration_is_rejected() {
         let command = fixture.ensure(&node);
         assert!(matches!(
             node.submit(command).unwrap().state,
-            ExecutionState::Completed(WorktreeExecutionResult::Failed(WorktreeFailed {
-                failure: WorktreeFailure {
-                    code: WorktreeFailureCode::InvalidMainWorkspace,
+            ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+                WorktreeExecutionResult::Failed(WorktreeFailed {
+                    failure: WorktreeFailure {
+                        code: WorktreeFailureCode::InvalidMainWorkspace,
+                        ..
+                    },
                     ..
-                },
-                ..
-            }))
+                })
+            ))
         ));
         assert_eq!(*fixture.faults.calls.borrow(), Vec::<&str>::new());
         assert!(fixture.main.join(".git").is_file());
@@ -345,24 +363,26 @@ fn main_checkout_overlap_is_rejected_even_for_a_distinct_task_identity() {
         let command = Command::Ensure(message);
         assert!(matches!(
             node.submit(command.clone()).unwrap().state,
-            ExecutionState::Completed(WorktreeExecutionResult::Failed(WorktreeFailed {
-                failure: WorktreeFailure {
-                    code: WorktreeFailureCode::PathOutsideAuthorizedRoot,
-                    ..
-                },
-                ..
-            }))
-        ));
-        assert!(matches!(
-            node.submit(removal(&command)).unwrap().state,
-            ExecutionState::Completed(WorktreeExecutionResult::RemovalFailed(
-                WorktreeRemovalFailed {
+            ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+                WorktreeExecutionResult::Failed(WorktreeFailed {
                     failure: WorktreeFailure {
                         code: WorktreeFailureCode::PathOutsideAuthorizedRoot,
                         ..
                     },
                     ..
-                }
+                })
+            ))
+        ));
+        assert!(matches!(
+            node.submit(removal(&command)).unwrap().state,
+            ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+                WorktreeExecutionResult::RemovalFailed(WorktreeRemovalFailed {
+                    failure: WorktreeFailure {
+                        code: WorktreeFailureCode::PathOutsideAuthorizedRoot,
+                        ..
+                    },
+                    ..
+                })
             ))
         ));
         assert_eq!(*fixture.faults.calls.borrow(), Vec::<&str>::new());

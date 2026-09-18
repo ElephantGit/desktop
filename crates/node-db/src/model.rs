@@ -141,7 +141,9 @@ impl Progress {
             Self::Accepted => ExecutionState::Accepted,
             Self::Running { .. } => ExecutionState::Running,
             Self::Unknown { .. } => ExecutionState::Unknown,
-            Self::Completed { result } => ExecutionState::Completed(result.clone()),
+            Self::Completed { result } => ExecutionState::Completed(
+                ora_node_protocol::ExecutionResult::Worktree(result.clone()),
+            ),
         }
     }
     /// Supplies the constrained SQL discriminator for state scans and guarded transitions.

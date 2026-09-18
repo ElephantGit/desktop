@@ -33,7 +33,9 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
                 self.database.reject(&command, result.clone())?;
                 return Ok(ExecutionStatus {
                     node: self.identity.clone(),
-                    state: ExecutionState::Completed(result),
+                    state: ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+                        result,
+                    )),
                 });
             }
         };
@@ -50,7 +52,9 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
                 self.database.reject(&command, result.clone())?;
                 return Ok(ExecutionStatus {
                     node: self.identity.clone(),
-                    state: ExecutionState::Completed(result),
+                    state: ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
+                        result,
+                    )),
                 });
             }
             Err(error) => return Err(error.into()),

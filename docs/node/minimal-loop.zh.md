@@ -9,14 +9,14 @@
 Controller 协调，Node 在执行环境完成 clone，结果回到调用方可观察的状态。
 
 此文记录方向，不是可运行 clone 接口说明。最小执行契约已获批，请求 framing 和输入校验已实现；
-结果、能力与持久执行仍待接通。
+结果、状态校验与能力声明也已实现；持久执行仍待接通。
 
 ## 已有基础与差距
 
 - [独立 Node](runtime.zh.md) 已有启动恢复、停止和显式数据目录；Linux host／guardian 可执行受管 Git。
 - [Worktree 持久执行](persistence/worktree-execution.zh.md)已实现，但这是保留能力，不是新的首版目标。
-- 当前协议能力、终态结果及 Node 数据模型含 Worktree 专用约束。clone 需要按实际需求适配，
-  不能直接套用已有 Main Workspace 前提或将 clone 伪装为 EnsureWorktree。
+- 协议结果和能力声明已支持独立 clone。Node 存储及运行时仍待适配，不能直接套用已有
+  Main Workspace 前提或将 clone 伪装为 EnsureWorktree。
 - Node 对外 IPC、Controller 持久协调及 Client 新入口尚未接通。已有测试不构成 clone 闭环验收。
 
 保留稳定执行身份、派发前持久责任、进程恢复交接、结果可查询及持久接管后确认等可靠性原则。
@@ -40,5 +40,5 @@ Controller 协调，Node 在执行环境完成 clone，结果回到调用方可�
 [clone 根决策](../../specs/decisions/node/repository/0-clone-selected-repository-branch.md)与
 [最小执行契约](../../specs/decisions/node/repository/20260918-minimal-clone-execution-contract.md)已于 2026-09-18
 获批（approved），确认范围、输入、目录、内容和恢复政策。
-核心测试义务已有部分输入 codec 证据，执行证据仍为 Missing；批准不表示功能已实现。
+核心测试义务已有部分请求／结果／握手 codec 证据，执行证据仍为 Missing；批准不表示功能已实现。
 本次不启动 clone，不迁移用户目录，不接通 IPC，也不切换 Backend 写入入口。
