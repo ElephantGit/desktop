@@ -27,7 +27,9 @@ use std::fs;
 use std::fs::File;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
+#[cfg(windows)]
+use std::process::Stdio;
 use std::sync::Arc;
 use tempfile::TempDir;
 use zip::ZipWriter;
@@ -1111,10 +1113,18 @@ async fn pack_install_applies_an_agent_gated_member_whose_agent_is_installed() {
 
 /// Holds one data directory open from a background process so directory replacement fails on
 /// Windows, and terminates the whole process tree on drop or explicit release.
+///
+/// This fault injection depends on Windows directory locking and is intentionally Windows-only:
+/// a child process whose working directory sits inside the directory makes the directory's
+/// rename/replacement fail deterministically. POSIX has no equivalent lock — another process can
+/// still unlink a directory that is somebody's cwd — so gating this on `cfg(windows)` is the only
+/// honest way to keep the qualification deterministic; Linux CI cannot produce the same fault.
+#[cfg(windows)]
 struct DirectoryHolder {
     child: std::process::Child,
 }
 
+#[cfg(windows)]
 impl DirectoryHolder {
     /// Spawns a background process whose working directory pins `directory`.
     fn spawn_holding(directory: &Path) -> Self {
@@ -1137,6 +1147,7 @@ impl DirectoryHolder {
     }
 }
 
+#[cfg(windows)]
 impl Drop for DirectoryHolder {
     fn drop(&mut self) {
         let _ = Command::new("taskkill")
@@ -1996,6 +2007,13 @@ async fn rollback_runs_in_reverse_order_and_clears_every_created_member() {
 
 /// A rollback that fails leaves the residual member installed, journals it as pack-managed,
 /// and surfaces the rollback failure next to the original install failure.
+///
+/// The filesystem fault is produced by holding the member's data directory open from a child
+/// process (`DirectoryHolder`), which only Windows directory locking turns into a deterministic
+/// rollback failure; POSIX cannot reproduce it, so the test is intentionally Windows-only and the
+/// cross-platform rollback, journal, and reconciliation behavior stays covered by the D3-D and
+/// `reconcile_*` tests above.
+#[cfg(windows)]
 #[tokio::test]
 async fn a_failed_rollback_keeps_residual_members_and_journals_them() {
     let _trace = trace_guard();
@@ -2065,15 +2083,6 @@ async fn a_failed_rollback_keeps_residual_members_and_journals_them() {
         .install_members(&namespace, preflight, &installer, /*progress*/ None)
         .await
         .expect("the failure is reported inside the pack outcome");
-    eprintln!("DEBUG outcome {outcome:?}");
-    eprintln!(
-        "DEBUG visible dir: {}",
-        member_installed(data_dir.path(), VISIBLE_MEMBER, "1.0.0")
-    );
-    eprintln!(
-        "DEBUG hidden dir: {}",
-        member_installed(data_dir.path(), HIDDEN_MEMBER, "1.0.0")
-    );
 
     // The visible member rolled back; the hidden member's rollback failed, so it remains
     // installed as the residual evidence.
@@ -2235,6 +2244,12 @@ async fn retry_after_a_complete_rollback_installs_normally() {
 
 /// A partially rolled-back failure is honestly reconciled after a restart, and the residual
 /// member can still be removed by a pack uninstall.
+///
+/// Like `a_failed_rollback_keeps_residual_members_and_journals_them`, the filesystem fault comes
+/// from Windows directory locking (`DirectoryHolder`) and cannot be reproduced on POSIX, so the
+/// test is intentionally Windows-only; generic restart reconciliation is covered cross-platform
+/// by the `reconcile_*` and `pack_ownership_survives_a_restart` tests.
+#[cfg(windows)]
 #[tokio::test]
 async fn partial_rollback_residual_is_reconciled_after_a_restart() {
     let _trace = trace_guard();
@@ -2771,6 +2786,12 @@ fn build_skill_artifact_v(data_dir: &Path, identifier: &str, version: &str) -> (
 }
 
 /// Builds one MCP member artifact and returns `(path, sha256_hex)`.
+///
+/// The transport is HTTP so the fixture installs identically on every host: production validation
+/// requires a stdio command inside the package to carry the Unix executable bit, a property this
+/// zip fixture cannot express portably from Windows. Pack qualification only proves member
+/// installation, marketplace resolution, and journal invariants — not the stdio runtime — so the
+/// transport shape is free to be the platform-independent one.
 fn build_mcp_artifact_v(data_dir: &Path, identifier: &str, version: &str) -> (PathBuf, String) {
     let artifact = data_dir
         .join("artifacts")
@@ -2779,13 +2800,13 @@ fn build_mcp_artifact_v(data_dir: &Path, identifier: &str, version: &str) -> (Pa
     let manifest = format!(
         "resolver = 1\nidentifier = \"{identifier}\"\nkind = \"mcp\"\nversion = \"{version}\"\ndescription = \"Python MCP server\"\n"
     );
-    let config = br#"{"schemaVersion":1,"transport":{"type":"stdio","command":"assets/server.py","args":["-m","ora_mcp"]}}"#;
+    let config =
+        br#"{"schemaVersion":1,"transport":{"type":"http","url":"https://example.com/mcp"}}"#;
     write_orax_zip(
         &artifact,
         &[
             ("orax.toml", manifest.as_bytes()),
             ("assets/config.json", config),
-            ("assets/server.py", b"print('mcp server')\n"),
         ],
     );
     let sha = ora_utils::hash::sha256_file(&artifact).expect("hash artifact");
