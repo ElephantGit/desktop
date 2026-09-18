@@ -1168,3 +1168,72 @@ fn reset_configuration_drops_the_health_row() {
             });
     });
 }
+
+/// A delivery boundary logs the ACP send first, then the paired Host health observation.
+#[test]
+fn session_health_observation_is_logged_after_the_acp_send_boundary() {
+    let temporary = TempDir::new().expect("temp directory");
+    let pool = test_pool(temporary.path());
+    let (plugins, _hub, plugin_host) = test_plugins_with_host(temporary.path(), &pool);
+    let recorder = EventTextRecorder::default();
+    ora_logging::with_recorded_trace_logging(recorder.layer(), || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime")
+            .block_on(async {
+                import_mcp(
+                    &plugins,
+                    temporary.path(),
+                    "boundary-mcp",
+                    UNRUNNABLE_STDIO_CONFIG,
+                )
+                .await;
+                let host =
+                    crate::session_setup::SessionMcpHost::from_plugin_api(plugin_host.clone());
+                let setup = crate::session_setup::SessionSetup::resolve(
+                    &host,
+                    temporary.path(),
+                    crate::session_setup::AgentSessionMcpCapabilities::new(
+                        /*load_session*/ true, /*http*/ true,
+                    ),
+                )
+                .expect("resolve session mcp");
+                crate::agent_runtime::record_session_mcp_boundary(
+                    &host,
+                    &ora_domain::SessionId::new("boundary-session"),
+                    &ora_domain::AgentRef::parse("official/ora-space.opencode").expect("agent ref"),
+                    Some("provider-session"),
+                    "session/new",
+                    &setup.mcp,
+                    temporary.path(),
+                );
+                // The observation runs on its own task; let it report before the runtime drops.
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while Instant::now() < deadline
+                    && !recorder.text().contains("host MCP health probe result")
+                {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            });
+    });
+
+    let recorded = recorder.text();
+    let send = recorded
+        .find("sending ACP session configuration")
+        .unwrap_or_else(|| panic!("missing send log: {recorded}"));
+    let probe = recorded
+        .find("host MCP health probe result")
+        .unwrap_or_else(|| panic!("missing probe result log: {recorded}"));
+    assert!(
+        send < probe,
+        "the Host health observation must follow the ACP send boundary: {recorded}"
+    );
+    // Both events carry the same session so an operator can pair them.
+    assert!(recorded.contains("boundary-session"), "{recorded}");
+    // The pairing log stays secret-free: no command path, env, or credential.
+    assert!(
+        !recorded.contains("#!/nonexistent-ora-probe-interpreter"),
+        "{recorded}"
+    );
+}

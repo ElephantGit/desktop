@@ -8,7 +8,7 @@ import type {
   SessionMcpSelection,
 } from "@ora/contracts";
 import { createChatStore } from "@ora/chat";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createHookWrapper,
   createTestQueryClient,
@@ -28,6 +28,7 @@ import "../../i18n/i18n-instance";
 import { useMcpHealth } from "../../state/hooks/use-mcp-health";
 import { useUiStore } from "../../state/stores/ui-store";
 import { SessionMcpHealthBanner } from "./session-mcp-health-banner";
+import { Composer } from "./composer";
 
 /** The workspace directory this fixture's platform reports for every workspace. */
 const WORKSPACE_CWD = "/ws/project";
@@ -210,5 +211,50 @@ describe("SessionMcpHealthBanner", () => {
       settingsOpen: previous.settingsOpen,
       pluginSettingsRequest: previous.pluginSettingsRequest,
     });
+  });
+
+  it("keeps the prompt editable and sendable while the banner is shown", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    const state = createPluginMemory();
+    state.installedPlugins = [
+      mcpPlugin("official/unreachable", "Unreachable MCP"),
+    ];
+    seedMcpHealth(state, WORKSPACE_CWD, [
+      entry("official/unreachable", {
+        status: "unhealthy",
+        error_code: "mcp_http_unauthorized",
+      }),
+    ]);
+    const backendHandlers: TestHandlers = pluginHandlers(state);
+    const client: ContractsClient = createTestClient(backendHandlers);
+    const stub = createStubPlatform();
+    const platform = {
+      ...stub,
+      locationActions: {
+        ...stub.locationActions,
+        resolveWorkspaceCwd: async () => WORKSPACE_CWD,
+      },
+    };
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    render(
+      <Wrapper>
+        <PlatformProvider adapter={platform}>
+          <SessionMcpHealthBanner session={session({ mode: "automatic" })} />
+          <Composer onSend={onSend} isResponding={false} />
+        </PlatformProvider>
+      </Wrapper>,
+    );
+
+    // The banner is a non-blocking status surface: the composer keeps accepting prompts.
+    await screen.findByRole("status");
+    const textarea = screen.getByRole("textbox");
+    expect(textarea).toBeEnabled();
+    await user.type(textarea, "hello{Enter}");
+    expect(onSend).toHaveBeenCalledWith("hello");
   });
 });

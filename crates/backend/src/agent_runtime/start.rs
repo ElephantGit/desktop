@@ -236,18 +236,15 @@ pub(super) async fn create_provider_session(
         ),
     )
     .map_err(crate::session_setup::SessionMcpError::into_backend)?;
-    log_session_mcp_request(
+    record_session_mcp_boundary(
+        session_mcp,
         ora_session_id,
         agent_ref,
         /*agent_session_id*/ None,
         AGENT_METHOD_NAMES.session_new,
-        &session_mcp.selection,
         &setup.mcp,
+        cwd,
     );
-    // Observe Host-side health for this Session's Effective MCP Set after the configuration was
-    // logged, so every result pairs with this delivery. This never blocks setup and never changes
-    // the list being sent.
-    crate::session_setup::observe_session_mcp_health(session_mcp, ora_session_id, cwd);
     let mcp_revision = setup.mcp.revision().clone();
     // Read before `into_servers` consumes the snapshot: the window depends on whether the
     // request asks the agent to connect any MCP servers.
@@ -356,7 +353,7 @@ impl std::fmt::Debug for SessionMcpLogMember {
 }
 
 /// Logs the exact secret-free MCP identity sent at an ACP session boundary.
-pub(super) fn log_session_mcp_request(
+fn log_session_mcp_request(
     ora_session_id: &SessionId,
     agent_ref: &AgentRef,
     agent_session_id: Option<&str>,
@@ -389,6 +386,32 @@ pub(super) fn log_session_mcp_request(
         mcp_members = ?members,
         "sending ACP session configuration"
     );
+}
+
+/// Records one ACP MCP delivery boundary and pairs the Host health observation with it.
+///
+/// Every `session/new` and `session/load` that carries `mcpServers` reaches this function, and the
+/// raw send log stays private to it, so a delivery boundary can never be logged without also
+/// scheduling Host health observation. The send log is emitted synchronously first; the
+/// observation then reports on its own task with the same `session_id`.
+pub(crate) fn record_session_mcp_boundary(
+    host: &SessionMcpHost,
+    session_id: &SessionId,
+    agent_ref: &AgentRef,
+    agent_session_id: Option<&str>,
+    acp_method: &str,
+    snapshot: &crate::session_setup::SessionMcpSnapshot,
+    cwd: &Path,
+) {
+    log_session_mcp_request(
+        session_id,
+        agent_ref,
+        agent_session_id,
+        acp_method,
+        &host.selection,
+        snapshot,
+    );
+    crate::session_setup::observe_session_mcp_health(host, session_id, cwd);
 }
 
 /// Applies a model only when the session authoritatively offers that value.
