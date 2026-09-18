@@ -97,6 +97,18 @@ impl Node {
         process: ProcessConfig,
         shutdown: Shutdown,
     ) -> Result<ManagedNode, Error> {
+        Self::open_managed_with_dependencies(config, process, shutdown, DurableWrites, LocalClock)
+    }
+
+    /// Injects durable-write boundaries and time without replacing the production host-backed adapter.
+    #[cfg(target_os = "linux")]
+    pub fn open_managed_with_dependencies<W: WriteGuard, C: Clock>(
+        config: NodeConfig,
+        process: ProcessConfig,
+        shutdown: Shutdown,
+        writes: W,
+        clock: C,
+    ) -> Result<Node<gitlancer::Git<ManagedGitRunner<W>>, W, C>, Error> {
         if !config.home_directory.is_absolute()
             || config
                 .home_directory
@@ -123,11 +135,11 @@ impl Node {
             )
             .map_err(|e| Error::Configuration(e.to_string()))?;
         }
-        let node = Self::open_with_dependencies(
+        let node = Node::open_with_dependencies(
             config,
             gitlancer::Git::new(gitlancer::CliGitRunner),
-            DurableWrites,
-            LocalClock,
+            writes,
+            clock,
         )?;
         // Secrets in explicitly supplied Git environments must remain behind an owner-private directory.
         // Never chmod an injected existing path: it may be a user's broader home or another owner's data.

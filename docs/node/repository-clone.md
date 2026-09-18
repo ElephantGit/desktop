@@ -46,6 +46,9 @@ the original durable result and event, even offline or after user edits, without
 
 Real Linux host/guardian tests cover TLS clone, deployment credentials, missing branches/tag-only sources,
 authentication failure, checkout extension suppression, replay, pre-existing/replaced paths and Node kill
-during acquisition. This is not Controller delivery/reconnect acceptance or a cross-platform Node runtime.
+during acquisition, SSH known-host rejection/success and completion/outbox write-failure recovery.
+Linux acceptance requires OpenSSH client/server installed and the system's `/run/sshd` directory provisioned;
+the fixture daemon runs as the ordinary test user on an ephemeral port. CI provisions this test dependency,
+not a production Node service. This is not Controller delivery/reconnect acceptance or a cross-platform Node runtime.
 
 See [durable records](persistence/repository-acquisition.md) and [runtime ownership](runtime.md).

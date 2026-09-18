@@ -38,6 +38,8 @@ Node 不交互接受。
 获得新目录。终态重放只使用原持久结果和事件，即使离线或文件被用户编辑，也不再检查或 clone。
 
 真实 Linux host／guardian 测试覆盖 TLS clone、部署凭据、分支缺失／仅有 tag、认证失败、checkout 扩展禁用、
-结果重放、已存在／替换路径及获取期间 Node 强杀。这不代表 Controller 投递／重连验收或跨平台 Node 运行时完成。
+结果重放、已存在／替换路径、获取期间 Node 强杀、SSH 未知主机拒绝／成功及终态／outbox 写入失败恢复。
+Linux 验收需安装 OpenSSH client／server 并由系统预备 `/run/sshd`；fixture daemon 以普通测试用户在临时端口运行。
+CI 部署的是测试依赖，不是生产 Node 服务。这不代表 Controller 投递／重连验收或跨平台 Node 运行时完成。
 
 参见[持久记录](persistence/repository-acquisition.zh.md)和[运行时责任](runtime.zh.md)。

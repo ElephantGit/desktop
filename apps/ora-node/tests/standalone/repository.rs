@@ -14,6 +14,12 @@ mod recovery;
 #[path = "repository_policy.rs"]
 mod policy;
 
+#[path = "repository_ssh.rs"]
+mod ssh;
+
+#[path = "repository_commit.rs"]
+mod commit;
+
 /// Provides explicit trusted TLS configuration without modifying process environment or user Git config.
 fn configuration(fixture: &Fixture, server: &HttpsRepository) -> CloneConfig {
     let root = fixture.path().join("clones");
@@ -77,8 +83,9 @@ fn managed_https_clone_selects_branch_and_replays_without_network() {
         fixture.git(&["update-server-info"]);
         let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
         let config = configuration(&fixture, &server);
-        let mut node =
-            Node::open(fixture.config(), fixture.process(), Shutdown::default()).unwrap();
+        let mut node_config = fixture.config();
+        node_config.repositories.clear();
+        let mut node = Node::open(node_config, fixture.process(), Shutdown::default()).unwrap();
         node.configure_clone(config).unwrap();
         let command = request(&server, "success", "feature/clone");
         let result = node.submit_clone(command.clone()).unwrap();

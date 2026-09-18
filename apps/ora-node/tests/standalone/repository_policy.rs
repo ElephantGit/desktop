@@ -1,6 +1,34 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
+/// Clone roots never share a state tree, an existing checkout, or its parent/child namespace.
+#[test]
+fn clone_configuration_rejects_protected_roots_without_changing_permissions() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let config = configuration(&fixture, &server);
+        let mut node =
+            Node::open(fixture.config(), fixture.process(), Shutdown::default()).unwrap();
+        let child = fixture.config().home_directory.join("repositories");
+        fs::create_dir(&child).unwrap();
+        fs::set_permissions(&child, fs::Permissions::from_mode(/*mode*/ 0o700)).unwrap();
+        for root in [
+            fixture.path().to_path_buf(),
+            fixture.config().home_directory,
+            fixture.process().host_directory,
+            child,
+        ] {
+            let before = fs::metadata(&root).unwrap().permissions();
+            let mut invalid = config.clone();
+            invalid.repository_root = root.clone();
+            assert!(node.configure_clone(invalid).is_err());
+            assert_eq!(fs::metadata(root).unwrap().permissions(), before);
+        }
+        node.configure_clone(config).unwrap();
+    });
+}
+
 /// Deployment credentials work while hooks, LFS downloads and recursive submodule acquisition stay off.
 #[test]
 fn private_https_uses_deployment_credentials_without_running_checkout_extensions() {
