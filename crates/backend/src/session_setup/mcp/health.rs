@@ -179,7 +179,7 @@ impl McpHealthStore {
     pub(crate) fn status_for(&self, identity: &McpHealthIdentity) -> McpHealthStatus {
         let guard = self.lock();
         match guard.statuses.get(identity) {
-            Some(Slot::Ready { status, .. }) => status.clone(),
+            Some(Slot::Ready { status, .. }) => *status,
             Some(Slot::InFlight(_)) | None => unknown_not_probed(),
         }
     }
@@ -191,7 +191,7 @@ impl McpHealthStore {
             Some(Slot::Ready {
                 status,
                 duration_ms,
-            }) => Some((status.clone(), *duration_ms)),
+            }) => Some((*status, *duration_ms)),
             Some(Slot::InFlight(_)) | None => None,
         }
     }
@@ -349,7 +349,7 @@ impl McpHealthStore {
                 }
                 // Pair the settled result with the Session whose setup triggered this observation.
                 if let Some((status, duration_ms)) = self.ready_entry(&identity) {
-                    log_probe_result(&session_id, &identity, &status, duration_ms);
+                    log_probe_result(&session_id, &identity, status, duration_ms);
                 }
             }
         });
@@ -367,17 +367,13 @@ impl McpHealthStore {
             return Ok(unknown_context_missing());
         }
 
-        loop {
-            match self.claim(identity, reuse) {
-                Claim::Ready(status) => return Ok(status),
-                // Joining returns the same recorded outcome the owner observes, so a late joiner
-                // cannot be told `not_probed` for a probe that already finished.
-                Claim::Join(flight) => return flight.await.status,
-                Claim::Owned => break,
-            }
+        match self.claim(identity, reuse) {
+            Claim::Ready(status) => Ok(status),
+            // Joining returns the same recorded outcome the owner observes, so a late joiner
+            // cannot be told `not_probed` for a probe that already finished.
+            Claim::Join(flight) => flight.await.status,
+            Claim::Owned => self.run_flight(member, identity).await.status,
         }
-
-        self.run_flight(member, identity).await.status
     }
 
     /// Claims the probe for one identity, or reports the result only this trigger may present.
@@ -386,7 +382,7 @@ impl McpHealthStore {
         match guard.statuses.get(identity) {
             // Every `Ready` slot holds a completed outcome, so a cached trigger reuses it as-is.
             Some(Slot::Ready { status, .. }) if reuse == ProbeReuse::Cached => {
-                Claim::Ready(status.clone())
+                Claim::Ready(*status)
             }
             Some(Slot::InFlight(flight)) => Claim::Join(flight.clone()),
             Some(Slot::Ready { .. }) | None => Claim::Owned,
@@ -427,7 +423,7 @@ impl McpHealthStore {
             };
             match &attempt.status {
                 Ok(status) => {
-                    store.store_ready(&probe_identity, status.clone(), Some(attempt.duration_ms));
+                    store.store_ready(&probe_identity, *status, Some(attempt.duration_ms));
                 }
                 Err(error) => {
                     // Release the claim so a later trigger can retry, and keep the failure in the
@@ -526,7 +522,7 @@ pub(crate) fn observe_session_mcp_health(
 fn log_probe_result(
     session_id: &SessionId,
     identity: &McpHealthIdentity,
-    status: &McpHealthStatus,
+    status: McpHealthStatus,
     duration_ms: Option<u64>,
 ) {
     let (status_label, code) = match status {

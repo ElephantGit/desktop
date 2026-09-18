@@ -126,8 +126,8 @@ pub(super) fn decode_line(line: &str) -> Result<JsonRpcResponse, ProbeError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        JsonRpcResponse, accept_result, decode_line, encode_line, initialize_request,
-        initialized_notification, tools_list_request,
+        accept_result, decode_line, encode_line, initialize_request, initialized_notification,
+        tools_list_request,
     };
     use pretty_assertions::assert_eq;
 

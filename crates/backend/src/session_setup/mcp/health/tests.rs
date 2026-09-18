@@ -450,24 +450,50 @@ fn session_observation_reuses_a_matching_identity() {
 /// Explicit empty selection resolves no members, so no backfill work exists for it.
 #[test]
 fn explicit_empty_selection_has_no_members_or_backfill() {
-    let fixture = Fixture::new();
-    let member = unrunnable_stdio_member(&fixture, "workspace-tool");
-    let catalog = FakeCatalog::new(vec![member.candidate.clone()]);
-    let configurations = complete_configurations(std::slice::from_ref(&member));
-    let selection = SessionMcpSelection::Explicit(BTreeSet::new());
+    with_scoped_trace(async {
+        let fixture = Fixture::new();
+        let member = unrunnable_stdio_member(&fixture, "workspace-tool");
+        let catalog = FakeCatalog::new(vec![member.candidate.clone()]);
+        let configurations = complete_configurations(std::slice::from_ref(&member));
+        let selection = SessionMcpSelection::Explicit(BTreeSet::new());
 
-    let snapshot = resolve_session_mcp(
-        &catalog,
-        &configurations,
-        &fixture.package_root,
-        super::super::AgentSessionMcpCapabilities::new(
-            /*load_session*/ true, /*http*/ true,
-        ),
-        &selection,
-    )
-    .expect("empty snapshot");
-    assert!(snapshot.servers().is_empty());
-    assert!(snapshot.revision().is_empty());
+        let snapshot = resolve_session_mcp(
+            &catalog,
+            &configurations,
+            &fixture.package_root,
+            super::super::AgentSessionMcpCapabilities::new(
+                /*load_session*/ true, /*http*/ true,
+            ),
+            &selection,
+        )
+        .expect("empty snapshot");
+        assert!(snapshot.servers().is_empty());
+        assert!(snapshot.revision().is_empty());
+
+        // The same empty selection is the Session observation's input, and it must schedule no
+        // probe at all. Neither identity may have a stored result: a probe here would have failed
+        // visibly, because this member's command cannot start.
+        let (store, _) = store();
+        store.clone().spawn_session_observation(
+            catalog.clone(),
+            configurations.clone(),
+            selection,
+            SessionId::new("session-empty"),
+            fixture.package_root.clone(),
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let card_identity = McpHealthIdentity::for_member(&member, /*cwd*/ None);
+        let session_identity =
+            McpHealthIdentity::for_member(&member, Some(fixture.package_root.as_path()));
+        for identity in [card_identity, session_identity] {
+            assert_eq!(
+                store.status_for(&identity),
+                McpHealthStatus::Unknown {
+                    reason: McpHealthUnknownReason::NotProbed
+                }
+            );
+        }
+    });
 }
 
 /// Invalidating one plugin drops every identity of it and tells clients to re-query.
@@ -616,6 +642,50 @@ fn probe_failure_does_not_change_the_delivered_snapshot() {
         // Delivery is unchanged: the complete list and its revision are identical.
         assert_eq!(after.revision(), before.revision());
         assert_eq!(after.servers(), before.servers());
+    });
+}
+
+/// A result bound to an older identity is never presented as the current one.
+#[test]
+fn stale_identity_is_not_presented_as_current() {
+    with_scoped_trace(async {
+        let fixture = Fixture::new();
+        let server = SilentHttpServer::start();
+        let (store, _) = store();
+        let member = http_member_with_secret(&fixture, "http-tool", server.url.clone());
+        let catalog = FakeCatalog::new(vec![member.candidate.clone()]);
+        let configurations = complete_configurations(std::slice::from_ref(&member));
+        store
+            .probe(
+                &catalog,
+                &configurations,
+                ProbeMcpHealthRequest {
+                    plugin_id: member.candidate.plugin_id.canonical(),
+                    cwd: None,
+                },
+            )
+            .await
+            .expect("seed probe at revision one");
+
+        // The configuration advances to a new revision: the previous identity's result is stale,
+        // and a mismatch reads as `Unknown(not_probed)` rather than as the old answer.
+        let mut advanced = member.clone();
+        advanced.configuration_revision = 2;
+        let advanced_configurations = complete_configurations(std::slice::from_ref(&advanced));
+        let listed = store
+            .list(
+                &catalog,
+                &advanced_configurations,
+                ListMcpHealthRequest { cwd: None },
+            )
+            .expect("list at the new revision");
+        assert_eq!(listed.entries[0].identity.configuration_revision, 2);
+        assert_eq!(
+            listed.entries[0].status,
+            McpHealthStatus::Unknown {
+                reason: McpHealthUnknownReason::NotProbed
+            }
+        );
     });
 }
 

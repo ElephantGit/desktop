@@ -34,6 +34,7 @@ import {
   IconUpload,
 } from "@tabler/icons-react";
 import { filterDiscoveredPlugins } from "./filter-discovered-plugins";
+import { McpHealthRow } from "./mcp-health-row";
 import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 import { PluginLogo } from "./plugin-logo";
 import { usePluginMutations } from "../../state/hooks/use-plugin-mutations";
@@ -232,6 +233,13 @@ function InstalledPluginRow({
               {t("settings.plugins.invalidDeclaration")}
             </Badge>
           )}
+          {plugin.kind === "mcp" &&
+            plugin.configuration.state === "available" &&
+            plugin.configuration.completeness === "complete" && (
+              // Host health is a third, independent fact shown only for a configuration-complete
+              // MCP; an unconfigured or unavailable plugin keeps exactly its existing display.
+              <McpHealthRow pluginId={plugin.id} />
+            )}
         </span>
 
         {hasUpdate && (

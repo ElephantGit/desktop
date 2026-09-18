@@ -128,11 +128,8 @@ async fn send_request(
 /// Closes the child cleanly within the remaining deadline, escalating to kill if needed.
 async fn reclaim_child(child: &mut Child, deadline: Instant) {
     let remaining = deadline.saturating_duration_since(Instant::now());
-    if !remaining.is_zero() {
-        match timeout(remaining, child.wait()).await {
-            Ok(_) => return,
-            Err(_) => {}
-        }
+    if !remaining.is_zero() && timeout(remaining, child.wait()).await.is_ok() {
+        return;
     }
     // `kill` awaits the exit internally, so returning from here means the process is reaped.
     let _ = child.kill().await;

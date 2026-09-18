@@ -41,7 +41,7 @@ fn fake_mcp_stdio_server() {
     };
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
-    let mut read_message = || -> Option<serde_json::Value> {
+    let read_message = || -> Option<serde_json::Value> {
         let mut line = String::new();
         let read = stdin.lock().read_line(&mut line).expect("read stdin");
         if read == 0 {
@@ -68,7 +68,7 @@ fn fake_mcp_stdio_server() {
                 "result": { "protocolVersion": "2025-03-26", "capabilities": {} }
             }));
         }
-        "ok" | "tools-error" => {
+        "ok" | "tools-error" | "slow-exit" => {
             let request = read_message().expect("initialize");
             assert_eq!(request["method"], "initialize");
             write_message(serde_json::json!({
@@ -97,8 +97,12 @@ fn fake_mcp_stdio_server() {
                     "result": { "tools": [] }
                 }));
             }
-            // Stay alive until the probe closes stdin so clean teardown is exercised.
+            // Stay alive until the probe closes stdin so clean teardown is exercised; the slow
+            // variant then lingers, which only a probe that waits for the child can outlast.
             while read_message().is_some() {}
+            if mode == "slow-exit" {
+                std::thread::sleep(Duration::from_millis(300));
+            }
         }
         other => panic!("unknown fake server mode {other}"),
     }
@@ -108,6 +112,19 @@ fn fake_mcp_stdio_server() {
 async fn stdio_probe_succeeds_for_well_behaved_server() {
     let result = probe(fake_server_transport("ok"), Duration::from_secs(15)).await;
     assert_eq!(result, Ok(()));
+}
+
+/// A probe returns only after the child has exited, which is what makes reclamation certain.
+#[tokio::test]
+async fn stdio_probe_waits_for_child_exit_after_a_handshake() {
+    let started = Instant::now();
+    let result = probe(fake_server_transport("slow-exit"), Duration::from_secs(15)).await;
+    assert_eq!(result, Ok(()));
+    assert!(
+        started.elapsed() >= Duration::from_millis(250),
+        "probe returned before the child exited: {:?}",
+        started.elapsed()
+    );
 }
 
 #[tokio::test]

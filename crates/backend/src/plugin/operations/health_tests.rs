@@ -20,8 +20,11 @@ use ora_scheduler::Scheduler;
 use pretty_assertions::assert_eq;
 use std::fs::File;
 use std::io::Write;
+use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::mpsc;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use zip::ZipWriter;
@@ -40,6 +43,15 @@ fn test_pool(root: &Path) -> RepositoryPool {
 
 /// Exercises the public plugin interface together with the event hub it publishes into.
 fn test_plugins(root: &Path, pool: &RepositoryPool) -> (Plugins, AppEventHub) {
+    let (plugins, events, _host) = test_plugins_with_host(root, pool);
+    (plugins, events)
+}
+
+/// Same composition as [`test_plugins`], also exposing the plugin API for delivery assertions.
+fn test_plugins_with_host(
+    root: &Path,
+    pool: &RepositoryPool,
+) -> (Plugins, AppEventHub, Arc<PluginApi>) {
     let events = AppEventHub::new();
     let host = Arc::new(
         PluginApi::open(
@@ -65,7 +77,68 @@ fn test_plugins(root: &Path, pool: &RepositoryPool) -> (Plugins, AppEventHub) {
         })
         .expect("agent runtime"),
     );
-    (Plugins::new(host, runtime), events)
+    (Plugins::new(host.clone(), runtime), events, host)
+}
+
+/// How a loopback peer treats the connections it accepts.
+enum PeerBehavior {
+    /// Accept and hold every connection without answering: an exchange can only end by timeout.
+    Hold,
+    /// Accept and close immediately: any exchange fails at connect or handshake.
+    Close,
+}
+
+/// Loopback TCP peer used to drive one HTTP probe outcome deterministically.
+struct RawTcpPeer {
+    port: u16,
+    stop: mpsc::Sender<()>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl RawTcpPeer {
+    fn start(behavior: PeerBehavior) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind peer");
+        listener.set_nonblocking(true).expect("nonblocking peer");
+        let port = listener.local_addr().expect("peer address").port();
+        let (stop, stop_rx) = mpsc::channel::<()>();
+        let handle = thread::spawn(move || {
+            let mut held: Vec<TcpStream> = Vec::new();
+            loop {
+                if stop_rx.try_recv().is_ok() {
+                    return;
+                }
+                match listener.accept() {
+                    Ok((stream, _)) => match behavior {
+                        PeerBehavior::Hold => held.push(stream),
+                        PeerBehavior::Close => drop(stream),
+                    },
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(_) => return,
+                }
+            }
+        });
+        Self {
+            port,
+            stop,
+            handle: Some(handle),
+        }
+    }
+
+    /// The MCP HTTP endpoint pointing at this peer.
+    fn url(&self) -> String {
+        format!("https://127.0.0.1:{}/mcp", self.port)
+    }
+}
+
+impl Drop for RawTcpPeer {
+    fn drop(&mut self) {
+        let _ = self.stop.send(());
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
 }
 
 /// Writes an MCP `.orax` archive with the given `assets/config.json` body.
@@ -488,6 +561,195 @@ fn health_surfaces_never_expose_setting_values() {
     let recorded = recorder.text();
     assert!(!recorded.contains("super-secret-key"), "{recorded}");
     assert!(!recorded.contains("ORA_FIXTURE_TOKEN"), "{recorded}");
+    assert!(!recorded.contains("Bearer"), "{recorded}");
+}
+
+/// A failed Host probe never changes what Session setup resolves and delivers.
+#[test]
+fn probe_failure_does_not_change_session_delivery() {
+    ora_logging::with_trace_logging(|| {
+        let temporary = TempDir::new().expect("temp directory");
+        let pool = test_pool(temporary.path());
+        let (plugins, _hub, plugin_host) = test_plugins_with_host(temporary.path(), &pool);
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime")
+            .block_on(async {
+                let plugin_id = import_mcp(
+                    &plugins,
+                    temporary.path(),
+                    "unrunnable-mcp",
+                    UNRUNNABLE_STDIO_CONFIG,
+                )
+                .await;
+                let listed = wait_for_card_health(&plugins, &plugin_id).await;
+                assert_eq!(
+                    listed.entries[0].status,
+                    McpHealthStatus::Unhealthy {
+                        error_code: McpHealthErrorCode::McpSpawnFailed
+                    }
+                );
+
+                // Session setup still resolves the complete set: the probe result never gates
+                // delivery and never produces a partial list.
+                let session_host =
+                    crate::session_setup::SessionMcpHost::from_plugin_api(plugin_host);
+                let setup = crate::session_setup::SessionSetup::resolve(
+                    &session_host,
+                    temporary.path(),
+                    crate::session_setup::AgentSessionMcpCapabilities::new(
+                        /*load_session*/ true, /*http*/ true,
+                    ),
+                )
+                .expect("session setup resolves despite the failed probe");
+                assert_eq!(setup.mcp.servers().len(), 1);
+                assert_eq!(setup.mcp.revision().members().len(), 1);
+                assert_eq!(
+                    setup.mcp.revision().members()[0].plugin_id.canonical(),
+                    plugin_id
+                );
+            });
+    });
+}
+
+/// Installing a member whose probe is still running answers immediately.
+#[test]
+fn importing_a_slow_http_member_does_not_wait_for_the_probe() {
+    ora_logging::with_trace_logging(|| {
+        let temporary = TempDir::new().expect("temp directory");
+        let pool = test_pool(temporary.path());
+        let (plugins, _hub) = test_plugins(temporary.path(), &pool);
+        // The peer accepts and never answers, so the triggered probe can only end in a timeout.
+        let peer = RawTcpPeer::start(PeerBehavior::Hold);
+        let config = serde_json::json!({
+            "schemaVersion": 1,
+            "transport": { "type": "http", "url": peer.url() }
+        })
+        .to_string();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime")
+            .block_on(async {
+                let started = Instant::now();
+                let plugin_id = import_mcp(&plugins, temporary.path(), "slow-mcp", &config).await;
+                assert!(
+                    started.elapsed() < Duration::from_secs(2),
+                    "the import waited for the probe: {:?}",
+                    started.elapsed()
+                );
+                // The install response arrived while the probe was still in flight, so the card
+                // reads a pending identity rather than a completed result.
+                let listed = plugins
+                    .list_mcp_health(ListMcpHealthRequest { cwd: None })
+                    .expect("list right after installing");
+                assert_eq!(listed.entries[0].identity.plugin_id, plugin_id);
+                assert_eq!(
+                    listed.entries[0].status,
+                    McpHealthStatus::Unknown {
+                        reason: McpHealthUnknownReason::NotProbed
+                    }
+                );
+            });
+    });
+}
+
+/// An HTTP credential failure reaches the card as one closed code and leaks nothing.
+#[test]
+fn http_credential_failure_reaches_the_card_without_leaking_the_key() {
+    let temporary = TempDir::new().expect("temp directory");
+    let pool = test_pool(temporary.path());
+    let (plugins, _hub) = test_plugins(temporary.path(), &pool);
+    // A closed loopback port makes the TLS handshake fail immediately, so the probe ends in the
+    // HTTP-unreachable classification without waiting for a timeout.
+    let peer = RawTcpPeer::start(PeerBehavior::Close);
+    let config = serde_json::json!({
+        "schemaVersion": 1,
+        "settings": {
+            "apiKey": {
+                "type": "string",
+                "title": "API key",
+                "description": "Credential sent to the remote server",
+                "required": true
+            }
+        },
+        "transport": {
+            "type": "http",
+            "url": peer.url(),
+            "headers": { "Authorization": { "setting": "apiKey", "prefix": "Bearer " } }
+        }
+    })
+    .to_string();
+    let recorder = EventTextRecorder::default();
+    ora_logging::with_recorded_trace_logging(recorder.layer(), || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime")
+            .block_on(async {
+                let plugin_id =
+                    import_mcp(&plugins, temporary.path(), "credential-mcp", &config).await;
+                // Incomplete configuration is never probed and shows no health row.
+                assert!(
+                    plugins
+                        .list_mcp_health(ListMcpHealthRequest { cwd: None })
+                        .expect("list before saving")
+                        .entries
+                        .is_empty()
+                );
+                let details = plugins
+                    .get_configuration(GetPluginConfigurationRequest {
+                        plugin_id: plugin_id.clone(),
+                    })
+                    .expect("configuration")
+                    .configuration;
+                plugins
+                    .save_configuration(SavePluginConfigurationRequest {
+                        plugin_id: plugin_id.clone(),
+                        expected_revision: details.revision,
+                        declaration_fingerprint: details.declaration_fingerprint,
+                        values: std::collections::BTreeMap::from([(
+                            "apiKey".to_string(),
+                            PluginSettingValue::String("super-secret-key".into()),
+                        )]),
+                        preserve_setting_ids: Vec::new(),
+                    })
+                    .expect("save configuration");
+
+                let listed = wait_for_card_health(&plugins, &plugin_id).await;
+                assert_eq!(
+                    listed.entries[0].status,
+                    McpHealthStatus::Unhealthy {
+                        error_code: McpHealthErrorCode::McpHttpUnreachable
+                    }
+                );
+                let probed = plugins
+                    .probe_mcp_health(ProbeMcpHealthRequest {
+                        plugin_id: plugin_id.clone(),
+                        cwd: None,
+                    })
+                    .await
+                    .expect("re-detect");
+
+                let installed = serde_json::to_string(
+                    &plugins
+                        .list_installed(ora_contracts::ListInstalledPluginsRequest {})
+                        .expect("list installed"),
+                )
+                .expect("serialize installed");
+                let listed_json = serde_json::to_string(&listed).expect("serialize list");
+                let probed_json = serde_json::to_string(&probed).expect("serialize probe");
+                for surface in [&installed, &listed_json, &probed_json] {
+                    assert!(!surface.contains("super-secret-key"), "{surface}");
+                    assert!(!surface.contains("Bearer"), "{surface}");
+                    assert!(!surface.contains("Authorization"), "{surface}");
+                }
+            });
+    });
+
+    let recorded = recorder.text();
+    assert!(!recorded.contains("super-secret-key"), "{recorded}");
     assert!(!recorded.contains("Bearer"), "{recorded}");
 }
 

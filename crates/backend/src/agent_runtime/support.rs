@@ -83,7 +83,7 @@ fn contract_mcp_selection(selection: SessionMcpSelection) -> ContractSessionMcpS
     match selection {
         SessionMcpSelection::Automatic => ContractSessionMcpSelection::Automatic,
         SessionMcpSelection::Explicit(ids) => ContractSessionMcpSelection::Explicit(
-            ids.iter().map(|plugin_id| plugin_id.canonical()).collect(),
+            ids.iter().map(ora_domain::PluginId::canonical).collect(),
         ),
     }
 }
