@@ -113,4 +113,28 @@ describe("PluginManager MCP health row", () => {
     await screen.findByText(/需要配置|Needs Configuration/);
     expect(document.querySelector("[data-slot='mcp-health']")).toBeNull();
   });
+
+  it("adds Host health for an MCP that declares no Settings", async () => {
+    // Declaring no Settings is eligibility, not incompleteness: the Host probes this member, so
+    // its card must show the third row instead of hiding it behind the configuration gate.
+    const simple = mcpPlugin("official/simple", { state: "not_declared" });
+    renderManager([simple], [cardEntry(simple.id)]);
+
+    await screen.findByText(/无法启动|mcp_spawn_failed/);
+    expect(document.querySelector("[data-slot='mcp-health']")).toHaveAttribute(
+      "data-mcp-health",
+      "unhealthy",
+    );
+  });
+
+  it("shows no health row while configuration is unavailable", async () => {
+    const unavailable = mcpPlugin("official/broken", {
+      state: "unavailable",
+      errorCode: "configuration_load_failed",
+    });
+    renderManager([unavailable], [cardEntry(unavailable.id)]);
+
+    await screen.findByText(/配置不可用|Configuration unavailable/);
+    expect(document.querySelector("[data-slot='mcp-health']")).toBeNull();
+  });
 });

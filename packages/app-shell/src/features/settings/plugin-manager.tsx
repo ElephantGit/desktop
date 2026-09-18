@@ -234,10 +234,14 @@ function InstalledPluginRow({
             </Badge>
           )}
           {plugin.kind === "mcp" &&
-            plugin.configuration.state === "available" &&
-            plugin.configuration.completeness === "complete" && (
-              // Host health is a third, independent fact shown only for a configuration-complete
-              // MCP; an unconfigured or unavailable plugin keeps exactly its existing display.
+            // Host health is a third, independent fact shown for every eligible MCP. That covers
+            // a member which declares no Settings (`not_declared`) as well as one whose required
+            // Settings are present (`available`/`complete`). A member that still needs
+            // configuration or whose configuration is unavailable is not probed at all, so it
+            // keeps exactly its existing display.
+            (plugin.configuration.state === "not_declared" ||
+              (plugin.configuration.state === "available" &&
+                plugin.configuration.completeness === "complete")) && (
               <McpHealthRow pluginId={plugin.id} />
             )}
         </span>
