@@ -57,6 +57,7 @@ pub struct WorkflowRun {
 pub struct WorkflowNodeRun {
     pub id: String,
     pub run_id: String,
+    pub scope_id: String,
     pub node_id: String,
     pub node_type: String,
     pub session_id: Option<String>,
@@ -71,6 +72,32 @@ pub struct WorkflowNodeRun {
     pub iteration: Option<u32>,
     pub started_at: Option<i64>,
     pub finished_at: Option<i64>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// Lifecycle state of one persisted Loop round.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflow-run.ts")]
+pub enum WorkflowExecutionScopeStatus {
+    Pending,
+    Running,
+    Succeeded,
+    Failed,
+    Cancelled,
+}
+
+/// Public Loop-round identity used to group repeated node definitions in run history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "workflow-run.ts")]
+pub struct WorkflowExecutionScope {
+    pub id: String,
+    pub run_id: String,
+    pub parent_loop_node_run_id: String,
+    pub round_index: u32,
+    pub status: WorkflowExecutionScopeStatus,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -155,6 +182,10 @@ pub struct GetWorkflowRunResponse {
     pub workspace_id: String,
     pub project_id: String,
     pub nodes: Vec<WorkflowNodeRun>,
+    /// Loop round identities; internal variable pools and branch decisions remain private.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub scopes: Option<Vec<WorkflowExecutionScope>>,
     /// Typed variable-pool projection; persistence metadata remains internal.
     pub variables: Vec<WorkflowRunVariable>,
     /// Condition decisions keyed by node id for branch-aware rendering.
@@ -372,6 +403,8 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     WorkflowNodeStatus::export(config)?;
     WorkflowRun::export(config)?;
     WorkflowNodeRun::export(config)?;
+    WorkflowExecutionScopeStatus::export(config)?;
+    WorkflowExecutionScope::export(config)?;
     WorkflowRunVariable::export(config)?;
     WorkflowRunSummary::export(config)?;
     WorkflowRunLocale::export(config)?;
@@ -411,8 +444,9 @@ mod tests {
         GetWorkflowRunRequest, GetWorkflowRunResponse, ListWorkflowNodeRunsRequest,
         ListWorkflowNodeRunsResponse, ListWorkflowRunsByWorkflowRequest,
         ListWorkflowRunsByWorkflowResponse, ListWorkflowRunsRequest, ListWorkflowRunsResponse,
-        NodeCompletionRequester, WorkflowNodeRun, WorkflowNodeStatus, WorkflowRun,
-        WorkflowRunLocale, WorkflowRunStatus, WorkflowRunSummary, WorkflowRunVariable,
+        NodeCompletionRequester, WorkflowExecutionScope, WorkflowExecutionScopeStatus,
+        WorkflowNodeRun, WorkflowNodeStatus, WorkflowRun, WorkflowRunLocale, WorkflowRunStatus,
+        WorkflowRunSummary, WorkflowRunVariable,
     };
     use pretty_assertions::assert_eq;
     use serde::Serialize;
@@ -441,6 +475,7 @@ mod tests {
         let node = WorkflowNodeRun {
             id: "node-1".to_string(),
             run_id: "run-1".to_string(),
+            scope_id: "root:run-1".to_string(),
             node_id: "start".to_string(),
             node_type: "start".to_string(),
             session_id: None,
@@ -455,9 +490,19 @@ mod tests {
             created_at: 30,
             updated_at: 31,
         };
+        let scope = WorkflowExecutionScope {
+            id: "round-1".into(),
+            run_id: "run-1".into(),
+            parent_loop_node_run_id: "loop-node-run".into(),
+            round_index: 1,
+            status: WorkflowExecutionScopeStatus::Succeeded,
+            created_at: 31,
+            updated_at: 32,
+        };
         // A region row carries its round on the wire; the outer form omits the field entirely.
         let region_node = WorkflowNodeRun {
             id: "node-2".to_string(),
+            scope_id: "root:run-1".into(),
             run_id: "run-1".to_string(),
             node_id: "fix".to_string(),
             node_type: "agent".to_string(),
@@ -542,6 +587,7 @@ mod tests {
                 workspace_id: "workspace-1".to_string(),
                 project_id: "project-1".to_string(),
                 nodes: vec![node.clone()],
+                scopes: Some(vec![scope]),
                 variables: vec![WorkflowRunVariable {
                     selector: vec!["start".to_string(), "count".to_string()],
                     value_type: "integer".to_string(),
@@ -576,6 +622,7 @@ mod tests {
                 "nodes": [{
                     "id": "node-1",
                     "runId": "run-1",
+                    "scopeId": "root:run-1",
                     "nodeId": "start",
                     "nodeType": "start",
                     "sessionId": null,
@@ -589,6 +636,15 @@ mod tests {
                     "finishedAt": 31,
                     "createdAt": 30,
                     "updatedAt": 31,
+                }],
+                "scopes": [{
+                    "id": "round-1",
+                    "runId": "run-1",
+                    "parentLoopNodeRunId": "loop-node-run",
+                    "roundIndex": 1,
+                    "status": "succeeded",
+                    "createdAt": 31,
+                    "updatedAt": 32,
                 }],
                 "variables": [{
                     "selector": ["start", "count"],
@@ -605,6 +661,7 @@ mod tests {
             json!({
                 "id": "node-2",
                 "runId": "run-1",
+                "scopeId": "root:run-1",
                 "nodeId": "fix",
                 "nodeType": "agent",
                 "sessionId": null,
@@ -704,6 +761,7 @@ mod tests {
                 "nodes": [{
                     "id": "node-1",
                     "runId": "run-1",
+                    "scopeId": "root:run-1",
                     "nodeId": "start",
                     "nodeType": "start",
                     "sessionId": null,

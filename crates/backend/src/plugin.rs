@@ -2,6 +2,9 @@ mod listing;
 mod logo_roots;
 mod marketplace;
 mod operations;
+mod pack;
+mod pack_reconcile;
+mod pack_uninstall;
 mod registry_sync;
 pub use operations::{AdmittedSync, Plugins};
 
@@ -28,8 +31,8 @@ use ora_contracts::{
 };
 use ora_db::{
     PluginSkillProjection, RepositoryPool, SqliteEffectRepository,
-    SqlitePluginMarketplaceSourceRepository, SqlitePluginSourceNamespaceRepository,
-    SqliteSkillRepository, SqliteWorkspaceRepository,
+    SqlitePackInstallationRepository, SqlitePluginMarketplaceSourceRepository,
+    SqlitePluginSourceNamespaceRepository, SqliteSkillRepository, SqliteWorkspaceRepository,
 };
 use ora_domain::PluginId;
 use ora_effect::{ConsumerDeclaration, ConsumerIdentity, ConsumerKind, Digest};
@@ -174,8 +177,10 @@ pub(crate) struct PluginApi {
     notifications: BroadcastNotificationSink,
     pub(crate) configuration: ConfigurationService,
     skill_repository: SqliteSkillRepository,
-    pub(crate) effect_repository: SqliteEffectRepository,
+    effect_repository: SqliteEffectRepository,
     workspace_repository: SqliteWorkspaceRepository,
+    /// Durable pack → member relationships recorded by pack installations (D3-A).
+    pack_installations: SqlitePackInstallationRepository,
     agent_effect_declarations: Mutex<BTreeMap<PluginId, ConsumerDeclaration>>,
     /// Admits at most one marketplace index rebuild at a time.
     ///
@@ -193,6 +198,9 @@ pub(crate) struct PluginApi {
     /// Process-local Host MCP health, shared with the Session runtime and plugin queries.
     pub(crate) mcp_health: McpHealthStore,
     clock: SystemClock,
+    /// Test-only transport substitution for production-entry marketplace qualification.
+    #[cfg(test)]
+    local_marketplace_releases: Mutex<BTreeMap<String, PathBuf>>,
 }
 
 impl PluginApi {
@@ -250,14 +258,39 @@ impl PluginApi {
             configuration,
             skill_repository: SqliteSkillRepository::new(pool.clone()),
             effect_repository: SqliteEffectRepository::new(pool.clone()),
-            workspace_repository: SqliteWorkspaceRepository::new(pool),
+            workspace_repository: SqliteWorkspaceRepository::new(pool.clone()),
+            pack_installations: SqlitePackInstallationRepository::new(pool),
             agent_effect_declarations: Mutex::new(BTreeMap::new()),
             rebuilding: Mutex::new(()),
             effect_reconcile: OnceLock::new(),
             mcp_wakeup: OnceLock::new(),
             mcp_health,
             clock,
+            #[cfg(test)]
+            local_marketplace_releases: Mutex::new(BTreeMap::new()),
         })
+    }
+
+    /// Substitutes one marketplace package's transfer source with a local artifact in tests.
+    ///
+    /// Resolution, host selection, digest verification, installation, finalization, and runtime
+    /// coordination remain on the production path; only the network transfer is kept offline.
+    #[cfg(test)]
+    pub(crate) fn use_local_marketplace_release(&self, plugin_id: &str, artifact: PathBuf) {
+        self.local_marketplace_releases
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(plugin_id.to_owned(), artifact);
+    }
+
+    /// Returns the local transfer override registered for one marketplace package in tests.
+    #[cfg(test)]
+    pub(crate) fn local_marketplace_release(&self, plugin_id: &PluginId) -> Option<PathBuf> {
+        self.local_marketplace_releases
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&plugin_id.canonical())
+            .cloned()
     }
 
     /// Connects the Effect worker's wake handle once it exists.
