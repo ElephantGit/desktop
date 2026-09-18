@@ -1,6 +1,6 @@
 import { useLayoutEffect } from "react";
 import { Handle, Position, useUpdateNodeInternals } from "@xyflow/react";
-import { IconPlayerPlay, IconSparkles, IconStack2 } from "@tabler/icons-react";
+import { IconHomeFilled, IconSparkles, IconStack2 } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import {
   WORKFLOW_ITERATION_ENTRY_HANDLE_Y,
@@ -14,7 +14,8 @@ import type {
 import { RunStatusBadge } from "./run-status-mark";
 import { isNodeWorking, runStatusTone } from "./run-status-style";
 
-const ITERATION_START_SIZE = 36;
+/** Matches the editor's Dify-style iteration-start block (44px card, blue badge). */
+const ITERATION_START_SIZE = 44;
 const ITERATION_START_LEFT = 24;
 
 interface RunOverviewIterationNodeProps {
@@ -134,7 +135,7 @@ export function RunOverviewIterationNode({
         data-workflow-run-iteration-start=""
         role="img"
         aria-label={t("workflowRun.overview.internalStart")}
-        className="absolute z-20 flex items-center justify-center rounded-full border border-violet-500/35 bg-background text-violet-700 shadow-sm dark:text-violet-300"
+        className="absolute z-20 flex items-center justify-center rounded-xl border border-border bg-card shadow-xs"
         style={{
           left: ITERATION_START_LEFT,
           top: WORKFLOW_ITERATION_ENTRY_HANDLE_Y - ITERATION_START_SIZE / 2,
@@ -142,7 +143,9 @@ export function RunOverviewIterationNode({
           height: ITERATION_START_SIZE,
         }}
       >
-        <IconPlayerPlay className="size-4" />
+        <span className="flex size-6 items-center justify-center rounded-full bg-blue-600 text-white">
+          <IconHomeFilled className="size-3" aria-hidden="true" />
+        </span>
         <Handle
           id="iteration-entry"
           type="source"

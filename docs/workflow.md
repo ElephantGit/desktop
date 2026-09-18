@@ -131,15 +131,21 @@ are recorded per round so a later round can never overwrite an earlier round's b
 
 The editor renders the iteration node as an embedded composite region on the same canvas. A
 compact header names the iteration while its parameters remain in the Inspector, and a fixed
-circular internal start sits at the left of the region. The start cannot be moved, configured, or
-deleted. The plus button beside the start stays hidden until the author hovers the start row
-(so the rest state keeps only the start itself), and it stays visible while its menu is open.
-Authors can click it to add an Agent or Condition, drag from its
-source handle to an existing member, and create multiple entry branches. They can also insert on
-an internal edge other than the entry edge, or append to an unconnected output (including a
-specific Condition branch). The entry edge does not repeat a midpoint plus button because the
+internal start sits at the left of the region, styled after Dify's iteration-start block: a
+44-pixel white rounded card with a blue home badge, plus its entry port on the right edge. The
+start cannot be moved, configured, or deleted. Following Dify, the add affordance is a solid
+blue circle-plus badge centered on a port: it fades in only while the author hovers the node
+(and stays visible while its menu is open or the badge is keyboard-focused), while the start
+block body and its port double as the picker trigger — clicking either opens the node picker,
+and dragging from the port still starts a connection, so the decorative badge never intercepts a
+drag.
+Authors can add an Agent or Condition this way from the internal start, or append to an
+unconnected member output (including a specific Condition branch), and create multiple entry
+branches by dragging from the start's source handle. They can also insert on
+an internal edge other than the entry edge. The entry edge does not repeat a midpoint plus button because the
 fixed start already owns that insertion seam. The internal canvas has one container boundary,
-without a second dashed region frame. The internal start is presentation-only: the frozen graph
+without a second dashed region frame. Selecting the frame repaints only its border and shadow —
+the background fill never changes between selected and unselected states. The internal start is presentation-only: the frozen graph
 still records an entry as
 `iteration --iteration-entry--> member` and never gains another runtime node. Each insertion
 creates or rewires its edges in the same undo/autosave operation. Dragging never changes
@@ -148,10 +154,11 @@ its original position with guidance to use the internal add entry. React Flow pa
 are derived while rendering and are not persisted.
 
 Expanded frames keep a 560×340 minimum and persist fitted `initialWidth` / `initialHeight` values.
-Authors can also resize an expanded frame manually, Dify-style: hovering the bottom-right corner
-turns the cursor into a resize indicator, and dragging with the left button resizes the frame in
-20-pixel grid steps; the gesture is one undoable, auto-saved edit that never shrinks below the
-minimum or clips region members. Collapse hides the internal start, members, and internal edges only in the canvas projection, so
+Authors can also resize an expanded frame manually, Dify-style: the bottom-right corner
+shows a soft gray arc affordance (revealed on frame hover or while the frame is selected), the
+cursor turns into a resize indicator over the corner, and dragging with the left button resizes
+the frame in 20-pixel grid steps; the gesture is one undoable, auto-saved edit that never shrinks
+below the minimum or clips region members. Collapse hides the internal start, members, and internal edges only in the canvas projection, so
 the source graph remains unchanged and expansion restores the same size. Frames grow when members
 are inserted or moved and compact after deletion or automatic layout. Because a freshly inserted
 card is only measured after it renders, the insertion-time fit re-runs when real measurements

@@ -1,4 +1,4 @@
-import { useLayoutEffect } from "react";
+import { useLayoutEffect, useState } from "react";
 import {
   type ControlPosition,
   Handle,
@@ -11,10 +11,9 @@ import {
 } from "@xyflow/react";
 import { useTranslation } from "react-i18next";
 import {
-  IconArrowsDoubleSeNw,
   IconChevronDown,
   IconChevronUp,
-  IconPlayerPlay,
+  IconHomeFilled,
   IconStack2,
   IconTrash,
 } from "@tabler/icons-react";
@@ -31,11 +30,14 @@ import { cn } from "@ora/ui";
 import { IterationInsertMenu } from "./iteration-actions";
 import { useWorkflowIterationActions } from "./iteration-actions-context";
 
-const ITERATION_START_SIZE = 36;
+/** Matches Dify's iteration-start block: a 44px card wrapping a blue home badge. */
+const ITERATION_START_SIZE = 44;
 const ITERATION_START_LEFT = 24;
-/** Dify-style corner affordance: an invisible but forgiving resize hit zone. */
-const ITERATION_RESIZE_HANDLE_SIZE = 20;
-const ITERATION_RESIZE_HANDLE_INSET = 6;
+/** Dify-style corner affordance: a forgiving resize hit zone flush with the corner. */
+const ITERATION_RESIZE_HANDLE_SIZE = 24;
+/** Dify's resize glyph: one soft arc hugging the rounded corner. */
+const ITERATION_RESIZE_ARC_PATH =
+  "M5.19009 11.8398C8.26416 10.6196 10.7144 8.16562 11.9297 5.08904";
 
 export interface IterationNodeFrameProps {
   id: string;
@@ -66,6 +68,9 @@ export function IterationNodeFrame({
     useReactFlow<Node<WorkflowNodeData, "workflow">>();
   const updateNodeInternals = useUpdateNodeInternals();
   const iterationActions = useWorkflowIterationActions();
+  // The entry port doubles as the insert trigger (Dify behavior): the hover plus is
+  // decorative, so the port click drives this controlled menu instead.
+  const [entryMenuOpen, setEntryMenuOpen] = useState(false);
   const collapsed = data.collapsed === true;
   const memberCount =
     typeof data.regionMemberCount === "number" ? data.regionMemberCount : 0;
@@ -97,10 +102,12 @@ export function IterationNodeFrame({
       data-collapsed={collapsed}
       aria-label={`${data.title}: ${nodeKindLabel}`}
       className={cn(
-        "relative overflow-visible rounded-2xl border bg-card/80 shadow-sm transition-[border-color,box-shadow,background-color]",
+        // The frame keeps one constant background; selection only repaints the
+        // border and shadow (Dify shows a green border, never a fill change).
+        "group/iteration-frame relative overflow-visible rounded-2xl border bg-violet-500/[0.035] shadow-sm transition-[border-color,box-shadow]",
         selected
           ? "border-ring shadow-md ring-2 ring-ring/10"
-          : "border-violet-500/40 bg-violet-500/[0.035]",
+          : "border-violet-500/40",
         isOutputCandidate && "border-ring/70 ring-2 ring-ring/10",
       )}
       style={{
@@ -202,7 +209,7 @@ export function IterationNodeFrame({
           </div>
 
           <div
-            className="nodrag nopan group/iteration-start absolute z-20 flex items-center gap-1.5"
+            className="nodrag nopan group/iteration-start absolute z-20"
             style={{
               left: ITERATION_START_LEFT,
               top: WORKFLOW_ITERATION_ENTRY_HANDLE_Y - ITERATION_START_SIZE / 2,
@@ -213,9 +220,16 @@ export function IterationNodeFrame({
               role="img"
               aria-label={t("settings.workflow.iteration.internalStart")}
               title={t("settings.workflow.iteration.internalStart")}
-              className="relative flex size-9 shrink-0 items-center justify-center rounded-full border border-violet-500/35 bg-background text-violet-700 shadow-sm dark:text-violet-300"
+              className="relative flex size-11 items-center justify-center rounded-xl border border-border bg-card shadow-xs"
+              onClick={
+                iterationActions.readOnly
+                  ? undefined
+                  : () => setEntryMenuOpen((open) => !open)
+              }
             >
-              <IconPlayerPlay className="size-4" />
+              <span className="flex size-6 items-center justify-center rounded-full bg-blue-600 text-white">
+                <IconHomeFilled className="size-3" aria-hidden="true" />
+              </span>
               <Handle
                 id="iteration-entry"
                 type="source"
@@ -225,14 +239,27 @@ export function IterationNodeFrame({
                   name: data.title,
                 })}
                 className="workflow-port workflow-port-output !size-2.5 !border-0 !bg-transparent"
+                onClick={
+                  iterationActions.readOnly
+                    ? undefined
+                    : (event) => {
+                        // The port click must not double-toggle through the card
+                        // handler that widens the entry affordance.
+                        event.stopPropagation();
+                        setEntryMenuOpen((open) => !open);
+                      }
+                }
               />
             </div>
-            {/* Dify-style affordance: the entry plus stays out of sight until the
-                author hovers the internal start row (or opens it from the keyboard). */}
+            {/* Dify-style affordance: the blue plus stays decorative and centered on
+                the entry port; the port itself opens the picker, and hover only fades
+                the badge in so connection drags from the port are never blocked. */}
             <IterationInsertMenu
               insertion={{ type: "entry", iterationId: id }}
               label={t("settings.workflow.iteration.addNode")}
-              className="pointer-events-none opacity-0 transition-opacity duration-150 group-hover/iteration-start:pointer-events-auto group-hover/iteration-start:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 data-popup-open:pointer-events-auto data-popup-open:opacity-100"
+              open={entryMenuOpen}
+              onOpenChange={setEntryMenuOpen}
+              className="pointer-events-none absolute left-full top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 opacity-0 transition-opacity duration-150 group-hover/iteration-start:opacity-100 focus-visible:opacity-100 data-popup-open:opacity-100"
             />
           </div>
           {!iterationActions.readOnly && (
@@ -245,8 +272,8 @@ export function IterationNodeFrame({
               style={{
                 left: "auto",
                 top: "auto",
-                right: ITERATION_RESIZE_HANDLE_INSET,
-                bottom: ITERATION_RESIZE_HANDLE_INSET,
+                right: 0,
+                bottom: 0,
                 width: ITERATION_RESIZE_HANDLE_SIZE,
                 height: ITERATION_RESIZE_HANDLE_SIZE,
                 // The built-in handle pins itself to the frame corner with a
@@ -257,7 +284,28 @@ export function IterationNodeFrame({
                 backgroundColor: "transparent",
               }}
             >
-              <IconArrowsDoubleSeNw className="size-3.5 text-violet-600 opacity-0 transition-opacity duration-150 group-hover/iteration-resize:opacity-100 dark:text-violet-300" />
+              {/* Dify's affordance: a single soft arc hugging the corner, revealed
+                  on frame hover or while the frame is selected. currentColor keeps the
+                  glyph visible in dark mode where Dify's fixed black stroke would vanish. */}
+              <svg
+                aria-hidden="true"
+                width={16}
+                height={16}
+                viewBox="0 0 16 16"
+                fill="none"
+                className={cn(
+                  "absolute bottom-px right-px text-foreground opacity-0 transition-opacity duration-150 group-hover/iteration-frame:opacity-100",
+                  selected && "opacity-100",
+                )}
+              >
+                <path
+                  d={ITERATION_RESIZE_ARC_PATH}
+                  stroke="currentColor"
+                  strokeOpacity="0.16"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                />
+              </svg>
             </NodeResizeControl>
           )}
         </>

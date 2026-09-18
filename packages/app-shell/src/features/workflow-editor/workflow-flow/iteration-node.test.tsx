@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import {
   applyNodeChanges,
@@ -13,6 +14,7 @@ import {
   WORKFLOW_ITERATION_NODE_HEIGHT,
   WORKFLOW_ITERATION_NODE_WIDTH,
   type WorkflowNodeData,
+  type WorkflowNodeKind,
 } from "@ora/workflow-mock";
 import { AppI18nProvider } from "../../../i18n/i18n";
 import { appI18n } from "../../../i18n/i18n-instance";
@@ -20,6 +22,7 @@ import { WorkflowIterationActionsProvider } from "./iteration-actions";
 import { WorkflowConnectionStateProvider } from "./connection-state";
 import { WorkflowFlowNodeView } from "./node";
 import { applyIterationFrameResize } from "../workflow-iteration-graph";
+import type { IterationInsertion } from "../workflow-iteration-graph";
 
 vi.mock("./node-parameter-summary", () => ({
   WorkflowNodeParameterSummary: () => null,
@@ -45,14 +48,19 @@ function windowedMouseEvent(
 function renderIteration({
   collapsed = false,
   readOnly = false,
+  selected = false,
+  onInsert = vi.fn(),
 }: {
   collapsed?: boolean;
   readOnly?: boolean;
+  selected?: boolean;
+  onInsert?: (kind: WorkflowNodeKind, insertion: IterationInsertion) => void;
 } = {}) {
   const node: Node<WorkflowNodeData, "workflow"> = {
     id: "iter",
     type: "workflow",
     position: { x: 40, y: 40 },
+    selected,
     initialWidth: 560,
     initialHeight: 340,
     data: {
@@ -78,7 +86,7 @@ function renderIteration({
               nodes={[node]}
               edges={[]}
               readOnly={readOnly}
-              onInsert={vi.fn()}
+              onInsert={onInsert}
               onToggleCollapsed={vi.fn()}
             >
               <ReactFlow
@@ -96,7 +104,12 @@ function renderIteration({
 }
 
 /** Renders an iteration with one unconnected member so its append affordance is available. */
-function renderIterationWithMember() {
+function renderIterationWithMember(
+  onInsert: (
+    kind: WorkflowNodeKind,
+    insertion: IterationInsertion,
+  ) => void = vi.fn(),
+) {
   const nodes: Node<WorkflowNodeData, "workflow">[] = [
     {
       id: "iter",
@@ -141,7 +154,7 @@ function renderIterationWithMember() {
               nodes={nodes}
               edges={[]}
               readOnly={false}
-              onInsert={vi.fn()}
+              onInsert={onInsert}
               onToggleCollapsed={vi.fn()}
             >
               <ReactFlow
@@ -280,6 +293,29 @@ describe("iteration composite node", () => {
     ).toBeNull();
   });
 
+  it("styles the internal start like Dify's iteration-start block", async () => {
+    renderIteration();
+
+    const start = await screen.findByRole("img", { name: "Internal start" });
+    expect(start).toHaveClass(
+      "size-11",
+      "rounded-xl",
+      "border",
+      "border-border",
+      "bg-card",
+    );
+    const badge = start.querySelector("span");
+    expect(badge).not.toBeNull();
+    expect(badge).toHaveClass(
+      "size-6",
+      "rounded-full",
+      "bg-blue-600",
+      "text-white",
+    );
+    // The home glyph is the only icon inside the blue badge.
+    expect(badge!.querySelector("svg")).not.toBeNull();
+  });
+
   it("reveals the entry plus affordance only while hovering the start row", async () => {
     renderIteration();
 
@@ -287,14 +323,19 @@ describe("iteration composite node", () => {
     const insert = screen.getByRole("button", {
       name: "Add a node to the iteration region",
     });
+    // The badge is decorative and centered on the entry port: the port owns the
+    // click, so the plus can never intercept a connection drag from the port.
     expect(insert).toHaveClass(
       "pointer-events-none",
       "opacity-0",
-      "group-hover/iteration-start:pointer-events-auto",
+      "left-full",
+      "top-1/2",
+      "-translate-x-1/2",
+      "-translate-y-1/2",
+      "bg-blue-600",
+      "rounded-full",
       "group-hover/iteration-start:opacity-100",
-      "focus-visible:pointer-events-auto",
       "focus-visible:opacity-100",
-      "data-popup-open:pointer-events-auto",
       "data-popup-open:opacity-100",
     );
     const start = document.querySelector("[data-workflow-iteration-start]");
@@ -303,8 +344,48 @@ describe("iteration composite node", () => {
       "nodrag",
       "nopan",
       "group/iteration-start",
-      "gap-1.5",
     );
+  });
+
+  it("opens the entry picker by clicking the internal start block", async () => {
+    const user = userEvent.setup();
+    const onInsert = vi.fn();
+    renderIteration({ onInsert });
+
+    // The decorated start block widens the entry affordance: its body stays clear
+    // of the elevated entry edge that swallows the port's forgiving hit area.
+    const start = await screen.findByRole("img", { name: "Internal start" });
+    await user.click(start);
+    expect(
+      await screen.findByRole("menuitem", { name: "Condition" }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("menuitem", { name: "Condition" }));
+    expect(onInsert).toHaveBeenCalledTimes(1);
+    expect(onInsert).toHaveBeenCalledWith("condition", {
+      type: "entry",
+      iterationId: "iter",
+    });
+  });
+
+  it("opens the node picker from the entry port and inserts the choice", async () => {
+    const user = userEvent.setup();
+    const onInsert = vi.fn();
+    renderIteration({ onInsert });
+
+    await screen.findByRole("img", { name: "Internal start" });
+    // The entry port doubles as the picker trigger, exactly like Dify.
+    await user.click(screen.getByLabelText("Connect to the first region node"));
+    expect(
+      await screen.findByRole("menuitem", { name: "Agent" }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("menuitem", { name: "Agent" }));
+    expect(onInsert).toHaveBeenCalledTimes(1);
+    expect(onInsert).toHaveBeenCalledWith("agent", {
+      type: "entry",
+      iterationId: "iter",
+    });
   });
 
   it("reveals a member append affordance only while hovering that member", async () => {
@@ -316,17 +397,72 @@ describe("iteration composite node", () => {
     expect(append).toHaveClass(
       "pointer-events-none",
       "opacity-0",
-      "group-hover/iteration-member:pointer-events-auto",
+      "-right-3",
+      "-translate-y-1/2",
+      "bg-blue-600",
+      "rounded-full",
       "group-hover/iteration-member:opacity-100",
-      "focus-visible:pointer-events-auto",
       "focus-visible:opacity-100",
-      "data-popup-open:pointer-events-auto",
       "data-popup-open:opacity-100",
     );
+    // The badge is centered on the member's output port anchor.
+    expect(append).toHaveStyle({ top: "61px" });
     expect(
       document.querySelector('[data-workflow-node-id="agent"]'),
     ).toHaveClass("group/iteration-member");
-    expect(append.parentElement).toHaveClass("flex", "w-[34px]", "justify-end");
+    expect(append.parentElement).toHaveAttribute(
+      "data-workflow-node-id",
+      "agent",
+    );
+  });
+
+  it("opens the append picker from a member output port and inserts the choice", async () => {
+    const user = userEvent.setup();
+    const onInsert = vi.fn();
+    renderIterationWithMember(onInsert);
+
+    await screen.findByRole("button", { name: "Add a node after Agent" });
+    await user.click(screen.getByLabelText("Connect from Agent"));
+    expect(
+      await screen.findByRole("menuitem", { name: "Condition" }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("menuitem", { name: "Condition" }));
+    expect(onInsert).toHaveBeenCalledTimes(1);
+    expect(onInsert).toHaveBeenCalledWith("condition", {
+      type: "output",
+      iterationId: "iter",
+      sourceId: "agent",
+      sourceHandle: undefined,
+    });
+  });
+
+  it("keeps the frame background constant when selected", async () => {
+    const first = renderIteration();
+    await first.findByRole("img", { name: "Internal start" });
+    const unselected = document.querySelector(
+      "[data-workflow-iteration-frame]",
+    )!;
+    expect(unselected).toHaveClass(
+      "bg-violet-500/[0.035]",
+      "border-violet-500/40",
+      "transition-[border-color,box-shadow]",
+    );
+    first.unmount();
+
+    renderIteration({ selected: true });
+    await screen.findByRole("img", { name: "Internal start" });
+    const selectedFrame = document.querySelector(
+      "[data-workflow-iteration-frame]",
+    )!;
+    // Selection repaints only the border and shadow; the fill never changes.
+    expect(selectedFrame).toHaveClass(
+      "bg-violet-500/[0.035]",
+      "border-ring",
+      "shadow-md",
+    );
+    expect(selectedFrame.className).not.toContain("bg-card");
+    expect(selectedFrame.className).not.toContain("background-color");
   });
 
   it("renders a Dify-style bottom-right resize affordance when editable", async () => {
@@ -339,17 +475,34 @@ describe("iteration composite node", () => {
     expect(control).not.toBeNull();
     expect(control).toHaveClass("nodrag");
     expect(control).toHaveStyle({
-      right: "6px",
-      bottom: "6px",
-      width: "20px",
-      height: "20px",
+      right: "0px",
+      bottom: "0px",
+      width: "24px",
+      height: "24px",
     });
-    const icon = control!.querySelector("svg");
-    expect(icon).not.toBeNull();
-    expect(icon).toHaveClass(
+    const glyph = control!.querySelector("svg");
+    expect(glyph).not.toBeNull();
+    expect(glyph).toHaveClass(
+      "bottom-px",
+      "right-px",
       "opacity-0",
-      "group-hover/iteration-resize:opacity-100",
+      "group-hover/iteration-frame:opacity-100",
     );
+    expect(glyph!.querySelector("path")).toHaveAttribute(
+      "d",
+      "M5.19009 11.8398C8.26416 10.6196 10.7144 8.16562 11.9297 5.08904",
+    );
+  });
+
+  it("keeps the resize glyph visible while the frame is selected", async () => {
+    renderIteration({ selected: true });
+
+    await screen.findByRole("img", { name: "Internal start" });
+    const glyph = document.querySelector<HTMLElement>(
+      ".react-flow__resize-control.handle.bottom.right svg",
+    );
+    expect(glyph).not.toBeNull();
+    expect(glyph).toHaveClass("opacity-100");
   });
 
   it("hides the resize affordance when collapsed or read-only", async () => {

@@ -1951,4 +1951,59 @@ describe("useDeleteWorkflow", () => {
       Reflect.deleteProperty(HTMLElement.prototype, "offsetHeight");
     }
   }, 20_000);
+
+  it("adds an iteration member end-to-end by clicking the internal start port", async () => {
+    const user = userEvent.setup();
+    const state = createFixtureState();
+    seedDemoWorkflows(state);
+    seedIterationShowcase(state);
+    useWorkflowEditorStore.setState({
+      selectedWorkflowId: "iteration-showcase",
+    });
+    renderEditor(undefined, state, undefined, false);
+
+    expect(await screen.findByLabelText("评审迭代: 迭代")).toBeInTheDocument();
+    // The entry port doubles as the picker trigger (Dify behavior), while the
+    // hover plus stays decorative so port drags keep starting connections.
+    await user.click(screen.getByLabelText("连接到循环体首节点"));
+    await user.click(await screen.findByRole("menuitem", { name: "Agent" }));
+
+    // The insert lands in the draft graph: one new member card selected on canvas.
+    await waitFor(() => {
+      expect(
+        document.querySelector('[data-workflow-node-id="agent-1"]'),
+      ).not.toBeNull();
+    });
+    const inserted = document.querySelector<HTMLElement>(
+      '[data-workflow-node-id="agent-1"]',
+    )!;
+    expect(inserted).toHaveTextContent("Agent 1");
+    expect(
+      document.querySelector("[data-workflow-node-count]"),
+    ).toHaveAttribute("data-workflow-node-count", "4");
+  }, 20_000);
+
+  it("appends an iteration member end-to-end from a member output port", async () => {
+    const user = userEvent.setup();
+    const state = createFixtureState();
+    seedDemoWorkflows(state);
+    seedIterationShowcase(state);
+    useWorkflowEditorStore.setState({
+      selectedWorkflowId: "iteration-showcase",
+    });
+    renderEditor(undefined, state, undefined, false);
+
+    // The unoccupied member output owns the append affordance.
+    await user.click(await screen.findByLabelText("从评审成员开始连接"));
+    await user.click(await screen.findByRole("menuitem", { name: "条件分支" }));
+
+    await waitFor(() => {
+      expect(
+        document.querySelector('[data-workflow-node-id="condition-1"]'),
+      ).not.toBeNull();
+    });
+    expect(
+      document.querySelector("[data-workflow-node-count]"),
+    ).toHaveAttribute("data-workflow-node-count", "4");
+  }, 20_000);
 });

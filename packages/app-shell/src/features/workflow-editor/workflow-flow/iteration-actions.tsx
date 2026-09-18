@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo } from "react";
+import { type CSSProperties, type ReactNode, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { IconPlus } from "@tabler/icons-react";
 import type { Edge, Node } from "@xyflow/react";
@@ -112,17 +112,28 @@ export function WorkflowIterationActionsProvider({
   );
 }
 
-/** Renders the capability-filtered node picker shared by entry, edge, and output seams. */
+/** Renders the capability-filtered node picker shared by entry, edge, and output seams.
+ * The trigger mirrors Dify's add-block affordance: a solid blue circle with a white
+ * plus. Port-anchored seams keep it decorative (`pointer-events-none` via className)
+ * and forward port clicks through the controlled `open` state instead, so connection
+ * drags from the underlying handle are never intercepted. */
 export function IterationInsertMenu({
   insertion,
   label,
   className,
   side = "right",
+  style,
+  open,
+  onOpenChange,
 }: {
   insertion: IterationInsertion;
   label: string;
   className?: string;
   side?: "top" | "right" | "bottom" | "left";
+  style?: CSSProperties;
+  /** Controlled menu state for seams whose port doubles as the trigger. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
   const { nodeTypes, readOnly, insert } = useWorkflowIterationActions();
   const { t } = useTranslation();
@@ -130,22 +141,23 @@ export function IterationInsertMenu({
     return null;
   }
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger
         render={
           <Button
             type="button"
-            variant="outline"
-            size="icon-sm"
+            variant="default"
+            size="icon-xs"
+            style={style}
             className={cn(
-              "nodrag nopan size-6 rounded-full bg-background shadow-sm",
+              "nodrag nopan rounded-full bg-blue-600 text-white shadow-sm hover:bg-blue-700",
               className,
             )}
             aria-label={label}
           />
         }
       >
-        <IconPlus className="size-3.5" />
+        <IconPlus className="size-3" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="center" side={side} className="w-44">
         {nodeTypes.map((nodeType) => {

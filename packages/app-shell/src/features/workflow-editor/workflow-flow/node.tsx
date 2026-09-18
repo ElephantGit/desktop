@@ -1,4 +1,4 @@
-import { Fragment, memo } from "react";
+import { Fragment, memo, useState } from "react";
 import {
   Handle,
   Position,
@@ -146,80 +146,51 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
         data.kind === "condition" ? (
           <>
             {conditionCases.map((conditionCase, index) => (
-              <Fragment key={conditionCase.id}>
-                <Handle
-                  id={conditionCase.id}
-                  type="source"
-                  position={Position.Right}
-                  data-workflow-output={id}
-                  aria-label={`${t("settings.workflow.connectFrom", { name: data.title })} · ${conditionCase.id}`}
-                  className={cn(
-                    "workflow-port workflow-port-output !size-2.5 !border-0 !bg-transparent",
-                    isOutputCandidate && "workflow-port-candidate",
-                  )}
-                  style={{
-                    top: conditionHandleTop(conditionCases, index),
-                  }}
-                />
-                <IterationOutputInsertButton
-                  insertion={iterationActions.outputInsertion(
-                    id,
-                    conditionCase.id,
-                  )}
-                  top={conditionHandleTop(conditionCases, index)}
-                  label={t("settings.workflow.iteration.appendBranch", {
-                    branch: conditionCase.id,
-                  })}
-                />
-              </Fragment>
+              <IterationOutputPort
+                key={conditionCase.id}
+                nodeId={id}
+                handleId={conditionCase.id}
+                top={conditionHandleTop(conditionCases, index)}
+                connectLabel={`${t("settings.workflow.connectFrom", { name: data.title })} · ${conditionCase.id}`}
+                plusLabel={t("settings.workflow.iteration.appendBranch", {
+                  branch: conditionCase.id,
+                })}
+                insertion={iterationActions.outputInsertion(
+                  id,
+                  conditionCase.id,
+                )}
+                isOutputCandidate={isOutputCandidate}
+              />
             ))}
-            <Handle
-              id="else"
-              type="source"
-              position={Position.Right}
-              data-workflow-output={id}
-              aria-label={`${t("settings.workflow.connectFrom", { name: data.title })} · else`}
-              className={cn(
-                "workflow-port workflow-port-output !size-2.5 !border-0 !bg-transparent",
-                isOutputCandidate && "workflow-port-candidate",
-              )}
-              style={{
-                top: conditionHandleTop(conditionCases, conditionCases.length),
-              }}
-            />
-            <IterationOutputInsertButton
-              insertion={iterationActions.outputInsertion(id, "else")}
+            <IterationOutputPort
+              nodeId={id}
+              handleId="else"
               top={conditionHandleTop(conditionCases, conditionCases.length)}
-              label={t("settings.workflow.iteration.appendBranch", {
+              connectLabel={`${t("settings.workflow.connectFrom", { name: data.title })} · else`}
+              plusLabel={t("settings.workflow.iteration.appendBranch", {
                 branch: "ELSE",
               })}
+              insertion={iterationActions.outputInsertion(id, "else")}
+              isOutputCandidate={isOutputCandidate}
             />
           </>
         ) : (
-          <>
-            <Handle
-              type="source"
-              position={Position.Right}
-              data-workflow-output={id}
-              aria-label={t("settings.workflow.connectFrom", {
-                name: data.title,
-              })}
-              className={cn(
-                "workflow-port workflow-port-output !size-2.5 !border-0 !bg-transparent",
-                isOutputCandidate && "workflow-port-candidate",
-              )}
-              style={{ top: WORKFLOW_NODE_ANCHOR_Y }}
-            />
-            {parentId !== undefined && (
-              <IterationOutputInsertButton
-                insertion={iterationActions.outputInsertion(id)}
-                top={WORKFLOW_NODE_ANCHOR_Y}
-                label={t("settings.workflow.iteration.appendOutput", {
-                  name: data.title,
-                })}
-              />
-            )}
-          </>
+          <IterationOutputPort
+            nodeId={id}
+            top={WORKFLOW_NODE_ANCHOR_Y}
+            connectLabel={t("settings.workflow.connectFrom", {
+              name: data.title,
+            })}
+            plusLabel={t("settings.workflow.iteration.appendOutput", {
+              name: data.title,
+            })}
+            insertion={
+              parentId !== undefined
+                ? iterationActions.outputInsertion(id)
+                : null
+            }
+            isOutputCandidate={isOutputCandidate}
+          />
         )
       }
     />
@@ -308,31 +279,56 @@ function ConditionNodeDetails({
   );
 }
 
-/** Shows an append affordance only for an unconnected region output. */
-function IterationOutputInsertButton({
-  insertion,
+/** One source port paired with its Dify-style append affordance. The plus badge is
+ * decorative (pointer-events-none) and centered on the port; clicking the port opens
+ * the node picker, while dragging from the port still starts a connection. */
+function IterationOutputPort({
+  nodeId,
+  handleId,
   top,
-  label,
+  connectLabel,
+  plusLabel,
+  insertion,
+  isOutputCandidate,
 }: {
-  insertion: IterationInsertion | null;
+  nodeId: string;
+  handleId?: string;
   top: number;
-  label: string;
+  connectLabel: string;
+  plusLabel: string;
+  insertion: IterationInsertion | null;
+  isOutputCandidate: boolean;
 }) {
-  if (insertion === null) {
-    return null;
-  }
+  const { readOnly } = useWorkflowIterationActions();
+  const [open, setOpen] = useState(false);
+  const offersInsert = insertion !== null && !readOnly;
   return (
-    <div
-      className="absolute z-10 flex w-[34px] justify-end"
-      style={{ right: -34, top, transform: "translateY(-50%)" }}
-    >
-      <IterationInsertMenu
-        insertion={insertion}
-        label={label}
-        side="right"
-        className="pointer-events-none opacity-0 transition-opacity duration-150 group-hover/iteration-member:pointer-events-auto group-hover/iteration-member:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 data-popup-open:pointer-events-auto data-popup-open:opacity-100"
+    <>
+      <Handle
+        id={handleId}
+        type="source"
+        position={Position.Right}
+        data-workflow-output={nodeId}
+        aria-label={connectLabel}
+        className={cn(
+          "workflow-port workflow-port-output !size-2.5 !border-0 !bg-transparent",
+          isOutputCandidate && "workflow-port-candidate",
+        )}
+        style={{ top }}
+        onClick={offersInsert ? () => setOpen((open) => !open) : undefined}
       />
-    </div>
+      {insertion !== null && (
+        <IterationInsertMenu
+          insertion={insertion}
+          label={plusLabel}
+          side="right"
+          open={open}
+          onOpenChange={setOpen}
+          style={{ top }}
+          className="pointer-events-none absolute -right-3 z-10 -translate-y-1/2 opacity-0 transition-opacity duration-150 group-hover/iteration-member:opacity-100 focus-visible:opacity-100 data-popup-open:opacity-100"
+        />
+      )}
+    </>
   );
 }
 

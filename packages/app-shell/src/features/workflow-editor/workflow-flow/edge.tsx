@@ -103,7 +103,6 @@ export const WorkflowFlowEdgeView = memo(function WorkflowFlowEdgeView({
               insertion={insertion}
               label={t("settings.workflow.iteration.insertOnEdge")}
               side="top"
-              className="size-5 border-violet-500/40 text-violet-700 dark:text-violet-300"
             />
           </div>
         )}
