@@ -1,9 +1,10 @@
+use super::iteration::RoundOutcome;
 use super::skill_delivery::SkillMaterializationReceipt;
 use crate::RepositoryError;
 use crate::workflow_run::engine::graph::WorkflowGraph;
 use ora_domain::{
-    SessionId, WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus, WorkflowRun, WorkflowRunId,
-    Workspace,
+    SessionId, WorkflowExecutionScope, WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus,
+    WorkflowRun, WorkflowRunId, WorkflowScopeId, Workspace,
 };
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -12,13 +13,53 @@ use thiserror::Error;
 /// A node-run the engine wants to start in one scheduling wave.
 ///
 /// The engine assigns the node-run id; the repository persists the row and the `current_nodes`
-/// anchor in the same transaction.
+/// anchor in the same transaction. Rows carrying an `iteration` belong to a composite region
+/// round and never enter the outer `current_nodes` anchor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeRunToStart {
     pub id: WorkflowNodeRunId,
+    pub scope_id: WorkflowScopeId,
     pub node_id: String,
     pub node_type: String,
     pub input: Option<String>,
+    /// Composite-region round this row executes in; `None` for outer rows.
+    pub iteration: Option<u32>,
+}
+
+/// How one node-run's failure propagates to its run (ADR "iteration composite runtime" D6).
+///
+/// The engine resolves the policy structurally — a failure inside a `continue`-strategy
+/// composite region is absorbed by the runtime's ledger instead of failing the run — so the
+/// scheduling core never branches on node types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailurePropagation {
+    /// The row fails and the run fails in the same transaction (the existing behavior).
+    Run,
+    /// The row fails but the run stays active; the owning composite runtime records the round
+    /// as failed and advances.
+    Composite,
+}
+
+/// How one settled iteration round continues, committed in the same transaction as the ledger
+/// entry so the round's terminal fact and the following transition never split.
+///
+/// This is the repository-facing form: the engine has already materialized node-run ids and
+/// inputs for the rows a `StartNextRound` begins.
+#[derive(Debug, Clone, PartialEq)]
+pub enum IterationRoundContinuation {
+    /// Start the next round: bind its `item`/`index` and start its first ready members.
+    StartNextRound {
+        round: u32,
+        item: serde_json::Value,
+        node_runs: Vec<NodeRunToStart>,
+    },
+    /// Complete the composite node, writing the ledger-derived exposed variables.
+    Complete {
+        exposed: Vec<(String, serde_json::Value)>,
+        output: Option<String>,
+    },
+    /// Fail the composite node (and its run) — used when a `fail`-strategy round fails.
+    Fail { error: String },
 }
 
 /// One file's incremental change made by a node execution, captured from the worktree git diff.
@@ -38,14 +79,43 @@ pub struct FileChange {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionContext {
     pub run: WorkflowRun,
+    pub root_scope_id: WorkflowScopeId,
     pub workspace: Workspace,
     pub graph_json: String,
+}
+
+/// Initial durable facts for one newly-created Loop round.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoopRoundToStart {
+    pub id: WorkflowScopeId,
+    pub parent_loop_node_run_id: WorkflowNodeRunId,
+    pub round_index: u32,
+    pub state: String,
+    pub start_node_run: NodeRunToStart,
+}
+
+/// The atomic state change chosen after every child node in a Loop round is terminal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoopRoundAdvance {
+    /// Closes the current round and starts the next round from its Start node.
+    Continue { next: LoopRoundToStart },
+    /// Closes the round and publishes the configured values through the parent Loop node.
+    Succeed {
+        outputs: BTreeMap<String, serde_json::Value>,
+    },
+    /// Terminates the current round, parent Loop, and root run with one durable error.
+    Fail { error: String },
 }
 
 /// Supplies new node-run identifiers for the engine's scheduling waves.
 pub trait WorkflowNodeRunIdGenerator {
     /// Produces the identifier for a newly created node run.
     fn generate_node_run_id(&self) -> WorkflowNodeRunId;
+
+    /// Produces a distinct identity for a newly-created execution scope.
+    fn generate_scope_id(&self) -> WorkflowScopeId {
+        WorkflowScopeId::new(format!("scope:{}", self.generate_node_run_id()))
+    }
 }
 
 /// Publishes run invalidation events after run or node-run state transitions commit
@@ -174,6 +244,18 @@ pub trait WorkflowRunEngineRepository {
         run_id: &WorkflowRunId,
     ) -> Result<Vec<WorkflowNodeRun>, RepositoryError>;
 
+    /// Loads one Loop's active round, if it has already been created.
+    fn find_active_loop_round(
+        &self,
+        parent_loop_node_run_id: &WorkflowNodeRunId,
+    ) -> Result<Option<WorkflowExecutionScope>, RepositoryError>;
+
+    /// Lists node instances belonging to one root or round scope.
+    fn list_node_runs_in_scope(
+        &self,
+        scope_id: &WorkflowScopeId,
+    ) -> Result<Vec<WorkflowNodeRun>, RepositoryError>;
+
     /// Publishes a node's prepared Ora session only while both the node and run are still running.
     ///
     /// The executor calls this after the initial prompt is accepted. Keeping `session_id` absent
@@ -236,6 +318,30 @@ pub trait WorkflowRunEngineRepository {
         now: i64,
     ) -> Result<(), RepositoryError>;
 
+    /// Creates a Loop round and its child Start node atomically while the parent is active.
+    fn start_loop_round(
+        &self,
+        run_id: &WorkflowRunId,
+        round: &LoopRoundToStart,
+        now: i64,
+    ) -> Result<(), RepositoryError>;
+
+    /// Starts child nodes without changing the root run's `current_nodes` anchor.
+    fn start_scope_ready_nodes(
+        &self,
+        scope_id: &WorkflowScopeId,
+        node_runs: &[NodeRunToStart],
+        now: i64,
+    ) -> Result<(), RepositoryError>;
+
+    /// Closes a drained Loop round and advances its parent atomically.
+    fn advance_loop_round(
+        &self,
+        scope_id: &WorkflowScopeId,
+        advance: &LoopRoundAdvance,
+        now: i64,
+    ) -> Result<AdvanceWorkflowRunResult, RepositoryError>;
+
     /// Marks one node-run succeeded, records its final assistant output, stop reason, and file
     /// changes, and removes it from `current_nodes`.
     ///
@@ -252,11 +358,59 @@ pub trait WorkflowRunEngineRepository {
         now: i64,
     ) -> Result<AdvanceWorkflowRunResult, RepositoryError>;
 
-    /// Marks one node-run and its run failed, anchoring the failed node in `current_nodes`.
+    /// Marks one node-run failed with a propagation policy.
+    ///
+    /// `FailurePropagation::Run` keeps the existing behavior: the row and its run fail in the
+    /// same transaction. `FailurePropagation::Composite` fails only the row; the run stays
+    /// active so the owning composite runtime settles the failed round and advances.
     fn fail_node(
         &self,
         node_run_id: &WorkflowNodeRunId,
         error: String,
+        output: Option<String>,
+        propagation: FailurePropagation,
+        now: i64,
+    ) -> Result<AdvanceWorkflowRunResult, RepositoryError>;
+
+    /// Starts one composite-region round atomically: binds the round's `item` and `index` pool
+    /// variables and inserts the round's first node-run rows in one transaction, so a crash
+    /// leaves either the whole round unstarted or the round variables consistent with its rows
+    /// (ADR "iteration composite runtime" D2).
+    ///
+    /// Round rows never enter the outer `current_nodes` anchor; the owner stays anchored while
+    /// running. Every row in `node_runs` must carry `iteration == Some(round)`.
+    fn start_iteration_round(
+        &self,
+        run_id: &WorkflowRunId,
+        owner_node_id: &str,
+        round: u32,
+        item: &serde_json::Value,
+        node_runs: &[NodeRunToStart],
+        now: i64,
+    ) -> Result<AdvanceWorkflowRunResult, RepositoryError>;
+
+    /// Settles one drained round and continues atomically: the ledger entry, the round's
+    /// terminal fact, and the continuation (next round start, node completion, or node
+    /// failure) commit in one transaction. Recording an already-settled round is a no-op so
+    /// replanning after a crash stays idempotent.
+    fn settle_iteration_round(
+        &self,
+        run_id: &WorkflowRunId,
+        owner_node_id: &str,
+        round: u32,
+        entry: RoundOutcome,
+        continuation: IterationRoundContinuation,
+        now: i64,
+    ) -> Result<AdvanceWorkflowRunResult, RepositoryError>;
+
+    /// Completes one composite node-run, writing its ledger-derived exposed variables through
+    /// the pool's typed `set` and the node's display `output` in one transaction. Used for the
+    /// empty-iterator-source path, where no round ever settles.
+    fn complete_iteration_node(
+        &self,
+        node_run_id: &WorkflowNodeRunId,
+        owner_node_id: &str,
+        exposed: &[(String, serde_json::Value)],
         output: Option<String>,
         now: i64,
     ) -> Result<AdvanceWorkflowRunResult, RepositoryError>;
@@ -305,6 +459,19 @@ pub trait WorkflowRunEngineRepository {
     fn fail_orphaned_node_runs(
         &self,
         run_ids: &[WorkflowRunId],
+        now: i64,
+    ) -> Result<(), RepositoryError>;
+
+    /// Fails the given interrupted node-run rows of one run as `interrupted_by_restart`, while
+    /// preserving the run and its `Running` composite rows so their runtimes settle the
+    /// interrupted rounds on the next advance (ADR "iteration composite runtime" D2: the
+    /// sweep's all-rows-fail behavior is relaxed only for composite rows).
+    ///
+    /// Orphaned sessions of the run's workspace are stopped, matching the whole-run sweep.
+    fn fail_interrupted_node_runs(
+        &self,
+        run_id: &WorkflowRunId,
+        node_run_ids: &[WorkflowNodeRunId],
         now: i64,
     ) -> Result<(), RepositoryError>;
 }

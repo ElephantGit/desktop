@@ -43,6 +43,26 @@ impl Plugins {
         Arc::new(PluginGateway::new(Arc::clone(&self.host)))
     }
 
+    /// Returns every recorded pack installation with its reconciled member states.
+    pub fn list_pack_installations(
+        &self,
+        _request: ListPackInstallationsRequest,
+    ) -> Result<ListPackInstallationsResponse, BackendError> {
+        Ok(ListPackInstallationsResponse {
+            packs: self.host.list_pack_installations()?,
+        })
+    }
+
+    /// Returns the ownership-aware uninstall plan for one pack id, absent for ordinary plugins.
+    pub fn pack_uninstall_plan(
+        &self,
+        request: PackUninstallPlanRequest,
+    ) -> Result<PackUninstallPlanResponse, BackendError> {
+        Ok(PackUninstallPlanResponse {
+            plan: self.host.pack_uninstall_plan(&request.plugin_id)?,
+        })
+    }
+
     /// Returns the cached installed-plugin snapshot without rescanning the filesystem.
     pub fn list_installed(
         &self,
@@ -186,11 +206,41 @@ impl Plugins {
     }
 
     /// Stops and removes one plugin package plus its process-local state.
+    ///
+    /// A pack id carries an ownership journal instead of a package: its removable members are
+    /// uninstalled through the ordinary single-plugin chain under an ownership-aware plan, and
+    /// the journal releases one relationship at a time. The agent supervisor is suspended for
+    /// every removed member so its respawn loop cannot race the package removal.
     pub async fn uninstall(
         &self,
         request: UninstallPluginRequest,
     ) -> Result<UninstallPluginResponse, BackendError> {
-        let response = self.host.uninstall(request).await?;
+        if let Some(plan) = self.host.pack_uninstall_plan(&request.plugin_id)? {
+            let member_ids = plan
+                .remove
+                .iter()
+                .chain(plan.preserve.iter().map(|entry| &entry.member_id))
+                .chain(plan.already_missing.iter())
+                .cloned()
+                .collect::<Vec<_>>();
+            for member_id in &plan.remove {
+                self.agent_runtime.suspend_plugin_agent(member_id);
+            }
+            let result = self
+                .host
+                .uninstall_pack(&request.plugin_id, request.data_disposition)
+                .await;
+            for member_id in &member_ids {
+                self.agent_runtime.resume_plugin_agent(member_id);
+            }
+            self.agent_runtime.sync_plugin_agents();
+            return result;
+        }
+        let plugin_id = request.plugin_id.clone();
+        self.agent_runtime.suspend_plugin_agent(&plugin_id);
+        let result = self.host.uninstall(request).await;
+        self.agent_runtime.resume_plugin_agent(&plugin_id);
+        let response = result?;
         self.agent_runtime.sync_plugin_agents();
         Ok(response)
     }
@@ -224,12 +274,18 @@ impl Plugins {
     /// reconciles the agent set afterwards.
     ///
     /// The agent set is reconciled so a replaced agent package supplies a reachable agent in this
-    /// process rather than only after the next restart.
+    /// process rather than only after the next restart. The agent supervisor is suspended for the
+    /// operation's duration: its respawn loop would otherwise re-attach to the version directory
+    /// the update retires, and on Windows that directory handle blocks the replacement.
     pub async fn update(
         &self,
         request: UpdatePluginRequest,
     ) -> Result<UpdatePluginResponse, BackendError> {
-        let response = self.host.update(request).await?;
+        let plugin_id = request.plugin_id.clone();
+        self.agent_runtime.suspend_plugin_agent(&plugin_id);
+        let result = self.host.update(request).await;
+        self.agent_runtime.resume_plugin_agent(&plugin_id);
+        let response = result?;
         self.agent_runtime.sync_plugin_agents();
         Ok(response)
     }
@@ -241,7 +297,11 @@ impl Plugins {
         request: UpdatePluginRequest,
         progress: ProgressCallback,
     ) -> Result<UpdatePluginResponse, BackendError> {
-        let response = self.host.update_with_progress(request, progress).await?;
+        let plugin_id = request.plugin_id.clone();
+        self.agent_runtime.suspend_plugin_agent(&plugin_id);
+        let result = self.host.update_with_progress(request, progress).await;
+        self.agent_runtime.resume_plugin_agent(&plugin_id);
+        let response = result?;
         self.agent_runtime.sync_plugin_agents();
         Ok(response)
     }

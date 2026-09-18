@@ -222,6 +222,9 @@ pub(crate) fn validate(
             &configuration_file,
             manifest.artifact(),
         )?),
+        // A pack never becomes an installed package, so it can never reach package validation:
+        // the manifest parser rejects `kind = "pack"` in the installed form outright.
+        PluginKind::Pack => unreachable!("installed pack manifests are rejected at parse time"),
         PluginKind::Workflow => PluginContribution::Workflow(validate_workflow(package_root)?),
     };
     let configuration_declaration = match &configuration_file {

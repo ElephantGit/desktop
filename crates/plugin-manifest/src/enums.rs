@@ -5,7 +5,9 @@ use thiserror::Error;
 ///
 /// `Hook` is a processless contribution: its package carries one immutable Hook Configuration
 /// and one package-contained executable, but the host never starts a Deno runtime for it. An
-/// installed Hook is globally available; its lifecycle runtime stays `stopped`.
+/// installed Hook is globally available; its lifecycle runtime stays `stopped`. `Pack` is a
+/// marketplace-only listing that names a set of member plugins; it never becomes an installed
+/// package and never carries a release of its own.
 ///
 /// `Workflow` is processless and declares no section of its own. Its package is a delivery
 /// vehicle for workflow documents under `assets/workflows/`, which the host imports into the
@@ -19,6 +21,7 @@ pub enum PluginKind {
     Skill,
     Mcp,
     Hook,
+    Pack,
     Workflow,
 }
 
@@ -33,7 +36,12 @@ impl PluginKind {
     pub fn may_ship_targeted_artifact(self) -> bool {
         match self {
             Self::Hook | Self::Agent => true,
-            Self::Workbench | Self::Webview | Self::Skill | Self::Mcp | Self::Workflow => false,
+            Self::Workbench
+            | Self::Webview
+            | Self::Skill
+            | Self::Mcp
+            | Self::Pack
+            | Self::Workflow => false,
         }
     }
 
@@ -46,6 +54,7 @@ impl PluginKind {
             Self::Skill => "skill",
             Self::Mcp => "mcp",
             Self::Hook => "hook",
+            Self::Pack => "pack",
             Self::Workflow => "workflow",
         }
     }
@@ -70,6 +79,7 @@ impl FromStr for PluginKind {
             "skill" => Ok(Self::Skill),
             "mcp" => Ok(Self::Mcp),
             "hook" => Ok(Self::Hook),
+            "pack" => Ok(Self::Pack),
             "workflow" => Ok(Self::Workflow),
             found => Err(PluginKindError::Unsupported {
                 found: found.to_owned(),

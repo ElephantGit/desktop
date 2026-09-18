@@ -44,11 +44,42 @@ category.
   a successful leave clears the sidebar error.
 - The inner library rail is gone: the app sidebar is the only workflow list.
   Newest-created workflows are first; create prepends the row and opens its draft.
-- The node catalog advertises only the runtime-backed Start, Agent, and Output
-  nodes. Prototype metadata for other node kinds remains available so each kind
-  can be exposed when its runtime support is implemented.
+- The node catalog advertises only the runtime-backed Start, Agent, Condition, Iteration, and
+  Output nodes. Prototype metadata for other node kinds remains available so each kind can be
+  exposed when its runtime support is implemented.
+- The iteration node is an embedded composite region on the same canvas. Membership is authored
+  only through its internal start, internal-edge insertion, and unconnected-output append menus;
+  geometry never changes `parentId`. Agent and Condition declare iteration support through
+  `supportedScopes`; outer drops over a region are rejected, and existing members cannot leave it.
+  A pure graph transform owns node creation, edge rewiring, branch-handle preservation, and frame
+  fitting so each insertion is one history/autosave operation. React Flow `extent` / `expandParent`
+  are derived from persisted `parentId` only at render time. Expanded dimensions persist through
+  `initialWidth` / `initialHeight`, default to 560×340 for old snapshots, grow with authored
+  members, compact after deletion or organize, and survive collapse/expand. Placements stack below
+  the measured bottom of existing members and are nudged off any card they would overlap; frames
+  re-fit when real card measurements arrive so the render-time parent extent never clamps a member
+  over the region's internal affordances. Internal-edge insert controls render above every node and
+  edge elevation React Flow computes, otherwise the edge hit target swallows their clicks. Deleting
+  a non-empty frame confirms the member count and cascades through members and incident edges as
+  one undoable edit. The authoritative execution validation remains in the Rust graph parser.
 - Collapsing the app sidebar hides the library in place; it does not remount
   the canvas, so in-memory draft edits survive.
+- The + beside the library title opens a menu with New workflow (Ctrl/Cmd+N still opens it
+  directly) and Import workflow; an empty library offers both actions inline.
+- Import runs in one dialog with three steps: a drop zone / file picker, a preview, or a
+  failure explanation (invalid JSON with line and column, missing name or graph, unknown
+  node kind, or a file larger than 5 MB). Nothing is persisted before confirmation. The
+  preview resolves MCP/Skill references against the installed catalogs; missing or
+  unavailable plugins warn but never block. Install on a missing MCP or Skill opens the plugin
+  marketplace with its identity searched; an MCP with incomplete or unreadable
+  configuration opens its configuration editor under Manage plugins, an MCP with an invalid
+  declaration opens Manage plugins, and an unusable Skill opens the Skills page. Users may create a draft
+  only or publish with an editable version, and the new row is marked for the session.
+- Export offers the live draft or any published version, lists each recorded plugin
+  reference with its enabled state, and previews the exact file content. Files record
+  plugin identities and enabled flags only, never packages, secrets, or plugin
+  configuration. A published version is embedded in the default filename so re-import
+  proposes it again.
 - Undo/redo history is scoped to the mounted draft session. Switching drafts,
   activating a version, or leaving the editor clears it; autosave and published
   version history are independent.

@@ -101,6 +101,8 @@ fn parses_complete_manifest_into_full_domain_object() {
             sha256: success(Sha256Digest::parse(DIGEST), "digest"),
         }),
         artifact: None,
+        pack: None,
+        marketplace_visible: true,
     };
 
     assert_eq!(actual, expected);

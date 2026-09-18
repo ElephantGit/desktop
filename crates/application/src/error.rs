@@ -371,6 +371,7 @@ impl ApplicationError {
             EngineError::GraphParse(error) => Self::WorkflowRunGraphParse(error),
             EngineError::Validation(error) => Self::WorkflowRunValidation(error),
             EngineError::Repository(source) => Self::WorkflowRunRepository { source },
+            EngineError::LoopState { message } => Self::WorkflowRunStartFailed { message },
         }
     }
 

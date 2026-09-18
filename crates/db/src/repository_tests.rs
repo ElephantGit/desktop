@@ -248,7 +248,7 @@ fn session_round_trip_persists_workspace_and_mcp_selection() {
     );
 }
 
-/// Verifies ordinary session lists exclude sessions owned by workflow node execution.
+/// Verifies workflow session ownership survives completion, restart, and database reopening.
 #[test]
 fn standalone_session_list_excludes_workflow_node_sessions() {
     let (temp_dir, pool) = bootstrapped_pool();
@@ -348,9 +348,11 @@ fn standalone_session_list_excludes_workflow_node_sessions() {
                 &run_id,
                 &NodeRunToStart {
                     id: node_run_id.clone(),
+                    scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                     node_id: "agent-1".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
+                    iteration: None,
                 },
                 40,
             )
@@ -366,11 +368,65 @@ fn standalone_session_list_excludes_workflow_node_sessions() {
 
     assert_eq!(
         session_repository.list_sessions().unwrap(),
-        vec![standalone.clone(), workflow_session]
+        vec![standalone.clone(), workflow_session.clone()]
     );
     assert_eq!(
         session_repository.list_standalone_sessions().unwrap(),
-        vec![standalone]
+        vec![standalone.clone()]
+    );
+
+    assert_eq!(
+        engine_repository
+            .complete_node(
+                &node_run_id,
+                Some("Agent result".to_string()),
+                /*structured_output*/ None,
+                /*stop_reason*/ None,
+                Vec::new(),
+                /*now*/ 60,
+            )
+            .unwrap(),
+        ora_application::AdvanceWorkflowRunResult::Advanced
+    );
+    engine_repository
+        .finish_run(&run_id, Some("Agent result".to_string()), /*now*/ 70)
+        .unwrap();
+    assert_eq!(
+        session_repository.list_standalone_sessions().unwrap(),
+        vec![standalone.clone()]
+    );
+    assert_eq!(
+        engine_repository.restart_run(&run_id, /*now*/ 80).unwrap(),
+        RestartWorkflowRunResult::Restarted
+    );
+    // Restart retires the node row, but must not turn its retained conversation into a chat.
+    assert_eq!(
+        session_repository.list_standalone_sessions().unwrap(),
+        vec![standalone.clone()]
+    );
+    assert_eq!(
+        session_repository
+            .find_session(&workflow_session.id)
+            .unwrap(),
+        Some(workflow_session.clone())
+    );
+
+    let reopened_pool = with_trace_logging(|| {
+        DatabaseBootstrapper::new(FixedTimestampSource)
+            .bootstrap_repository_pool(
+                &DatabaseLocation::path(temp_dir.path().join("repositories.sqlite3")),
+                &default_migration_catalog().unwrap(),
+            )
+            .unwrap()
+    });
+    let reopened_sessions = SqliteSessionRepository::new(reopened_pool);
+    assert_eq!(
+        reopened_sessions.list_standalone_sessions().unwrap(),
+        vec![standalone.clone()]
+    );
+    assert_eq!(
+        reopened_sessions.list_sessions().unwrap(),
+        vec![standalone, workflow_session]
     );
 }
 
@@ -707,9 +763,11 @@ fn running_run_cannot_be_deleted() {
                 &run_id,
                 &NodeRunToStart {
                     id: WorkflowNodeRunId::new("node-run-1"),
+                    scope_id: ora_domain::WorkflowScopeId::new(format!("root:{run_id}")),
                     node_id: "agent-1".to_string(),
                     node_type: "agent".to_string(),
                     input: None,
+                    iteration: None,
                 },
                 40,
             )

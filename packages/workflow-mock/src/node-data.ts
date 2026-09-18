@@ -7,6 +7,7 @@ export const WORKFLOW_NODE_KINDS = [
   "junction",
   "human",
   "loop",
+  "iteration",
   "subflow",
   "output",
 ] as const;
@@ -248,6 +249,27 @@ export interface WorkflowOutputBinding {
   variableSelector: string[];
 }
 
+/** One carried Loop variable with its initial value and simultaneous feedback source. */
+export interface WorkflowLoopVariable {
+  name: string;
+  valueType: WorkflowVariableValueType;
+  initial:
+    | { kind: "constant"; value: unknown }
+    | { kind: "variable"; selector: string[] };
+  feedback: string[];
+}
+
+/** Executable bounded Loop configuration consumed by the workflow engine. */
+export interface WorkflowLoopConfig {
+  maxIterations: number;
+  variables: WorkflowLoopVariable[];
+  until: {
+    logic: WorkflowConditionLogic;
+    conditions: WorkflowConditionComparison[];
+  };
+  outputs: WorkflowOutputBinding[];
+}
+
 /** Which branches a Junction node waits for before it may proceed. */
 export type WorkflowJunctionWaitStrategy = "all" | "any" | "count";
 
@@ -258,6 +280,20 @@ export type WorkflowJunctionFailureStrategy = "fail" | "continue";
 export interface WorkflowToolParameter {
   key: string;
   value: string;
+}
+
+/** How an Iteration node reacts when one round fails (backend `errorStrategy`). */
+export type WorkflowIterationErrorStrategy = "fail" | "continue";
+
+/** Executable configuration of an Iteration node (foreach composite runtime). */
+export interface WorkflowIterationConfig {
+  /** Dify-style selector of the array variable driving the rounds. */
+  iteratorSelector: string[];
+  /** Dify-style root-variable selector collected into `{iter}.output` each round. */
+  collectSelector: string[];
+  errorStrategy: WorkflowIterationErrorStrategy;
+  /** Safety ceiling; a longer source fails the node at the startup boundary. */
+  maxIterations: number;
 }
 
 /** Uses React Flow's `Node.data` extension point for executable workflow data. */
@@ -283,6 +319,10 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   cases?: WorkflowConditionCase[];
   /** Named result bindings of an Output node, resolved from the variable pool at completion. */
   outputs?: WorkflowOutputBinding[];
+  /** Owning Loop id for one child node. */
+  containerId?: string;
+  /** Bounded feedback behavior for a Loop container. */
+  loopConfig?: WorkflowLoopConfig;
   operation?: string;
   toolParameters?: WorkflowToolParameter[];
   waitStrategy?: WorkflowJunctionWaitStrategy;
@@ -290,6 +330,12 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   failureStrategy?: WorkflowJunctionFailureStrategy;
   maxAttempts?: number;
   exitCondition?: string;
+  /** Iteration node: foreach composite configuration (backend `data.iterationConfig`). */
+  iterationConfig?: WorkflowIterationConfig;
+  /** Iteration frame: presentation-only collapsed state; region members stay in the graph. */
+  collapsed?: boolean;
+  /** Iteration frame: derived member count for the collapsed summary badge. */
+  regionMemberCount?: number;
   /**
    * Fixture-only mock-engine step duration (ms); the editor deliberately does
    * not expose this simulation control as workflow configuration.

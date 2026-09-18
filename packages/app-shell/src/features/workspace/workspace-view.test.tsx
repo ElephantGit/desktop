@@ -1992,7 +1992,7 @@ describe("WorkspaceView", () => {
 
     expect(
       await screen.findByRole("button", {
-        name: /导出工作流|Export workflow/,
+        name: /^(导出|Export)$/,
       }),
     ).toBeInTheDocument();
     expect(

@@ -13,8 +13,14 @@ import type { ReactElement } from "react";
 import { createChatStore } from "@ora/chat";
 import { PlatformProvider } from "../../platform";
 import {
+  createMockWorkflow,
   createMockWorkflowVersions,
   createMockWorkflows,
+  WORKFLOW_ITERATION_NODE_HEIGHT,
+  WORKFLOW_ITERATION_NODE_WIDTH,
+  WORKFLOW_NODE_INITIAL_HEIGHT,
+  WORKFLOW_NODE_WIDTH,
+  type DemoWorkflow,
 } from "@ora/workflow-mock";
 import {
   serializeWorkflowGraph,
@@ -312,6 +318,150 @@ function nodeGraphPosition(label: string): { x: string; y: string } {
   };
 }
 
+/** jsdom never runs layout, and d3 drag needs a window-scoped event view. */
+function windowedMouseEvent(
+  type: "mousedown" | "mousemove" | "mouseup",
+  init: { button?: number; clientX: number; clientY: number },
+): MouseEvent {
+  const event = new MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    ...init,
+  });
+  Object.defineProperty(event, "view", { value: window });
+  return event;
+}
+
+/**
+ * Stubs React Flow node-wrapper offset sizes so `measured` reflects each card's
+ * authored geometry: the iteration frame reports its rendered style size and
+ * members report the standard card box. Other elements keep jsdom's zero layout.
+ */
+function stubNodeWrapperOffsetSize(): void {
+  const sizeOf = (element: HTMLElement): { width: number; height: number } => {
+    if (!element.hasAttribute("data-id")) {
+      return { width: 0, height: 0 };
+    }
+    const frame = element.querySelector<HTMLElement>(
+      "[data-workflow-iteration-frame]",
+    );
+    if (frame !== null) {
+      return {
+        width:
+          Number.parseFloat(frame.style.width) || WORKFLOW_ITERATION_NODE_WIDTH,
+        height:
+          Number.parseFloat(frame.style.height) ||
+          WORKFLOW_ITERATION_NODE_HEIGHT,
+      };
+    }
+    return { width: WORKFLOW_NODE_WIDTH, height: WORKFLOW_NODE_INITIAL_HEIGHT };
+  };
+  Object.defineProperty(HTMLElement.prototype, "offsetWidth", {
+    configurable: true,
+    get() {
+      return sizeOf(this as HTMLElement).width;
+    },
+  });
+  Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+    configurable: true,
+    get() {
+      return sizeOf(this as HTMLElement).height;
+    },
+  });
+}
+
+/** Seeds a dedicated iteration showcase workflow the editor can open directly. */
+function seedIterationShowcase(state: FixtureState): void {
+  const showcase: DemoWorkflow = {
+    id: "iteration-showcase",
+    name: "迭代示例",
+    description: "验证迭代区域的编辑交互。",
+    updatedAt: "2026-09-16T10:00:00+08:00",
+    viewport: { x: 32, y: 32, zoom: 1 },
+    nodes: [
+      {
+        id: "start",
+        type: "workflow",
+        deletable: false,
+        position: { x: 72, y: 286 },
+        data: {
+          kind: "start",
+          title: "开始",
+          description: "接收任务",
+          input: "提取输入。",
+          inputVariables: [{ name: "条目", valueType: "array" }],
+        },
+      },
+      {
+        id: "iter",
+        type: "workflow",
+        position: { x: 240, y: 120 },
+        initialWidth: WORKFLOW_ITERATION_NODE_WIDTH,
+        initialHeight: WORKFLOW_ITERATION_NODE_HEIGHT,
+        data: {
+          kind: "iteration",
+          title: "评审迭代",
+          description: "",
+          iterationConfig: {
+            iteratorSelector: ["start", "条目"],
+            collectSelector: ["member", "输出"],
+            errorStrategy: "fail",
+            maxIterations: 10,
+          },
+        },
+      },
+      {
+        id: "member",
+        type: "workflow",
+        parentId: "iter",
+        position: { x: 120, y: 100 },
+        data: {
+          kind: "agent",
+          title: "评审成员",
+          description: "",
+        },
+      },
+    ],
+    edges: [
+      { id: "e-start-iter", source: "start", target: "iter", type: "workflow" },
+      {
+        id: "e-iter-entry",
+        source: "iter",
+        sourceHandle: "iteration-entry",
+        target: "member",
+        type: "workflow",
+      },
+    ],
+  };
+  const now = BigInt(Date.parse(showcase.updatedAt));
+  state.workflows.push({
+    workflow: {
+      id: showcase.id,
+      namespace: "local",
+      name: showcase.name,
+      publishedSnapshotId: null,
+      createdAt: now,
+      updatedAt: now,
+    },
+    draft: {
+      id: `snap-${showcase.id}`,
+      workflowId: showcase.id,
+      version: "draft",
+      graph: serializeWorkflowGraph({
+        nodes: showcase.nodes as unknown as WorkflowDefinitionNode[],
+        edges: showcase.edges as unknown as WorkflowDefinitionEdge[],
+        viewport: showcase.viewport,
+        annotations: [],
+        globalVariables: [],
+        description: showcase.description,
+      }),
+      createdAt: now,
+      updatedAt: now,
+    },
+    published: [],
+  });
+}
+
 /** Locates the React Flow viewport transform used for pan/zoom assertions. */
 function flowViewport(): HTMLElement | null {
   return document.querySelector(".react-flow__viewport");
@@ -330,6 +480,7 @@ describe("WorkflowEditor", () => {
       selectedWorkflowId: null,
       managerError: null,
       actions: null,
+      importedWorkflowIds: [],
     });
     useUiStore.setState({
       sidebarCollapsed: false,
@@ -376,9 +527,7 @@ describe("WorkflowEditor", () => {
     expect(
       screen.queryByRole("button", { name: "部署到项目" }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "导出工作流" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "导出" })).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "打开代码审查工作流的操作菜单" }),
     ).toHaveClass("opacity-100");
@@ -734,6 +883,46 @@ describe("WorkflowEditor", () => {
     expect(nodeGraphPosition("Agent节点: Agent 1")).toEqual({
       x: "260px",
       y: "200px",
+    });
+  });
+
+  it("adds, configures, and deletes an executable Loop container as one group", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(await screen.findByRole("button", { name: "循环" }));
+
+    const loop = screen.getByLabelText("循环节点: 循环 1");
+    expect(loop).toBeInTheDocument();
+    expect(screen.getByLabelText("开始节点: 轮次开始")).toBeInTheDocument();
+    expect(screen.getByLabelText("Agent节点: 循环 Agent")).toBeInTheDocument();
+    expect(screen.getByLabelText("工作流画布")).toHaveAttribute(
+      "data-workflow-edge-count",
+      "7",
+    );
+
+    const maximumRounds = screen.getByLabelText("最大轮次");
+    expect(maximumRounds).toHaveValue(3);
+    fireEvent.change(maximumRounds, { target: { value: "5" } });
+    expect(screen.getByLabelText("最大轮次")).toHaveValue(5);
+    fireEvent.change(screen.getByLabelText("初始值"), {
+      target: { value: "draft" },
+    });
+    expect(screen.getByLabelText("初始值")).toHaveValue("draft");
+
+    await user.click(loop.closest(".react-flow__node") ?? loop);
+    await user.click(screen.getByRole("button", { name: "删除循环 1" }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByLabelText("循环节点: 循环 1"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByLabelText("开始节点: 轮次开始"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByLabelText("Agent节点: 循环 Agent"),
+      ).not.toBeInTheDocument();
     });
   });
 
@@ -1279,7 +1468,11 @@ describe("WorkflowEditor", () => {
 
     await screen.findByText("代码审查工作流");
     await screen.findByLabelText("工作流画布");
-    await user.click(screen.getByLabelText("新建工作流"));
+    // Match the row-menu helper: open the Base UI menu with a single click event.
+    fireEvent.click(screen.getByRole("button", { name: "新建或导入工作流" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: /新建工作流/ }),
+    );
     const createDialog = await screen.findByRole("alertdialog", {
       name: "新建工作流",
     });
@@ -1335,7 +1528,11 @@ describe("WorkflowEditor", () => {
       screen.queryByRole("button", { name: "错开并行演示" }),
     ).not.toBeInTheDocument();
 
-    await user.click(screen.getByLabelText("新建工作流"));
+    // Match the row-menu helper: open the Base UI menu with a single click event.
+    fireEvent.click(screen.getByRole("button", { name: "新建或导入工作流" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: /新建工作流/ }),
+    );
     const createDialog = await screen.findByRole("alertdialog", {
       name: "新建工作流",
     });
@@ -1366,7 +1563,11 @@ describe("WorkflowEditor", () => {
     });
 
     await screen.findByText("代码审查工作流");
-    await user.click(screen.getByLabelText("新建工作流"));
+    // Match the row-menu helper: open the Base UI menu with a single click event.
+    fireEvent.click(screen.getByRole("button", { name: "新建或导入工作流" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: /新建工作流/ }),
+    );
     const createDialog = await screen.findByRole("alertdialog", {
       name: "新建工作流",
     });
@@ -1610,9 +1811,11 @@ describe("WorkflowEditor", () => {
   it("shows the empty-library action only after the library loads with no workflows", async () => {
     renderEditor(undefined, createFixtureState(), undefined, false);
 
-    expect(screen.queryByText("还没有工作流")).not.toBeInTheDocument();
-    expect(await screen.findByText("还没有工作流")).toBeInTheDocument();
+    expect(screen.queryAllByText("还没有工作流")).toHaveLength(0);
+    // Both the main pane and the sidebar list offer first-run actions.
+    expect(await screen.findAllByText("还没有工作流")).toHaveLength(2);
     expect(screen.queryByLabelText("工作流画布")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "导入" })).toBeInTheDocument();
   });
 
   it("shows a retryable error when the workflow library fails to load", async () => {
@@ -1655,6 +1858,163 @@ describe("WorkflowEditor", () => {
     renderEditor();
 
     expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
+  });
+
+  it("previews imported plugin dependencies before creating and publishing", async () => {
+    const user = userEvent.setup();
+    const state = createFixtureState();
+    renderEditor(undefined, state);
+    await screen.findByLabelText("工作流画布");
+
+    const imported = createMockWorkflow("zh-CN");
+    imported.name = "导入的审查";
+    const agent = imported.nodes.find((node) => node.data.kind === "agent");
+    if (agent?.data.agentConfig === undefined) {
+      throw new Error("fixture must contain an Agent node");
+    }
+    agent.data.agentConfig = {
+      ...agent.data.agentConfig,
+      mcps: [{ mcpId: "acme/missing-mcp", enabled: true }],
+      skills: [{ skillId: "openspec-explore", enabled: true }],
+    };
+
+    // Match the row-menu helper: open the Base UI menu with a single click event.
+    fireEvent.click(screen.getByRole("button", { name: "新建或导入工作流" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: "导入工作流…" }),
+    );
+    const pickDialog = await screen.findByRole("dialog");
+    expect(
+      within(pickDialog).getByText("支持 .json / .reactflow.json"),
+    ).toBeInTheDocument();
+    await user.upload(
+      within(pickDialog).getByLabelText("拖入文件，或点击选择"),
+      new File([JSON.stringify(imported)], "导入的审查.v9.reactflow.json", {
+        type: "application/json",
+      }),
+    );
+
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText("确认导入")).toBeInTheDocument();
+    expect(
+      within(dialog).getAllByText("acme/missing-mcp").length,
+    ).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText("未安装").length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText("已安装").length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText("去安装").length).toBeGreaterThan(0);
+    expect(within(dialog).getByDisplayValue("v9")).toBeInTheDocument();
+
+    // A missing dependency deep-links to the marketplace, searching for its identity.
+    const missingRow = within(dialog)
+      .getAllByText("acme/missing-mcp")[0]
+      .closest("li");
+    if (missingRow === null) {
+      throw new Error("missing dependency row not rendered");
+    }
+    await user.click(
+      within(missingRow).getByRole("button", { name: "去安装" }),
+    );
+    expect(useUiStore.getState()).toMatchObject({
+      settingsOpen: true,
+      settingsCategory: "plugins",
+      pluginSettingsRequest: {
+        kind: "marketplaceSearch",
+        query: "acme/missing-mcp",
+      },
+    });
+    act(() =>
+      useUiStore.setState({
+        settingsOpen: false,
+        pluginSettingsRequest: null,
+      }),
+    );
+    // Nothing is persisted while the preview is open.
+    expect(
+      state.workflows.some((record) => record.workflow.name === "导入的审查"),
+    ).toBe(false);
+
+    await user.click(within(dialog).getByRole("button", { name: "仍然导入" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+    await waitFor(() => {
+      const record = state.workflows.find(
+        (item) => item.workflow.name === "导入的审查",
+      );
+      expect(record?.published.map((snapshot) => snapshot.version)).toEqual([
+        "v9",
+      ]);
+    });
+    expect(await screen.findByDisplayValue("导入的审查")).toBeInTheDocument();
+    expect(screen.getByText("新导入")).toBeInTheDocument();
+  });
+
+  it("explains an unreadable import file without creating a workflow", async () => {
+    const user = userEvent.setup();
+    const state = createFixtureState();
+    renderEditor(undefined, state);
+    await screen.findByLabelText("工作流画布");
+    const workflowCount = state.workflows.length;
+
+    // Match the row-menu helper: open the Base UI menu with a single click event.
+    fireEvent.click(screen.getByRole("button", { name: "新建或导入工作流" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: "导入工作流…" }),
+    );
+    const pickDialog = await screen.findByRole("dialog");
+    await user.upload(
+      within(pickDialog).getByLabelText("拖入文件，或点击选择"),
+      new File(["{ nope"], "broken.json", { type: "application/json" }),
+    );
+
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "文件不是有效的 JSON。",
+    );
+    expect(within(dialog).getByText("无法导入")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "关闭" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+    expect(state.workflows).toHaveLength(workflowCount);
+  });
+
+  it("exports the draft or a chosen published version", async () => {
+    const user = userEvent.setup();
+    renderEditor();
+    await screen.findByLabelText("工作流画布");
+
+    await user.click(screen.getByRole("button", { name: "导出" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByRole("radio", { name: /当前草稿/ }),
+    ).toHaveAttribute("aria-checked", "true");
+    expect(
+      within(dialog).getByDisplayValue("代码审查工作流.reactflow.json"),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText("随文件记录的插件引用"),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText("预览文件结构")).toBeInTheDocument();
+
+    const [, publishedVersion] = within(dialog).getAllByRole("radio");
+    await user.click(publishedVersion);
+
+    expect(publishedVersion).toHaveAttribute("aria-checked", "true");
+    expect(
+      await within(dialog).findByText("随文件记录的插件引用"),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).queryByDisplayValue("代码审查工作流.reactflow.json"),
+    ).not.toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: "取消" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
   });
 });
 
@@ -1721,4 +2081,140 @@ describe("useDeleteWorkflow", () => {
     }>;
     expect(after.some((item) => item.id === "code-review")).toBe(false);
   });
+
+  it("resizes an iteration frame from its corner as one undoable edit", async () => {
+    const user = userEvent.setup();
+    const state = createFixtureState();
+    seedDemoWorkflows(state);
+    seedIterationShowcase(state);
+    useWorkflowEditorStore.setState({
+      selectedWorkflowId: "iteration-showcase",
+    });
+    stubNodeWrapperOffsetSize();
+    renderEditor(undefined, state, undefined, false);
+
+    try {
+      expect(
+        await screen.findByLabelText("评审迭代: 迭代"),
+      ).toBeInTheDocument();
+      const frame = () =>
+        document.querySelector<HTMLElement>("[data-workflow-iteration-frame]")!;
+      expect(frame()).toHaveStyle({
+        width: `${WORKFLOW_ITERATION_NODE_WIDTH}px`,
+        height: `${WORKFLOW_ITERATION_NODE_HEIGHT}px`,
+      });
+      const control = document.querySelector<HTMLElement>(
+        ".react-flow__resize-control.handle.bottom.right",
+      );
+      expect(control).not.toBeNull();
+      control!.setPointerCapture = () => {};
+
+      await act(async () => {
+        control!.dispatchEvent(
+          windowedMouseEvent("mousedown", {
+            button: 0,
+            clientX: 600,
+            clientY: 380,
+          }),
+        );
+      });
+      await act(async () => {
+        window.dispatchEvent(
+          windowedMouseEvent("mousemove", {
+            button: 0,
+            clientX: 700,
+            clientY: 460,
+          }),
+        );
+      });
+      await act(async () => {
+        window.dispatchEvent(
+          windowedMouseEvent("mouseup", {
+            button: 0,
+            clientX: 700,
+            clientY: 460,
+          }),
+        );
+      });
+
+      // The corner drag enlarged the frame and persisted the authored size.
+      expect(frame()).toHaveStyle({
+        width: `${WORKFLOW_ITERATION_NODE_WIDTH + 100}px`,
+        height: `${WORKFLOW_ITERATION_NODE_HEIGHT + 80}px`,
+      });
+
+      // The resize is one semantic history step with a localized label.
+      await user.click(screen.getByRole("button", { name: "变更历史" }));
+      expect(
+        await screen.findByText(/调整迭代区域大小：评审迭代/),
+      ).toBeInTheDocument();
+
+      // Undo restores the previous frame size in one step.
+      await user.click(screen.getByRole("button", { name: "撤销" }));
+      await waitFor(() => {
+        expect(frame()).toHaveStyle({
+          width: `${WORKFLOW_ITERATION_NODE_WIDTH}px`,
+          height: `${WORKFLOW_ITERATION_NODE_HEIGHT}px`,
+        });
+      });
+    } finally {
+      Reflect.deleteProperty(HTMLElement.prototype, "offsetWidth");
+      Reflect.deleteProperty(HTMLElement.prototype, "offsetHeight");
+    }
+  }, 20_000);
+
+  it("adds an iteration member end-to-end by clicking the internal start port", async () => {
+    const user = userEvent.setup();
+    const state = createFixtureState();
+    seedDemoWorkflows(state);
+    seedIterationShowcase(state);
+    useWorkflowEditorStore.setState({
+      selectedWorkflowId: "iteration-showcase",
+    });
+    renderEditor(undefined, state, undefined, false);
+
+    expect(await screen.findByLabelText("评审迭代: 迭代")).toBeInTheDocument();
+    // The entry port doubles as the picker trigger (Dify behavior), while the
+    // hover plus stays decorative so port drags keep starting connections.
+    await user.click(screen.getByLabelText("连接到循环体首节点"));
+    await user.click(await screen.findByRole("menuitem", { name: "Agent" }));
+
+    // The insert lands in the draft graph: one new member card selected on canvas.
+    await waitFor(() => {
+      expect(
+        document.querySelector('[data-workflow-node-id="agent-1"]'),
+      ).not.toBeNull();
+    });
+    const inserted = document.querySelector<HTMLElement>(
+      '[data-workflow-node-id="agent-1"]',
+    )!;
+    expect(inserted).toHaveTextContent("Agent 1");
+    expect(
+      document.querySelector("[data-workflow-node-count]"),
+    ).toHaveAttribute("data-workflow-node-count", "4");
+  }, 20_000);
+
+  it("appends an iteration member end-to-end from a member output port", async () => {
+    const user = userEvent.setup();
+    const state = createFixtureState();
+    seedDemoWorkflows(state);
+    seedIterationShowcase(state);
+    useWorkflowEditorStore.setState({
+      selectedWorkflowId: "iteration-showcase",
+    });
+    renderEditor(undefined, state, undefined, false);
+
+    // The unoccupied member output owns the append affordance.
+    await user.click(await screen.findByLabelText("从评审成员开始连接"));
+    await user.click(await screen.findByRole("menuitem", { name: "条件分支" }));
+
+    await waitFor(() => {
+      expect(
+        document.querySelector('[data-workflow-node-id="condition-1"]'),
+      ).not.toBeNull();
+    });
+    expect(
+      document.querySelector("[data-workflow-node-count]"),
+    ).toHaveAttribute("data-workflow-node-count", "4");
+  }, 20_000);
 });

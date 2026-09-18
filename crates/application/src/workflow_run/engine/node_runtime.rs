@@ -6,12 +6,15 @@
 //! node type means adding a runtime plus one registration line; the engine core does not change.
 
 mod control;
+mod iteration;
 
-use crate::workflow_run::engine::graph::WorkflowGraphNode;
+use crate::workflow_run::engine::graph::{WorkflowGraph, WorkflowGraphNode};
+use crate::workflow_run::engine::iteration::RoundOutcome;
 use crate::workflow_run::engine::node_type::NodeType;
 use crate::workflow_run::engine::ports::ExecutionContext;
 use crate::workflow_run::engine::variable_pool::WorkflowVariablePool;
 use control::{ConditionRuntime, OutputRuntime, StartRuntime};
+use iteration::IterationRuntime;
 use ora_domain::{WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus};
 use std::cmp::Reverse;
 use std::collections::HashMap;
@@ -68,7 +71,81 @@ pub trait AsyncNodeRuntime: NodeRuntime {
         node_run_id: &WorkflowNodeRunId,
         node: &WorkflowGraphNode,
         context: &ExecutionContext,
+        graph: &WorkflowGraph,
+        scope_id: &ora_domain::WorkflowScopeId,
+        pool: &WorkflowVariablePool,
     );
+}
+
+/// The next transition one Running composite node-run needs, computed purely from persisted
+/// facts (ADR "node runtime orchestration" D2/D5; iteration ADR D2 advance).
+///
+/// Planning is pure: the engine executes the plan through repository transactions, so the
+/// runtime itself performs no IO under the run lock.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CompositeAdvancePlan {
+    /// Nothing to do: the current round is in flight or the node is not driven by advance.
+    Noop,
+    /// Bind a fresh round's `item`/`index` and start its first ready members.
+    StartRound {
+        round: u32,
+        item: serde_json::Value,
+        node_ids: Vec<String>,
+    },
+    /// Start newly ready members of the current round (no pool write).
+    StartRegionNodes { node_ids: Vec<String> },
+    /// Settle the drained round and continue atomically.
+    SettleRound {
+        round: u32,
+        entry: RoundOutcome,
+        continuation: CompositeContinuation,
+    },
+    /// Complete the composite node without settling any round (empty iterator source).
+    CompleteNode {
+        exposed: Vec<(String, serde_json::Value)>,
+        output: Option<String>,
+    },
+    /// Fail the composite node; its own failures always propagate to the run.
+    FailNode { error: String },
+}
+
+/// How one settled iteration round continues, at the planning level (pure node ids; the engine
+/// materializes rows before executing).
+#[derive(Debug, Clone, PartialEq)]
+pub enum CompositeContinuation {
+    /// Start the next round: bind its `item`/`index` and start its first ready members.
+    StartNextRound {
+        round: u32,
+        item: serde_json::Value,
+        node_ids: Vec<String>,
+    },
+    /// Complete the composite node, writing the ledger-derived exposed variables.
+    Complete {
+        exposed: Vec<(String, serde_json::Value)>,
+        output: Option<String>,
+    },
+    /// Fail the composite node (and its run) — used when a `fail`-strategy round fails.
+    Fail { error: String },
+}
+
+/// A runtime that owns a region and drives it over multiple rounds.
+///
+/// The engine hands every Running composite node-run back to its runtime on each scheduling
+/// wave (`advance`); the runtime answers with a [`CompositeAdvancePlan`] derived purely from
+/// the persisted rows, ledger, and variable pool, so a restart replays to the same point
+/// without any in-memory state.
+pub trait CompositeNodeRuntime: NodeRuntime {
+    /// Computes the next transition for one Running composite node-run.
+    ///
+    /// `Err` carries a failure message that fails the node (and the run): composite-own
+    /// failures such as a non-array iterator source or an exceeded safety ceiling.
+    fn plan_advance(
+        &self,
+        node: &WorkflowGraphNode,
+        graph: &WorkflowGraph,
+        node_runs: &[WorkflowNodeRun],
+        payload: &crate::workflow_run::engine::skill_delivery::WorkflowRunPayload,
+    ) -> Result<CompositeAdvancePlan, String>;
 }
 
 /// The committed facts a swift runtime reads to complete one running node inside a wave.
@@ -91,22 +168,28 @@ pub struct SwiftCompletion<'a> {
 /// One registered node runtime, tagged by its execution form.
 ///
 /// The tag keeps illegal dispatch unrepresentable: the wave can only ask a swift runtime to
-/// complete synchronously, and can only ask an async runtime to dispatch to its background
-/// driver.
+/// complete synchronously, only ask an async runtime to dispatch to its background driver, and
+/// only ask a composite runtime to plan its next advance.
 #[derive(Clone)]
 pub enum RegisteredNodeRuntime {
     /// Completes synchronously inside the scheduling wave.
     Swift(Arc<dyn SwiftNodeRuntime>),
     /// Dispatched to a background driver that reports through the callback sink.
     Async(Arc<dyn AsyncNodeRuntime>),
+    /// Drives a region over rounds; the engine re-plans it on every scheduling wave.
+    Composite(Arc<dyn CompositeNodeRuntime>),
+    /// Drives durable isolated feedback scopes.
+    ScopedLoop,
 }
 
 impl RegisteredNodeRuntime {
     /// The run-output precedence rank of the registered runtime's node type.
     fn run_output_rank(&self) -> Option<u32> {
         match self {
+            Self::ScopedLoop => None,
             Self::Swift(runtime) => runtime.run_output_rank(),
             Self::Async(runtime) => runtime.run_output_rank(),
+            Self::Composite(runtime) => runtime.run_output_rank(),
         }
     }
 }
@@ -149,7 +232,8 @@ impl NodeRuntimeRegistry {
         match self.runtime(node.node_type) {
             Some(RegisteredNodeRuntime::Swift(runtime)) => runtime.start_input(node, context),
             Some(RegisteredNodeRuntime::Async(runtime)) => runtime.start_input(node, context),
-            None => None,
+            Some(RegisteredNodeRuntime::Composite(runtime)) => runtime.start_input(node, context),
+            Some(RegisteredNodeRuntime::ScopedLoop) | None => None,
         }
     }
 
@@ -163,6 +247,9 @@ impl NodeRuntimeRegistry {
     pub fn compute_run_output(&self, node_runs: &[WorkflowNodeRun]) -> Option<String> {
         node_runs
             .iter()
+            // Region rows are per-round members of a composite; only outer rows contribute the
+            // run's final output (ADR "iteration composite runtime" Stage B).
+            .filter(|node_run| node_run.iteration.is_none())
             .filter(|node_run| node_run.status == WorkflowNodeStatus::Succeeded)
             .filter_map(|node_run| {
                 let rank = NodeType::from_str(&node_run.node_type)
@@ -206,6 +293,11 @@ where
         NodeType::Agent,
         RegisteredNodeRuntime::Async(Arc::new(AgentNodeRuntime::new(agent_executor))),
     );
+    runtimes.register(
+        NodeType::Iteration,
+        RegisteredNodeRuntime::Composite(Arc::new(IterationRuntime)),
+    );
+    runtimes.register(NodeType::Loop, RegisteredNodeRuntime::ScopedLoop);
     runtimes
 }
 
@@ -251,8 +343,12 @@ where
         node_run_id: &WorkflowNodeRunId,
         node: &WorkflowGraphNode,
         context: &ExecutionContext,
+        graph: &WorkflowGraph,
+        scope_id: &ora_domain::WorkflowScopeId,
+        pool: &WorkflowVariablePool,
     ) {
-        self.executor.dispatch(node_run_id, node, context);
+        self.executor
+            .dispatch(node_run_id, node, graph, context, scope_id, pool);
     }
 }
 
@@ -277,7 +373,10 @@ mod tests {
             &self,
             _node_run_id: &WorkflowNodeRunId,
             _node: &WorkflowGraphNode,
+            _graph: &WorkflowGraph,
             _context: &ExecutionContext,
+            _scope_id: &ora_domain::WorkflowScopeId,
+            _pool: &WorkflowVariablePool,
         ) {
         }
     }
@@ -286,6 +385,7 @@ mod tests {
     /// graph are unused by these tests.
     fn execution_context_with_input(input: Option<&str>) -> ExecutionContext {
         ExecutionContext {
+            root_scope_id: ora_domain::WorkflowScopeId::new("root:run-1"),
             run: WorkflowRun::new(
                 WorkflowRunId::new("run-1"),
                 WorkspaceId::new("workspace-1"),
@@ -325,6 +425,7 @@ mod tests {
         WorkflowNodeRun::new(
             WorkflowNodeRunId::new(format!("node-run-{node_id}")),
             WorkflowRunId::new("run-1"),
+            ora_domain::WorkflowScopeId::new("root:run-1"),
             node_id,
             node_type,
             None,
