@@ -211,7 +211,7 @@ impl<G: WriteGuard> NodeDatabase<G> {
                 "SELECT exit_code FROM process_outcomes JOIN process_attempts USING(run) WHERE execution=?1",
             )?.query_map([record.command.execution_id.as_str()], |r| r.get(/*idx*/ 0))?.collect::<Result<_, _>>()?;
             let success = matches!(result, CloneExecutionResult::CloneReady(_));
-            if codes.len() != 1 || (codes[0] == 0) != success {
+            if codes.len() != 1 || (success && codes[0] != 0) {
                 return Err(Error::InvalidTransition);
             }
         } else if matches!(result, CloneExecutionResult::CloneReady(_)) {

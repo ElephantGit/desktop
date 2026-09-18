@@ -1,5 +1,7 @@
 #![cfg(target_os = "linux")]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+#[path = "standalone/repository.rs"]
+mod repository;
 #[path = "standalone/support.rs"]
 mod support;
 

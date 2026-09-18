@@ -63,6 +63,7 @@ impl<G: WriteGuard> ProcessJournal<G> {
         if !matches!(
             record.progress,
             crate::CloneProgress::Pending(crate::ClonePhase::DirectoryCreated { .. })
+                | crate::CloneProgress::Unknown(crate::ClonePhase::DirectoryCreated { .. })
         ) {
             return Err(Error::InvalidTransition);
         }

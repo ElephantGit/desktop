@@ -64,7 +64,8 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
         let result = self.drive(record);
         self.git.end_execution();
         result?;
-        if self.database.recoverable()?.is_empty() {
+        if self.database.recoverable()?.is_empty() && self.database.recoverable_clones()?.is_empty()
+        {
             self.state = NodeState::Ready;
         }
         let record = self
@@ -89,7 +90,8 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
             self.git.end_execution();
             result?;
         }
-        if self.database.recoverable()?.is_empty() {
+        if self.database.recoverable()?.is_empty() && self.database.recoverable_clones()?.is_empty()
+        {
             self.state = NodeState::Ready;
         }
         Ok(self.state)

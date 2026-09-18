@@ -34,6 +34,8 @@ fn run(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
         process: ProcessConfig,
         timezone: String,
         recovery_interval_ms: u64,
+        #[serde(default)]
+        clone: Option<ora_node::CloneConfig>,
     }
     if !path.is_absolute() {
         return Err("configuration path must be absolute".into());
@@ -54,10 +56,12 @@ fn run(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
         let worker_shutdown = shutdown.clone();
         let mut worker = tokio::task::spawn_blocking(move || -> Result<(), String> {
             let mut node = Node::open(config.node, config.process, worker_shutdown.clone()).map_err(|e| e.to_string())?;
+            if let Some(clone) = config.clone { node.configure_clone(clone).map_err(|e| e.to_string())?; }
             ora_logging::ora_info!(node_id = %node.node_id().as_str(), "Node opened without Controller IPC");
             let mut previous = None;
             while !worker_shutdown.requested() {
-                let state = node.recover().map_err(|e| e.to_string())?;
+                node.recover().map_err(|e| e.to_string())?;
+                let state = node.recover_clones().map_err(|e| e.to_string())?;
                 if previous != Some(state) {
                     ora_logging::ora_info!(state = ?state, "Node recovery pass completed");
                     previous = Some(state);

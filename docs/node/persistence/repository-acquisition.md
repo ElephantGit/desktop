@@ -3,8 +3,8 @@
 English | [中文](repository-acquisition.zh.md)
 
 Clone has separate business records in the existing explicitly injected Node database. It does not
-reinterpret Worktree inputs or terminal results. This stage implements storage, not Git acquisition;
-filesystem identity capture and the managed execution adapter remain to be connected.
+reinterpret Worktree inputs or terminal results. The Linux runtime now connects storage, native
+directory identity, managed Git acquisition and restart reconciliation; see [deployment](../repository-clone.md).
 
 `accept_clone` atomically stores the original command, generated repository identity, root/path and
 initial reservation. It never creates a directory. Replaying the same input returns the original target;
@@ -19,7 +19,8 @@ Run can be recorded per clone execution. Retrying a failed clone requires new id
 
 Terminal result and original event commit in one transaction. Result input/resource/path must match the
 original record. A dispatched attempt requires exactly one observed exit code and no uncleaned Runs;
-success requires code zero, failure requires nonzero. Missing exit/cleanup evidence remains recoverable,
+success requires code zero; verification may reject a code-zero tag checkout as a missing branch.
+Missing exit/cleanup evidence remains recoverable,
 not terminal. Native repository fact checks are an additional runtime obligation, not supplied by SQLite.
 Pre-dispatch failures may complete with appropriate owned-residue evidence without inventing a Run.
 

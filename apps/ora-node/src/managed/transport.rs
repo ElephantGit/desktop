@@ -99,6 +99,14 @@ pub(super) async fn execute(
         }
         tokio::time::sleep(Duration::from_millis(/*millis*/ 25)).await;
     };
+    if intent.spec.output == OutputPolicy::Discard {
+        return Ok(GitOutput::new(
+            outcome,
+            String::new(),
+            String::new(),
+            started.elapsed().as_millis() as u64,
+        ));
+    }
     let mut streams = [String::new(), String::new()];
     for (slot, stream) in streams
         .iter_mut()

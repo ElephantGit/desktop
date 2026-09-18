@@ -26,8 +26,12 @@ pub struct NodeConfig {
 
 mod execution;
 mod git;
+#[cfg(target_os = "linux")]
+mod repository;
 mod resources;
 pub use git::{Checkout, DirectoryState, ExecutionGitRunner, Observation, WorktreeGit};
+#[cfg(target_os = "linux")]
+pub use repository::{CloneConfig, CloneSsh};
 #[cfg(target_os = "linux")]
 mod managed;
 #[cfg(target_os = "linux")]
@@ -74,6 +78,8 @@ pub enum Error {
 /// Exclusive mutable execution access serializes commands and recovery for the leased database.
 /// Shared callers can place the Node behind a mutex; concurrent retries wait for the same result.
 pub struct Node<G = gitlancer::Git<gitlancer::CliGitRunner>, W = DurableWrites, C = LocalClock> {
+    #[cfg(target_os = "linux")]
+    repository_config: Option<CloneConfig>,
     home_directory: PathBuf,
     database: NodeDatabase<W>,
     identity: NodeRuntimeIdentity,
@@ -135,6 +141,7 @@ impl Node {
         let runner = ManagedGitRunner::new(node.database.process_journal()?, process, shutdown)
             .map_err(|e| Error::Configuration(e.to_string()))?;
         Ok(Node {
+            repository_config: None,
             home_directory: node.home_directory,
             database: node.database,
             identity: node.identity,
@@ -196,12 +203,15 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
             node_id: database.node_id().clone(),
             incarnation_id: NodeIncarnationId::new(uuid::Uuid::new_v4().to_string()),
         };
-        let state = if database.recoverable()?.is_empty() {
-            NodeState::Ready
-        } else {
-            NodeState::RecoveryPending
-        };
+        let state =
+            if database.recoverable()?.is_empty() && database.recoverable_clones()?.is_empty() {
+                NodeState::Ready
+            } else {
+                NodeState::RecoveryPending
+            };
         Ok(Self {
+            #[cfg(target_os = "linux")]
+            repository_config: None,
             home_directory: config.home_directory,
             database,
             identity,

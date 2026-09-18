@@ -1,5 +1,6 @@
 pub mod base_branch;
 pub mod branch;
+pub mod branch_clone;
 pub mod commit;
 pub mod config;
 pub mod diff;
