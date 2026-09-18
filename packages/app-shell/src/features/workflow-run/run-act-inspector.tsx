@@ -40,6 +40,8 @@ interface RunActInspectorProps {
   /** Currently viewed round; `null` shows the node-level (latest) state. */
   selectedRound: number | null;
   onRoundChange: (round: number | null) => void;
+  /** Region navigation owns round selection when false, avoiding duplicate controls. */
+  showRoundSelector?: boolean;
   artifacts: WorkflowArtifact[];
   revealedArtifactId: string | null;
   loopRounds?: GraphWorkflowRound[];
@@ -119,6 +121,7 @@ export function RunActInspector({
   roundStates,
   selectedRound,
   onRoundChange,
+  showRoundSelector = true,
   artifacts,
   revealedArtifactId,
   loopRounds = [],
@@ -183,6 +186,7 @@ export function RunActInspector({
       rounds={rounds}
       selectedRound={selectedRound}
       onRoundChange={onRoundChange}
+      showRoundSelector={showRoundSelector}
       artifacts={artifacts}
       revealedArtifactId={revealedArtifactId}
       loopRounds={loopRounds}
@@ -211,6 +215,7 @@ function RunActInspectorPanel({
   rounds,
   selectedRound,
   onRoundChange,
+  showRoundSelector,
   artifacts,
   revealedArtifactId,
   loopRounds,
@@ -235,6 +240,7 @@ function RunActInspectorPanel({
   rounds: GraphWorkflowNodeState[];
   selectedRound: number | null;
   onRoundChange: (round: number | null) => void;
+  showRoundSelector: boolean;
   artifacts: WorkflowArtifact[];
   revealedArtifactId: string | null;
   loopRounds: GraphWorkflowRound[];
@@ -287,7 +293,7 @@ function RunActInspectorPanel({
       className="flex min-h-0 min-w-0 flex-1 flex-col bg-background"
       aria-label={t("workflowRun.inspector.label")}
     >
-      {rounds.length > 1 && (
+      {showRoundSelector && rounds.length > 1 && (
         <div
           className="flex items-center gap-1 overflow-x-auto border-b border-border px-3 py-2"
           role="tablist"

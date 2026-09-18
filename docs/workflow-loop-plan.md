@@ -16,6 +16,8 @@ Migration `0013` introduces root/round identities, scope membership, and duplica
 
 ## Goal and design baseline
 
+The subsequent integration of upstream main `a54a4105` retains Iteration hover insertion, resizing, deletion confirmation, and region-level round navigation alongside Loop containment and scope history. Loop boundary validation now shares the extracted connection validator, and Loop children remain individually reachable in the execution path. The existing isolated composite scheduler preserves both upstream dispatch fixes without restoring the former monolithic implementation.
+
 Support a bounded feedback workflow such as generate → review → revise → review inside Desktop. A Loop owns an executable child graph, typed carried variables, a termination condition, and final outputs. The outer graph and each single-round child graph remain DAGs.
 
 This plan adopts the container-loop product concept discussed for Dify. It defines Ora semantics independently; it does not claim compatibility with Dify DSL, dependency versions, persistence, or current Human Input support. Before implementation, any upstream behavior used as a compatibility requirement must be checked against a pinned revision.

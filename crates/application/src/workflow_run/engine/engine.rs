@@ -398,6 +398,7 @@ where
                         }
                         if propagation == FailurePropagation::Composite {
                             // The absorbed failure settles as a failed round on the next pass.
+                            completed_swift = true;
                             continue;
                         }
                         return Ok(());

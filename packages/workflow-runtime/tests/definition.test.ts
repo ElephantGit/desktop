@@ -165,6 +165,42 @@ describe("workflow definition validation", () => {
     ]);
   });
 
+  it("persists iteration geometry and parentId without render-only constraints", () => {
+    const workflow = createMockWorkflow("en-US");
+    const iteration = {
+      id: "iter",
+      type: "workflow" as const,
+      position: { x: 100, y: 200 },
+      initialWidth: 760,
+      initialHeight: 420,
+      data: { kind: "iteration" as const, title: "Iteration", description: "" },
+    };
+    const member = {
+      id: "member",
+      type: "workflow" as const,
+      parentId: "iter",
+      extent: "parent" as const,
+      expandParent: true,
+      position: { x: 96, y: 160 },
+      data: { kind: "agent" as const, title: "Agent", description: "" },
+    };
+    workflow.nodes.push(iteration, member);
+
+    const normalized = normalizeWorkflowDefinition(workflow);
+
+    expect(normalized.nodes.at(-2)).toMatchObject({
+      id: "iter",
+      initialWidth: 760,
+      initialHeight: 420,
+    });
+    expect(normalized.nodes.at(-1)).toMatchObject({
+      id: "member",
+      parentId: "iter",
+    });
+    expect(normalized.nodes.at(-1)).not.toHaveProperty("extent");
+    expect(normalized.nodes.at(-1)).not.toHaveProperty("expandParent");
+  });
+
   it("rejects cycles before they can leave a run permanently running", () => {
     const definition = normalizeWorkflowDefinition(createMockWorkflow("en-US"));
     const firstNode = definition.nodes[0]!;
