@@ -172,112 +172,144 @@ describe("buildDisplayRun", () => {
     expect(display.nodeStates.explore.sessionId).toBe("session-explore");
   });
 
-  it("keeps repeated Loop child runs isolated by execution scope", () => {
-    const loopGraph = JSON.stringify({
-      nodes: [
-        ...JSON.parse(GRAPH).nodes,
-        {
-          id: "loop-1",
-          type: "workflow",
-          position: { x: 400, y: 0 },
-          data: { kind: "loop", title: "循环", description: "" },
-        },
-        {
-          id: "child-agent",
-          type: "workflow",
-          parentId: "loop-1",
-          position: { x: 80, y: 100 },
-          data: {
-            kind: "agent",
-            title: "改进",
-            description: "",
-            containerId: "loop-1",
-          },
-        },
-      ],
-      edges: [],
-      viewport: { x: 0, y: 0, zoom: 1 },
-    });
-    const display = buildDisplayRun(
-      {
-        ...detail,
-        scopes: [
-          {
-            id: "scope-1",
-            parentLoopNodeRunId: "node-run-loop",
-            roundIndex: 0,
-            status: "succeeded" as const,
-            createdAt: 10n,
-            updatedAt: 20n,
-          },
-          {
-            id: "scope-2",
-            parentLoopNodeRunId: "node-run-loop",
-            roundIndex: 1,
-            status: "succeeded" as const,
-            createdAt: 30n,
-            updatedAt: 40n,
-          },
-        ],
+  it.each(["root:run-1", "root:restarted-execution"])(
+    "projects root nodes in %s while isolating Loop rounds",
+    (rootScopeId) => {
+      const loopGraph = JSON.stringify({
         nodes: [
+          ...JSON.parse(GRAPH).nodes,
           {
-            id: "node-run-loop",
-            scopeId: "root:run-1",
-            nodeId: "loop-1",
-            status: "succeeded",
-            startedAt: 1n,
-            finishedAt: 50n,
-            error: null,
-            output: null,
-            payload: null,
+            id: "output",
+            type: "workflow",
+            position: { x: 1000, y: 0 },
+            data: { kind: "output", title: "Result", description: "" },
           },
           {
-            id: "node-run-child-1",
-            scopeId: "scope-1",
-            nodeId: "child-agent",
-            status: "succeeded",
-            startedAt: 11n,
-            finishedAt: 19n,
-            error: null,
-            output: '"first"',
-            payload: null,
+            id: "loop-1",
+            type: "workflow",
+            position: { x: 400, y: 0 },
+            data: { kind: "loop", title: "循环", description: "" },
           },
           {
-            id: "node-run-child-2",
-            scopeId: "scope-2",
-            nodeId: "child-agent",
-            status: "succeeded",
-            startedAt: 31n,
-            finishedAt: 39n,
-            error: null,
-            output: '"second"',
-            payload: null,
+            id: "child-agent",
+            type: "workflow",
+            parentId: "loop-1",
+            position: { x: 80, y: 100 },
+            data: {
+              kind: "agent",
+              title: "改进",
+              description: "",
+              containerId: "loop-1",
+            },
           },
         ],
-      },
-      loopGraph,
-    );
+        edges: [],
+        viewport: { x: 0, y: 0, zoom: 1 },
+      });
+      const display = buildDisplayRun(
+        {
+          ...detail,
+          run: { ...detail.run, status: "succeeded", state: null },
+          scopes: [
+            {
+              id: "scope-1",
+              parentLoopNodeRunId: "node-run-loop",
+              roundIndex: 0,
+              status: "succeeded" as const,
+              createdAt: 10n,
+              updatedAt: 20n,
+            },
+            {
+              id: "scope-2",
+              parentLoopNodeRunId: "node-run-loop",
+              roundIndex: 1,
+              status: "succeeded" as const,
+              createdAt: 30n,
+              updatedAt: 40n,
+            },
+          ],
+          nodes: [
+            ...["start", "output"].map((nodeId) => ({
+              id: `node-run-${nodeId}`,
+              scopeId: rootScopeId,
+              nodeId,
+              status: "succeeded",
+              startedAt: null,
+              finishedAt: null,
+              error: null,
+              output: null,
+              payload: null,
+            })),
+            {
+              id: "node-run-loop",
+              scopeId: rootScopeId,
+              nodeId: "loop-1",
+              status: "succeeded",
+              startedAt: 1n,
+              finishedAt: 50n,
+              error: null,
+              output: null,
+              payload: null,
+            },
+            {
+              id: "node-run-child-1",
+              scopeId: "scope-1",
+              nodeId: "child-agent",
+              status: "succeeded",
+              startedAt: 11n,
+              finishedAt: 19n,
+              error: null,
+              output: '"first"',
+              payload: null,
+            },
+            {
+              id: "node-run-child-2",
+              scopeId: "scope-2",
+              nodeId: "child-agent",
+              status: "succeeded",
+              startedAt: 31n,
+              finishedAt: 39n,
+              error: null,
+              output: '"second"',
+              payload: null,
+            },
+          ],
+        },
+        loopGraph,
+      );
 
-    expect(display.nodeStates["child-agent"]).toEqual({ status: "idle" });
-    expect(display.rounds).toEqual([
-      expect.objectContaining({
-        id: "scope-1",
-        parentLoopNodeId: "loop-1",
-        roundIndex: 0,
-        nodeStates: {
-          "child-agent": expect.objectContaining({ status: "succeeded" }),
+      expect(display.status).toBe("succeeded");
+      expect(display.nodeStates).toEqual({
+        start: { status: "succeeded" },
+        explore: { status: "idle" },
+        output: { status: "succeeded" },
+        "loop-1": {
+          status: "succeeded",
+          startedAt: new Date(1).toISOString(),
+          finishedAt: new Date(50).toISOString(),
         },
-      }),
-      expect.objectContaining({
-        id: "scope-2",
-        parentLoopNodeId: "loop-1",
-        roundIndex: 1,
-        nodeStates: {
-          "child-agent": expect.objectContaining({ status: "succeeded" }),
-        },
-      }),
-    ]);
-  });
+        "child-agent": { status: "idle" },
+      });
+      expect(display.rounds).toEqual([
+        expect.objectContaining({
+          id: "scope-1",
+          parentLoopNodeId: "loop-1",
+          roundIndex: 0,
+          nodeStates: {
+            "child-agent": expect.objectContaining({ status: "succeeded" }),
+          },
+        }),
+        expect.objectContaining({
+          id: "scope-2",
+          parentLoopNodeId: "loop-1",
+          roundIndex: 1,
+          nodeStates: {
+            "child-agent": expect.objectContaining({ status: "succeeded" }),
+          },
+        }),
+      ]);
+    },
+  );
 
   it("surfaces the committed run input on the start node as kickoff input", () => {
     const display = buildDisplayRun(

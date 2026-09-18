@@ -372,14 +372,16 @@ export function buildDisplayRun(
     nodes,
     edges: envelope.edges,
   };
-  const rootScopeId = `root:${detail.run.id}`;
+  const rootNodeIds = new Set(
+    definitionSnapshot.nodes
+      .filter((node) => node.data.containerId === undefined)
+      .map((node) => node.id),
+  );
   const nodeRunByNodeId = new Map(
     detail.nodes
-      // Older adapters omitted scopeId. Keep those records readable while ensuring repeated
-      // Loop children never replace the root canvas state for the same definition node.
-      .filter(
-        (node) => node.scopeId === undefined || node.scopeId === rootScopeId,
-      )
+      // The repository excludes previous executions on restart. Scope IDs are opaque and
+      // rotate on restart, so definition ownership identifies the current root nodes.
+      .filter((node) => rootNodeIds.has(node.nodeId))
       .map((node) => [node.nodeId, node]),
   );
   const nodeStates: Record<string, GraphWorkflowNodeState> = {};
