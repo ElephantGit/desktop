@@ -10,6 +10,11 @@ import { useTranslation } from "react-i18next";
 import { Badge, cn, toast } from "@ora/ui";
 import { useUpdateWorkflowRunInput } from "../../state/data/workflow-runs";
 import { filterArtifacts, latestArtifact } from "./artifact-filter";
+import {
+  projectLoopRoundNodeStates,
+  selectedLoopRound,
+  type LoopRoundSelection,
+} from "./loop-round-state";
 import { RunActInspector } from "./run-act-inspector";
 import { RunResultAct } from "./run-result-act";
 import { RunTheaterActCard } from "./run-theater-act-card";
@@ -115,6 +120,24 @@ export function RunTheater({
   const [inspectorVisualWidth, setInspectorVisualWidth] = useState(0);
   const pathScrollOpenSigRef = useRef<string>("");
   const pathRailRef = useRef<HTMLDivElement | null>(null);
+  const [loopRoundSelection, setLoopRoundSelection] =
+    useState<LoopRoundSelection>({});
+  const [loopRoundSelectionRunId, setLoopRoundSelectionRunId] = useState(
+    run.id,
+  );
+  if (loopRoundSelectionRunId !== run.id) {
+    setLoopRoundSelectionRunId(run.id);
+    setLoopRoundSelection({});
+  }
+
+  const visibleNodeStates = useMemo(
+    () => projectLoopRoundNodeStates(run, loopRoundSelection),
+    [run, loopRoundSelection],
+  );
+  const visibleRun = useMemo(
+    () => ({ ...run, nodeStates: visibleNodeStates }),
+    [run, visibleNodeStates],
+  );
   const nodeById = useMemo(
     () => new Map(run.definitionSnapshot.nodes.map((node) => [node.id, node])),
     [run.definitionSnapshot.nodes],
@@ -125,13 +148,16 @@ export function RunTheater({
   );
 
   const focus = useMemo(
-    () => resolveTheaterFocus(run, focusNodeId),
-    [run, focusNodeId],
+    () => resolveTheaterFocus(visibleRun, focusNodeId),
+    [visibleRun, focusNodeId],
   );
   const primaryId = focus.primaryId;
   const primaryNode = primaryId === null ? undefined : nodeById.get(primaryId);
   const primaryRegionId =
-    primaryNode?.parentId ??
+    (primaryNode?.parentId !== undefined &&
+    nodeById.get(primaryNode.parentId)?.data.kind === "iteration"
+      ? primaryNode.parentId
+      : undefined) ??
     (primaryNode?.data.kind === "iteration" ? primaryNode.id : null);
   const primaryRegion =
     primaryNode?.parentId === undefined
@@ -166,7 +192,7 @@ export function RunTheater({
     expandHitlForRequest,
     collapseHitl,
   } = useTheaterHitl({
-    run,
+    run: visibleRun,
     focusNodeId,
     primaryId,
     onFocusNode,
@@ -202,7 +228,7 @@ export function RunTheater({
   }, [openHitls, primaryId, run.id]);
 
   const primaryState =
-    primaryId !== null ? run.nodeStates[primaryId] : undefined;
+    primaryId !== null ? visibleNodeStates[primaryId] : undefined;
   const primaryRounds =
     primaryId !== null ? (run.roundStates?.[primaryId] ?? []) : [];
   const regionRoundNumbers = useMemo(() => {
@@ -300,7 +326,7 @@ export function RunTheater({
     }
     return focus.activeIds.flatMap((nodeId) => {
       const node = nodeById.get(nodeId);
-      const state = run.nodeStates[nodeId];
+      const state = visibleNodeStates[nodeId];
       if (node === undefined || state === undefined) {
         return [];
       }
@@ -310,7 +336,10 @@ export function RunTheater({
           data: node.data,
           state,
           artifactCount: artifactCountByNode[nodeId] ?? 0,
-          conversation: conversationByNodeId.get(nodeId) ?? [],
+          conversation:
+            state.conversation != null && state.conversation.length > 0
+              ? state.conversation
+              : (conversationByNodeId.get(nodeId) ?? []),
         },
       ];
     });
@@ -318,7 +347,7 @@ export function RunTheater({
     parallel,
     focus.activeIds,
     nodeById,
-    run.nodeStates,
+    visibleNodeStates,
     artifactCountByNode,
     conversationByNodeId,
   ]);
@@ -518,7 +547,7 @@ export function RunTheater({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <RunTheaterPathRail
-        run={run}
+        run={visibleRun}
         primaryId={primaryId}
         activeIds={focus.activeIds}
         openHitls={openHitls}
@@ -760,6 +789,42 @@ export function RunTheater({
                 state={primaryDisplayState ?? null}
                 artifacts={primaryArtifacts}
                 revealedArtifactId={revealedArtifactId}
+                loopRounds={
+                  primaryNode?.data.kind === "loop"
+                    ? (run.rounds ?? []).filter(
+                        (round) => round.parentLoopNodeId === primaryNode.id,
+                      )
+                    : undefined
+                }
+                loopChildTitles={
+                  primaryNode?.data.kind === "loop"
+                    ? Object.fromEntries(
+                        run.definitionSnapshot.nodes
+                          .filter(
+                            (node) => node.data.containerId === primaryNode.id,
+                          )
+                          .map((node) => [node.id, node.data.title]),
+                      )
+                    : undefined
+                }
+                selectedLoopRoundId={
+                  primaryNode?.data.kind === "loop"
+                    ? selectedLoopRound(
+                        run.rounds ?? [],
+                        primaryNode.id,
+                        loopRoundSelection,
+                      )?.id
+                    : undefined
+                }
+                onSelectedLoopRoundChange={
+                  primaryNode?.data.kind === "loop"
+                    ? (roundId) =>
+                        setLoopRoundSelection((current) => ({
+                          ...current,
+                          [primaryNode.id]: roundId,
+                        }))
+                    : undefined
+                }
                 editable={isEditableStart}
                 onPatchNode={
                   isEditableStart

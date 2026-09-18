@@ -1,4 +1,10 @@
-import type { Edge, Node, SnapGrid, XYPosition } from "@xyflow/react";
+import type {
+  Edge,
+  Node,
+  NodeChange,
+  SnapGrid,
+  XYPosition,
+} from "@xyflow/react";
 import {
   WORKFLOW_ITERATION_MEMBER_LEFT,
   WORKFLOW_ITERATION_MEMBER_TOP,
@@ -7,6 +13,7 @@ import {
   WORKFLOW_NODE_WIDTH,
   type WorkflowNodeData,
 } from "@ora/workflow-mock";
+import { workflowContainerNodes } from "@ora/workflow-runtime";
 import {
   compactIterationFrames,
   iterationExpandedSize,
@@ -30,6 +37,31 @@ export function snapNodePosition(position: XYPosition): XYPosition {
     x: Math.round(position.x / WORKFLOW_SNAP_GRID[0]) * WORKFLOW_SNAP_GRID[0],
     y: Math.round(position.y / WORKFLOW_SNAP_GRID[1]) * WORKFLOW_SNAP_GRID[1],
   };
+}
+
+/** Ignores measurement noise while persisting user-driven moves and resizes. */
+export function shouldPersistWorkflowNodeChanges(
+  changes: readonly NodeChange[],
+): boolean {
+  return changes.some(
+    (change) =>
+      change.type !== "select" &&
+      (change.type !== "dimensions" ||
+        change.setAttributes !== undefined ||
+        change.resizing === true ||
+        change.resizing === false),
+  );
+}
+
+/** Projects Loop children into bounded, auto-expanding React Flow containers. */
+export function containWorkflowCanvasNodes(
+  nodes: readonly Node<WorkflowNodeData, "workflow">[],
+): Node<WorkflowNodeData, "workflow">[] {
+  return workflowContainerNodes(nodes).map((node) =>
+    node.data.containerId === undefined
+      ? node
+      : { ...node, extent: "parent", expandParent: true },
+  );
 }
 
 const WORKFLOW_LAYOUT_COLUMN_GAP = 120;
@@ -70,7 +102,9 @@ export function organizeWorkflowNodes(
     edges: [...edges],
   }).nodes;
   const outerNodes = arranged.filter(
-    (node) => node.parentId === undefined || !iterationIds.has(node.parentId),
+    (node) =>
+      node.data.containerId === undefined &&
+      (node.parentId === undefined || !iterationIds.has(node.parentId)),
   );
   const outerIds = new Set(outerNodes.map((node) => node.id));
   const outerEdges = edges.filter(
@@ -101,6 +135,7 @@ function layoutDag(
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
   const outgoing = new Map(nodes.map((node) => [node.id, [] as string[]]));
   const indegree = new Map(nodes.map((node) => [node.id, 0]));
+  const layoutNodes = nodes;
   for (const edge of edges) {
     if (!nodeById.has(edge.source) || !nodeById.has(edge.target)) {
       continue;
@@ -109,13 +144,13 @@ function layoutDag(
     indegree.set(edge.target, (indegree.get(edge.target) ?? 0) + 1);
   }
 
-  const rank = new Map(nodes.map((node) => [node.id, 0]));
+  const rank = new Map(layoutNodes.map((node) => [node.id, 0]));
   const compareNodes = (leftId: string, rightId: string): number => {
     const left = nodeById.get(leftId)!;
     const right = nodeById.get(rightId)!;
     return left.position.y - right.position.y || leftId.localeCompare(rightId);
   };
-  const queue = nodes
+  const queue = layoutNodes
     .filter((node) => indegree.get(node.id) === 0)
     .map((node) => node.id)
     .sort(compareNodes);
@@ -138,13 +173,13 @@ function layoutDag(
   }
 
   const finalRank = Math.max(0, ...rank.values()) + 1;
-  for (const node of nodes) {
+  for (const node of layoutNodes) {
     if (!visited.has(node.id)) {
       rank.set(node.id, finalRank);
     }
   }
   const columns = new Map<number, Node<WorkflowNodeData, "workflow">[]>();
-  for (const node of nodes) {
+  for (const node of layoutNodes) {
     const column = rank.get(node.id) ?? 0;
     columns.set(column, [...(columns.get(column) ?? []), node]);
   }

@@ -18,10 +18,12 @@ import { RunActAgentConfig } from "./run-act-agent-config";
 import { RunActArtifacts } from "./run-act-artifacts";
 import { RunActFileChanges } from "./run-act-file-changes";
 import { RunBriefPopover } from "./run-brief-popover";
+import { RunLoopRoundHistory } from "./run-loop-round-history";
 import { RunStatusBadge } from "./run-status-mark";
 import { shouldPreviewBrief } from "./should-preview-brief";
 import type {
   GraphWorkflowNodeState,
+  GraphWorkflowRound,
   GraphWorkflowSnapshotNodePatch,
   WorkflowArtifact,
   WorkflowNodeData,
@@ -42,6 +44,10 @@ interface RunActInspectorProps {
   showRoundSelector?: boolean;
   artifacts: WorkflowArtifact[];
   revealedArtifactId: string | null;
+  loopRounds?: GraphWorkflowRound[];
+  loopChildTitles?: Record<string, string>;
+  selectedLoopRoundId?: string | null;
+  onSelectedLoopRoundChange?: (roundId: string) => void;
   /**
    * When true, description and a human-approval prompt are editable for this run only
    * (`pending` overrides on the frozen snapshot).
@@ -118,6 +124,10 @@ export function RunActInspector({
   showRoundSelector = true,
   artifacts,
   revealedArtifactId,
+  loopRounds = [],
+  loopChildTitles = {},
+  selectedLoopRoundId,
+  onSelectedLoopRoundChange,
   editable = false,
   onPatchNode,
   instructionDraft,
@@ -179,6 +189,10 @@ export function RunActInspector({
       showRoundSelector={showRoundSelector}
       artifacts={artifacts}
       revealedArtifactId={revealedArtifactId}
+      loopRounds={loopRounds}
+      loopChildTitles={loopChildTitles}
+      selectedLoopRoundId={selectedLoopRoundId}
+      onSelectedLoopRoundChange={onSelectedLoopRoundChange}
       editable={editable}
       onPatchNode={onPatchNode}
       instructionDraft={instructionDraft}
@@ -204,6 +218,10 @@ function RunActInspectorPanel({
   showRoundSelector,
   artifacts,
   revealedArtifactId,
+  loopRounds,
+  loopChildTitles,
+  selectedLoopRoundId,
+  onSelectedLoopRoundChange,
   editable,
   onPatchNode,
   instructionDraft,
@@ -225,6 +243,10 @@ function RunActInspectorPanel({
   showRoundSelector: boolean;
   artifacts: WorkflowArtifact[];
   revealedArtifactId: string | null;
+  loopRounds: GraphWorkflowRound[];
+  loopChildTitles: Record<string, string>;
+  selectedLoopRoundId?: string | null;
+  onSelectedLoopRoundChange?: (roundId: string) => void;
   editable: boolean;
   onPatchNode?: (patch: GraphWorkflowSnapshotNodePatch) => void;
   instructionDraft?: string | null;
@@ -459,6 +481,22 @@ function RunActInspectorPanel({
                 mono
               />
             )}
+          {nodeType.configFields.includes("maxIterations") &&
+            data.loopConfig !== undefined && (
+              <ReadOnlyField
+                label={t("settings.workflow.field.maxIterations")}
+                value={String(data.loopConfig.maxIterations)}
+                mono
+              />
+            )}
+          {nodeType.configFields.includes("loopInitialValue") &&
+            data.loopConfig?.variables[0]?.initial.kind === "constant" && (
+              <ReadOnlyField
+                label={t("settings.workflow.field.loopInitialValue")}
+                value={String(data.loopConfig.variables[0].initial.value ?? "")}
+                mono
+              />
+            )}
           {promptLabel !== null &&
             (canEdit ? (
               <div className="space-y-1.5">
@@ -538,6 +576,17 @@ function RunActInspectorPanel({
             </p>
           )}
         </InspectorSection>
+
+        {data.kind === "loop" && (
+          <InspectorSection title={t("workflowRun.loopRounds.title")}>
+            <RunLoopRoundHistory
+              rounds={loopRounds}
+              nodeTitles={loopChildTitles}
+              selectedRoundId={selectedLoopRoundId}
+              onSelectedRoundChange={onSelectedLoopRoundChange}
+            />
+          </InspectorSection>
+        )}
 
         <InspectorSection title={t("workflowRun.artifacts.title")}>
           {fileChanges.length > 0 ? (

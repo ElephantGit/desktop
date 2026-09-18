@@ -70,6 +70,28 @@ const definition: WorkflowDefinition = {
 };
 
 describe("projectRunPathStructure", () => {
+  it("keeps Loop children reachable in the path instead of treating them as foreach members", () => {
+    const loopDefinition: WorkflowDefinition = {
+      ...definition,
+      nodes: definition.nodes.map((node) =>
+        node.id === "iter"
+          ? { ...node, data: { ...node.data, kind: "loop" } }
+          : node.parentId === "iter"
+            ? { ...node, data: { ...node.data, containerId: "iter" } }
+            : node,
+      ),
+    };
+    const stages = projectRunPathStructure(loopDefinition);
+    expect(
+      stages.filter((stage) =>
+        ["body-a", "body-b", "merge"].includes(stage.nodeId),
+      ),
+    ).toEqual([
+      { type: "node", nodeId: "body-a" },
+      { type: "node", nodeId: "body-b" },
+      { type: "node", nodeId: "merge" },
+    ]);
+  });
   it("keeps an iteration on the outer path and groups its entry targets in parallel", () => {
     expect(projectRunPathStructure(definition)).toEqual([
       { type: "node", nodeId: "start" },

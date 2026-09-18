@@ -10,6 +10,9 @@ runtime registered for its node type.
   document into a validated `petgraph` DAG, validate structural invariants, and answer topology
   queries (full topological order, successors/predecessors, transitive closures, ready set,
   reachability).
+- **Loop graph and round model** (`loop_graph.rs`, `loop_config.rs`, `loop_round.rs`): partition
+  one-level container bodies, validate scoped bindings, and compute typed feedback, termination,
+  and exports without mutating the completed round pool.
 - **Node runtimes and registry** (`node_runtime.rs`, `node_runtime/control.rs`): the per-node-type
   execution strategies behind a registry. Swift runtimes (`Start`, `Condition`, `Output`) complete
   synchronously inside a scheduling wave; the async Agent runtime wraps the backend's
@@ -42,6 +45,10 @@ runtime registered for its node type.
 - **Skill delivery model** (`skill_delivery.rs`): Agent capability, non-empty validated discovery
   roots, frozen materialization bindings, and the typed workflow-run payload shared by deployment
   and node execution.
+- **Composite scheduler** (`engine/composite_scheduler.rs`): execute pure advance plans through
+  atomic repository operations, then dispatch newly started rows with their committed pool.
+- **Loop scheduler** (`engine/loop_scheduler.rs`): create or resume one durable round scope,
+  dispatch its ready Agent nodes, and atomically advance or complete the parent Loop.
 - **Branch projection** (`branch_projection.rs`): derives node states from persisted rows and
   Condition decisions. The outer projection treats composite regions as black boxes — members
   never enter the outer ready set and their per-round rows never seed outer states — while the
@@ -95,6 +102,11 @@ node-run transition — engine or interactive — publishes one event. `ora-db` 
 - `WorkflowGraph` is immutable after `parse`; every topology query is deterministic.
 - The graph is acyclic (validated by `petgraph::algo::toposort`), has unique node ids, and at most
   one start node; all three are rejected at parse time with a `GraphError` variant.
+- A schema-v2 Loop and each child body are separate DAGs. Children declare one matching container
+  owner, bodies have exactly one reachable Start, and nested Loops or cross-scope edges fail before
+  execution.
+- Every Loop round owns a fresh variable pool and node-run scope. Feedback assignments read the
+  same completed pool, and the repository commits the next scope or parent completion atomically.
 - The scheduling core is type-agnostic: the engine module and the registry's scheduling-facing
   surface contain no node-type literals outside the documented policy seams (registry assembly,
   registry lookups by parsed type, runtime implementations, start-time graph-structural

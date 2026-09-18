@@ -219,6 +219,18 @@ export function resolveIterationDeletionCascade(
       memberCount += 1;
     }
   }
+  // Loop descendants share deletion ownership but do not use the Iteration confirmation UX.
+  let added = true;
+  while (added) {
+    added = false;
+    for (const node of graph.nodes) {
+      const owner = node.data.containerId;
+      if (owner !== undefined && nodeIds.has(owner) && !nodeIds.has(node.id)) {
+        nodeIds.add(node.id);
+        added = true;
+      }
+    }
+  }
   return {
     nodeIds,
     edgeIds: new Set(

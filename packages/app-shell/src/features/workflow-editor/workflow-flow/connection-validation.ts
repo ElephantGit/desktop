@@ -22,6 +22,13 @@ export function isValidWorkflowConnection({
   ) {
     return false;
   }
+  const sourceLoop = nodes.find((node) => node.id === connection.source)?.data
+    .containerId;
+  const targetLoop = nodes.find((node) => node.id === connection.target)?.data
+    .containerId;
+  if (sourceLoop !== targetLoop) {
+    return false;
+  }
   const iterationIds = new Set(
     nodes
       .filter((node) => node.data.kind === "iteration")

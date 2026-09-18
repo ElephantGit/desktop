@@ -5,6 +5,8 @@ import { IconSparkles } from "@tabler/icons-react";
 import { cn } from "@ora/ui";
 import {
   createMockWorkflowNodeType,
+  WORKFLOW_LOOP_NODE_HEIGHT,
+  WORKFLOW_LOOP_NODE_WIDTH,
   WORKFLOW_NODE_ANCHOR_Y,
   WORKFLOW_NODE_WIDTH,
 } from "@ora/workflow-mock";
@@ -66,6 +68,8 @@ export const RunOverviewNode = memo(function RunOverviewNode({
   id,
   data,
   selected,
+  width,
+  height,
 }: NodeProps<Node<RunOverviewNodeData, "workflow">>) {
   const { i18n, t } = useTranslation();
   const { states, focusedNodeId, activeNodeIds, artifactCountByNode } =
@@ -115,7 +119,16 @@ export const RunOverviewNode = memo(function RunOverviewNode({
       kindLabel={kindLabel}
       density="run"
       selected={focused}
-      width={WORKFLOW_NODE_WIDTH * 0.92}
+      width={
+        data.kind === "loop"
+          ? (width ?? WORKFLOW_LOOP_NODE_WIDTH)
+          : WORKFLOW_NODE_WIDTH * 0.92
+      }
+      style={
+        data.kind === "loop"
+          ? { height: height ?? WORKFLOW_LOOP_NODE_HEIGHT }
+          : undefined
+      }
       titleAccessory={
         data.kind === "agent" ? (
           <AgentExecutionModeMark

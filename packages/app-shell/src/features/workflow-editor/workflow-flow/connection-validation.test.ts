@@ -34,6 +34,38 @@ function valid(connection: Edge, edges: Edge[] = []): boolean {
 }
 
 describe("workflow connection validation", () => {
+  it.each([
+    ["child-a", "child-b", true],
+    ["child-a", "outside", false],
+    ["outside", "child-a", false],
+    ["loop", "child-a", false],
+    ["loop", "outside", true],
+  ] as const)(
+    "checks Loop boundary for %s → %s",
+    (source, target, expected) => {
+      const loopNodes = [
+        node("loop", "loop"),
+        node("outside", "agent"),
+        ...["child-a", "child-b"].map((id) => ({
+          ...node(id, "agent", "loop"),
+          data: {
+            kind: "agent" as const,
+            title: id,
+            description: "",
+            containerId: "loop",
+          },
+        })),
+      ];
+      expect(
+        isValidWorkflowConnection({
+          connection: { id: "edge", source, target },
+          nodes: loopNodes,
+          edges: [],
+          reconnectingEdgeId: null,
+        }),
+      ).toBe(expected);
+    },
+  );
   it("allows multiple internal-start branches into the owning region", () => {
     expect(
       valid(

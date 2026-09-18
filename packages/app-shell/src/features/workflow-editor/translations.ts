@@ -290,11 +290,12 @@ export const workflowEditorTranslations = {
     "settings.workflow.field.waitCount": "完成数量",
     "settings.workflow.field.maxAttempts": "最大次数",
     "settings.workflow.field.exitCondition": "退出条件",
+    "settings.workflow.field.maxIterations": "最大轮次",
+    "settings.workflow.field.loopInitialValue": "初始值",
     "settings.workflow.field.approvalPrompt": "审批说明",
     "settings.workflow.field.iterationIterator": "迭代源",
     "settings.workflow.field.iterationCollect": "收集目标",
     "settings.workflow.field.iterationErrorStrategy": "错误策略",
-    "settings.workflow.field.maxIterations": "迭代上限",
     "settings.workflow.iteration.failStrategy": "任一轮失败即失败",
     "settings.workflow.iteration.continueStrategy": "失败轮记入账本并继续",
     "settings.workflow.iteration.iteratorPlaceholder": "选择一个数组变量",
@@ -336,6 +337,10 @@ export const workflowEditorTranslations = {
     "settings.workflow.junction.collectResults": "收集结果继续",
     "settings.workflow.loop.exitConditionPlaceholder":
       "如 verification.status == passed",
+    "settings.workflow.loop.defaultBehavior":
+      "每轮将 Agent 输出反馈为下一轮的 value；输出非空时结束，并导出为 result。",
+    "settings.workflow.loop.legacyUnsupported":
+      "此旧循环节点缺少可执行配置，请删除后重新添加。",
     "settings.workflow.subflow.hint":
       "子流程用于封装可复用的复杂业务步骤。执行引擎接入后生效。",
     "settings.workflow.field.name": "名称",
@@ -802,11 +807,12 @@ export const workflowEditorTranslations = {
     "settings.workflow.field.waitCount": "Completion count",
     "settings.workflow.field.maxAttempts": "Max attempts",
     "settings.workflow.field.exitCondition": "Exit condition",
+    "settings.workflow.field.maxIterations": "Maximum rounds",
+    "settings.workflow.field.loopInitialValue": "Initial value",
     "settings.workflow.field.approvalPrompt": "Approval prompt",
     "settings.workflow.field.iterationIterator": "Iterator source",
     "settings.workflow.field.iterationCollect": "Collect target",
     "settings.workflow.field.iterationErrorStrategy": "Error strategy",
-    "settings.workflow.field.maxIterations": "Max iterations",
     "settings.workflow.iteration.failStrategy":
       "Fail on the first failed round",
     "settings.workflow.iteration.continueStrategy":
@@ -859,6 +865,10 @@ export const workflowEditorTranslations = {
     "settings.workflow.junction.collectResults": "Collect results and continue",
     "settings.workflow.loop.exitConditionPlaceholder":
       "e.g. verification.status == passed",
+    "settings.workflow.loop.defaultBehavior":
+      "Each Agent output feeds the next round as value; a non-empty output stops the Loop and is exported as result.",
+    "settings.workflow.loop.legacyUnsupported":
+      "This legacy Loop lacks executable configuration. Delete it and add a new Loop.",
     "settings.workflow.subflow.hint":
       "Subflows encapsulate reusable complex business steps. Effective once the execution engine lands.",
     "settings.workflow.field.name": "Name",

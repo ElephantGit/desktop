@@ -10,8 +10,10 @@ import {
   type WorkflowNodeData,
 } from "@ora/workflow-mock";
 import {
+  containWorkflowCanvasNodes,
   nodePositionAt,
   organizeWorkflowNodes,
+  shouldPersistWorkflowNodeChanges,
   snapNodePosition,
 } from "./layout";
 
@@ -41,6 +43,45 @@ describe("workflow-flow layout", () => {
     expect(snapNodePosition({ x: 253, y: 207 })).toEqual({ x: 260, y: 200 });
   });
 
+  it("persists explicit resize completion without treating measurement as an edit", () => {
+    expect(
+      shouldPersistWorkflowNodeChanges([
+        {
+          id: "loop",
+          type: "dimensions",
+          dimensions: { width: 800, height: 420 },
+        },
+      ]),
+    ).toBe(false);
+    expect(
+      shouldPersistWorkflowNodeChanges([
+        {
+          id: "loop",
+          type: "dimensions",
+          dimensions: { width: 800, height: 420 },
+          resizing: false,
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  it("contains Loop children and allows the parent to expand around them", () => {
+    const loop = workflowNode("loop", 200, 0);
+    loop.data = { ...loop.data, kind: "loop" };
+    const child = workflowNode("child", 500, 140);
+    child.data = { ...child.data, containerId: loop.id };
+
+    expect(containWorkflowCanvasNodes([child, loop])).toEqual([
+      loop,
+      {
+        ...child,
+        parentId: loop.id,
+        extent: "parent",
+        expandParent: true,
+      },
+    ]);
+  });
+
   it("places dependency layers left-to-right and preserves branch order", () => {
     const nodes = [
       workflowNode("start", 900, 300),
@@ -64,6 +105,34 @@ describe("workflow-flow layout", () => {
     expect(positions.top!.x).toBe(positions.bottom!.x);
     expect(positions.top!.y).toBeLessThan(positions.bottom!.y);
     expect(positions.bottom!.x).toBeLessThan(positions.output!.x);
+  });
+
+  it("preserves Loop child positions while organizing the root graph", () => {
+    const loop = workflowNode("loop", 900, 300);
+    loop.data = { ...loop.data, kind: "loop" };
+    const childStart = workflowNode("child-start", 40, 145);
+    childStart.parentId = loop.id;
+    childStart.data = {
+      ...childStart.data,
+      kind: "start",
+      containerId: loop.id,
+    };
+    const childAgent = workflowNode("child-agent", 350, 145);
+    childAgent.parentId = loop.id;
+    childAgent.data = {
+      ...childAgent.data,
+      kind: "agent",
+      containerId: loop.id,
+    };
+    const nodes = [workflowNode("start", 500, 0), loop, childStart, childAgent];
+
+    const organized = organizeWorkflowNodes(nodes, [
+      { id: "root", source: "start", target: "loop" },
+      { id: "child", source: "child-start", target: "child-agent" },
+    ]);
+
+    expect(organized.slice(2)).toEqual([childStart, childAgent]);
+    expect(organized[0]!.position.x).toBeLessThan(organized[1]!.position.x);
   });
 
   it("lays out an iteration DAG independently and reserves its fitted outer width", () => {

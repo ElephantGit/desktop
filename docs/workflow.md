@@ -2,6 +2,8 @@
 
 English | [中文](workflow.zh.md)
 
+Delivered extension: [Workflow Loop implementation plan and evidence](workflow-loop-plan.md).
+
 `ora-application` owns the workflow definition use cases, with persistence in `ora-db` and public contracts in `ora-contracts`. Workflows manage editable agent orchestration graphs with draft-as-workspace semantics and immutable published snapshots.
 
 ## Entities and tables
@@ -36,6 +38,32 @@ Snapshot versions are strings. The draft is identified by the reserved string `"
 ## Graph storage
 
 The `graph` column stores the complete React Flow JSON document. Workflow definition CRUD treats it as an opaque string; the [workflow run engine](../crates/application/src/workflow_run/engine/README.md) parses and validates the frozen snapshot when a run starts.
+
+## Loop containers
+
+Executable Loop graphs use `schemaVersion: 2`. A root Loop owns `data.loopConfig`; every child
+declares the same Loop through both React Flow `parentId` and `data.containerId`. The editor creates
+a valid container group with one child Start, one child Agent, and their internal edge. Root and
+child connections cannot cross scope boundaries, deleting a Loop removes its descendants and
+incident edges atomically, and root auto-layout preserves child-relative positions. Both the
+editor and run Overview render owned nodes inside the Loop body. Editor children remain bounded
+by that body, and authors can resize the selected Loop; the saved dimensions are reused by
+published snapshots and run Overview.
+
+`loopConfig` defines a 1–100 round bound, typed carried variables, simultaneous feedback selectors,
+a typed `until` condition, and named exports. Each Loop body is a separate DAG with exactly one
+reachable Start. Nested Loops, ownership mismatches, cross-scope edges and selectors, invalid
+types, and unreachable children are rejected before sessions start. The default editor group feeds
+the child Agent output into the next round's `value`, stops on a non-empty output, and exports it as
+`result`; authors can set the initial value and maximum rounds.
+
+Each iteration has a durable `WorkflowExecutionScope`. Child NodeRuns and Sessions belong to that
+scope, so repeated definition node IDs do not overwrite another round. Completion resolves feedback
+and termination from the completed pool, then commits either the next scope or the parent Loop
+result in one repository transaction. Cancellation and child failure settle the active scope and
+parent together. Restart rotates the root execution identity, preserving old history while making
+late callbacks harmless. The real run contract returns ordered scope identities, and the Theater
+Loop inspector lets users switch rounds and inspect each round's child status and session ID.
 
 ## Agent-node MCP bindings
 
@@ -88,7 +116,7 @@ Before an agent node is prompted, the backend turns the frozen graph and current
 
 Skill delivery is capability-driven. Effect owns physical Skill materialization in every eligible Workspace. A node's enabled Skill bindings are required invocations added to that node's prompt; they are not a security allowlist and do not hide other materialized Skills from the Agent. During run creation, the backend asks an `AgentSkillDeliveryProvider` for each skill-using node's validated, Workspace-relative discovery roots and freezes a per-node receipt containing the original skill id, executable slash-command name, and actual package paths; it does not copy or rewrite packages. Deploy-time skill resolution is origin-aware: a local skill resolves through its formal catalog directory and a plugin-imported skill through the immutable plugin package recorded in its catalog row, so a workflow bound to a plugin skill starts as long as that package is still installed and loadable. The current provider returns the shared `.agents/skills` root for every Agent. A future plugin-backed provider may return different or multiple roots without changing workflow creation, executor, or prompt-rendering code. Node execution consumes only the frozen receipt and never re-resolves skill names from the mutable global catalog; capability or catalog changes therefore affect new runs only.
 
-The session history is the sole source of a node's complete conversation. `workflow_node_runs.output` always stores an Agent node's final assistant text for display, audit, and explicit access through `agent-1.output`, including when structured parsing or schema validation fails and the node is marked failed. The run-scoped variable pool lives in `workflow_runs.payload`: its catalog declares typed Start inputs and stable outputs from data-producing nodes, while enabled structured output additionally declares `agent-1.structured_output`. Condition nodes expose no variables and persist neither `output` nor `selected_branch_id`; their selected branch is private scheduler state in `conditionDecisions`, kept outside the variable pool while remaining restart-safe. A validated structured object is committed only on successful completion; invalid JSON never enters the variable pool. `variablePool.values` contains only assigned values. The run's kickoff instruction remains separate in `workflow_runs.input` and is never exposed as a selectable workflow variable. Start variables may deliberately remain unassigned in the workflow definition and be filled in on the deployed run's pre-start input screen. Each declaration may carry a human-facing display name and string/secret variables may impose a positive maximum character length; the same limit is enforced for editor defaults and deployment-time writes. User-defined workflow globals differ from runtime-owned system globals: each custom declaration requires both an explicit dotted name and a type-correct initial value before it can be saved. For each node, the editor exposes workflow globals plus variables from every direct predecessor. Condition nodes are scope-transparent: their downstream nodes see the original variables from the Condition's direct predecessors, including through a chain of Conditions, without creating a `condition.output`. Other transitive ancestors remain unavailable unless forwarded by a direct predecessor. Structured-output field paths are expanded in the same catalog, so Condition and Output selectors never rely on free-form text. Each terminal Output builds its own result object, so result names must be unique only within that node and may be reused by Outputs on separate branches. The pool is initialized from the frozen graph when a run is created and completed-node writes are committed in the same SQLite transaction as the node status transition. A node Session remains addressable by id for Theater, but standalone Session listing excludes every Session bound to a visible workflow node run so workflow execution never appears as an ordinary chat.
+The session history is the sole source of a node's complete conversation. `workflow_node_runs.output` always stores an Agent node's final assistant text for display, audit, and explicit access through `agent-1.output`, including when structured parsing or schema validation fails and the node is marked failed. The run-scoped variable pool lives in `workflow_runs.payload`: its catalog declares typed Start inputs and stable outputs from data-producing nodes, while enabled structured output additionally declares `agent-1.structured_output`. Condition nodes expose no variables and persist neither `output` nor `selected_branch_id`; their selected branch is private scheduler state in `conditionDecisions`, kept outside the variable pool while remaining restart-safe. A validated structured object is committed only on successful completion; invalid JSON never enters the variable pool. `variablePool.values` contains only assigned values. The run's kickoff instruction remains separate in `workflow_runs.input` and is never exposed as a selectable workflow variable. Start variables may deliberately remain unassigned in the workflow definition and be filled in on the deployed run's pre-start input screen. Each declaration may carry a human-facing display name and string/secret variables may impose a positive maximum character length; the same limit is enforced for editor defaults and deployment-time writes. User-defined workflow globals differ from runtime-owned system globals: each custom declaration requires both an explicit dotted name and a type-correct initial value before it can be saved. For each node, the editor exposes workflow globals plus variables from every direct predecessor. Condition nodes are scope-transparent: their downstream nodes see the original variables from the Condition's direct predecessors, including through a chain of Conditions, without creating a `condition.output`. Other transitive ancestors remain unavailable unless forwarded by a direct predecessor. Structured-output field paths are expanded in the same catalog, so Condition and Output selectors never rely on free-form text. Each terminal Output builds its own result object, so result names must be unique only within that node and may be reused by Outputs on separate branches. The pool is initialized from the frozen graph when a run is created and completed-node writes are committed in the same SQLite transaction as the node status transition. A node Session remains addressable by id for Theater, but standalone Session listing excludes every Session bound to a workflow node run, including node runs soft-deleted by a restart. Workflow ownership survives completion, reruns, and application restarts; retained node conversations never become ordinary chats.
 
 Workflow value types are enforced at graph parsing, editor entry, and variable-pool writes. `array` and `array[any]` both accept heterogeneous JSON arrays; the first is the concise unconstrained declaration and the second explicitly documents an unconstrained element type. Typed arrays validate every element. `file` is a durable Workspace-relative reference shaped as `{ "kind": "workspace_file", "path": "relative/path" }`, and `array[file]` is an array of those references. Editor path strings and legacy saved path strings are normalized into that object, while absolute paths, parent traversal, empty paths, and platform-reserved paths are rejected. Global-value placeholders are generated from this vocabulary, so changing a declaration's type immediately shows a parseable example. Structured Agent schemas use the same types, are validated recursively before execution, and generate a schema-derived valid JSON example in the Agent prompt. Agent-produced file fields must use the canonical object representation shown in that example.
 
@@ -194,12 +222,13 @@ stuck.
 
 ### Entities and tables
 
-| Domain type       | Backing table        |
-| ----------------- | -------------------- |
-| `WorkflowRun`     | `workflow_runs`      |
-| `WorkflowNodeRun` | `workflow_node_runs` |
+| Domain type              | Backing table               |
+| ------------------------ | --------------------------- |
+| `WorkflowRun`            | `workflow_runs`             |
+| `WorkflowNodeRun`        | `workflow_node_runs`        |
+| `WorkflowExecutionScope` | `workflow_execution_scopes` |
 
-`WorkflowRun` pins `snapshot_id` to the user-released version it was created against and stores its own display name and `workspace_id`. `WorkflowNodeRun` records one executed node; nodes that never started have no row, and the frontend derives "not started" by comparing graph nodes against recorded node runs. Run and node status share the same five-value enums (`Pending | Running | Succeeded | Failed | Cancelled`). An interactive node parked awaiting follow-up input is persisted as `Pending`; the public contract derives a `Running` run with an awaiting node as `AwaitingInput` so the sidebar can surface that human action is needed. A session bound to a terminal node is read-only: the backend rejects new prompts against it.
+`WorkflowRun` pins `snapshot_id` to the user-released version it was created against and stores its own display name and `workspace_id`. `WorkflowNodeRun` records one executed node and its scope; nodes that never started have no row, and the frontend derives "not started" by comparing graph nodes against recorded node runs. `WorkflowExecutionScope` records a Loop parent, round index, lifecycle, and private round state. Run and node status share the same five-value enums (`Pending | Running | Succeeded | Failed | Cancelled`). An interactive node parked awaiting follow-up input is persisted as `Pending`; the public contract derives a `Running` run with an awaiting node as `AwaitingInput` so the sidebar can surface that human action is needed. A session bound to a terminal node is read-only: the backend rejects new prompts against it.
 
 ### Creation and snapshot pinning
 
