@@ -20,8 +20,8 @@ API are implemented; see [clone deployment and recovery](repository-clone.md). T
   the first end-to-end objective.
 - Clone has independent protocol results, capability declarations, storage and managed execution.
   It does not require an existing Main Workspace or disguise acquisition as EnsureWorktree.
-- Node-facing IPC, Controller coordination and the new Client entry are not connected. Existing passing
-  tests do not establish a clone loop.
+- [Local Node IPC](local-ipc.md) and [Controller durable coordination](../controller/local-runtime.md)
+  are connected, with independent-process clone and lost-Ack recovery tests. The Client entry is not connected.
 
 Stable execution identities, durable responsibility before dispatch, process handoff, queryable results
 and acknowledgement after durable takeover remain reliability principles. Trust infrastructure and Strong
@@ -30,12 +30,12 @@ Existing Backend writers, Worktree records and filesystem layouts remain unchang
 
 ## Approved boundaries and remaining design
 
-| Topic           | Approved policy / remaining work                                                                         |
-| --------------- | -------------------------------------------------------------------------------------------------------- |
-| Input           | HTTPS and explicit SSH, deployment credentials, explicit branch; return the actual fetched commit        |
-| Local resources | Node allocates an exclusive destination under an injected root; preserve failed/unknown residue          |
-| Git scope       | Full single-branch history and checkout; hooks disabled, no recursive submodules or LFS downloads        |
-| Coordination    | Durable original-execution replay is implemented; local IPC, Controller takeover and Client entry remain |
+| Topic           | Approved policy / remaining work                                                                           |
+| --------------- | ---------------------------------------------------------------------------------------------------------- |
+| Input           | HTTPS and explicit SSH, deployment credentials, explicit branch; return the actual fetched commit          |
+| Local resources | Node allocates an exclusive destination under an injected root; preserve failed/unknown residue            |
+| Git scope       | Full single-branch history and checkout; hooks disabled, no recursive submodules or LFS downloads          |
+| Coordination    | Local IPC, durable Controller takeover and original-execution replay are implemented; Client entry remains |
 
 The accepted discussion about disabling Worktree-management hooks and repository-wide gates for unknown
 process cleanup has not been implemented. It is neither current code behavior nor a complete clone failure model.
@@ -45,5 +45,5 @@ process cleanup has not been implemented. It is neither current code behavior no
 The [clone root decision](../../specs/decisions/node/repository/0-clone-selected-repository-branch.md)
 and [minimal execution contract](../../specs/decisions/node/repository/20260918-minimal-clone-execution-contract.md)
 were approved on 2026-09-18, confirming scope, input, destination, content and recovery policies. Core verification obligations
-include real HTTPS/SSH clone, Node-kill recovery and terminal-write failure evidence. Controller/Client
-acceptance remains missing. There is no user-directory migration, IPC integration or Backend writer cutover.
+include real HTTPS/SSH clone, Node-kill recovery, terminal-write failure and Controller lost-Ack recovery evidence.
+Client acceptance and additional fault combinations remain missing. There is no user-directory migration or Backend writer cutover.

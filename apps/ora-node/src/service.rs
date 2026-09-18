@@ -54,8 +54,17 @@ struct SessionInfo {
     capabilities: Vec<NodeCapability>,
 }
 
+struct StopOnDrop(Shutdown);
+impl Drop for StopOnDrop {
+    /// Canceling the service future must also release its blocking owner and managed process scopes.
+    fn drop(&mut self) {
+        self.0.request();
+    }
+}
+
 /// Runs independent IPC and execution lifecycles while retaining the Node lease until cleanup finishes.
 pub async fn serve(config: ServiceConfig, shutdown: Shutdown) -> io::Result<()> {
+    let _stop = StopOnDrop(shutdown.clone());
     if config.recovery_interval_ms == 0 {
         return Err(io::Error::other("recovery interval must be positive"));
     }

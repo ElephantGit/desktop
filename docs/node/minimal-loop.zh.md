@@ -17,7 +17,8 @@ Controller 协调，Node 在执行环境完成 clone，结果回到调用方可�
 - [Worktree 持久执行](persistence/worktree-execution.zh.md)已实现，但这是保留能力，不是新的首版目标。
 - clone 已有独立协议结果、能力声明、存储及受管执行，不要求已有 Main Workspace，
   不将获取仓库伪装为 EnsureWorktree。
-- Node 对外 IPC、Controller 持久协调及 Client 新入口尚未接通。已有测试不构成 clone 闭环验收。
+- [Node 本机 IPC](local-ipc.zh.md)与 [Controller 持久协调](../controller/local-runtime.zh.md)已接通，
+  已有独立进程 clone 及 Ack 丢失恢复测试；Client 新入口尚未接通。
 
 保留稳定执行身份、派发前持久责任、进程恢复交接、结果可查询及持久接管后确认等可靠性原则。
 信任体系和 Strong 继续延期；私有仓库访问使用 Node 可信部署提供的非交互凭据。
@@ -30,7 +31,7 @@ Controller 协调，Node 在执行环境完成 clone，结果回到调用方可�
 | 输入     | HTTPS 与显式 SSH、部署凭据、明确分支；返回实际获取的 commit              |
 | 本地资源 | Node 在注入根下分配独占目标，保留失败／未知残留                          |
 | Git 范围 | 单分支完整历史并 checkout；禁用 hooks，不递归初始化 submodule 或下载 LFS |
-| 协调     | 已实现持久原执行重放；本机 IPC、Controller 接管和 Client 入口仍待接通    |
+| 协调     | 本机 IPC、Controller 持久接管及原执行重放已实现；Client 入口仍待接通     |
 
 已讨论接受的 Worktree 管理命令禁用 hooks 和清理未知时的仓库级门禁尚未实现；
 不能直接把其讨论结论当作当前代码行为或完整 clone 故障模型。
@@ -40,5 +41,5 @@ Controller 协调，Node 在执行环境完成 clone，结果回到调用方可�
 [clone 根决策](../../specs/decisions/node/repository/0-clone-selected-repository-branch.md)与
 [最小执行契约](../../specs/decisions/node/repository/20260918-minimal-clone-execution-contract.md)已于 2026-09-18
 获批（approved），确认范围、输入、目录、内容和恢复政策。
-核心测试已有真实 HTTPS／SSH clone、Node 强杀恢复及终态写入失败证据；Controller／Client
-验收仍缺失。不迁移用户目录、不接通 IPC，也不切换 Backend 写入入口。
+核心测试已有真实 HTTPS／SSH clone、Node 强杀恢复、终态写入失败及 Controller Ack 丢失恢复证据；
+Client 验收及其他故障组合仍有缺口。不迁移用户目录，也不切换 Backend 写入入口。

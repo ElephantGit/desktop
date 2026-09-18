@@ -72,6 +72,7 @@ jobs:
               - 'apps/ora-reaper/**'
               - 'apps/ora-process-*/**'
               - 'apps/ora-node/**'
+              - 'apps/ora-controller/**'
               - 'xtask/**'
               - 'apps/desktop/src-tauri/bindings.rs'
               - 'apps/desktop/src-tauri/bindings/**'

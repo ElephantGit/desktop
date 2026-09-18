@@ -9,7 +9,7 @@ use std::{
 use tokio::{net::UnixStream, time::timeout};
 
 /// Starts the production service with private injected IPC and a deployment-selected owner.
-fn launch(fixture: &Fixture, clone: &CloneConfig) -> ChildGuard {
+pub(super) fn launch(fixture: &Fixture, clone: &CloneConfig) -> ChildGuard {
     let config = fixture.path().join("ipc-config.json");
     fs::write(
         &config,

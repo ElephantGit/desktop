@@ -7,6 +7,7 @@ members = [
     "apps/ora-process-host",
     "crates/process-client",
     "apps/ora-node",
+    "apps/ora-controller",
     "crates/application",
     "crates/acp",
     "crates/backend",
@@ -44,6 +45,7 @@ members = [
     "xtask",
 ]
 default-members = [
+    "apps/ora-controller",
     "apps/ora-reaper",
     "apps/ora-process-helper",
     "apps/ora-process-guardian",
@@ -113,6 +115,7 @@ gitlancer = { path = "crates/gitlancer" }
 ora-history = { path = "crates/history" }
 ora-logging = { path = "crates/logging" }
 ora-node-db = { path = "crates/node-db" }
+ora-controller = { path = "apps/ora-controller" }
 ora-node-protocol = { path = "crates/node-protocol" }
 ora-plugin-asset = { path = "crates/plugin-asset" }
 ora-plugin-config = { path = "crates/plugin-config" }

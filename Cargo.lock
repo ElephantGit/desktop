@@ -3189,6 +3189,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "ora-controller"
+version = "0.0.0"
+dependencies = [
+ "libc",
+ "ora-logging",
+ "ora-node-protocol",
+ "ora-utils",
+ "pretty_assertions",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "ora-db"
 version = "0.0.0"
 dependencies = [
@@ -3371,6 +3390,7 @@ version = "0.0.0"
 dependencies = [
  "gitlancer",
  "libc",
+ "ora-controller",
  "ora-logging",
  "ora-node-db",
  "ora-node-protocol",
@@ -3379,6 +3399,7 @@ dependencies = [
  "ora-utils",
  "pretty_assertions",
  "rcgen",
+ "rusqlite",
  "rustls",
  "serde",
  "serde_json",

@@ -39,4 +39,5 @@ Controller should periodically query its executions. Slow readers may be disconn
 for replay. Shutdown closes admission and then performs the existing managed-process cleanup.
 
 The real standalone test verifies owner/duplicate rejection, HTTPS clone, Node kill/restart, unchanged
-result replay and exact acknowledgement. It is not yet evidence of Controller durable takeover.
+result replay and exact acknowledgement. [Controller acceptance](../controller/local-runtime.md) adds
+an independent-process durable-takeover and lost-Ack recovery test.

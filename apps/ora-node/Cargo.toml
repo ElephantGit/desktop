@@ -26,6 +26,8 @@ tokio = { workspace = true, features = ["rt", "net", "time", "signal", "macros",
 libc.workspace = true
 
 [dev-dependencies]
+ora-controller.workspace = true
+rusqlite = { workspace = true, features = ["bundled"] }
 rustls.workspace = true
 rcgen.workspace = true
 tracing-subscriber.workspace = true

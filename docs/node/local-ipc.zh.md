@@ -33,4 +33,4 @@ clone 能力；会话接收 clone、状态查询和精确确认，冲突或不�
 随后重连恢复投递。正常停止先关闭受理，再执行原受管进程清理。
 
 真实独立入口测试覆盖归属／重复连接拒绝、HTTPS clone、Node 强杀重启、原结果重放和精确确认。
-这还不是 Controller 持久接管的验收证据。
+[Controller 验收](../controller/local-runtime.zh.md)另外覆盖独立进程持久接管及 Ack 丢失恢复。
