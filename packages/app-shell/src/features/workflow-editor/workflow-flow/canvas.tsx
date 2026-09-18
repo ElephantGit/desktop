@@ -34,6 +34,7 @@ import {
   WORKFLOW_FLOW_EDGE_TYPE,
   WORKFLOW_FLOW_NODE_TYPE,
   WORKFLOW_SNAP_GRID,
+  containWorkflowCanvasNodes,
   nodePositionAt,
   snapNodePosition,
 } from "./layout";
@@ -231,13 +232,16 @@ function WorkflowCanvasInner({
         ...annotation,
         zIndex: WORKFLOW_ANNOTATION_Z_INDEX,
       })),
-      ...nodes.map((node) => ({
+      ...containWorkflowCanvasNodes(nodes).map((node) => ({
         ...node,
         // Notes reserve the bottom layer, while selected executable nodes keep
         // React Flow's usual elevation over their executable peers.
-        zIndex: node.selected
-          ? WORKFLOW_SELECTED_NODE_Z_INDEX
-          : WORKFLOW_NODE_Z_INDEX,
+        zIndex:
+          node.data.kind === "loop"
+            ? 0
+            : node.selected
+              ? WORKFLOW_SELECTED_NODE_Z_INDEX
+              : WORKFLOW_NODE_Z_INDEX,
       })),
     ],
     [annotations, nodes],

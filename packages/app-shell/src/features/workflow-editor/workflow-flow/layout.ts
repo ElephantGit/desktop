@@ -11,6 +11,7 @@ import {
   WORKFLOW_NODE_WIDTH,
   type WorkflowNodeData,
 } from "@ora/workflow-mock";
+import { workflowContainerNodes } from "@ora/workflow-runtime";
 
 export const WORKFLOW_FLOW_NODE_TYPE = "workflow" as const;
 export const WORKFLOW_FLOW_EDGE_TYPE = "workflow" as const;
@@ -42,6 +43,17 @@ export function shouldPersistWorkflowNodeChanges(
       (change.type !== "dimensions" ||
         change.setAttributes !== undefined ||
         change.resizing === false),
+  );
+}
+
+/** Projects Loop children into bounded, auto-expanding React Flow containers. */
+export function containWorkflowCanvasNodes(
+  nodes: readonly Node<WorkflowNodeData, "workflow">[],
+): Node<WorkflowNodeData, "workflow">[] {
+  return workflowContainerNodes(nodes).map((node) =>
+    node.data.containerId === undefined
+      ? node
+      : { ...node, extent: "parent", expandParent: true },
   );
 }
 

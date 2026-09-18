@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Edge, Node } from "@xyflow/react";
 import { WORKFLOW_NODE_WIDTH, type WorkflowNodeData } from "@ora/workflow-mock";
 import {
+  containWorkflowCanvasNodes,
   nodePositionAt,
   organizeWorkflowNodes,
   shouldPersistWorkflowNodeChanges,
@@ -54,6 +55,23 @@ describe("workflow-flow layout", () => {
         },
       ]),
     ).toBe(true);
+  });
+
+  it("contains Loop children and allows the parent to expand around them", () => {
+    const loop = workflowNode("loop", 200, 0);
+    loop.data = { ...loop.data, kind: "loop" };
+    const child = workflowNode("child", 500, 140);
+    child.data = { ...child.data, containerId: loop.id };
+
+    expect(containWorkflowCanvasNodes([child, loop])).toEqual([
+      loop,
+      {
+        ...child,
+        parentId: loop.id,
+        extent: "parent",
+        expandParent: true,
+      },
+    ]);
   });
 
   it("places dependency layers left-to-right and preserves branch order", () => {

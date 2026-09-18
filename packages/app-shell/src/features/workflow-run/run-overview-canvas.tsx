@@ -21,6 +21,8 @@ import {
   MAX_WORKFLOW_ZOOM,
   MIN_WORKFLOW_ZOOM,
 } from "../workflow-node-chrome/viewport";
+import { projectLoopRoundNodeStates } from "./loop-round-state";
+import { createRunOverviewNodes } from "./run-overview-layout";
 import { resolveOverviewFocusedId, resolveTheaterFocus } from "./run-focus";
 import {
   RunOverviewNode,
@@ -147,16 +149,17 @@ export function RunOverviewCanvas({
   const containerRef = useRef<HTMLDivElement>(null);
   const userAdjustedRef = useRef(false);
   const snapshot = run.definitionSnapshot;
-  const nodeStates = run.nodeStates;
+  const nodeStates = useMemo(() => projectLoopRoundNodeStates(run, {}), [run]);
+  const visibleRun = useMemo(() => ({ ...run, nodeStates }), [run, nodeStates]);
   const focus = useMemo(
-    () => resolveTheaterFocus(run, focusedNodeId),
-    [run, focusedNodeId],
+    () => resolveTheaterFocus(visibleRun, focusedNodeId),
+    [visibleRun, focusedNodeId],
   );
   // Terminal + no pin: do not paint Theater's fallback as selected —
   // Theater shows the result act for the same state.
   const overviewFocusedId = useMemo(
-    () => resolveOverviewFocusedId(run, focusedNodeId),
-    [run, focusedNodeId],
+    () => resolveOverviewFocusedId(visibleRun, focusedNodeId),
+    [visibleRun, focusedNodeId],
   );
   const artifactCountByNode = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -167,19 +170,8 @@ export function RunOverviewCanvas({
   }, [artifacts]);
 
   const nodes = useMemo((): Node<RunOverviewNodeData, "workflow">[] => {
-    return snapshot.nodes.map((node) => ({
-      ...node,
-      type: NODE_TYPE,
-      selectable: true,
-      draggable: false,
-      connectable: false,
-      deletable: false,
-      data: {
-        ...node.data,
-        runStatus: nodeStates[node.id]?.status ?? "idle",
-      },
-    }));
-  }, [snapshot.nodes, nodeStates]);
+    return createRunOverviewNodes(snapshot, nodeStates);
+  }, [snapshot, nodeStates]);
 
   const edges = useMemo((): Edge[] => {
     return snapshot.edges.map((edge) => {

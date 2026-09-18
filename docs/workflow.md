@@ -45,7 +45,10 @@ Executable Loop graphs use `schemaVersion: 2`. A root Loop owns `data.loopConfig
 declares the same Loop through both React Flow `parentId` and `data.containerId`. The editor creates
 a valid container group with one child Start, one child Agent, and their internal edge. Root and
 child connections cannot cross scope boundaries, deleting a Loop removes its descendants and
-incident edges atomically, and root auto-layout preserves child-relative positions.
+incident edges atomically, and root auto-layout preserves child-relative positions. Both the
+editor and run Overview render owned nodes inside the Loop body. Editor children remain bounded
+by that body, and authors can resize the selected Loop; the saved dimensions are reused by
+published snapshots and run Overview.
 
 `loopConfig` defines a 1–100 round bound, typed carried variables, simultaneous feedback selectors,
 a typed `until` condition, and named exports. Each Loop body is a separate DAG with exactly one

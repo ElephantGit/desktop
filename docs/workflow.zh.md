@@ -42,7 +42,9 @@
 可执行 Loop 图使用 `schemaVersion: 2`。根 Loop 持有 `data.loopConfig`；每个子节点通过
 React Flow `parentId` 与 `data.containerId` 指向同一个 Loop。编辑器一次创建包含唯一子
 Start、子 Agent 和内部边的合法容器组。根图与子图禁止跨作用域连线；删除 Loop 会原子
-删除后代及相关边；根图自动布局保留子节点的相对位置。
+删除后代及相关边；根图自动布局保留子节点的相对位置。编辑器与运行全图都会把所属节点
+渲染在 Loop 体内；编辑器中的子节点受容器边界约束，选中 Loop 后可调整其大小，保存的
+尺寸会继续用于发布快照和运行全图。
 
 `loopConfig` 定义 1–100 的轮次上限、有类型跨轮变量、同时反馈选择器、有类型 `until`
 条件及命名输出。每个 Loop 体是独立 DAG，必须有且仅有一个可达 Start。嵌套 Loop、归属
