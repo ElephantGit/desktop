@@ -143,6 +143,42 @@ describe("graph envelope codec", () => {
       expect.objectContaining({ kind: "agent", title: "总结" }),
     ]);
   });
+
+  it("loads legacy iteration geometry without dimensions and preserves its entry handle", () => {
+    const graph = JSON.stringify({
+      nodes: [
+        {
+          id: "iter",
+          type: "workflow",
+          position: { x: 40, y: 80 },
+          data: { kind: "iteration", title: "Iteration", description: "" },
+        },
+        {
+          id: "agent",
+          type: "workflow",
+          parentId: "iter",
+          position: { x: 96, y: 160 },
+          data: { kind: "agent", title: "Agent", description: "" },
+        },
+      ],
+      edges: [
+        {
+          id: "entry",
+          source: "iter",
+          sourceHandle: "iteration-entry",
+          target: "agent",
+        },
+      ],
+      viewport: { x: 0, y: 0, zoom: 1 },
+    });
+
+    const parsed = parseWorkflowGraph(graph);
+
+    expect(parsed.nodes[0]).not.toHaveProperty("initialWidth");
+    expect(parsed.nodes[0]).not.toHaveProperty("initialHeight");
+    expect(parsed.nodes[1]?.parentId).toBe("iter");
+    expect(parsed.edges[0]?.sourceHandle).toBe("iteration-entry");
+  });
 });
 
 describe("workflow timestamp projection", () => {

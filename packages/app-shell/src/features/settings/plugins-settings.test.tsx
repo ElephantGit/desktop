@@ -24,6 +24,7 @@ import {
 import { createPluginMemory, pluginHandlers } from "../../test/memory/plugins";
 import { PluginOperationEventBridge } from "./plugin-operation-event-bridge";
 import { PluginsSettings } from "./plugins-settings";
+import { useUiStore } from "../../state/stores/ui-store";
 
 /** State for this test surface; no unrelated domain fixtures are initialized. */
 function createFixtureState() {
@@ -263,6 +264,77 @@ it("renders marketplace plugins from the registry index", async () => {
 });
 
 /** Installing goes through the backend and refreshes the installed surface. */
+it("adopts a deep-linked marketplace search once", async () => {
+  const { client } = clientWithWeather();
+  act(() =>
+    useUiStore
+      .getState()
+      .openPluginSettings({ kind: "marketplaceSearch", query: "weather" }),
+  );
+  renderSettings(client);
+
+  expect(await screen.findByText("Weather")).toBeInTheDocument();
+  expect(
+    screen.getByRole("textbox", { name: /搜索插件|Search plugins/ }),
+  ).toHaveValue("weather");
+  expect(useUiStore.getState().pluginSettingsRequest).toBeNull();
+  act(() => useUiStore.setState({ settingsOpen: false }));
+});
+
+it("opens a deep-linked plugin configuration inside plugin management", async () => {
+  const user = userEvent.setup();
+  const state = createFixtureState();
+  state.installedPlugins.push({
+    ...weatherInstalled(),
+    configuration: { state: "available", completeness: "incomplete" },
+  });
+  state.pluginConfigurations.set("official/weather", {
+    pluginId: "official/weather",
+    schemaVersion: 1,
+    revision: 0n,
+    declarationFingerprint: "declaration-1",
+    settings: [
+      {
+        declaration: {
+          id: "endpoint",
+          title: "Endpoint",
+          description: "Service URL",
+          type: "string",
+          required: true,
+          order: 1n,
+          default: null,
+        },
+        storedValue: null,
+        effectiveValue: null,
+        redacted: false,
+        source: "absent",
+        valueErrorCode: null,
+      },
+    ],
+    summary: { state: "available", completeness: "incomplete" },
+  });
+  act(() =>
+    useUiStore.getState().openPluginSettings({
+      kind: "configure",
+      pluginId: "official/weather",
+      displayName: "weather",
+    }),
+  );
+  renderSettings(createTestClient(createFixtureHandlers(state)));
+
+  expect(await screen.findByLabelText(/Endpoint/)).toBeInTheDocument();
+  expect(useUiStore.getState().pluginSettingsRequest).toBeNull();
+
+  // Leaving the editor returns to plugin management, not the marketplace grid.
+  await user.click(
+    screen.getByRole("button", { name: /管理插件|Manage plugins/ }),
+  );
+  expect(
+    await screen.findByRole("button", { name: /配置|Configure/ }),
+  ).toBeInTheDocument();
+  act(() => useUiStore.setState({ settingsOpen: false }));
+});
+
 it("installs a marketplace plugin through the backend", async () => {
   const user = userEvent.setup();
   const { state, client } = clientWithWeather();

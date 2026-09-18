@@ -17,6 +17,9 @@ import {
   type WorkflowNodeData,
   type WorkflowNodeType,
   type WorkflowVariableCatalogEntry,
+  type WorkflowGlobalVariable,
+  deriveWorkflowVariableCatalog,
+  normalizeWorkflowGlobalVariables,
 } from "@ora/workflow-mock";
 import {
   Button,
@@ -46,6 +49,8 @@ interface WorkflowNodeDetailsLayoutProps {
   variableCatalog: WorkflowVariableCatalogEntry[];
   /** Whole-graph node list, for panels whose configuration reads graph structure. */
   graphNodes?: Node<WorkflowNodeData, "workflow">[];
+  /** Workflow-wide declarations used when resolving graph-owned selector types. */
+  globalVariables?: WorkflowGlobalVariable[];
 }
 
 /**
@@ -63,6 +68,7 @@ export function WorkflowNodeDetailsLayout({
   onClose,
   variableCatalog,
   graphNodes,
+  globalVariables,
 }: WorkflowNodeDetailsLayoutProps) {
   switch (node.data.kind) {
     case "start":
@@ -121,6 +127,7 @@ export function WorkflowNodeDetailsLayout({
         <IterationNodeDetails
           {...{ node, nodeType, onUpdate, onClose, variableCatalog }}
           graphNodes={graphNodes ?? [node]}
+          globalVariables={globalVariables ?? []}
         />
       );
     case "subflow":
@@ -1149,8 +1156,10 @@ function IterationNodeDetails({
   onClose,
   variableCatalog,
   graphNodes,
+  globalVariables,
 }: Omit<WorkflowNodeDetailsLayoutProps, "capabilities"> & {
   graphNodes: Node<WorkflowNodeData, "workflow">[];
+  globalVariables: WorkflowGlobalVariable[];
 }) {
   const { t } = useTranslation();
   const config: WorkflowIterationConfig = node.data.iterationConfig ?? {
@@ -1170,40 +1179,33 @@ function IterationNodeDetails({
   const iteratorChoices = variableCatalog.filter((variable) =>
     variable.valueType.startsWith("array"),
   );
-  // Collect choices: root variables declared by this region's members; conditions produce
-  // nothing, agents expose their raw output and an optional structured object.
+  // Collect choices are derived by the workflow-mock catalog owner, then restricted to direct
+  // region members. This keeps output and structured-output declarations in one source of truth.
   const memberIds = new Set(
     graphNodes
       .filter((candidate) => candidate.parentId === node.id)
       .map((candidate) => candidate.id),
   );
-  const collectChoices: WorkflowVariableCatalogEntry[] = graphNodes
-    .filter((candidate) => memberIds.has(candidate.id))
-    .flatMap((member) => {
-      const entries: WorkflowVariableCatalogEntry[] = [];
-      if (member.data.kind !== "condition") {
-        entries.push({
-          selector: [member.id, "output"],
-          sourceNodeId: member.id,
-          sourceNodeTitle: member.data.title,
-          variableName: "output",
-          valueType: "string",
-        });
-      }
-      if (
-        member.data.kind === "agent" &&
-        member.data.agentConfig?.outputContract?.type === "structured"
-      ) {
-        entries.push({
-          selector: [member.id, "structured_output"],
-          sourceNodeId: member.id,
-          sourceNodeTitle: member.data.title,
-          variableName: "structured_output",
-          valueType: "object",
-        });
-      }
-      return entries;
-    });
+  const collectChoices: WorkflowVariableCatalogEntry[] =
+    deriveWorkflowVariableCatalog(
+      graphNodes,
+      [],
+      undefined,
+      normalizeWorkflowGlobalVariables(globalVariables),
+    )
+      .filter(
+        (variable) =>
+          memberIds.has(variable.sourceNodeId) &&
+          variable.selector.length === 2 &&
+          (variable.variableName === "output" ||
+            variable.variableName === "structured_output"),
+      )
+      .map((variable) => ({
+        ...variable,
+        sourceNodeTitle:
+          graphNodes.find((candidate) => candidate.id === variable.sourceNodeId)
+            ?.data.title ?? variable.sourceNodeTitle,
+      }));
   const iteratorValue = config.iteratorSelector.join(".");
   const collectValue = config.collectSelector.join(".");
   const iteratorVariable = iteratorChoices.find(

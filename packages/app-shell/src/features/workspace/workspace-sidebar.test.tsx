@@ -1979,7 +1979,8 @@ describe("WorkspaceSidebar", () => {
           copy: async () => true,
           rename: async () => true,
           delete: async () => undefined,
-          importFile: async () => true,
+          openImport: () => undefined,
+          exportFile: async () => undefined,
           leave: async () => {
             useUiStore.getState().setWorkflowEditorOpen(false);
           },

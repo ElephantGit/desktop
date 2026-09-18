@@ -22,7 +22,7 @@ use ora_domain::{
 };
 use std::cell::Cell;
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
 pub(crate) const AGENT_GRAPH: &str = r#"{"nodes":[
@@ -61,6 +61,42 @@ impl NodeExecutor for NoopExecutor {
         _node: &WorkflowGraphNode,
         _context: &ExecutionContext,
     ) {
+    }
+}
+
+/// Records production dispatch inputs while leaving completion under the test's control.
+#[derive(Clone, Default)]
+pub(crate) struct RecordingExecutor {
+    records: Arc<Mutex<Vec<DispatchRecord>>>,
+}
+
+/// The immutable facts a background executor receives for one dispatch.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DispatchRecord {
+    pub(crate) node_run_id: String,
+    pub(crate) node_id: String,
+    pub(crate) payload: Option<String>,
+}
+
+impl RecordingExecutor {
+    /// Shares a snapshot of all dispatches observed so far.
+    pub(crate) fn records(&self) -> Vec<DispatchRecord> {
+        self.records.lock().unwrap().clone()
+    }
+}
+
+impl NodeExecutor for RecordingExecutor {
+    fn dispatch(
+        &self,
+        node_run_id: &WorkflowNodeRunId,
+        node: &WorkflowGraphNode,
+        context: &ExecutionContext,
+    ) {
+        self.records.lock().unwrap().push(DispatchRecord {
+            node_run_id: node_run_id.to_string(),
+            node_id: node.id.clone(),
+            payload: context.run.payload.clone(),
+        });
     }
 }
 

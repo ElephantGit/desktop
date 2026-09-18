@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type {
@@ -50,6 +50,7 @@ import { PluginConfigurationEditor } from "./plugin-configuration-editor";
 import type { PluginConfigurationNavigationGuard } from "./plugin-configuration-editor";
 import { PluginDownloadProgress } from "./plugin-download-progress";
 import { showPluginInstallOutcome } from "./plugin-install-feedback";
+import { useUiStore } from "../../state/stores/ui-store";
 
 /** The registry kind order shown in the marketplace, mirroring the contracts docs. */
 const MARKETPLACE_KIND_ORDER = [
@@ -89,13 +90,35 @@ export function PluginsSettings({
 }) {
   const { t } = useTranslation();
   const showContractError = useContractErrorToast();
-  const [query, setQuery] = useState("");
-  const [managing, setManaging] = useState(false);
+  // Another surface may deep-link here (e.g. a workflow dependency to install or
+  // configure). Adopt the request once so later visits start from the default view.
+  const [initialRequest] = useState(
+    () => useUiStore.getState().pluginSettingsRequest,
+  );
+  const clearPluginSettingsRequest = useUiStore(
+    (state) => state.clearPluginSettingsRequest,
+  );
+  useEffect(() => {
+    clearPluginSettingsRequest();
+  }, [clearPluginSettingsRequest]);
+  const [query, setQuery] = useState(
+    initialRequest?.kind === "marketplaceSearch" ? initialRequest.query : "",
+  );
+  const [managing, setManaging] = useState(
+    initialRequest?.kind === "manage" || initialRequest?.kind === "configure",
+  );
   const [managingSources, setManagingSources] = useState(false);
   const [configurationPlugin, setConfigurationPlugin] = useState<{
     id: string;
     displayName: string;
-  } | null>(null);
+  } | null>(
+    initialRequest?.kind === "configure"
+      ? {
+          id: initialRequest.pluginId,
+          displayName: initialRequest.displayName,
+        }
+      : null,
+  );
   const [selecting, setSelecting] = useState(false);
   const [readmePlugin, setReadmePlugin] = useState<AvailablePlugin | null>(
     null,

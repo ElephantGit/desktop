@@ -35,11 +35,102 @@ export const workflowEditorTranslations = {
     "settings.workflow.copyName": "{{name}} - 副本",
     "settings.workflow.copySuccess": "已创建副本“{{name}}”",
     "settings.workflow.importWorkflow": "导入工作流",
-    "settings.workflow.exportWorkflow": "导出工作流",
-    "settings.workflow.importError": "无法导入：请选择有效的工作流 JSON 文件。",
+    "settings.workflow.exportWorkflow": "导出",
     "settings.workflow.importPublishSuccess":
-      "已导入“{{name}}”并发布版本 {{version}}",
+      "已导入「{{name}}」并发布 {{version}}",
     "settings.workflow.exportError": "无法导出工作流文件。",
+    "settings.workflow.transfer.importTitle": "确认导入",
+    "settings.workflow.transfer.importFailedTitle": "无法导入",
+    "settings.workflow.transfer.pickDescription":
+      "选择一个由 Ora 导出的 .reactflow.json 文件，确认内容后再创建。",
+    "settings.workflow.transfer.dropZoneTitle": "拖入文件，或点击选择",
+    "settings.workflow.transfer.dropZoneHint": "支持 .json / .reactflow.json",
+    "settings.workflow.transfer.failure.invalidJson": "文件不是有效的 JSON。",
+    "settings.workflow.transfer.failure.invalidJsonAt":
+      "第 {{line}} 行第 {{column}} 列附近存在语法错误。请用 Ora 重新导出，或修正文件后再试。",
+    "settings.workflow.transfer.failure.invalidJsonDetail":
+      "请用 Ora 重新导出，或修正文件后再试。",
+    "settings.workflow.transfer.failure.missingName": "文件缺少工作流名称。",
+    "settings.workflow.transfer.failure.missingNameDetail":
+      "请用 Ora 重新导出，或检查文件中的 name 字段。",
+    "settings.workflow.transfer.failure.missingGraph":
+      "文件缺少节点或连线数据。",
+    "settings.workflow.transfer.failure.missingGraphDetail":
+      "请用 Ora 重新导出，或检查文件中的 nodes 与 edges 字段。",
+    "settings.workflow.transfer.failure.unknownNodeKind":
+      "文件包含无法识别的节点类型「{{kind}}」。",
+    "settings.workflow.transfer.failure.unknownNodeKindDetail":
+      "该文件可能来自更新版本的 Ora，请升级后再导入。",
+    "settings.workflow.transfer.failure.fileTooLarge": "文件大于 5 MB。",
+    "settings.workflow.transfer.failure.fileTooLargeDetail":
+      "请确认选择的是由 Ora 导出的工作流文件。",
+    "settings.workflow.transfer.failureNote":
+      "其他会被拦截的情况：缺少 name 或 nodes、节点类型无法识别、文件大于 5 MB。没有创建任何工作流。",
+    "settings.workflow.transfer.close": "关闭",
+    "settings.workflow.transfer.chooseOtherFile": "选择其他文件",
+    "settings.workflow.transfer.chooseAgain": "重新选择",
+    "settings.workflow.transfer.publishVersion": "发布版本",
+    "settings.workflow.transfer.publishVersionPlaceholder": "留空则自动生成",
+    "settings.workflow.transfer.versionInvalid":
+      "版本不能为 draft、. 或 ..，不能包含斜杠，且不超过 128 个字符。",
+    "settings.workflow.transfer.summaryNodes": "节点",
+    "settings.workflow.transfer.summaryAgents": "Agent 节点",
+    "settings.workflow.transfer.summaryGlobals": "全局变量",
+    "settings.workflow.transfer.summaryDependencies": "插件依赖",
+    "settings.workflow.transfer.missingWarningTitle":
+      "{{total}} 个插件未安装。",
+    "settings.workflow.transfer.missingWarning":
+      "仍可导入并编辑，但运行到引用它们的节点时会失败。建议先到插件市场安装。",
+    "settings.workflow.transfer.unavailableWarning":
+      "{{total}} 个插件已安装但当前不可用，运行前需要检查插件状态或配置。",
+    "settings.workflow.transfer.allInstalled":
+      "所有引用的插件都已安装，导入后可以直接运行。",
+    "settings.workflow.transfer.dependencies": "插件依赖",
+    "settings.workflow.transfer.recordedDependencies": "随文件记录的插件引用",
+    "settings.workflow.transfer.dependencyCount": "{{usable}} / {{total}} 可用",
+    "settings.workflow.transfer.referenceCount": "{{total}} 项",
+    "settings.workflow.transfer.noDependencies":
+      "未引用任何 MCP 或 Skill 插件。",
+    "settings.workflow.transfer.usedBy": "用于：{{nodes}}",
+    "settings.workflow.transfer.listSeparator": "、",
+    "settings.workflow.transfer.status.installed": "已安装",
+    "settings.workflow.transfer.status.unavailable": "不可用",
+    "settings.workflow.transfer.status.missing": "未安装",
+    "settings.workflow.transfer.goInstall": "去安装",
+    "settings.workflow.transfer.goConfigure": "去配置",
+    "settings.workflow.transfer.goReview": "去查看",
+    "settings.workflow.transfer.bindingEnabled": "已启用",
+    "settings.workflow.transfer.bindingDisabled": "已停用",
+    "settings.workflow.transfer.publishAfterImport": "导入后立即发布为生效版本",
+    "settings.workflow.transfer.publishAfterImportHint":
+      "取消勾选则只创建草稿，需要手动发布后才能运行。",
+    "settings.workflow.transfer.confirmImport": "导入",
+    "settings.workflow.transfer.importAnyway": "仍然导入",
+    "settings.workflow.transfer.importDraftSuccess": "已导入「{{name}}」为草稿",
+    "settings.workflow.transfer.importedBadge": "新导入",
+    "settings.workflow.transfer.exportMenuItem": "导出…",
+    "settings.workflow.transfer.addMenu": "新建或导入工作流",
+    "settings.workflow.transfer.newWorkflowShortcut": "Ctrl+N",
+    "settings.workflow.transfer.importMenuItem": "导入工作流…",
+    "settings.workflow.transfer.emptyCreate": "新建",
+    "settings.workflow.transfer.emptyImport": "导入",
+    "settings.workflow.transfer.exportTitle": "导出「{{name}}」",
+    "settings.workflow.transfer.exportDescription":
+      "生成可在其他设备导入的 .reactflow.json 文件。",
+    "settings.workflow.transfer.exportSource": "导出内容",
+    "settings.workflow.transfer.currentDraft": "当前草稿",
+    "settings.workflow.transfer.currentDraftHint": "包含尚未发布的改动",
+    "settings.workflow.transfer.currentDraftSavedHint":
+      "包含尚未发布的改动 · {{time}} 保存",
+    "settings.workflow.transfer.activeVersion": "生效中",
+    "settings.workflow.transfer.activeVersionDetail": "{{time}} · 当前生效",
+    "settings.workflow.transfer.fileName": "文件名",
+    "settings.workflow.transfer.loadingVersion": "正在读取版本内容…",
+    "settings.workflow.transfer.referenceOnlyNotice":
+      "只记录插件 ID 和启用状态，不打包插件，也不包含任何密钥或插件配置。对方导入时会看到缺失的插件。",
+    "settings.workflow.transfer.previewStructure": "预览文件结构",
+    "settings.workflow.transfer.confirmExport": "导出…",
+    "settings.workflow.transfer.exportSuccess": "已导出 {{name}}",
     "settings.workflow.noWorkflows": "没有匹配的工作流",
     "settings.workflow.deleteWorkflowTitle": "删除“{{name}}”？",
     "settings.workflow.deleteWorkflowDescription":
@@ -78,6 +169,7 @@ export const workflowEditorTranslations = {
     "settings.workflow.historyEventEdgeConnect": "连接节点",
     "settings.workflow.historyEventEdgeReconnect": "调整连线",
     "settings.workflow.historyEventNodeMove": "移动节点",
+    "settings.workflow.historyEventIterationResize": "调整迭代区域大小",
     "settings.workflow.historyEventOrganize": "整理节点",
     "settings.workflow.historyEventNodeEdit": "编辑节点",
     "settings.workflow.historyEventAnnotationEdit": "编辑注释",
@@ -214,9 +306,29 @@ export const workflowEditorTranslations = {
       "对迭代源数组的每个元素执行一轮区域内的节点；每轮绑定 {iter}.item 与 {iter}.index，完成后暴露 output / entries / failed_count 三个变量。",
     "settings.workflow.iteration.collapse": "折叠迭代区域",
     "settings.workflow.iteration.expand": "展开迭代区域",
-    "settings.workflow.iteration.dropHint": "将节点拖入此区域作为循环体",
+    "settings.workflow.iteration.dropHint": "请使用区域内的添加节点入口",
+    "settings.workflow.iteration.emptyHint": "区域为空，请从内部起点添加节点",
     "settings.workflow.iteration.regionSummary": "循环体节点：{{total}} 个",
     "settings.workflow.iteration.entryHandle": "连接到循环体首节点",
+    "settings.workflow.iteration.internalStart": "内部起点",
+    "settings.workflow.iteration.addNode": "向迭代区域添加节点",
+    "settings.workflow.iteration.useInternalAdd":
+      "节点不能跨区域拖动，请使用迭代区域内的添加节点入口。",
+    "settings.workflow.iteration.noSupportedNodes":
+      "当前没有可用于迭代区域的节点",
+    "settings.workflow.iteration.insertOnEdge": "在内部连线上插入节点",
+    "settings.workflow.iteration.appendBranch": "在 {{branch}} 分支后添加节点",
+    "settings.workflow.iteration.appendOutput": "在 {{name}} 后添加节点",
+    "settings.workflow.iteration.deleteTitle": "删除非空迭代区域？",
+    "settings.workflow.iteration.deleteDescription":
+      "此区域包含 {{count}} 个节点。继续将级联删除区域、成员及相关连线；可使用撤销完整恢复。",
+    "settings.workflow.iteration.collectTargetDeleted":
+      "已清空 {{count}} 个迭代区域的收集目标，请重新配置。",
+    "settings.workflow.iteration.interactiveUnavailable":
+      "迭代区域内的 Agent 不能开启交互模式。",
+    "settings.workflow.iteration.interactiveRepairHint":
+      "此旧节点仍开启交互模式，发布会被拒绝。请关闭后再发布。",
+    "settings.workflow.iteration.disableInteractive": "关闭交互模式",
     "settings.workflow.junction.waitAll": "全部分支完成",
     "settings.workflow.junction.waitAny": "任一分支完成",
     "settings.workflow.junction.waitCount": "至少 N 个完成",
@@ -411,12 +523,113 @@ export const workflowEditorTranslations = {
     "settings.workflow.copyName": "{{name}} - copy",
     "settings.workflow.copySuccess": "Created copy “{{name}}”",
     "settings.workflow.importWorkflow": "Import workflow",
-    "settings.workflow.exportWorkflow": "Export workflow",
-    "settings.workflow.importError":
-      "Import failed. Select a valid workflow JSON file.",
+    "settings.workflow.exportWorkflow": "Export",
     "settings.workflow.importPublishSuccess":
       "Imported “{{name}}” and published version {{version}}",
     "settings.workflow.exportError": "The workflow file could not be exported.",
+    "settings.workflow.transfer.importTitle": "Review import",
+    "settings.workflow.transfer.importFailedTitle": "Can’t import",
+    "settings.workflow.transfer.pickDescription":
+      "Choose a .reactflow.json file exported from Ora, then review it before anything is created.",
+    "settings.workflow.transfer.dropZoneTitle":
+      "Drop a file here, or click to choose",
+    "settings.workflow.transfer.dropZoneHint":
+      "Supports .json / .reactflow.json",
+    "settings.workflow.transfer.failure.invalidJson":
+      "This file isn’t valid JSON. ",
+    "settings.workflow.transfer.failure.invalidJsonAt":
+      "There’s a syntax error near line {{line}}, column {{column}}. Export it again from Ora, or fix the file and retry.",
+    "settings.workflow.transfer.failure.invalidJsonDetail":
+      "Export it again from Ora, or fix the file and retry.",
+    "settings.workflow.transfer.failure.missingName":
+      "This file has no workflow name. ",
+    "settings.workflow.transfer.failure.missingNameDetail":
+      "Export it again from Ora, or check the name field in the file.",
+    "settings.workflow.transfer.failure.missingGraph":
+      "This file has no nodes or edges. ",
+    "settings.workflow.transfer.failure.missingGraphDetail":
+      "Export it again from Ora, or check the nodes and edges fields in the file.",
+    "settings.workflow.transfer.failure.unknownNodeKind":
+      "This file contains an unrecognized node type “{{kind}}”. ",
+    "settings.workflow.transfer.failure.unknownNodeKindDetail":
+      "It may come from a newer version of Ora. Update Ora, then import it again.",
+    "settings.workflow.transfer.failure.fileTooLarge":
+      "This file is larger than 5 MB. ",
+    "settings.workflow.transfer.failure.fileTooLargeDetail":
+      "Make sure you chose a workflow file exported from Ora.",
+    "settings.workflow.transfer.failureNote":
+      "Files are also rejected when name or nodes are missing, a node type isn’t recognized, or the file is larger than 5 MB. No workflow was created.",
+    "settings.workflow.transfer.close": "Close",
+    "settings.workflow.transfer.chooseOtherFile": "Choose another file",
+    "settings.workflow.transfer.chooseAgain": "Choose again",
+    "settings.workflow.transfer.publishVersion": "Publish version",
+    "settings.workflow.transfer.publishVersionPlaceholder":
+      "Leave blank to generate one",
+    "settings.workflow.transfer.versionInvalid":
+      "A version can’t be draft, . or .., can’t contain slashes, and must be at most 128 characters.",
+    "settings.workflow.transfer.summaryNodes": "Nodes",
+    "settings.workflow.transfer.summaryAgents": "Agent nodes",
+    "settings.workflow.transfer.summaryGlobals": "Global variables",
+    "settings.workflow.transfer.summaryDependencies": "Plugin dependencies",
+    "settings.workflow.transfer.missingWarningTitle":
+      "{{total}} referenced plugins aren’t installed. ",
+    "settings.workflow.transfer.missingWarning":
+      "You can still import and edit, but runs fail at the nodes that use them. Install them from the plugin marketplace first.",
+    "settings.workflow.transfer.unavailableWarning":
+      "{{total}} referenced plugins are installed but unavailable. Check their status or configuration before running.",
+    "settings.workflow.transfer.allInstalled":
+      "Every referenced plugin is installed, so the workflow can run right after import.",
+    "settings.workflow.transfer.dependencies": "Plugin dependencies",
+    "settings.workflow.transfer.recordedDependencies":
+      "Plugin references recorded in the file",
+    "settings.workflow.transfer.dependencyCount":
+      "{{usable}} / {{total}} usable",
+    "settings.workflow.transfer.referenceCount": "{{total}} items",
+    "settings.workflow.transfer.noDependencies":
+      "No MCP or Skill plugins are referenced.",
+    "settings.workflow.transfer.usedBy": "Used by: {{nodes}}",
+    "settings.workflow.transfer.listSeparator": ", ",
+    "settings.workflow.transfer.status.installed": "Installed",
+    "settings.workflow.transfer.status.unavailable": "Unavailable",
+    "settings.workflow.transfer.status.missing": "Not installed",
+    "settings.workflow.transfer.goInstall": "Install",
+    "settings.workflow.transfer.goConfigure": "Configure",
+    "settings.workflow.transfer.goReview": "Review",
+    "settings.workflow.transfer.bindingEnabled": "Enabled",
+    "settings.workflow.transfer.bindingDisabled": "Disabled",
+    "settings.workflow.transfer.publishAfterImport":
+      "Publish as the active version after import",
+    "settings.workflow.transfer.publishAfterImportHint":
+      "Clear this to create only a draft; you’ll need to publish before running.",
+    "settings.workflow.transfer.confirmImport": "Import",
+    "settings.workflow.transfer.importAnyway": "Import anyway",
+    "settings.workflow.transfer.importDraftSuccess":
+      "Imported “{{name}}” as a draft",
+    "settings.workflow.transfer.importedBadge": "Imported",
+    "settings.workflow.transfer.exportMenuItem": "Export…",
+    "settings.workflow.transfer.addMenu": "Create or import workflow",
+    "settings.workflow.transfer.newWorkflowShortcut": "Ctrl+N",
+    "settings.workflow.transfer.importMenuItem": "Import workflow…",
+    "settings.workflow.transfer.emptyCreate": "New",
+    "settings.workflow.transfer.emptyImport": "Import",
+    "settings.workflow.transfer.exportTitle": "Export “{{name}}”",
+    "settings.workflow.transfer.exportDescription":
+      "Create a .reactflow.json file you can import on another device.",
+    "settings.workflow.transfer.exportSource": "Export source",
+    "settings.workflow.transfer.currentDraft": "Current draft",
+    "settings.workflow.transfer.currentDraftHint":
+      "Includes unpublished changes",
+    "settings.workflow.transfer.currentDraftSavedHint":
+      "Includes unpublished changes · saved {{time}}",
+    "settings.workflow.transfer.activeVersion": "Active",
+    "settings.workflow.transfer.activeVersionDetail": "{{time}} · active",
+    "settings.workflow.transfer.fileName": "File name",
+    "settings.workflow.transfer.loadingVersion": "Loading version…",
+    "settings.workflow.transfer.referenceOnlyNotice":
+      "Only plugin IDs and enabled state are recorded. Plugins, secrets, and plugin configuration aren’t included; whoever imports the file will see which plugins are missing.",
+    "settings.workflow.transfer.previewStructure": "Preview file structure",
+    "settings.workflow.transfer.confirmExport": "Export…",
+    "settings.workflow.transfer.exportSuccess": "Exported {{name}}",
     "settings.workflow.noWorkflows": "No matching workflows",
     "settings.workflow.deleteWorkflowTitle": "Delete “{{name}}”?",
     "settings.workflow.deleteWorkflowDescription":
@@ -455,6 +668,7 @@ export const workflowEditorTranslations = {
     "settings.workflow.historyEventEdgeConnect": "Connect nodes",
     "settings.workflow.historyEventEdgeReconnect": "Reconnect nodes",
     "settings.workflow.historyEventNodeMove": "Move node",
+    "settings.workflow.historyEventIterationResize": "Resize iteration region",
     "settings.workflow.historyEventOrganize": "Organize nodes",
     "settings.workflow.historyEventNodeEdit": "Edit node",
     "settings.workflow.historyEventAnnotationEdit": "Edit annotation",
@@ -609,10 +823,35 @@ export const workflowEditorTranslations = {
     "settings.workflow.iteration.collapse": "Collapse the iteration region",
     "settings.workflow.iteration.expand": "Expand the iteration region",
     "settings.workflow.iteration.dropHint":
-      "Drag nodes into this area as the loop body",
+      "Use the add-node entry inside this region",
+    "settings.workflow.iteration.emptyHint":
+      "This region is empty. Add a node from the internal start.",
     "settings.workflow.iteration.regionSummary": "Region nodes: {{total}}",
     "settings.workflow.iteration.entryHandle":
       "Connect to the first region node",
+    "settings.workflow.iteration.internalStart": "Internal start",
+    "settings.workflow.iteration.addNode": "Add a node to the iteration region",
+    "settings.workflow.iteration.useInternalAdd":
+      "Nodes cannot move across region boundaries. Use the add-node entry inside the iteration region.",
+    "settings.workflow.iteration.noSupportedNodes":
+      "No node types are available in iteration regions",
+    "settings.workflow.iteration.insertOnEdge":
+      "Insert a node on the internal edge",
+    "settings.workflow.iteration.appendBranch":
+      "Add a node after the {{branch}} branch",
+    "settings.workflow.iteration.appendOutput": "Add a node after {{name}}",
+    "settings.workflow.iteration.deleteTitle":
+      "Delete this non-empty iteration region?",
+    "settings.workflow.iteration.deleteDescription":
+      "This region contains {{count}} nodes. Continuing deletes the region, its members, and connected edges; Undo restores the complete graph.",
+    "settings.workflow.iteration.collectTargetDeleted":
+      "Cleared the collect target for {{count}} iteration regions. Configure a new target before publishing.",
+    "settings.workflow.iteration.interactiveUnavailable":
+      "Agents inside an iteration region cannot use interactive mode.",
+    "settings.workflow.iteration.interactiveRepairHint":
+      "This legacy node still has interactive mode enabled, so publishing will fail. Disable it before publishing.",
+    "settings.workflow.iteration.disableInteractive":
+      "Disable interactive mode",
     "settings.workflow.junction.waitAll": "All branches complete",
     "settings.workflow.junction.waitAny": "Any branch completes",
     "settings.workflow.junction.waitCount": "At least N complete",

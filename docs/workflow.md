@@ -129,14 +129,68 @@ reading the previous round's stale pool value. The node's own failures always pr
 failure; only region-internal failures can be absorbed, and Condition decisions inside a region
 are recorded per round so a later round can never overwrite an earlier round's branch.
 
-The editor renders the iteration node as an embedded container frame on the same canvas:
-dragging a node into the frame's region zone makes it a member, the frame collapses to a
-compact summary, and the inspector edits the four config fields. The variable catalog follows
-region scope — members see `item`/`index` plus their in-region upstream products but never the
-node's own exposed results, while outer consumers see the three exposed variables but never the
-round bindings. Run views group region states by `(node_id, iteration)`: the overview marks
-member nodes with their round badge, and Theater's act inspector offers a per-round strip for
-viewing each round's session and output.
+The editor renders the iteration node as an embedded composite region on the same canvas. A
+compact header names the iteration while its parameters remain in the Inspector, and a fixed
+internal start sits at the left of the region, styled after Dify's iteration-start block: a
+44-pixel white rounded card with a blue home badge, plus its entry port on the right edge. The
+start cannot be moved, configured, or deleted. Following Dify, the add affordance is a solid
+blue circle-plus badge centered on a port: it fades in only while the author hovers the node
+(and stays visible while its menu is open or the badge is keyboard-focused), while the start
+block body and its port double as the picker trigger — clicking either opens the node picker,
+and dragging from the port still starts a connection, so the decorative badge never intercepts a
+drag.
+Authors can add an Agent or Condition this way from the internal start, or append to an
+unconnected member output (including a specific Condition branch), and create multiple entry
+branches by dragging from the start's source handle. They can also insert on
+an internal edge other than the entry edge. The entry edge does not repeat a midpoint plus button because the
+fixed start already owns that insertion seam. The internal canvas has one container boundary,
+without a second dashed region frame. Selecting the frame repaints only its border and shadow —
+the background fill never changes between selected and unselected states. The internal start is presentation-only: the frozen graph
+still records an entry as
+`iteration --iteration-entry--> member` and never gains another runtime node. Each insertion
+creates or rewires its edges in the same undo/autosave operation. Dragging never changes
+`parentId`: members stay inside their owner, and an outer node dropped over a region returns to
+its original position with guidance to use the internal add entry. React Flow parent constraints
+are derived while rendering and are not persisted.
+
+Expanded frames keep a 560×340 minimum and persist fitted `initialWidth` / `initialHeight` values.
+Authors can also resize an expanded frame manually, Dify-style: the bottom-right corner
+shows a soft gray arc affordance (revealed on frame hover or while the frame is selected), the
+cursor turns into a resize indicator over the corner, and dragging with the left button resizes
+the frame in 20-pixel grid steps; the gesture is one undoable, auto-saved edit that never shrinks
+below the minimum or clips region members. Collapse hides the internal start, members, and internal edges only in the canvas projection, so
+the source graph remains unchanged and expansion restores the same size. Frames grow when members
+are inserted or moved and compact after deletion or automatic layout. Because a freshly inserted
+card is only measured after it renders, the insertion-time fit re-runs when real measurements
+arrive, so React Flow's parent extent never clamps a tall member back over the region's internal
+affordances. New members stack below the measured bottom of existing members and are nudged below
+any card they would overlap, because card heights vary by kind and content. Automatic layout arranges every region DAG
+independently before laying out the outer graph with the fitted container dimensions. Deleting a
+non-empty frame confirms its member count, then removes the frame, members, and incident edges as
+one undoable edit. Deleting the current `collectSelector` target clears that selector and asks the
+author to configure a replacement. Region Agent nodes default to `interactive: false`; legacy
+interactive members remain visible with a direct repair action because the runtime still rejects
+them.
+
+The variable catalog follows region scope — members see `item`/`index` plus their in-region
+upstream products but never the node's own exposed results, while outer consumers see the three
+exposed variables but never the round bindings. Run views group region states by
+`(node_id, iteration)`. Theater keeps only the iteration container on its top-level path and
+projects the frozen region DAG beneath it: multiple `iteration-entry` targets stay in a persistent
+parallel group, Condition successors are labeled as conditional branches, and later dependencies
+form following stages. One region-level round selector drives every member's status, conversation,
+and detail view; switching parallel peers preserves the round, while a member that did not run in
+that round is shown explicitly instead of borrowing another round's result. The selected member's
+region, round, and parallel position remain visible above its act card. Records without round
+projections still receive the structural grouping and use their node-level status. The overview
+reconstructs the iteration parent frame from the frozen `parentId`, `initialWidth`,
+`initialHeight`, and `iteration-entry` edge facts, so completed member cards remain inside their
+region and entry edges remain visible. It supports mouse-wheel, pinch, plus/minus, and fit-to-graph
+zoom controls.
+The production regression suite exercises the same boundaries through SQLite and the fake ACP
+provider: a second round receives a new session, round bindings are available while rendering its
+prompt, and synchronous failures settle under both `fail` and `continue` without leaving a run
+stuck.
 
 ### Entities and tables
 
