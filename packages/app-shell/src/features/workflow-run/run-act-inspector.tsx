@@ -39,6 +39,8 @@ interface RunActInspectorProps {
   revealedArtifactId: string | null;
   loopRounds?: GraphWorkflowRound[];
   loopChildTitles?: Record<string, string>;
+  selectedLoopRoundId?: string | null;
+  onSelectedLoopRoundChange?: (roundId: string) => void;
   /**
    * When true, description and a human-approval prompt are editable for this run only
    * (`pending` overrides on the frozen snapshot).
@@ -113,6 +115,8 @@ export function RunActInspector({
   revealedArtifactId,
   loopRounds = [],
   loopChildTitles = {},
+  selectedLoopRoundId,
+  onSelectedLoopRoundChange,
   editable = false,
   onPatchNode,
   instructionDraft,
@@ -163,6 +167,8 @@ export function RunActInspector({
       revealedArtifactId={revealedArtifactId}
       loopRounds={loopRounds}
       loopChildTitles={loopChildTitles}
+      selectedLoopRoundId={selectedLoopRoundId}
+      onSelectedLoopRoundChange={onSelectedLoopRoundChange}
       editable={editable}
       onPatchNode={onPatchNode}
       instructionDraft={instructionDraft}
@@ -186,6 +192,8 @@ function RunActInspectorPanel({
   revealedArtifactId,
   loopRounds,
   loopChildTitles,
+  selectedLoopRoundId,
+  onSelectedLoopRoundChange,
   editable,
   onPatchNode,
   instructionDraft,
@@ -205,6 +213,8 @@ function RunActInspectorPanel({
   revealedArtifactId: string | null;
   loopRounds: GraphWorkflowRound[];
   loopChildTitles: Record<string, string>;
+  selectedLoopRoundId?: string | null;
+  onSelectedLoopRoundChange?: (roundId: string) => void;
   editable: boolean;
   onPatchNode?: (patch: GraphWorkflowSnapshotNodePatch) => void;
   instructionDraft?: string | null;
@@ -497,6 +507,8 @@ function RunActInspectorPanel({
             <RunLoopRoundHistory
               rounds={loopRounds}
               nodeTitles={loopChildTitles}
+              selectedRoundId={selectedLoopRoundId}
+              onSelectedRoundChange={onSelectedLoopRoundChange}
             />
           </InspectorSection>
         )}

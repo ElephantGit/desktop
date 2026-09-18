@@ -8,14 +8,19 @@ import { RunStatusBadge } from "./run-status-mark";
 export function RunLoopRoundHistory({
   rounds,
   nodeTitles,
+  selectedRoundId,
+  onSelectedRoundChange,
 }: {
   rounds: GraphWorkflowRound[];
   nodeTitles: Record<string, string>;
+  selectedRoundId?: string | null;
+  onSelectedRoundChange?: (roundId: string) => void;
 }) {
   const { t } = useTranslation();
   const [preferredRoundId, setPreferredRoundId] = useState<string | null>(null);
+  const effectiveRoundId = selectedRoundId ?? preferredRoundId;
   const selectedRound =
-    rounds.find((round) => round.id === preferredRoundId) ?? rounds.at(-1);
+    rounds.find((round) => round.id === effectiveRoundId) ?? rounds.at(-1);
 
   if (selectedRound === undefined) {
     return (
@@ -42,7 +47,10 @@ export function RunLoopRoundHistory({
                   ? "border-foreground/35 bg-muted text-foreground"
                   : "border-border text-muted-foreground hover:bg-muted/60",
               )}
-              onClick={() => setPreferredRoundId(round.id)}
+              onClick={() => {
+                setPreferredRoundId(round.id);
+                onSelectedRoundChange?.(round.id);
+              }}
             >
               {t("workflowRun.loopRounds.round", {
                 round: round.roundIndex + 1,

@@ -10,6 +10,11 @@ import { useTranslation } from "react-i18next";
 import { Badge, cn, toast } from "@ora/ui";
 import { useUpdateWorkflowRunInput } from "../../state/data/workflow-runs";
 import { filterArtifacts, latestArtifact } from "./artifact-filter";
+import {
+  projectLoopRoundNodeStates,
+  selectedLoopRound,
+  type LoopRoundSelection,
+} from "./loop-round-state";
 import { RunActInspector } from "./run-act-inspector";
 import { RunResultAct } from "./run-result-act";
 import { RunTheaterActCard } from "./run-theater-act-card";
@@ -108,10 +113,28 @@ export function RunTheater({
   const [inspectorVisualWidth, setInspectorVisualWidth] = useState(0);
   const pathScrollOpenSigRef = useRef<string>("");
   const pathRailRef = useRef<HTMLDivElement | null>(null);
+  const [loopRoundSelection, setLoopRoundSelection] =
+    useState<LoopRoundSelection>({});
+  const [loopRoundSelectionRunId, setLoopRoundSelectionRunId] = useState(
+    run.id,
+  );
+  if (loopRoundSelectionRunId !== run.id) {
+    setLoopRoundSelectionRunId(run.id);
+    setLoopRoundSelection({});
+  }
+
+  const visibleNodeStates = useMemo(
+    () => projectLoopRoundNodeStates(run, loopRoundSelection),
+    [run, loopRoundSelection],
+  );
+  const visibleRun = useMemo(
+    () => ({ ...run, nodeStates: visibleNodeStates }),
+    [run, visibleNodeStates],
+  );
 
   const focus = useMemo(
-    () => resolveTheaterFocus(run, focusNodeId),
-    [run, focusNodeId],
+    () => resolveTheaterFocus(visibleRun, focusNodeId),
+    [visibleRun, focusNodeId],
   );
   const primaryId = focus.primaryId;
   const parallel = focus.activeIds.length > 1;
@@ -132,7 +155,7 @@ export function RunTheater({
     expandHitlForRequest,
     collapseHitl,
   } = useTheaterHitl({
-    run,
+    run: visibleRun,
     focusNodeId,
     primaryId,
     onFocusNode,
@@ -173,7 +196,7 @@ export function RunTheater({
   );
   const primaryNode = primaryId === null ? undefined : nodeById.get(primaryId);
   const primaryState =
-    primaryId !== null ? run.nodeStates[primaryId] : undefined;
+    primaryId !== null ? visibleNodeStates[primaryId] : undefined;
   // The Start input is editable whenever the run is not executing — a not-started pending
   // run or any terminal run — so the kickoff input can be changed before a restart re-runs it.
   const isEditableStart =
@@ -220,7 +243,7 @@ export function RunTheater({
     }
     return focus.activeIds.flatMap((nodeId) => {
       const node = nodeById.get(nodeId);
-      const state = run.nodeStates[nodeId];
+      const state = visibleNodeStates[nodeId];
       if (node === undefined || state === undefined) {
         return [];
       }
@@ -230,7 +253,10 @@ export function RunTheater({
           data: node.data,
           state,
           artifactCount: artifactCountByNode[nodeId] ?? 0,
-          conversation: conversationByNodeId.get(nodeId) ?? [],
+          conversation:
+            state.conversation != null && state.conversation.length > 0
+              ? state.conversation
+              : (conversationByNodeId.get(nodeId) ?? []),
         },
       ];
     });
@@ -238,7 +264,7 @@ export function RunTheater({
     parallel,
     focus.activeIds,
     nodeById,
-    run.nodeStates,
+    visibleNodeStates,
     artifactCountByNode,
     conversationByNodeId,
   ]);
@@ -438,7 +464,7 @@ export function RunTheater({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <RunTheaterPathRail
-        run={run}
+        run={visibleRun}
         primaryId={primaryId}
         activeIds={focus.activeIds}
         openHitls={openHitls}
@@ -675,6 +701,24 @@ export function RunTheater({
                           )
                           .map((node) => [node.id, node.data.title]),
                       )
+                    : undefined
+                }
+                selectedLoopRoundId={
+                  primaryNode?.data.kind === "loop"
+                    ? selectedLoopRound(
+                        run.rounds ?? [],
+                        primaryNode.id,
+                        loopRoundSelection,
+                      )?.id
+                    : undefined
+                }
+                onSelectedLoopRoundChange={
+                  primaryNode?.data.kind === "loop"
+                    ? (roundId) =>
+                        setLoopRoundSelection((current) => ({
+                          ...current,
+                          [primaryNode.id]: roundId,
+                        }))
                     : undefined
                 }
                 editable={isEditableStart}
