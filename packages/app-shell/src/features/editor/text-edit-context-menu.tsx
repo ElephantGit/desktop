@@ -57,7 +57,7 @@ export function writeClipboardTextSync(text: string): boolean {
   textarea.focus();
   textarea.select();
   textarea.setSelectionRange(0, text.length);
-  let ok = false;
+  let ok: boolean;
   try {
     ok = document.execCommand("copy");
   } catch {
