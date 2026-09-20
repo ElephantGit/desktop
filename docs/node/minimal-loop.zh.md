@@ -44,5 +44,6 @@ Controller 协调，Node 在执行环境完成 clone，结果回到调用方可�
 [最小执行契约](../../specs/decisions/node/repository/20260918-minimal-clone-execution-contract.md)已于 2026-09-18
 获批（approved），确认范围、输入、目录、内容和恢复政策。
 核心测试已有真实 HTTPS／SSH clone、Node 强杀恢复、终态写入失败及 Controller Ack 丢失恢复证据；
-minicloud 真实 HTTP／Vite proxy clone 及 server 重启已有证据；浏览器引擎验收和其他故障组合仍有缺口。
+minicloud 的真实 HTTP／Vite proxy clone、回复丢失重试、server 关闭／重启和状态交接已验证，根 ADR 已 implemented；
+完整浏览器引擎验收不在约定范围内，Node／Controller 其他 ADR 的故障组合缺口仍按各自核心用例记录。
 不迁移用户目录，也不切换 Backend 写入入口。

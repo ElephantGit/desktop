@@ -64,5 +64,9 @@ Frontend checks: `deno task --filter @ora/minicloud-client lint`, `test`, and `b
 Node → HTTPS Git tests, including server SIGKILL/restart and one mutation Run. It requires Linux and
 installed frontend dependencies. The Vite case is explicitly opt-in for Rust-only CI runners.
 The real chain also holds a SQLite writer lock to verify HTTP 503 without accepted intent, then releases
-it and verifies a single Run. DOM tests verify UI behavior and reload identity recovery; a full
-browser-engine interaction suite and real HTTP response truncation remain separate acceptance gaps.
+it and verifies a single Run. A real TCP proxy truncates the accepted response body; retry after server
+restart preserves the original execution. Normal server shutdown during clone preserves the pinned live
+Git process and eventually produces the same result with one Run. Server entry tests reject overlapping
+directories and preserve unknown files, and reuse intent accepted by a separate Controller owner.
+DOM tests verify UI behavior, automatic polling recovery and reload identity recovery. Full browser-engine
+interaction acceptance is explicitly outside the agreed scope.

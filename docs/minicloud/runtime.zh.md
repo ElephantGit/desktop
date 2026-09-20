@@ -60,4 +60,7 @@ HTTP 错误不是 clone 终态。浏览器 DTO 从 `ora-contracts::minicloud` �
 包含 server SIGKILL／重启和唯一变更 Run；要求 Linux 且已安装前端依赖。
 Vite 用例在纯 Rust CI 中显式跳过，通过专项任务执行。
 真实链路还通过 SQLite writer lock 注入接受写失败，验证 HTTP 503 且没有接受记录，释放后仍只有一个 Run。
-DOM 测试验证页面行为及刷新身份恢复；完整浏览器引擎交互测试、真实 HTTP 回复截断仍是独立验收缺口。
+真实 TCP 代理截断接受响应 body，server 重启后重传仍保留原执行；clone 期间正常关闭 server，
+固定身份的 Git 进程仍存活，最终返回同一结果且只有一个 Run。server 入口验证重叠目录拒绝、
+未知文件保留，并复用独立 Controller 所有者接受的记录。
+DOM 测试验证页面行为、轮询自动恢复及刷新身份恢复；完整浏览器引擎交互验收明确不在本次范围内。

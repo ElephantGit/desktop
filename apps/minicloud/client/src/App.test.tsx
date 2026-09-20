@@ -18,6 +18,37 @@ const operation: MiniCloneOperation = {
 beforeEach(() => sessionStorage.clear());
 
 describe("clone application", () => {
+  it("automatically resumes polling after an outage without submitting again", async () => {
+    let online = false;
+    const submit = vi.fn<CloneClient["submit"]>();
+    render(
+      <App
+        pollMs={20}
+        client={{
+          submit,
+          list: async () => {
+            if (!online) throw new Error("offline");
+            return [
+              {
+                ...operation,
+                state: {
+                  kind: "succeeded",
+                  path: "/restored",
+                  commit: "original-commit",
+                },
+              },
+            ];
+          },
+        }}
+      />,
+    );
+    await screen.findByRole("alert");
+    online = true;
+    await screen.findByText("original-commit");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText("Node 路径：/restored")).toBeTruthy();
+    expect(submit).not.toHaveBeenCalled();
+  });
   it("keeps the request locked when rejected input cannot be removed from storage", async () => {
     const storage: Storage = {
       length: 0,

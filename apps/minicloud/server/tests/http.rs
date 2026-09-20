@@ -3,7 +3,7 @@
 use ora_contracts::minicloud::*;
 use ora_controller::{NodeEndpoint, RuntimeConfig, SessionConfig};
 use ora_minicloud_server::{Server, ServerConfig};
-use ora_node_protocol::{ControllerId, NodeId};
+use ora_node_protocol::{BranchName, CloneExecutionSpec, CloneRepositoryUrl, ControllerId, NodeId};
 use pretty_assertions::assert_eq;
 use std::{fs, os::unix::fs::PermissionsExt};
 
@@ -43,6 +43,44 @@ fn http_acceptance_is_idempotent_and_survives_server_restart() {
                 exposed.listen = "0.0.0.0:0".parse().unwrap();
                 assert!(Server::bind(exposed).await.is_err());
                 assert!(!config.controller.home_directory.exists());
+                let mut overlap = config.clone();
+                overlap.controller.home_directory = root.path().join("process").join("nested");
+                assert!(Server::bind(overlap).await.is_err());
+                assert!(!root.path().join("process").exists());
+                fs::create_dir(&config.controller.home_directory).unwrap();
+                fs::set_permissions(
+                    &config.controller.home_directory,
+                    fs::Permissions::from_mode(/*mode*/ 0o700),
+                )
+                .unwrap();
+                let unknown = config
+                    .controller
+                    .home_directory
+                    .join("ora-controller.sqlite3");
+                fs::write(&unknown, b"user-owned unknown file").unwrap();
+                assert!(Server::bind(config.clone()).await.is_err());
+                assert_eq!(fs::read(&unknown).unwrap(), b"user-owned unknown file");
+                // Retain the rejected fixture file; the legitimate owner starts in a fresh root.
+                let mut config = config;
+                config.controller.home_directory = root.path().join("valid-controller");
+                let mut standalone = ora_controller::Controller::open(
+                    &config.controller.home_directory,
+                    config.controller.controller_id.clone(),
+                )
+                .unwrap();
+                let original = standalone
+                    .accept_clone(
+                        ora_node_protocol::RequestId::new("original"),
+                        CloneExecutionSpec {
+                            node_id: config.node_id.clone(),
+                            repository: CloneRepositoryUrl::parse("https://example.com/repo.git")
+                                .unwrap(),
+                            branch: BranchName::new("main"),
+                        },
+                    )
+                    .unwrap();
+                assert!(Server::bind(config.clone()).await.is_err());
+                drop(standalone);
                 let server = Server::bind(config.clone()).await.unwrap();
                 assert!(Server::bind(config.clone()).await.is_err());
                 let base = format!("http://{}/api/clones", server.local_addr().unwrap());
@@ -59,6 +97,14 @@ fn http_acceptance_is_idempotent_and_survives_server_restart() {
                 let response = client.post(&base).json(&input).send().await.unwrap();
                 assert_eq!(response.status().as_u16(), 202);
                 let accepted: MiniCloneAccepted = response.json().await.unwrap();
+                assert_eq!(
+                    accepted,
+                    MiniCloneAccepted {
+                        request_id: "original".into(),
+                        operation_id: original.operation_id.as_str().into(),
+                        execution_id: original.execution_id.as_str().into(),
+                    }
+                );
                 assert_eq!(
                     client
                         .post(&base)

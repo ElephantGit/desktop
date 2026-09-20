@@ -14,6 +14,56 @@ enum Entry {
     Vite,
 }
 
+/// Drops a real HTTP response body only after observing the upstream durable acceptance receipt.
+async fn truncated_acceptance(address: String, input: &MiniCloneRequest) -> MiniCloneAccepted {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/api/clones", listener.local_addr().unwrap());
+    let relay = tokio::spawn(async move {
+        let (mut downstream, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        while !request.ends_with(b"\r\n\r\n") {
+            request.push(downstream.read_u8().await.unwrap());
+            assert!(request.len() < 8192);
+        }
+        let length: usize = String::from_utf8_lossy(&request)
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse().unwrap())
+            })
+            .unwrap();
+        let mut body = vec![0; length];
+        downstream.read_exact(&mut body).await.unwrap();
+        request.extend(body);
+        let mut upstream = tokio::net::TcpStream::connect(address).await.unwrap();
+        upstream.write_all(&request).await.unwrap();
+        let mut response = Vec::new();
+        upstream.read_to_end(&mut response).await.unwrap();
+        assert!(response.starts_with(b"HTTP/1.1 202"));
+        let start = response
+            .windows(4)
+            .position(|part| part == b"\r\n\r\n")
+            .unwrap()
+            + 4;
+        let receipt = serde_json::from_slice::<MiniCloneAccepted>(&response[start..]).unwrap();
+        downstream.write_all(&response[..start + 1]).await.unwrap();
+        downstream.shutdown().await.unwrap();
+        receipt
+    });
+    let response = reqwest::Client::new()
+        .post(endpoint)
+        .header("connection", "close")
+        .json(input)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 202);
+    assert!(response.json::<MiniCloneAccepted>().await.is_err());
+    relay.await.unwrap()
+}
+
 /// Starts a production server process and reads its actual ephemeral loopback address.
 fn launch(fixture: &Fixture, config: &ServerConfig) -> (ChildGuard, String) {
     let path = fixture.path().join("minicloud.json");
@@ -170,9 +220,12 @@ fn exercise(entry: Entry) {
                         .unwrap(),
                     vec![]
                 );
-                let response = client.post(&endpoint).json(&input).send().await.unwrap();
-                assert_eq!(response.status().as_u16(), 202);
-                let receipt: MiniCloneAccepted = response.json().await.unwrap();
+                let receipt = tokio::time::timeout(
+                    Duration::from_secs(/*secs*/ 10),
+                    truncated_acceptance(address.clone(), &input),
+                )
+                .await
+                .unwrap();
                 server.kill();
                 let (replacement, _) = launch(&fixture, &config);
                 server = replacement;
@@ -188,7 +241,41 @@ fn exercise(entry: Entry) {
                         .unwrap(),
                     receipt
                 );
+                // A .git directory is Git's observable side effect, not just Controller acceptance.
+                // Keep HTTPS paused while normally stopping the coordinator during the live clone.
+                until(|| {
+                    fs::read_dir(&clone.repository_root)
+                        .unwrap()
+                        .flatten()
+                        .any(|entry| entry.path().join(".git").is_dir())
+                });
+                let mut git = None;
+                until(|| {
+                    git = ora_utils::process::linux_process_snapshot()
+                        .unwrap()
+                        .flatten()
+                        .find_map(|stat| {
+                            let executable = std::path::Path::new("/proc")
+                                .join(stat.pid.to_string())
+                                .join("exe");
+                            if fs::read_link(executable).ok().as_ref()
+                                == Some(&fixture.path().join("git"))
+                            {
+                                ora_utils::process::LinuxPidFd::from_observation(&stat).ok()
+                            } else {
+                                None
+                            }
+                        });
+                    git.is_some()
+                });
+                let git = git.unwrap();
+                server.terminate();
+                assert!(server.0.try_wait().unwrap().unwrap().success());
+                assert!(node.0.try_wait().unwrap().is_none());
+                assert!(!git.has_exited().unwrap());
                 source.paused.store(false, Ordering::SeqCst);
+                let (replacement, _) = launch(&fixture, &config);
+                server = replacement;
                 let final_record = tokio::time::timeout(Duration::from_secs(/*secs*/ 40), async {
                     loop {
                         let records: Vec<MiniCloneOperation> = client

@@ -48,5 +48,6 @@ The [clone root decision](../../specs/decisions/node/repository/0-clone-selected
 and [minimal execution contract](../../specs/decisions/node/repository/20260918-minimal-clone-execution-contract.md)
 were approved on 2026-09-18, confirming scope, input, destination, content and recovery policies. Core verification obligations
 include real HTTPS/SSH clone, Node-kill recovery, terminal-write failure and Controller lost-Ack recovery evidence.
-Real minicloud HTTP/Vite-proxy clone and server restart are verified; browser-engine acceptance and additional
-fault combinations remain missing. There is no user-directory migration or Backend writer cutover.
+Real minicloud HTTP/Vite-proxy clone, lost-response retry, server shutdown/restart and state handoff are verified;
+its root ADR is implemented. Full browser-engine acceptance is outside the agreed scope. Additional
+Node/Controller fault combinations remain tracked in their own core cases. There is no user-directory migration or Backend writer cutover.

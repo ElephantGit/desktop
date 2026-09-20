@@ -215,6 +215,7 @@ tasks:
       - deno task --filter @ora/minicloud-client test
       - deno task --filter @ora/minicloud-client build
       - cargo build -p ora-minicloud-server -p ora-node -p ora-process-host -p ora-process-guardian
+      - cargo test -p ora-minicloud-server
       - cargo test -p ora-node --test standalone minicloud -- --include-ignored
 
   test:crates:
