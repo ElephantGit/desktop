@@ -4,8 +4,9 @@
 
 minicloud 是承载 Ora clone 最小闭环及短期需求的非生产本机应用。
 它替代 Desktop 成为首个用户入口，不替代已有 Controller 和 Node 职责。
-[根 ADR](../../specs/decisions/minicloud/runtime/0-local-web-client-embedded-controller.md) 已于 2026-09-20 获批，应用尚未实现。
-[核心验证义务](../../specs/test-cases/minicloud/runtime/local-web-clone-loop.md)已登记，直接证据仍缺失。
+Linux client／server clone 闭环已实现，启动方式见[运行 minicloud](runtime.zh.md)。
+[根 ADR](../../specs/decisions/minicloud/runtime/0-local-web-client-embedded-controller.md) 保持 approved，
+[核心验证义务](../../specs/test-cases/minicloud/runtime/local-web-clone-loop.md)中继续如实保留验收缺口。
 
 ## 组合
 

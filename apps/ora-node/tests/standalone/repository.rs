@@ -32,6 +32,9 @@ mod session;
 #[path = "repository_takeover_crash.rs"]
 mod takeover_crash;
 
+#[path = "repository_minicloud.rs"]
+mod minicloud;
+
 /// Provides explicit trusted TLS configuration without modifying process environment or user Git config.
 fn configuration(fixture: &Fixture, server: &HttpsRepository) -> CloneConfig {
     let root = fixture.path().join("clones");

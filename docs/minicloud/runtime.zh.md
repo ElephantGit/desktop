@@ -33,6 +33,13 @@ Node 配置的归属必须匹配 ControllerId。启动 minicloud 前，停止使
 
 ## HTTP 接口
 
+先运行 `deno install`，再从仓库根执行 `deno task --filter @ora/minicloud-client dev`，
+打开 `http://127.0.0.1:5174`。Vite 将 `/api` 代理到 `http://127.0.0.1:4317`；
+不同 server 端口可通过 `MINICLOUD_SERVER_URL` 配置。
+页面使用共享 shadcn 组件及 React 19，轮询 Controller 操作。
+提交前把未确认请求写入当前标签页 session storage；回复丢失或刷新后，“重试原请求”复用原身份与输入。
+这不是操作历史数据库。关闭页面终止 HTTP 和轮询，不取消 Node 执行。
+
 - `POST /api/clones`：`{ "requestId": "stable-client-id", "repository": "https://host/repo.git", "branch": "main" }`。
   持久接受后返回 HTTP 202，包含 `requestId`、`operationId`、`executionId`。
 - `GET /api/clones`：按接受顺序倒序列出操作，Node 离线时仍能读取待协调记录。
@@ -47,3 +54,10 @@ HTTP 错误不是 clone 终态。浏览器 DTO 从 `ora-contracts::minicloud` �
 
 真实 HTTP 测试覆盖接受、冲突、无效输入、离线列表、不存在的执行身份、独占、回环限制及正常重启。
 下层 Controller 强杀测试与 minicloud 自身端到端证据分别记录。
+
+前端检查：`deno task --filter @ora/minicloud-client lint`、`test`、`build`。
+`task test:minicloud` 另验证真实 HTTP 及 Vite proxy → 独立 minicloud server → Node → HTTPS Git，
+包含 server SIGKILL／重启和唯一变更 Run；要求 Linux 且已安装前端依赖。
+Vite 用例在纯 Rust CI 中显式跳过，通过专项任务执行。
+真实链路还通过 SQLite writer lock 注入接受写失败，验证 HTTP 503 且没有接受记录，释放后仍只有一个 Run。
+DOM 测试验证页面行为及刷新身份恢复；完整浏览器引擎交互测试、真实 HTTP 回复截断仍是独立验收缺口。

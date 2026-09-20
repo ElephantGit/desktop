@@ -4,8 +4,9 @@ English | [中文](overview.zh.md)
 
 minicloud is the non-production local application for Ora's clone minimal loop and near-term needs.
 It replaces Desktop as the first user-facing entry, not the existing Controller or Node responsibilities.
-The [root ADR](../../specs/decisions/minicloud/runtime/0-local-web-client-embedded-controller.md) was approved on 2026-09-20; the application is not implemented yet.
-Its [core verification obligations](../../specs/test-cases/minicloud/runtime/local-web-clone-loop.md) are recorded with evidence still missing.
+The Linux client/server clone loop is implemented; see [running minicloud](runtime.md).
+The [root ADR](../../specs/decisions/minicloud/runtime/0-local-web-client-embedded-controller.md) remains approved
+while its [core verification obligations](../../specs/test-cases/minicloud/runtime/local-web-clone-loop.md) retain explicit remaining acceptance gaps.
 
 ## Composition
 

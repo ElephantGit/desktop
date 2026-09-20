@@ -34,6 +34,13 @@ This is a non-production application, with no authentication or additional secur
 
 ## HTTP interface
 
+After `deno install`, run `deno task --filter @ora/minicloud-client dev` from the repository root and
+open `http://127.0.0.1:5174`. Vite proxies `/api` to `http://127.0.0.1:4317`; set
+`MINICLOUD_SERVER_URL` when using a different server port. The page uses the shared shadcn components
+with React 19 and polls Controller operations. An unresolved submission is saved in tab session storage
+before dispatch; after response loss or reload, “retry original request” reuses its identity and input.
+This storage is not operation history. Closing the page aborts HTTP and polling, not the Node execution.
+
 - `POST /api/clones`: `{ "requestId": "stable-client-id", "repository": "https://host/repo.git", "branch": "main" }`.
   Returns HTTP 202 with `requestId`, `operationId`, and `executionId` after durable acceptance.
 - `GET /api/clones`: newest accepted operations first, including pending records while Node is offline.
@@ -51,3 +58,11 @@ There is no separate minicloud task database, cleanup command or automatic new-e
 Real HTTP tests cover acceptance, conflicts, invalid input, offline listing, missing identities, exclusive
 ownership, loopback restriction and normal server restart. Lower-level Controller crash tests remain
 separate from minicloud's own end-to-end evidence.
+
+Frontend checks: `deno task --filter @ora/minicloud-client lint`, `test`, and `build`.
+`task test:minicloud` additionally runs real HTTP and Vite proxy → independent minicloud server →
+Node → HTTPS Git tests, including server SIGKILL/restart and one mutation Run. It requires Linux and
+installed frontend dependencies. The Vite case is explicitly opt-in for Rust-only CI runners.
+The real chain also holds a SQLite writer lock to verify HTTP 503 without accepted intent, then releases
+it and verifies a single Run. DOM tests verify UI behavior and reload identity recovery; a full
+browser-engine interaction suite and real HTTP response truncation remain separate acceptance gaps.
