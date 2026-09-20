@@ -131,6 +131,7 @@ export function createContractsClient(transport: ContractTransport): ContractsCl
     },
     workflow: {
       activate: (request, options) => executeOperation("activateWorkflow", request, transport, options),
+      analyze: (request, options) => executeOperation("analyzeWorkflow", request, transport, options),
       create: (request, options) => executeOperation("createWorkflow", request, transport, options),
       delete: (request, options) => executeOperation("deleteWorkflow", request, transport, options),
       deleteSnapshot: (request, options) => executeOperation("deleteSnapshot", request, transport, options),

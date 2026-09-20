@@ -9,7 +9,10 @@ use std::collections::{BTreeMap, HashMap};
 impl WorkflowGraph {
     /// Parses a frozen React Flow graph JSON into a validated, scope-aware DAG.
     pub fn parse(source: &str) -> Result<Self, GraphError> {
-        parse_scoped_graph(source)
+        let document = super::execution_document::project(source)?;
+        let graph = parse_scoped_graph(&document.graph.to_string())?;
+        super::unused_references::validate(&graph, &document.unused_node_ids)?;
+        Ok(graph)
     }
 
     /// Finds a node in the root graph or any container body.

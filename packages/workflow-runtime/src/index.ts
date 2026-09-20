@@ -41,6 +41,7 @@ export type {
 export { findOpenHitlForNode, listOpenHitls } from "./types";
 export {
   normalizeWorkflowDefinition,
+  normalizeWorkflowDocument,
   validateWorkflowDefinition,
   WorkflowDefinitionValidationError,
   type WorkflowDefinitionInput,

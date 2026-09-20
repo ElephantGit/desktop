@@ -15,6 +15,7 @@ export const tauriCommands = {
   activatePlugin: "activate_plugin",
   activateWorkflow: "activate_workflow",
   addMarketplaceSource: "add_marketplace_source",
+  analyzeWorkflow: "analyze_workflow",
   cancelSessionPrompt: "cancel_session_prompt",
   cancelSkillImport: "cancel_skill_import",
   cancelWorkflowRun: "cancel_workflow_run",

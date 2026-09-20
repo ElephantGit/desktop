@@ -3,6 +3,7 @@ desktop_command_registry! {
     commands::plugin::activate_plugin,
     commands::workflow::activate_workflow,
     commands::plugin::add_marketplace_source,
+    commands::workflow::analyze_workflow,
     commands::stream::cancel_contract_stream,
     commands::session::cancel_session_prompt,
     commands::skill::cancel_skill_import,

@@ -11,6 +11,7 @@ mod branch_projection;
 mod condition;
 #[allow(clippy::module_inception)]
 mod engine;
+mod execution_document;
 mod graph;
 mod handlers;
 mod iteration;
@@ -24,6 +25,7 @@ mod ports;
 mod skill_delivery;
 mod start_input;
 mod structured_output;
+mod unused_references;
 mod variable_pool;
 mod variable_template;
 mod variable_value;

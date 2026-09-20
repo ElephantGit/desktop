@@ -1,3 +1,7 @@
+import {
+  useWorkflowNodeUnused,
+  WorkflowUnusedBadge,
+} from "../workflow-node-chrome";
 import { useLayoutEffect } from "react";
 import { Handle, Position, useUpdateNodeInternals } from "@xyflow/react";
 import { IconHomeFilled, IconSparkles, IconStack2 } from "@tabler/icons-react";
@@ -44,6 +48,7 @@ export function RunOverviewIterationNode({
 }: RunOverviewIterationNodeProps) {
   const { t } = useTranslation();
   const updateNodeInternals = useUpdateNodeInternals();
+  const unused = useWorkflowNodeUnused(id);
   const tone = runStatusTone(state.status);
   const hasTiming = startedLabel !== null || finishedLabel !== null;
   const memberCount =
@@ -59,9 +64,10 @@ export function RunOverviewIterationNode({
     <article
       data-workflow-run-node=""
       data-workflow-run-iteration-frame=""
-      aria-label={`${data.title}: ${t(tone.labelKey)}`}
+      aria-label={`${data.title}: ${t(unused ? "workflowNode.unused" : tone.labelKey)}`}
       className={cn(
         "relative size-full overflow-visible rounded-2xl border bg-card/70 shadow-sm ring-1 transition-[border-color,box-shadow,ring-color]",
+        unused && "opacity-60",
         tone.ring,
         focused && "shadow-md ring-2",
         state.status === "running" && "ring-sky-500/35 theater-live-breathe",
@@ -124,11 +130,15 @@ export function RunOverviewIterationNode({
             <span className="tabular-nums">{artifactCount}</span>
           </span>
         ) : undefined}
-        <RunStatusBadge
-          status={state.status}
-          live={isNodeWorking(state.status)}
-          className="px-1.5 py-0 text-[9px]"
-        />
+        {unused ? (
+          <WorkflowUnusedBadge />
+        ) : (
+          <RunStatusBadge
+            status={state.status}
+            live={isNodeWorking(state.status)}
+            className="px-1.5 py-0 text-[9px]"
+          />
+        )}
       </header>
 
       <div

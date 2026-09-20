@@ -536,6 +536,43 @@ describe("WorkflowEditor", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("presents backend-derived unused nodes while preserving them in saved documents", async () => {
+    const user = userEvent.setup();
+    const saved: string[] = [];
+    let spareId = "";
+    renderEditor(undefined, createFixtureState(), (handlers) => {
+      handlers.analyzeWorkflow = ({ graph }) => {
+        const document = JSON.parse(graph) as {
+          nodes: Array<{ id: string; data: { kind: string } }>;
+        };
+        spareId =
+          document.nodes.find((node) => node.data.kind === "agent")?.id ?? "";
+        return { unusedNodeIds: spareId === "" ? [] : [spareId] };
+      };
+      const update = handlers.updateDraft!;
+      handlers.updateDraft = (request, options) => {
+        saved.push(request.graph);
+        return update(request, options);
+      };
+    });
+    await screen.findByText("有 1 个节点未参与运行");
+    expect(screen.getByText("未参与运行")).toHaveAttribute(
+      "title",
+      "此节点或所属容器未从作用域入口连通，不会参与运行。",
+    );
+    const name = screen.getByLabelText("工作流名称");
+    await user.clear(name);
+    await user.type(name, "保留备用节点");
+    await waitFor(() => expect(saved.length).toBeGreaterThan(0));
+    const document = JSON.parse(saved.at(-1)!) as {
+      nodes: Array<{ id: string; data: Record<string, unknown> }>;
+    };
+    const spare = document.nodes.find((node) => node.id === spareId);
+    expect(spare).toBeDefined();
+    expect(spare!.data).not.toHaveProperty("unused");
+    expect(spare!.data).not.toHaveProperty("unusedNodeIds");
+  });
+
   it("previews and activates a mock published workflow version", async () => {
     const user = userEvent.setup();
     renderEditor();
