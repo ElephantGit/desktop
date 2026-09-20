@@ -251,6 +251,11 @@ tasks:
   ############# Run Development Servers #############
   ###################################################
 
+  run:minicloud:
+    desc: Initialize and run the local minicloud stack; Ctrl+C stops all components
+    cmds:
+      - deno run -A scripts/run-minicloud.ts
+
   run:desktop:
     desc: Run the desktop Tauri app in development mode
     preconditions:

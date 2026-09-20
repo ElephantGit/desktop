@@ -2,6 +2,38 @@
 
 English | [中文](runtime.zh.md)
 
+## One-command development environment
+
+Run `task run:minicloud` at the repository root. The launcher installs frontend dependencies, builds
+debug binaries, then starts host, Node, the server embedding Controller, and Vite. Open
+`http://127.0.0.1:5174`. Linux, Deno, Cargo, Node.js, Git and `setsid` are required; root is not.
+
+Development configuration and runtime data live under `.data/minicloud/`:
+
+- `config/node.json`, `server.json`, `client.json`: deployment configuration and frontend port.
+- `config/clone.gitconfig`: noninteractive Git configuration; the default supports credential-free HTTPS repositories. Configure private-repository credentials explicitly.
+- `node/`, `controller/`: databases and Node IPC; `p/`: host/guardian state (short to leave room for Unix socket names).
+- `repositories/`: clones; `home/`: workload HOME; `bin/`: identifiable versioned guardians; `vite/`: Vite cache.
+
+Repeated runs preserve configuration edits, databases and checkouts; failed recovery never falls back
+to clearing state. Logs go to the terminal. Dependencies and build outputs retain the standard
+repository `node_modules`/`target` locations. Use `deno run -A scripts/run-minicloud.ts --init-only`
+to initialize without starting, or `--no-build` to skip installation and compilation. Restart after
+changing ports; launcher-owned state paths must not point at a different deployment.
+
+Ctrl+C or unexpected component exit stops Vite/server, waits for Node to clean up managed Git, then
+stops host and guardians belonging to this directory. Stop timeouts are reported before escalating
+signals; escaped workload descendants are not guaranteed to terminate. Interrupted clones may remain
+pending/unknown for recovery; they are never automatically recreated or deleted. An exclusive lock
+rejects a second launcher for the same data directory.
+
+Debug builds skip Unix permission-bit checks on trusted paths, allowing group-writable checkouts
+without changing existing permissions. Owner, symlink, hard-link, type, directory-isolation and database
+ownership checks remain enabled; release builds still enforce permission bits. Long real checkout
+paths may exceed Unix socket limits; use a shorter real path, not a symlink workaround.
+
+## Manual deployment
+
 The Linux HTTP executable embeds the same Controller runtime as `ora-controller`. Start Node and
 host/guardian using their existing [deployment configuration](../node/repository-clone.md), then build
 `cargo build -p ora-minicloud-server`. Run `ora-minicloud-server /absolute/path/minicloud.json`:
