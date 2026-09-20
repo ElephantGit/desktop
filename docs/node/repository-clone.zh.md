@@ -18,7 +18,7 @@ Linux Node 为嵌入调用方提供 `configure_clone`、`submit_clone` 和 `reco
 ```
 
 这是原独立入口配置的附加部分，不是完整配置文件。启动前须部署根目录和配置文件。路径必须绝对，
-由当前用户或 root 控制，禁止 group／other 写入及符号链接路径分量。Node 不修改部署权限。
+由当前用户或 root 控制，禁止符号链接路径分量。release 禁止 group／other 写入，debug 跳过权限位校验；Node 不修改部署权限。
 根目录不能与 Node／process 状态或已配置的 Worktree checkout 重叠。文件系统须支持 Unix birth time：
 使用设备、inode、创建时间识别根和新建目标。身份缺失或替换保持 Unknown，数据库预留本身不证明目录归属。
 这是无需 root、信任同用户的保护，不是对抗同 UID 恶意代码的隔离。

@@ -49,8 +49,9 @@ authorized root and worktree root. No repository is cloned or inferred from cwd.
 
 Node data is always `home_directory/ora-node.sqlite3`. Both state directories are absolute and injected;
 neither is selected from HOME. The environment's HOME above configures Git only. New Node directories
-are private on Unix; existing nonprivate directories, symlinks through trusted paths and aliases of
-host state are rejected rather than chmod'ed, overwritten or repurposed. Existing v1 Node databases
+are private on Unix; release builds reject existing nonprivate directories. Debug builds skip permission-bit
+checks without chmod. Both builds reject wrong owners, symlinks through trusted paths and aliases of
+host state rather than overwriting or repurposing them. Existing v1 Node databases
 follow the [storage migration](persistence/storage.md).
 
 ## Execution and recovery

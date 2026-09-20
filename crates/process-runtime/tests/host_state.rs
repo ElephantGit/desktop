@@ -254,10 +254,12 @@ fn recovery_rejects_links_permissions_and_unknown_files() -> TestResult {
     assert!(HostState::recover(&path).is_err());
     fs::remove_file(&saved)?;
     fs::set_permissions(&database, fs::Permissions::from_mode(/*mode*/ 0o644))?;
-    assert!(HostState::recover(&path).is_err());
+    assert_eq!(HostState::recover(&path).is_ok(), cfg!(debug_assertions));
     assert_eq!(fs::metadata(&database)?.mode() & 0o777, 0o644);
     fs::set_permissions(&database, fs::Permissions::from_mode(/*mode*/ 0o600))?;
 
+    // Debug permission bypass permits recovery to advance the host generation above.
+    let original = fs::read(&database)?;
     fs::write(path.join("unknown"), b"preserve")?;
     assert!(HostState::recover(&path).is_err());
     assert_eq!(

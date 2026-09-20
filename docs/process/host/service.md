@@ -10,7 +10,8 @@ This is a cooperative same-user deployment, not authentication against malicious
 ## Deployment and connection
 
 Build both binaries with `cargo build -p ora-process-host -p ora-process-guardian`. Deploy the guardian
-executable under a trusted absolute path; its ancestors cannot be group/other writable or symlinks.
+executable under a trusted absolute path; release builds reject group/other writable ancestors, while
+debug builds skip permission-bit checks. Both retain owner, symlink and inode-type checks.
 Choose an explicit, private local state parent that satisfies the host journal's filesystem and socket
 path-length requirements. The app neither reads HOME to select state nor creates missing parents.
 

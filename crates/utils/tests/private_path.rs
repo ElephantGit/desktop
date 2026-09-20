@@ -34,8 +34,24 @@ fn private_path_requires_exact_owner_and_private_permissions() -> TestResult {
     open_private_path(&path, owner, TrustedPathKind::File)?;
     assert!(open_private_path(&path, owner.wrapping_add(1), TrustedPathKind::File).is_err());
     fs::set_permissions(&path, fs::Permissions::from_mode(/*mode*/ 0o640))?;
-    assert!(open_private_path(&path, owner, TrustedPathKind::File).is_err());
+    assert_eq!(
+        open_private_path(&path, owner, TrustedPathKind::File).is_ok(),
+        cfg!(debug_assertions)
+    );
     assert_eq!(fs::read(&path)?, b"private");
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(/*mode*/ 0o775))?;
+    assert_eq!(
+        open_private_path(directory.path(), owner, TrustedPathKind::Directory).is_ok(),
+        cfg!(debug_assertions)
+    );
+    assert_eq!(
+        open_private_path(&path, owner, TrustedPathKind::File).is_ok(),
+        cfg!(debug_assertions)
+    );
+    assert_eq!(
+        fs::metadata(directory.path())?.permissions().mode() & 0o777,
+        0o775
+    );
     Ok(())
 }
 

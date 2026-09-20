@@ -18,12 +18,13 @@ pub enum TrustedPathKind {
 ///
 /// Regular files must have one link so a second pathname cannot accidentally share private state.
 /// Ancestors follow `open_trusted_path` rules; the final target must belong to the selected owner
-/// and deny all group/other access. This does not isolate mutually untrusted code with the same UID.
+/// and deny all group/other access in release builds. Debug builds skip permission-bit checks
+/// for local development; ownership, inode type and link checks remain mandatory.
 pub fn open_private_path(path: &Path, owner: u32, kind: TrustedPathKind) -> io::Result<File> {
     let file = open_trusted_path(path, owner, kind)?;
     let metadata = file.metadata()?;
     if metadata.uid() != owner
-        || metadata.mode() & 0o077 != 0
+        || (!cfg!(debug_assertions) && metadata.mode() & 0o077 != 0)
         || (metadata.is_file() && metadata.nlink() != 1)
     {
         return Err(io::Error::new(
@@ -36,7 +37,8 @@ pub fn open_private_path(path: &Path, owner: u32, kind: TrustedPathKind) -> io::
 
 /// Opens an absolute path without following links, trusting only root and the selected owner.
 ///
-/// Every ancestor and the final inode must reject group/other writes. Descriptor-relative walks
+/// Release builds require every ancestor and final inode to reject group/other writes. Debug
+/// builds permit development checkouts with shared permissions without changing their modes. Descriptor-relative walks
 /// pin checked directories; the returned descriptor pins the checked target. Trusted owners may
 /// still change their files, so this is not a sandbox against the selected owner or root.
 pub fn open_trusted_path(path: &Path, owner: u32, kind: TrustedPathKind) -> io::Result<File> {
@@ -63,7 +65,9 @@ pub fn open_trusted_path(path: &Path, owner: u32, kind: TrustedPathKind) -> io::
         .collect();
     for index in 0..=parts.len() {
         let metadata = directory.metadata()?;
-        if (metadata.uid() != 0 && metadata.uid() != owner) || metadata.mode() & 0o022 != 0 {
+        if (metadata.uid() != 0 && metadata.uid() != owner)
+            || (!cfg!(debug_assertions) && metadata.mode() & 0o022 != 0)
+        {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "path is not exclusively controlled by trusted owners",

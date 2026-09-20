@@ -45,5 +45,8 @@ fn trusted_file_is_opened_without_following_links() {
     assert!(open_trusted_path(&link, owner, TrustedPathKind::File).is_err());
     fs::set_permissions(&path, fs::Permissions::from_mode(/*mode*/ 0o666))
         .unwrap_or_else(|e| panic!("permissions: {e}"));
-    assert!(open_trusted_path(&path, owner, TrustedPathKind::File).is_err());
+    assert_eq!(
+        open_trusted_path(&path, owner, TrustedPathKind::File).is_ok(),
+        cfg!(debug_assertions)
+    );
 }

@@ -46,8 +46,8 @@ ora-node /absolute/path/node-config.json
 仓库引用、已有 Main Workspace 身份／路径、授权根和 worktree 根；不克隆仓库，也不从 cwd 猜测绑定。
 
 Node 数据固定放在 `home_directory/ora-node.sqlite3`。Node 与 host 的状态目录均为显式注入的绝对路径，
-不从 HOME 推导；上面环境中的 HOME 只影响 Git。Unix 下新 Node 目录为私有目录；已有非私有目录、
-受信路径中的符号链接及 host 状态目录的别名会被拒绝，不会被 chmod、覆盖或挪作他用。
+不从 HOME 推导；上面环境中的 HOME 只影响 Git。Unix 下新 Node 目录为私有目录；release 拒绝已有非私有目录，
+debug 跳过权限位校验但不 chmod。两种构建仍拒绝错误所有者、受信路径中的符号链接及 host 状态目录别名，不覆盖或挪作他用。
 已有 v1 Node 数据库按[存储迁移规则](persistence/storage.zh.md)处理。
 
 ## 执行与恢复

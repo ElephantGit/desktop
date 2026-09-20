@@ -19,7 +19,8 @@ clones. Optional [local IPC](local-ipc.md) accepts new clone commands; files and
 
 These are additions to the existing executable configuration, not a complete configuration file.
 Provision the root and configuration before startup. All paths must be absolute, controlled by the
-current user or root, with no group/other writes or symlink components. Node does not change deployment
+current user or root, without symlink components. Release rejects group/other writes; debug skips permission-bit
+checks. Node does not change deployment
 permissions. The root cannot overlap Node/process state or configured Worktree checkouts. Unix filesystem
 birth-time support is required: device, inode and birth time identify the root and newly created leaf.
 Missing or replaced ownership evidence remains Unknown; a database reservation alone never owns a directory.

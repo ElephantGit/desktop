@@ -9,7 +9,8 @@ Linux `ora-process-host` app 持有[宿主日志与协调器](storage.zh.md)，�
 ## 部署与连接
 
 用 `cargo build -p ora-process-host -p ora-process-guardian` 构建两个程序。guardian 可执行文件
-部署在可信绝对路径下，祖先目录不能组／其他用户可写，也不能有符号链接。显式选择私有本地状态父目录，
+部署在可信绝对路径下；release 拒绝组／其他用户可写的祖先目录，debug 跳过权限位校验，
+两种构建仍保留所有者、符号链接和 inode 类型校验。显式选择私有本地状态父目录，
 满足宿主日志的文件系统和 socket 路径长度要求；app 不读取 HOME 选择状态，也不创建缺失的父目录。
 
 ```text
