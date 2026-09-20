@@ -23,6 +23,10 @@ application ID 为 `0x4f524143`、schema version 为 1；精确结构／完整�
 
 ## 独立可执行入口
 
+`ControllerRuntime::open(RuntimeConfig)` 同时支持内嵌。`handle()` 提供持久 clone 接受、操作列表和查询；
+`run(shutdown)` 拥有重连循环，不安装进程信号。查询不存在与操作已接受但尚无终态明确区分。
+调用方停止受理、等待关闭并释放句柄后，数据库独占锁才释放。独立程序也使用同一运行时，只自行提供进程信号。
+
 构建 `cargo build -p ora-controller -p ora-node -p ora-process-host -p ora-process-guardian`。
 分别部署 host 和 Node，Node 配置的归属须匹配 ControllerId，然后运行
 `ora-controller /absolute/path/controller.json`：

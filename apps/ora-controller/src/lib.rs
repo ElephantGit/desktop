@@ -1,9 +1,15 @@
 //! Local durable clone coordination; no Desktop/Backend writer or Cloud authority is installed.
+mod operations;
+#[cfg(target_os = "linux")]
+mod runtime;
 #[cfg(target_os = "linux")]
 mod session;
 mod storage;
 mod takeover;
+pub use operations::CloneOperation;
 use ora_node_protocol::*;
+#[cfg(target_os = "linux")]
+pub use runtime::{ControllerHandle, ControllerRuntime, RuntimeConfig};
 use rusqlite::Connection;
 #[cfg(target_os = "linux")]
 pub use session::{NodeEndpoint, SessionConfig, run_session};

@@ -26,6 +26,12 @@ incarnations are retained, while query reporters and heartbeats must match the c
 
 ## Independent executable
 
+`ControllerRuntime::open(RuntimeConfig)` also supports embedding. `handle()` exposes durable clone
+acceptance, operation listing and lookup; `run(shutdown)` owns reconnect loops without installing signal
+handlers. Missing lookup is distinct from an accepted operation without a terminal result. Callers stop
+accepting requests, await shutdown and release handles to release the database lease. The standalone
+executable uses this same runtime and supplies its own process signals.
+
 Build `cargo build -p ora-controller -p ora-node -p ora-process-host -p ora-process-guardian`.
 Deploy host and Node separately; configure Node's owner to match this ControllerId. Then run
 `ora-controller /absolute/path/controller.json`:
