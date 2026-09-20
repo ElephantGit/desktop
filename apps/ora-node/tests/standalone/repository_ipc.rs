@@ -10,6 +10,17 @@ use tokio::{net::UnixStream, time::timeout};
 
 /// Starts the production service with private injected IPC and a deployment-selected owner.
 pub(super) fn launch(fixture: &Fixture, clone: &CloneConfig) -> ChildGuard {
+    // Ordinary replay tests allow the configured 30-second Git deadline plus cleanup; dedicated
+    // lifecycle tests inject shorter admission deadlines to exercise timeout and reconnection.
+    launch_with_deadline(fixture, clone, /*frame_timeout_ms*/ 40_000)
+}
+
+/// Injects a session deadline without changing production defaults or environment variables.
+pub(super) fn launch_with_deadline(
+    fixture: &Fixture,
+    clone: &CloneConfig,
+    frame_timeout_ms: u64,
+) -> ChildGuard {
     let config = fixture.path().join("ipc-config.json");
     fs::write(
         &config,
@@ -21,7 +32,7 @@ pub(super) fn launch(fixture: &Fixture, clone: &CloneConfig) -> ChildGuard {
                 controller_id: ControllerId::new("owner"),
                 endpoint: fixture.config().home_directory.join("control.sock"),
                 heartbeat_ms: 100,
-                frame_timeout_ms: 3000,
+                frame_timeout_ms,
             }),
             recovery_interval_ms: 50,
             timezone: "Asia/Shanghai".into(),
@@ -41,7 +52,7 @@ pub(super) fn launch(fixture: &Fixture, clone: &CloneConfig) -> ChildGuard {
 }
 
 /// Opens an actual framed stream without bypassing the server's handshake policy.
-async fn connect(path: &Path, owner: &str) -> UnixStream {
+pub(super) async fn connect(path: &Path, owner: &str) -> UnixStream {
     let mut stream = UnixStream::connect(path).await.unwrap();
     write_controller_message(
         &mut stream,

@@ -127,8 +127,15 @@ async fn connected(
             let Some(message) = message else {
                 return Ok::<(), io::Error>(());
             };
-            // Polling the request must not hide EOF forever; writer heartbeats also detect a lost peer.
-            for reply in request(sender, &active, Request::Message(message)).await? {
+            // Git may occupy the worker. Bound admission waiting independently of heartbeats so
+            // revocation invalidates queued work; already durable executions are not canceled.
+            let replies = timeout(
+                deadline,
+                request(sender, &active, Request::Message(message)),
+            )
+            .await
+            .map_err(io::Error::other)??;
+            for reply in replies {
                 outgoing.send(reply).await.map_err(io::Error::other)?;
             }
         }

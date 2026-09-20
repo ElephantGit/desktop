@@ -34,10 +34,17 @@ of unacknowledged clone events. Status replies do not acknowledge events.
 
 Admission uses a bounded queue and a revocable session guard. Only durable admission happens under
 that guard; Git runs afterwards. Disconnect or session revocation discards unaccepted queued work,
-but cannot cancel already accepted clones. Reads and writes have finite frame deadlines; an idle
+but cannot cancel already accepted clones. Reads, writes and command admission replies use the finite
+`frame_timeout_ms` deadline. A busy worker can therefore cause a query/command session to close even
+while heartbeats are arriving; reconnect queries the original execution, not a new attempt. An idle
 Controller should periodically query its executions. Slow readers may be disconnected and reconnect
 for replay. Shutdown closes admission and then performs the existing managed-process cleanup.
 
 The real standalone test verifies owner/duplicate rejection, HTTPS clone, Node kill/restart, unchanged
 result replay and exact acknowledgement. [Controller acceptance](../controller/local-runtime.md) adds
 an independent-process durable-takeover and lost-Ack recovery test.
+
+Additional real-socket tests pause HTTPS during an accepted clone, observe live heartbeats, expire a
+queued command and verify it remains Unknown while the accepted clone completes. Partial-frame tests
+verify timeout and fresh admission; a non-reading peer is flooded with status replies until disconnect,
+then reconnects to the identical unacknowledged result. No production test-only wire messages are used.

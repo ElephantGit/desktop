@@ -26,6 +26,9 @@ mod ipc;
 #[path = "repository_controller.rs"]
 mod controller;
 
+#[path = "repository_session.rs"]
+mod session;
+
 /// Provides explicit trusted TLS configuration without modifying process environment or user Git config.
 fn configuration(fixture: &Fixture, server: &HttpsRepository) -> CloneConfig {
     let root = fixture.path().join("clones");
