@@ -5,6 +5,7 @@ import type { GraphWorkflowRun } from "@ora/workflow-runtime";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { appI18n } from "../../i18n/i18n-instance";
 import { RunOverviewCanvas } from "./run-overview-canvas";
+import { WorkflowMembershipProvider } from "../workflow-node-chrome";
 
 const run: GraphWorkflowRun = {
   id: "run",
@@ -68,6 +69,34 @@ const run: GraphWorkflowRun = {
 };
 
 describe("run overview canvas", () => {
+  it("shows excluded nodes independently of pending runtime status", async () => {
+    await appI18n.changeLanguage("en-US");
+    const unusedRun = { ...run, nodeStates: {} };
+    render(
+      <AppI18nProvider>
+        <WorkflowMembershipProvider
+          unusedNodeIds={["iter", "body-a", "body-b"]}
+        >
+          <div style={{ width: 1200, height: 800 }}>
+            <RunOverviewCanvas
+              run={unusedRun}
+              focusedNodeId={null}
+              onFocusNode={vi.fn()}
+            />
+          </div>
+        </WorkflowMembershipProvider>
+      </AppI18nProvider>,
+    );
+    await waitFor(() =>
+      expect(screen.getAllByText("Excluded from execution")).toHaveLength(3),
+    );
+    expect(
+      screen.getByLabelText("Iteration: Excluded from execution"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Agent A: Excluded from execution"),
+    ).toBeInTheDocument();
+  });
   beforeEach(async () => {
     await appI18n.changeLanguage("en-US");
     Object.defineProperty(HTMLElement.prototype, "clientWidth", {
