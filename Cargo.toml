@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "apps/minicloud/server",
     "apps/desktop/src-tauri",
     "apps/ora-reaper",
     "apps/ora-process-helper",
@@ -45,6 +46,7 @@ members = [
     "xtask",
 ]
 default-members = [
+    "apps/minicloud/server",
     "apps/ora-controller",
     "apps/ora-reaper",
     "apps/ora-process-helper",

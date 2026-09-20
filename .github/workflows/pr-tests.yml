@@ -56,6 +56,7 @@ jobs:
               - 'Cargo.lock'
             frontend:
               - *shared
+              - 'apps/minicloud/client/**'
               - 'packages/**'
               - 'crates/contracts/**'
               - 'xtask/**'
@@ -73,6 +74,7 @@ jobs:
               - 'apps/ora-process-*/**'
               - 'apps/ora-node/**'
               - 'apps/ora-controller/**'
+              - 'apps/minicloud/server/**'
               - 'xtask/**'
               - 'apps/desktop/src-tauri/bindings.rs'
               - 'apps/desktop/src-tauri/bindings/**'
