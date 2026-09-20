@@ -6,6 +6,7 @@ commands.allow = [
     "activate_plugin",
     "activate_workflow",
     "add_marketplace_source",
+    "analyze_workflow",
     "cancel_contract_stream",
     "cancel_session_prompt",
     "cancel_skill_import",

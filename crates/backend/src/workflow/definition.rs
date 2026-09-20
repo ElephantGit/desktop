@@ -38,6 +38,16 @@ pub struct WorkflowApi {
 }
 
 impl WorkflowApi {
+    /// Derives editor participation with the same domain owner used by every execution path.
+    pub fn analyze(
+        &self,
+        request: ora_contracts::AnalyzeWorkflowRequest,
+    ) -> Result<ora_contracts::AnalyzeWorkflowResponse, BackendError> {
+        let unused_node_ids = ora_application::WorkflowGraph::unused_node_ids(&request.graph)
+            .map_err(ora_application::ApplicationError::WorkflowRunGraphParse)?;
+        Ok(ora_contracts::AnalyzeWorkflowResponse { unused_node_ids })
+    }
+
     /// Builds workflow handlers from the shared repository pool.
     pub(crate) fn new(pool: RepositoryPool, clock: SystemClock) -> Self {
         let repository = Arc::new(SqliteWorkflowRepository::new(pool));
