@@ -68,6 +68,12 @@ The independent Controller–Node–host/guardian test performs real HTTPS clone
 Controller after durable takeover, restarts it offline, then checks original result, exact Ack, cleared
 Node outbox and one mutation Run. Node's own IPC tests additionally cover Node restart and event replay.
 
+A separate child process runs production `run_session` and the real SQLite owner with an injected
+pre-commit barrier. The parent observes that no Ack escaped, sends SIGKILL while the takeover transaction
+is open, and reopens the store to verify rollback and unchanged intent. The normal Controller executable
+then takes over the replayed Node result with HTTPS refusing access. The barrier is a persistence test
+dependency (`WritePoint::Commit`), not a deployment option or protocol extension.
+
 These are not complete Client/UI, Cloud, multi-Controller or hostile-peer guarantees. Exhaustive queue
 pressure, all crash boundaries and all deployment combinations remain tracked in the approved ADR's
 core test cases. The existing Backend entry and Worktree coordination are unchanged.

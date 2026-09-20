@@ -10,16 +10,16 @@ use std::{
 use tokio::net::{UnixListener, UnixStream};
 
 /// A byte-stream fault boundary drops acknowledgements without replacing either production peer.
-struct Proxy {
-    endpoint: PathBuf,
-    drop_ack: Arc<AtomicBool>,
+pub(super) struct Proxy {
+    pub(super) endpoint: PathBuf,
+    pub(super) drop_ack: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
-    acknowledgements: mpsc::Receiver<EventAckMessage>,
+    pub(super) acknowledgements: mpsc::Receiver<EventAckMessage>,
     worker: Option<std::thread::JoinHandle<()>>,
 }
 impl Proxy {
     /// Listens in a distinct private deployment root and forwards the actual Node framing in both directions.
-    fn new(fixture: &Fixture) -> Self {
+    pub(super) fn new(fixture: &Fixture) -> Self {
         let root = fixture.path().join("proxy");
         fs::create_dir(&root).unwrap();
         fs::set_permissions(&root, fs::Permissions::from_mode(/*mode*/ 0o700)).unwrap();
@@ -105,7 +105,7 @@ async fn relay(
 }
 
 /// Runs the real Controller recovery executable with no file-based business command channel.
-fn launch(fixture: &Fixture, proxy: &Proxy) -> ChildGuard {
+pub(super) fn launch(fixture: &Fixture, proxy: &Proxy) -> ChildGuard {
     let path = fixture.path().join("controller.json");
     fs::write(&path, serde_json::to_vec(&serde_json::json!({
         "home_directory": fixture.path().join("controller"), "controller_id": "owner",

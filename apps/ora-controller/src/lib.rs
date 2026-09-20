@@ -43,6 +43,8 @@ pub enum WritePoint {
     Accept,
     Takeover,
     Receipt,
+    /// Final takeover boundary inside the open transaction, before SQLite commit or any Ack.
+    Commit,
 }
 pub struct DurableWrites;
 impl WriteGuard for DurableWrites {

@@ -61,5 +61,10 @@ framed 会话测试覆盖 Unknown 重传有界，以及错误 Node 身份或缺�
 截住 Ack 后在持久接管之后强杀 Controller，再离线重启，检查原结果、精确 Ack、Node outbox 清空和唯一变更 Run。
 Node 自身 IPC 测试另覆盖 Node 重启与事件重放。
 
+另有独立子进程运行生产 `run_session` 与真实 SQLite 所有者，仅注入提交前暂停点。
+父进程确认没有 Ack，在接管事务仍打开时发送 SIGKILL，再重开数据库验证回滚及原意图不变。
+随后由正常 Controller 可执行程序在 HTTPS 拒绝访问时接管 Node 重放的结果。
+暂停点是持久化测试依赖（`WritePoint::Commit`），不是部署选项或协议扩展。
+
 这不代表 Client／UI、Cloud、多 Controller 或恶意对端保证完成；全部队列压力、崩溃边界和部署组合
 仍在 approved ADR 核心用例中跟踪。既有 Backend 入口及 Worktree 协调保持不变。

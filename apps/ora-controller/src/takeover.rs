@@ -130,6 +130,9 @@ impl<W: WriteGuard> Controller<W> {
                 params![execution.as_str(), sequence, encoded],
             )?;
         }
+        // Keep the pre-commit fault boundary inside the live transaction, shared by query
+        // and event takeover. No acknowledgement can escape while this boundary is pending.
+        self.writes.before_write(WritePoint::Commit)?;
         tx.commit()?;
         Ok(())
     }
