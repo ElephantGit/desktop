@@ -2,7 +2,7 @@
 
 English | [中文](workflow-unused-nodes-plan.zh.md)
 
-Status: proposed, not implemented. This document records the design, not currently supported product behavior.
+Status: implemented. This document retains the design and acceptance scope; see [Workflow](workflow.md) for product behavior.
 
 ## Goal and scope
 
@@ -10,7 +10,7 @@ Allow authors to retain individual nodes or connected groups outside the executi
 Preserve the complete canvas in drafts and published snapshots, while executing only the subgraph reachable from its entry.
 This proposal does not introduce manual disable switches or standalone node execution.
 
-## Current behavior and constraints
+## Behavior and constraints before this change
 
 - Draft-save and publish handlers in `crates/application/src/workflow/handlers.rs` store graphs or create snapshots without checking reachability there.
 - Startup in `crates/application/src/workflow_run/engine/engine.rs` rejects nodes unreachable from Start through `UnreachableNodes`.
@@ -143,4 +143,4 @@ Keep translations with the workflow-editor and relevant run-view domain owners.
 Backend tests exercise production interfaces for execution and host prerequisite preparation. Frontend tests use typed operation handlers, await React updates correctly, and pass the clean-stderr gate.
 During implementation, run the smallest relevant tests first, followed by required contract, frontend, and Rust checks.
 Desktop binding changes require `task test:tauri`; run `task test` before completing the cross-layer implementation.
-A documentation-only commit of this proposal does not require those implementation tests.
+The implementation passed `task test`, including frontend clean-stderr, the Rust workspace, Tauri, and Desktop E2E, with additional focused coverage for execution membership, persistence, request cancellation, and run views.

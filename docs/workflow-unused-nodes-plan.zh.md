@@ -2,7 +2,7 @@
 
 [English](workflow-unused-nodes-plan.md) | 中文
 
-状态：待实现。本文记录设计方案，不代表当前产品已支持该行为。
+状态：已实现。本文保留设计与验收范围；实际行为见 [工作流文档](workflow.zh.md)。
 
 ## 目标与范围
 
@@ -10,7 +10,7 @@
 完整画布保留在草稿和发布快照中，运行时只执行从入口可达的子图。
 本方案不引入手动禁用开关或独立节点试运行功能。
 
-## 当前机制与限制
+## 变更前机制与限制
 
 - `crates/application/src/workflow/handlers.rs` 的草稿保存和发布 handler 保存图或创建快照，未在该处执行可达性校验。
 - `crates/application/src/workflow_run/engine/engine.rs` 的启动逻辑通过 `UnreachableNodes` 拒绝从 Start 不可达的节点。
@@ -143,4 +143,4 @@ B 从 Start 不可达，因此执行子图排除 B 及其指向 A 的边，A 不
 后端测试通过生产接口覆盖执行与宿主依赖准备；前端使用类型化操作 handler，正确等待 React 更新并通过 clean-stderr 检查。
 实现时先运行最小相关测试，再执行必要的契约检查、前端检查和 Rust 检查。
 涉及 Desktop 绑定需运行 `task test:tauri`，跨层实现完成前运行 `task test`。
-仅提交本方案文档时，不需要运行上述实现测试。
+实现已通过 `task test`（含前端 clean-stderr、Rust 工作区、Tauri 与 Desktop E2E），并补充执行范围、保存、请求取消与运行视图的定向测试。
