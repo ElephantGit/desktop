@@ -5,8 +5,9 @@ English | [中文](minimal-loop.zh.md)
 ## Current direction
 
 As of 2026-09-18, the minimal loop changes from creating/deleting task worktrees under an existing
-Main Workspace to **cloning a specified repository at a specified branch**. The local
-Desktop–Controller–Node split remains: the caller specifies the repository and branch, Controller
+Main Workspace to **cloning a specified repository at a specified branch**. As of 2026-09-20,
+the first Client is [non-production local minicloud](../minicloud/overview.md), not Desktop.
+The caller specifies the repository and branch, Controller
 coordinates, Node performs the clone in its execution environment, and the caller can observe the result.
 
 This records the overall direction. Protocol, durable clone records and the Linux managed execution
@@ -21,7 +22,7 @@ API are implemented; see [clone deployment and recovery](repository-clone.md). T
 - Clone has independent protocol results, capability declarations, storage and managed execution.
   It does not require an existing Main Workspace or disguise acquisition as EnsureWorktree.
 - [Local Node IPC](local-ipc.md) and [Controller durable coordination](../controller/local-runtime.md)
-  are connected, with independent-process clone and lost-Ack recovery tests. The Client entry is not connected.
+  are connected, with independent-process clone, pre-commit kill and lost-Ack recovery tests. The minicloud Client entry is not connected.
 
 Stable execution identities, durable responsibility before dispatch, process handoff, queryable results
 and acknowledgement after durable takeover remain reliability principles. Trust infrastructure and Strong

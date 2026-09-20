@@ -5,7 +5,8 @@
 ## 当前方向
 
 2026-09-18 起，最小闭环从“已有 Main Workspace 上创建／删除 task worktree”调整为
-**clone 指定仓库的指定分支**。沿用本机 Desktop–Controller–Node 分工：调用方指定仓库和分支，
+**clone 指定仓库的指定分支**。2026-09-20 首个 Client 进一步改为
+[非生产本机 minicloud](../minicloud/overview.zh.md)，不先引入 Desktop：调用方指定仓库和分支，
 Controller 协调，Node 在执行环境完成 clone，结果回到调用方可观察的状态。
 
 此文记录整体方向。协议、clone 持久记录和 Linux 受管执行 API 已实现，见
@@ -18,7 +19,7 @@ Controller 协调，Node 在执行环境完成 clone，结果回到调用方可�
 - clone 已有独立协议结果、能力声明、存储及受管执行，不要求已有 Main Workspace，
   不将获取仓库伪装为 EnsureWorktree。
 - [Node 本机 IPC](local-ipc.zh.md)与 [Controller 持久协调](../controller/local-runtime.zh.md)已接通，
-  已有独立进程 clone 及 Ack 丢失恢复测试；Client 新入口尚未接通。
+  已有独立进程 clone、接管提交前强杀和 Ack 丢失恢复测试；minicloud Client 新入口尚未接通。
 
 保留稳定执行身份、派发前持久责任、进程恢复交接、结果可查询及持久接管后确认等可靠性原则。
 信任体系和 Strong 继续延期；私有仓库访问使用 Node 可信部署提供的非交互凭据。
