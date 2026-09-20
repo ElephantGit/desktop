@@ -57,6 +57,27 @@ fn partitions_round_topology() {
     );
 }
 
+/// An unfinished spare child does not become an independent round entry or affect bindings.
+#[test]
+fn excludes_unused_loop_members() {
+    let mut source = snapshot();
+    source["nodes"].as_array_mut().unwrap().push(json!({
+        "id":"spare", "data":{"kind":"agent", "containerId":"loop", "agentConfig":false}
+    }));
+    source["edges"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"source":"spare","target":"writer"}));
+    let source = source.to_string();
+    assert_eq!(
+        WorkflowGraph::unused_node_ids(&source).unwrap(),
+        vec!["spare"]
+    );
+    let graph = WorkflowGraph::parse(&source).unwrap();
+    assert_eq!(graph.loop_body("loop").unwrap().1.node_count(), 2);
+    assert_eq!(graph.execution_node("spare"), None);
+}
+
 /// Flat snapshots retain their original decoding behavior without a version marker.
 #[test]
 fn preserves_flat_snapshots() {

@@ -519,7 +519,7 @@ fn parses_condition_cases_into_the_model() {
                 }
             ] } }
         ],
-        "edges": []
+        "edges": [{"source":"start","target":"c"}]
     }))
     .unwrap();
     let config = graph.node("c").unwrap().condition_config.as_ref().unwrap();
@@ -635,7 +635,7 @@ fn parses_structured_output_contract_into_the_model() {
                 }
             } } }
         ],
-        "edges": []
+        "edges": [{"source":"start","target":"review"}]
     }))
     .unwrap();
     let contract = graph
@@ -826,7 +826,7 @@ fn first_unsupported_node_reports_tool() {
             { "id": "start", "data": { "kind": "start" } },
             { "id": "t", "data": { "kind": "tool", "tool": "Terminal" } }
         ],
-        "edges": []
+        "edges": [{"source":"start","target":"t"}]
     }))
     .unwrap();
     assert_eq!(graph.first_unsupported_node().unwrap().id, "t");
@@ -851,7 +851,8 @@ fn unreachable_from_start_reports_isolated_nodes() {
         "edges": [{ "source": "start", "target": "a" }]
     }))
     .unwrap();
-    assert_eq!(graph.unreachable_from_start(), vec!["orphan"]);
+    assert_eq!(graph.node("orphan"), None);
+    assert_eq!(graph.unreachable_from_start(), Vec::<String>::new());
 }
 
 #[test]
