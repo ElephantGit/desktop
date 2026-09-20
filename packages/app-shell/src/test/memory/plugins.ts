@@ -5,6 +5,7 @@ import {
   type InstalledPlugin,
   type ImportedWorkflowOutcome,
   type InstallOutcome,
+  type McpHealthEntry,
   type PackInstallationStatus,
   type PackUninstallPlan,
   type PluginConfigurationDetails,
@@ -38,6 +39,17 @@ export interface PluginMemoryState {
    * is what every kind other than a Workflow package reports.
    */
   importedWorkflows?: ImportedWorkflowOutcome[];
+  /**
+   * Host MCP health per view, keyed by the resolved Session cwd; the empty key is the plugin-card
+   * view. A view a test never seeds answers "no health recorded yet", which is what an untouched
+   * Host reports.
+   */
+  mcpHealthByView: Map<string, McpHealthEntry[]>;
+  /**
+   * The entry one explicit re-detect returns. Absent means the fixture refuses the operation, as
+   * the host refuses to probe an ineligible member; `null` means it fails.
+   */
+  probeMcpHealthResult?: McpHealthEntry | null;
   /** Ownership journal rows served by the pack presentation queries. */
   packInstallations: PackInstallationStatus[];
   /** Installable member packages keyed by their owning pack listing id. */
@@ -56,10 +68,20 @@ export function createPluginMemory(): PluginMemoryState {
     pluginReadmes: new Map(),
     availablePluginsUpdatedAt: 0n,
     marketplaceSources: [],
+    mcpHealthByView: new Map(),
     packInstallations: [],
     packMemberPlugins: new Map(),
     packUninstallPlans: new Map(),
   };
+}
+
+/** Seeds one Host MCP health view: the card view for `null`, a Session workspace otherwise. */
+export function seedMcpHealth(
+  state: PluginMemoryState,
+  cwd: string | null,
+  entries: McpHealthEntry[],
+): void {
+  state.mcpHealthByView.set(cwd ?? "", entries);
 }
 
 /** Materializes one installed plugin from a marketplace listing for mock install tests. */
@@ -294,6 +316,36 @@ export function pluginHandlers(state: PluginMemoryState) {
     listInstalledPlugins: async () => ({
       plugins: [...state.installedPlugins],
     }),
+    listMcpHealth: async (req) => ({
+      entries: structuredClone(state.mcpHealthByView.get(req.cwd ?? "") ?? []),
+    }),
+    probeMcpHealth: async (req) => {
+      if (state.probeMcpHealthResult === undefined) {
+        throw new Error(
+          "mcp health re-detect is not configured in this fixture",
+        );
+      }
+      if (state.probeMcpHealthResult === null) {
+        throw new Error("mcp health re-detect fails in this fixture");
+      }
+      const entry = structuredClone(state.probeMcpHealthResult);
+      const key = req.cwd ?? "";
+      const current = state.mcpHealthByView.get(key) ?? [];
+      state.mcpHealthByView.set(
+        key,
+        current.some(
+          (candidate) =>
+            candidate.identity.pluginId === entry.identity.pluginId,
+        )
+          ? current.map((candidate) =>
+              candidate.identity.pluginId === entry.identity.pluginId
+                ? entry
+                : candidate,
+            )
+          : [...current, entry],
+      );
+      return { entry };
+    },
     getPluginConfiguration: async (req) => {
       const configuration = state.pluginConfigurations.get(req.pluginId);
       if (configuration === undefined)
