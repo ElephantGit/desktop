@@ -12,7 +12,7 @@ pub use process::{ProcessAttempt, ProcessJournal};
 pub use repository_model::{CloneExecution, ClonePhase, CloneProgress, CloneTarget};
 
 use ora_node_protocol::NodeId;
-use ora_utils::fs::SidecarLease;
+use ora_utils::fs::{ExclusiveFileLock, ExclusiveLockError};
 use rusqlite::Connection;
 use std::{fs::OpenOptions, path::Path, sync::Arc};
 use thiserror::Error;
@@ -61,8 +61,9 @@ pub struct NodeDatabase<G = DurableWrites> {
     connection: Connection,
     node_id: NodeId,
     // A sibling lock inode resolves the same for every spelling of the home, while leaving the
-    // database file free for SQLite's own locks (see `SidecarLease` for why that matters).
-    _lease: Arc<SidecarLease>,
+    // database file free for SQLite's own locks: a whole-file lease on the database collides with
+    // them on macOS (flock and fcntl share one lock table) and Windows (mandatory LockFileEx).
+    _lease: Arc<ExclusiveFileLock>,
 }
 
 impl NodeDatabase<DurableWrites> {
@@ -98,10 +99,18 @@ impl<G: WriteGuard> NodeDatabase<G> {
             }
             Err(error) => return Err(error.into()),
         };
-        let lease = SidecarLease::try_acquire(path).map_err(|error| match error.kind() {
-            std::io::ErrorKind::WouldBlock => Error::AlreadyRunning,
-            _ => Error::Io(error),
-        })?;
+        let Some(name) = path.file_name() else {
+            return Err(Error::InvalidSchema);
+        };
+        let mut lock_name = name.to_os_string();
+        lock_name.push(".lock");
+        let lease =
+            ExclusiveFileLock::try_acquire(&path.with_file_name(lock_name)).map_err(|error| {
+                match error {
+                    ExclusiveLockError::Busy { .. } => Error::AlreadyRunning,
+                    ExclusiveLockError::Io { source, .. } => Error::Io(source),
+                }
+            })?;
         let mut connection = Connection::open(path)?;
         let node_id = schema::initialize(&mut connection, created, &identity)?;
         connection.pragma_update(/*schema_name*/ None, "foreign_keys", "ON")?;

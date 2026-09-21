@@ -19,7 +19,7 @@ pub struct ProcessAttempt {
 pub struct ProcessJournal<G: WriteGuard> {
     connection: Connection,
     guard: Arc<G>,
-    _lease: Arc<ora_utils::fs::SidecarLease>,
+    _lease: Arc<ora_utils::fs::ExclusiveFileLock>,
 }
 
 impl<G: WriteGuard> NodeDatabase<G> {

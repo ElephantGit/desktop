@@ -8,7 +8,7 @@ mod storage;
 mod takeover;
 pub use operations::CloneOperation;
 use ora_node_protocol::*;
-use ora_utils::fs::SidecarLease;
+use ora_utils::fs::{ExclusiveFileLock, ExclusiveLockError};
 #[cfg(target_os = "linux")]
 pub use runtime::{ControllerHandle, ControllerRuntime, RuntimeConfig};
 use rusqlite::Connection;
@@ -65,7 +65,7 @@ pub struct Controller<W = DurableWrites> {
     home: PathBuf,
     writes: W,
     // Held beside the database rather than on it so SQLite's own locks never collide with ours.
-    _lease: SidecarLease,
+    _lease: ExclusiveFileLock,
 }
 
 impl Controller {

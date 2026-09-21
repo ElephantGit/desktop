@@ -53,10 +53,11 @@ impl<W: WriteGuard> Controller<W> {
             }
             Err(error) => return Err(error.into()),
         };
-        let lease = SidecarLease::try_acquire(&path).map_err(|error| match error.kind() {
-            std::io::ErrorKind::WouldBlock => Error::AlreadyRunning,
-            _ => Error::Io(error),
-        })?;
+        let lease = ExclusiveFileLock::try_acquire(&home.join("ora-controller.sqlite3.lock"))
+            .map_err(|error| match error {
+                ExclusiveLockError::Busy { .. } => Error::AlreadyRunning,
+                ExclusiveLockError::Io { source, .. } => Error::Io(source),
+            })?;
         let mut connection = Connection::open(path)?;
         if created {
             let tx = connection.transaction()?;

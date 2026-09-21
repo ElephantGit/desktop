@@ -3586,6 +3586,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -3659,13 +3660,16 @@ dependencies = [
 name = "ora-plugin-runtime"
 version = "0.0.0"
 dependencies = [
+ "libc",
  "ora-logging",
  "ora-plugin-protocol",
  "ora-process",
+ "ora-utils",
  "pretty_assertions",
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
+ "time",
  "tokio",
  "tracing",
 ]
