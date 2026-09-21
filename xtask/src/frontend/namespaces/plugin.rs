@@ -182,6 +182,22 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
+        operation_name: "listHookLifecycleReports",
+        namespace: NAMESPACE,
+        member_name: "listHookLifecycleReports",
+        request_type: "ListHookLifecycleReportsRequest",
+        response_type: "ListHookLifecycleReportsResponse",
+        response_mode: FrontendResponseMode::Unary,
+    },
+    FrontendEndpoint {
+        operation_name: "initializeHook",
+        namespace: NAMESPACE,
+        member_name: "initializeHook",
+        request_type: "InitializeHookRequest",
+        response_type: "InitializeHookResponse",
+        response_mode: FrontendResponseMode::Unary,
+    },
+    FrontendEndpoint {
         operation_name: "listMcpHealth",
         namespace: NAMESPACE,
         member_name: "listMcpHealth",

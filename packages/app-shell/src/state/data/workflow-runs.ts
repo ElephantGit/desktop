@@ -603,7 +603,8 @@ export function buildDisplayRun(
     ...(detail.run.finishedAt != null
       ? { finishedAt: toIso(detail.run.finishedAt) }
       : {}),
-    ...(typeof detail.run.snapshotId === "string" && detail.run.snapshotId !== ""
+    ...(typeof detail.run.snapshotId === "string" &&
+    detail.run.snapshotId !== ""
       ? { snapshotId: detail.run.snapshotId }
       : {}),
   };
@@ -652,7 +653,9 @@ function projectPersistedNodeState(
     ...(nodeRun?.error != null ? { errorMessage: nodeRun.error } : {}),
     ...(errorDetail != null ? { errorDetail } : {}),
     ...(aiDiagnosis != null ? { aiDiagnosis } : {}),
-    ...(payload?.snapshot_id != null ? { snapshotId: payload.snapshot_id } : {}),
+    ...(payload?.snapshot_id != null
+      ? { snapshotId: payload.snapshot_id }
+      : {}),
     ...(payload?.injected_failure_context != null
       ? { injectedFailureContext: payload.injected_failure_context }
       : {}),
@@ -803,7 +806,9 @@ function parseErrorDetail(value: unknown): WorkflowNodeErrorDetail | undefined {
     kind: detail.kind,
     message: typeof detail.message === "string" ? detail.message : "",
     sourceChain: Array.isArray(detail.source_chain)
-      ? detail.source_chain.filter((item): item is string => typeof item === "string")
+      ? detail.source_chain.filter(
+          (item): item is string => typeof item === "string",
+        )
       : [],
     attempt: typeof detail.attempt === "number" ? detail.attempt : 1,
     resumable: typeof detail.resumable === "boolean" ? detail.resumable : true,

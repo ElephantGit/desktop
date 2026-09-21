@@ -290,6 +290,7 @@ async fn uninstall_disposition_decides_whether_the_level_survives() {
 
         lifecycle
             .uninstall_plugin(UninstallPluginRequest {
+                hook_execution_acknowledged: false,
                 plugin_id: "official/ora.example".to_string(),
                 data_disposition: disposition,
             })
@@ -354,6 +355,7 @@ async fn delete_uninstall_rolls_back_every_tree_when_the_level_clear_fails() {
 
     let error = lifecycle
         .uninstall_plugin(UninstallPluginRequest {
+            hook_execution_acknowledged: false,
             plugin_id: "official/ora.example".to_string(),
             data_disposition: PluginDataDisposition::Delete,
         })

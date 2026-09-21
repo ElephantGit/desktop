@@ -37,6 +37,7 @@ async fn uninstall_disposition_decides_whether_the_log_tree_survives() {
 
         lifecycle
             .uninstall_plugin(UninstallPluginRequest {
+                hook_execution_acknowledged: false,
                 plugin_id: "official/ora.example".to_string(),
                 data_disposition: disposition,
             })
@@ -81,6 +82,7 @@ async fn delete_uninstall_fails_and_rolls_back_while_the_log_is_open() {
 
     let error = lifecycle
         .uninstall_plugin(UninstallPluginRequest {
+            hook_execution_acknowledged: false,
             plugin_id: "official/ora.example".to_string(),
             data_disposition: PluginDataDisposition::Delete,
         })
@@ -121,6 +123,7 @@ async fn delete_uninstall_is_refused_while_a_writer_holds_the_log() {
 
     let refused = lifecycle
         .uninstall_plugin(UninstallPluginRequest {
+            hook_execution_acknowledged: false,
             plugin_id: "official/ora.example".to_string(),
             data_disposition: PluginDataDisposition::Delete,
         })
@@ -131,6 +134,7 @@ async fn delete_uninstall_is_refused_while_a_writer_holds_the_log() {
     drop(writer);
     lifecycle
         .uninstall_plugin(UninstallPluginRequest {
+            hook_execution_acknowledged: false,
             plugin_id: "official/ora.example".to_string(),
             data_disposition: PluginDataDisposition::Delete,
         })
@@ -159,6 +163,7 @@ async fn delete_uninstall_is_refused_while_a_writer_holds_the_log() {
 
     lifecycle
         .uninstall_plugin(UninstallPluginRequest {
+            hook_execution_acknowledged: false,
             plugin_id: "official/ora.example".to_string(),
             data_disposition: PluginDataDisposition::Retain,
         })

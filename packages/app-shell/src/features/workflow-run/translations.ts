@@ -252,8 +252,7 @@ export const workflowRunTranslations = {
       "将在当前工作区中创建“{{name}}”的工作流运行。",
     "workflowRun.createRun": "创建运行",
     "workflowRun.runRequiredName": "请填写运行名称。",
-    "workflowRun.injectLastFailure":
-      "节点重跑时把上次失败原因告诉智能体",
+    "workflowRun.injectLastFailure": "节点重跑时把上次失败原因告诉智能体",
     "workflowRun.kickoffInput": "启动输入（可选）",
     "workflowRun.kickoffPlaceholder": "例如：审查当前分支的未提交改动",
     "workflowRun.startConfirm": "启动",
@@ -282,8 +281,7 @@ export const workflowRunTranslations = {
     "workflowRun.errorHint.invalid_run_payload":
       "该运行的快照已损坏，请从头重新运行",
     "workflowRun.errorKind.prompt_template": "提示词模板无法渲染",
-    "workflowRun.errorHint.prompt_template":
-      "修正模板中引用的变量后发布新版本",
+    "workflowRun.errorHint.prompt_template": "修正模板中引用的变量后发布新版本",
     "workflowRun.errorKind.structured_output": "结构化输出不合格",
     "workflowRun.errorHint.structured_output":
       "智能体的回复不符合输出结构；可直接续跑让它带着失败信息重试，或调整提示词/输出结构后发布新版本",
@@ -297,8 +295,7 @@ export const workflowRunTranslations = {
     "workflowRun.errorHint.session_binding_rejected":
       "通常是临时故障，可直接续跑",
     "workflowRun.errorKind.baseline_persist": "工作区基线保存失败",
-    "workflowRun.errorHint.baseline_persist":
-      "检查磁盘空间与权限后续跑",
+    "workflowRun.errorHint.baseline_persist": "检查磁盘空间与权限后续跑",
     "workflowRun.errorKind.repository": "数据库操作失败",
     "workflowRun.errorHint.repository": "通常是临时故障，可直接续跑",
     "workflowRun.errorKind.session": "智能体会话失败",
@@ -324,8 +321,7 @@ export const workflowRunTranslations = {
     "workflowRun.errorInjectedResumeHint":
       "同版本续跑时，Ora 会把这次失败的类型、原因和上次输出告诉智能体让它重试；若仍失败，再修改工作流并发布新版本。",
     "workflowRun.injectedFailure.title": "本次尝试注入的上次失败信息",
-    "workflowRun.resumeFromTopHint":
-      "可在顶部点「从失败处继续」重跑这个节点",
+    "workflowRun.resumeFromTopHint": "可在顶部点「从失败处继续」重跑这个节点",
     "workflowRun.nodeFromOlderSnapshotHint":
       "此节点的结果来自本运行之前使用的版本（续跑时已切换版本）",
     "workflowRun.aiDiagnosis.run": "让 AI 分析",
@@ -385,7 +381,8 @@ export const workflowRunTranslations = {
     "workflowRun.resume.description":
       "Succeeded nodes will not run again. First decide what to do with the files the failed nodes changed:",
     "workflowRun.resume.keep": "Keep the worktree as it is (default)",
-    "workflowRun.resume.nodeFiles": "Roll back only the files the failed nodes changed",
+    "workflowRun.resume.nodeFiles":
+      "Roll back only the files the failed nodes changed",
     "workflowRun.resume.checkpoint": "Roll back everything to the checkpoint",
     "workflowRun.resume.nodeSummary":
       "Node {{nodeId}}: the node recorded {{nodeFiles}} files; {{total}} changes since the checkpoint, {{extra}} of which are not in the node record (possibly edited by hand after the failure)",
@@ -653,8 +650,7 @@ export const workflowRunTranslations = {
       "Session ended unexpectedly",
     "workflowRun.errorHint.session_ended_without_stop_reason":
       "Usually transient; resume directly",
-    "workflowRun.errorKind.session_binding_rejected":
-      "Session could not start",
+    "workflowRun.errorKind.session_binding_rejected": "Session could not start",
     "workflowRun.errorHint.session_binding_rejected":
       "Usually transient; resume directly",
     "workflowRun.errorKind.baseline_persist":
@@ -676,8 +672,7 @@ export const workflowRunTranslations = {
       "Interrupted by app restart",
     "workflowRun.errorHint.interrupted_by_restart":
       "The node was running when the app restarted; resume directly",
-    "workflowRun.errorKind.multiple_outputs":
-      "Multiple output nodes completed",
+    "workflowRun.errorKind.multiple_outputs": "Multiple output nodes completed",
     "workflowRun.errorHint.multiple_outputs":
       "The workflow graph is wrong; fix the branches and publish a new version",
     "workflowRun.errorKind.condition_evaluation":

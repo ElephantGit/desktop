@@ -285,6 +285,12 @@ impl Plugins {
         }
         let plugin_id = request.plugin_id.clone();
         self.agent_runtime.suspend_plugin_agent(&plugin_id);
+        // Deinitialization runs before the package is removed, and only when the user authorized
+        // it: the command is the package's own program, and it can only run while the package is
+        // still on disk. A Hook whose command fails still uninstalls (D8).
+        if request.hook_execution_acknowledged {
+            self.host.deinitialize_installed_hook(&plugin_id).await;
+        }
         let result = self.host.uninstall(request).await;
         self.agent_runtime.resume_plugin_agent(&plugin_id);
         let response = result?;
@@ -336,10 +342,13 @@ impl Plugins {
         &self,
         request: InstallPluginRequest,
     ) -> Result<InstallPluginResponse, BackendError> {
+        let acknowledged = request.hook_execution_acknowledged;
         let plugin_id = PluginId::parse(&request.plugin_id).ok();
         let response = self.host.install(request).await?;
         self.probe_installed_mcp(plugin_id);
         self.agent_runtime.sync_plugin_agents();
+        self.initialize_hook_landed(&response.plugin_id, &response.outcome, acknowledged)
+            .await;
         Ok(response)
     }
 
@@ -349,10 +358,13 @@ impl Plugins {
         request: InstallPluginRequest,
         progress: ProgressCallback,
     ) -> Result<InstallPluginResponse, BackendError> {
+        let acknowledged = request.hook_execution_acknowledged;
         let plugin_id = PluginId::parse(&request.plugin_id).ok();
         let response = self.host.install_with_progress(request, progress).await?;
         self.probe_installed_mcp(plugin_id);
         self.agent_runtime.sync_plugin_agents();
+        self.initialize_hook_landed(&response.plugin_id, &response.outcome, acknowledged)
+            .await;
         Ok(response)
     }
 
@@ -368,6 +380,7 @@ impl Plugins {
         request: UpdatePluginRequest,
     ) -> Result<UpdatePluginResponse, BackendError> {
         let plugin_id = request.plugin_id.clone();
+        let acknowledged = request.hook_execution_acknowledged;
         self.agent_runtime.suspend_plugin_agent(&plugin_id);
         let result = self.host.update(request).await;
         self.agent_runtime.resume_plugin_agent(&plugin_id);
@@ -378,6 +391,11 @@ impl Plugins {
             self.refresh_mcp_health(plugin_id);
         }
         self.agent_runtime.sync_plugin_agents();
+        // Every update re-runs `init`, because only the tool knows whether the version it is
+        // replacing needs its Agent configuration migrated (D2).
+        if acknowledged {
+            self.host.initialize_installed_hook(&plugin_id).await;
+        }
         Ok(response)
     }
 
@@ -389,6 +407,7 @@ impl Plugins {
         progress: ProgressCallback,
     ) -> Result<UpdatePluginResponse, BackendError> {
         let plugin_id = request.plugin_id.clone();
+        let acknowledged = request.hook_execution_acknowledged;
         self.agent_runtime.suspend_plugin_agent(&plugin_id);
         let result = self.host.update_with_progress(request, progress).await;
         self.agent_runtime.resume_plugin_agent(&plugin_id);
@@ -397,6 +416,9 @@ impl Plugins {
             self.refresh_mcp_health(plugin_id);
         }
         self.agent_runtime.sync_plugin_agents();
+        if acknowledged {
+            self.host.initialize_installed_hook(&plugin_id).await;
+        }
         Ok(response)
     }
 
@@ -408,10 +430,55 @@ impl Plugins {
         &self,
         request: ImportPluginRequest,
     ) -> Result<ImportPluginResponse, BackendError> {
+        let acknowledged = request.hook_execution_acknowledged;
         let response = self.host.import(request).await?;
         self.probe_installed_mcp(PluginId::parse(&response.plugin_id).ok());
         self.agent_runtime.sync_plugin_agents();
+        self.initialize_hook_landed(&response.plugin_id, &response.outcome, acknowledged)
+            .await;
         Ok(response)
+    }
+
+    /// Lists this session's Hook lifecycle results for the settings surface to merge by plugin.
+    ///
+    /// Reading the store cannot fail; the result type keeps this operation shaped like every other
+    /// one the Desktop surface drives, so the transport does not need a second response mode for
+    /// an operation that happens to be infallible.
+    pub fn list_hook_lifecycle_reports(
+        &self,
+        _request: ListHookLifecycleReportsRequest,
+    ) -> Result<ListHookLifecycleReportsResponse, BackendError> {
+        Ok(ListHookLifecycleReportsResponse {
+            reports: self.host.hook_lifecycle_reports(),
+        })
+    }
+
+    /// Runs one user-requested `init` for an installed Hook package.
+    ///
+    /// This is the retry path for a failed `init` and the only way a pack-installed Hook member
+    /// is initialized: the pack landed the package without running anything, so the user
+    /// authorizes that member on its own afterwards (D2).
+    pub async fn initialize_hook(
+        &self,
+        request: InitializeHookRequest,
+    ) -> Result<InitializeHookResponse, BackendError> {
+        self.host.initialize_hook(request).await
+    }
+
+    /// Runs `init` for a Hook that a single-plugin install or import just landed.
+    ///
+    /// Pack members are excluded by the outcome rather than by the caller: a pack reports
+    /// `PackInstalled`, so nothing the pack brought in is executed, which is exactly the
+    /// authorization boundary the decision draws.
+    async fn initialize_hook_landed(
+        &self,
+        plugin_id: &str,
+        outcome: &InstallOutcome,
+        acknowledged: bool,
+    ) {
+        if acknowledged && matches!(outcome, InstallOutcome::Installed) {
+            self.host.initialize_installed_hook(plugin_id).await;
+        }
     }
 
     /// Lists secret-free Host MCP health for the plugin card (no cwd) or one Session view.

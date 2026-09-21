@@ -81,9 +81,7 @@ function renderInspector(
     selectedRound?: number | null;
   } = {},
 ) {
-  useWorkspaceSelectionStore
-    .getState()
-    .selectWorkflowRun("run-1", "project-1");
+  useWorkspaceSelectionStore.getState().selectWorkflowRun("run-1", "project-1");
   const state = createFixtureState();
   state.agents = [
     {
@@ -278,7 +276,8 @@ describe("RunActInspector failure detail", () => {
     await appI18n.changeLanguage("zh-CN");
     renderInspector({
       status: "running",
-      injectedFailureContext: "## 上一次尝试（第 1 次）失败信息\n类型：结构化输出不合格",
+      injectedFailureContext:
+        "## 上一次尝试（第 1 次）失败信息\n类型：结构化输出不合格",
     });
     expect(
       await screen.findByText("本次尝试注入的上次失败信息"),
@@ -460,7 +459,8 @@ describe("RunActInspector AI diagnosis", () => {
         injectsPreviousFailure: true,
         recordedAt: 50,
       },
-      injectedFailureContext: "## 上一次尝试（第 1 次）失败信息\n类型：会话失败",
+      injectedFailureContext:
+        "## 上一次尝试（第 1 次）失败信息\n类型：会话失败",
     };
     renderInspector(round1, {
       runStatus: "failed",
@@ -469,9 +469,7 @@ describe("RunActInspector AI diagnosis", () => {
     });
     expect(await screen.findByText("round 2 exploded")).toBeInTheDocument();
     expect(screen.getByText("智能体会话失败")).toBeInTheDocument();
-    expect(
-      screen.getByText("本次尝试注入的上次失败信息"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("本次尝试注入的上次失败信息")).toBeInTheDocument();
     expect(document.querySelector("pre")?.textContent).toBe(
       "## 上一次尝试（第 1 次）失败信息\n类型：会话失败",
     );
