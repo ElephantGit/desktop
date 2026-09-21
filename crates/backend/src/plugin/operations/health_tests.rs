@@ -78,7 +78,15 @@ fn test_plugins_with_host(
         })
         .expect("agent runtime"),
     );
-    (Plugins::new(host.clone(), runtime), events, host)
+    (
+        Plugins::new(
+            host.clone(),
+            runtime,
+            Arc::new(crate::workflow::workflow_import(pool.clone(), SystemClock)),
+        ),
+        events,
+        host,
+    )
 }
 
 /// How a loopback peer treats the connections it accepts.

@@ -5,14 +5,26 @@ import type { TFunction } from "i18next";
 type InstallSuccessKey =
   "settings.plugins.installSuccess" | "settings.plugins.importSuccess";
 
-/** Presents one install outcome consistently across every marketplace entry point. */
+/**
+ * Presents one install outcome consistently across every marketplace entry point.
+ *
+ * `successDescription` adds entry-point specific context to the plain success toast — a local
+ * import reports the workflow documents the package carried. Outcomes that already own their
+ * wording (a command conflict, a pack member journal) ignore it, so a caller never overrides
+ * the message its own outcome requires.
+ */
 export function showPluginInstallOutcome(
   outcome: InstallOutcome,
   t: TFunction,
   successKey: InstallSuccessKey = "settings.plugins.installSuccess",
+  successDescription?: string,
 ): void {
   if (outcome.state !== "pack_installed") {
-    toast.success(t(successKey));
+    if (successDescription === undefined) {
+      toast.success(t(successKey));
+      return;
+    }
+    toast.success(t(successKey), { description: successDescription });
     return;
   }
 

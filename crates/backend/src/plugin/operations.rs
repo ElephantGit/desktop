@@ -1,10 +1,11 @@
 //! Public plugin use cases, including reconciliation of the process-local agent set.
 
-use super::PluginApi;
+use super::{ImportedPlugin, PluginApi};
 use crate::BackendError;
 use crate::agent_runtime::AgentRuntimeManager;
 use crate::plugin_gateway::PluginGateway;
 use crate::session_setup::SessionMcpHost;
+use crate::workflow::WorkflowImport;
 use ora_contracts::*;
 use ora_domain::PluginId;
 use ora_plugin_asset::LogoAssetRoot;
@@ -53,13 +54,19 @@ fn internal_log_level(level: RuntimeLogLevel) -> ora_logging::LogLevel {
 pub struct Plugins {
     host: Arc<PluginApi>,
     agent_runtime: Arc<AgentRuntimeManager>,
+    workflow_import: Arc<WorkflowImport>,
 }
 
 impl Plugins {
-    pub(crate) fn new(host: Arc<PluginApi>, agent_runtime: Arc<AgentRuntimeManager>) -> Self {
+    pub(crate) fn new(
+        host: Arc<PluginApi>,
+        agent_runtime: Arc<AgentRuntimeManager>,
+        workflow_import: Arc<WorkflowImport>,
+    ) -> Self {
         Self {
             host,
             agent_runtime,
+            workflow_import,
         }
     }
 
@@ -422,21 +429,33 @@ impl Plugins {
         Ok(response)
     }
 
-    /// Imports one local release archive and reconciles the agent set afterwards.
+    /// Imports one local release archive, its workflow documents, and reconciles the agent set.
     ///
     /// The agent set is reconciled so the imported package supplies a reachable agent in this
-    /// process rather than only after the next restart.
+    /// process rather than only after the next restart, and the package's MCP members are probed
+    /// so their health reaches the plugin card without waiting for one. Workflow documents import
+    /// only once the package is committed: a package that fails to install therefore creates no
+    /// workflows, while a document that fails to import never removes the package that carried it.
     pub async fn import(
         &self,
         request: ImportPluginRequest,
     ) -> Result<ImportPluginResponse, BackendError> {
         let acknowledged = request.hook_execution_acknowledged;
-        let response = self.host.import(request).await?;
-        self.probe_installed_mcp(PluginId::parse(&response.plugin_id).ok());
+        let ImportedPlugin {
+            plugin_id,
+            outcome,
+            workflow_documents,
+        } = self.host.import(request).await?;
+        self.probe_installed_mcp(PluginId::parse(&plugin_id).ok());
         self.agent_runtime.sync_plugin_agents();
-        self.initialize_hook_landed(&response.plugin_id, &response.outcome, acknowledged)
+        self.initialize_hook_landed(&plugin_id, &outcome, acknowledged)
             .await;
-        Ok(response)
+        let workflows = self.workflow_import.handle(workflow_documents);
+        Ok(ImportPluginResponse {
+            plugin_id,
+            outcome,
+            workflows,
+        })
     }
 
     /// Lists this session's Hook lifecycle results for the settings surface to merge by plugin.

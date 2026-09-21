@@ -6,6 +6,7 @@ import {
   type HookLifecycleReport,
   type MarketplaceSource,
   type InstalledPlugin,
+  type ImportedWorkflowOutcome,
   type InstallOutcome,
   type McpHealthEntry,
   type PackInstallationStatus,
@@ -46,6 +47,11 @@ export interface PluginMemoryState {
    * `installed`; a pack test supplies `pack_installed`.
    */
   installOutcome?: InstallOutcome;
+  /**
+   * Per-document workflow outcomes a local `.orax` import should report. Defaults to none, which
+   * is what every kind other than a Workflow package reports.
+   */
+  importedWorkflows?: ImportedWorkflowOutcome[];
   /**
    * Host MCP health per view, keyed by the resolved Session cwd; the empty key is the plugin-card
    * view. A view a test never seeds answers "no health recorded yet", which is what an untouched
@@ -543,6 +549,7 @@ export function pluginHandlers(state: PluginMemoryState) {
       return {
         pluginId: target.id,
         outcome,
+        workflows: state.importedWorkflows ?? [],
       };
     },
     installPlugin: async (req) => {

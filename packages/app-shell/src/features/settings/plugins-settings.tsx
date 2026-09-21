@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type {
   AvailablePlugin,
+  ImportedWorkflowOutcome,
   InstalledPlugin,
   PackInstallationStatus,
   PackMemberReconciliationState,
@@ -55,6 +56,7 @@ import {
   type HookExecutionAction,
 } from "./hook-execution-confirm";
 import { useUiStore } from "../../state/stores/ui-store";
+import type { TFunction } from "i18next";
 
 /** The registry kind order shown in the marketplace, mirroring the contracts docs. */
 const MARKETPLACE_KIND_ORDER = [
@@ -233,12 +235,21 @@ export function PluginsSettings({
       importPlugin.mutate(
         { path },
         {
-          onSuccess: (response) =>
+          onSuccess: (response) => {
+            // Only a package that carried workflow documents says anything about workflows.
+            // Every other kind leaves the description unset, so an ordinary plugin import still
+            // produces the one-argument success toast its callers already match against.
+            const description =
+              response.workflows.length === 0
+                ? undefined
+                : workflowImportSummary(response.workflows, t);
             showPluginInstallOutcome(
               response.outcome,
               t,
               "settings.plugins.importSuccess",
-            ),
+              description,
+            );
+          },
           onError: (cause) =>
             showContractError(cause, t("settings.plugins.importFailed")),
         },
@@ -732,4 +743,24 @@ function CompletedInstallIcon({
       />
     </span>
   );
+}
+
+/**
+ * Summarizes the per-document outcomes of a workflow package import.
+ *
+ * Every document imports on its own, so the summary reports both counts instead of only
+ * failures: "all imported" and "some refused" are different results, and the user has to be able
+ * to tell them apart without going to the workflow library to count rows.
+ */
+function workflowImportSummary(
+  outcomes: readonly ImportedWorkflowOutcome[],
+  t: TFunction,
+): string {
+  const imported = outcomes.filter(
+    (outcome) => outcome.state === "imported",
+  ).length;
+  const failed = outcomes.length - imported;
+  return failed === 0
+    ? t("settings.plugins.importWorkflowsImported", { count: imported })
+    : t("settings.plugins.importWorkflowsSummary", { imported, failed });
 }

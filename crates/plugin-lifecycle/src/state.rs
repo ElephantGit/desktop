@@ -159,6 +159,7 @@ pub(super) fn discovered_plugin_contract<Runtime>(
         },
         PluginContribution::Skill(_) => InstalledPluginContribution::Skill,
         PluginContribution::Mcp(_) => InstalledPluginContribution::Mcp,
+        PluginContribution::Workflow(_) => InstalledPluginContribution::Workflow,
         // Unlike the other kinds, a Hook's executable path is part of what the user agreed to when
         // they accepted the execution disclosure, so it is projected rather than kept host-side.
         PluginContribution::Hook(descriptor) => InstalledPluginContribution::Hook {
