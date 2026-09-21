@@ -7,10 +7,10 @@ use agent_client_protocol_schema::v1::{
 use ora_contracts::{
     AgentRef as ContractAgentRef, RespondToPermissionRequest, RespondToPermissionResponse,
     Session as ContractSession, SessionHistoryState as ContractSessionHistoryState,
-    SessionStatus as ContractSessionStatus,
+    SessionMcpSelection as ContractSessionMcpSelection, SessionStatus as ContractSessionStatus,
 };
 use ora_contracts::{EmptyErrorParams, PublicError};
-use ora_domain::{AgentRef, HistoryState, Session, SessionStatus};
+use ora_domain::{AgentRef, HistoryState, Session, SessionMcpSelection, SessionStatus};
 use std::collections::HashMap;
 
 /// Responds to a pending permission after validating the public request ownership.
@@ -74,6 +74,17 @@ pub(super) fn contract_session(session: Session) -> ContractSession {
             HistoryState::Writable => ContractSessionHistoryState::Writable,
             HistoryState::Degraded { reason } => ContractSessionHistoryState::Degraded { reason },
         },
+        mcp_selection: contract_mcp_selection(session.mcp_selection),
+    }
+}
+
+/// Projects the persisted MCP authorization as canonical plugin IDs only.
+fn contract_mcp_selection(selection: SessionMcpSelection) -> ContractSessionMcpSelection {
+    match selection {
+        SessionMcpSelection::Automatic => ContractSessionMcpSelection::Automatic,
+        SessionMcpSelection::Explicit(ids) => ContractSessionMcpSelection::Explicit(
+            ids.iter().map(ora_domain::PluginId::canonical).collect(),
+        ),
     }
 }
 
@@ -159,6 +170,24 @@ pub(super) fn agent_start_failed(detail: impl Into<String>) -> BackendError {
         ErrorClassification::Unprocessable,
         PublicError::AgentStartFailed(EmptyErrorParams {}),
         detail,
+    )
+}
+
+/// Reports that the actor cannot accept a second operation while one is in flight.
+pub(super) fn session_busy() -> BackendError {
+    BackendError::new(
+        ErrorClassification::Conflict,
+        PublicError::SessionBusy(EmptyErrorParams {}),
+        "session already has an active operation",
+    )
+}
+
+/// Reports that the requested permission no longer belongs to an active prompt.
+pub(super) fn permission_not_pending() -> BackendError {
+    BackendError::new(
+        ErrorClassification::Conflict,
+        PublicError::PermissionRequestNotPending(EmptyErrorParams {}),
+        "permission request is not pending",
     )
 }
 

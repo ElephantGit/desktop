@@ -7,6 +7,7 @@ export type WorkflowNodeKind =
   | "junction"
   | "human"
   | "loop"
+  | "iteration"
   | "subflow"
   | "output";
 
@@ -119,6 +120,41 @@ export interface WorkflowOutputBinding {
   variableSelector: string[];
 }
 
+/** One carried Loop variable with its first-round value and simultaneous feedback source. */
+export interface WorkflowLoopVariable {
+  name: string;
+  valueType: WorkflowVariableValueType;
+  initial:
+    | { kind: "constant"; value: unknown }
+    | { kind: "variable"; selector: string[] };
+  feedback: string[];
+}
+
+/** Executable bounded Loop configuration shared with the Rust snapshot decoder. */
+export interface WorkflowLoopConfig {
+  maxIterations: number;
+  variables: WorkflowLoopVariable[];
+  until: {
+    logic: WorkflowConditionLogic;
+    conditions: WorkflowConditionComparison[];
+  };
+  outputs: WorkflowOutputBinding[];
+}
+
+/** How an Iteration node reacts when one round fails (backend `errorStrategy`). */
+export type WorkflowIterationErrorStrategy = "fail" | "continue";
+
+/** Executable configuration of an Iteration node (foreach composite runtime). */
+export interface WorkflowIterationConfig {
+  /** Dify-style selector of the array variable driving the rounds. */
+  iteratorSelector: string[];
+  /** Dify-style root-variable selector collected into `{iter}.output` each round. */
+  collectSelector: string[];
+  errorStrategy: WorkflowIterationErrorStrategy;
+  /** Safety ceiling; a longer source fails the node at the startup boundary. */
+  maxIterations: number;
+}
+
 /** Which branches a Junction node waits for before it may proceed. */
 export type WorkflowJunctionWaitStrategy = "all" | "any" | "count";
 
@@ -183,6 +219,10 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   cases?: WorkflowConditionCase[];
   /** Named result bindings of an Output node, resolved from the variable pool at completion. */
   outputs?: WorkflowOutputBinding[];
+  /** Owning Loop id for one child node. */
+  containerId?: string;
+  /** Bounded feedback behavior for a Loop container. */
+  loopConfig?: WorkflowLoopConfig;
   operation?: string;
   toolParameters?: WorkflowToolParameter[];
   waitStrategy?: WorkflowJunctionWaitStrategy;
@@ -190,6 +230,12 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   failureStrategy?: WorkflowJunctionFailureStrategy;
   maxAttempts?: number;
   exitCondition?: string;
+  /** Iteration node: foreach composite configuration (backend `data.iterationConfig`). */
+  iterationConfig?: WorkflowIterationConfig;
+  /** Iteration frame: presentation-only collapsed state; region members stay in the graph. */
+  collapsed?: boolean;
+  /** Iteration frame: derived member count for the collapsed summary badge. */
+  regionMemberCount?: number;
   /** Fixture-only timing hint; the editor does not expose it as configuration. */
   mockStepMs?: number;
 }
@@ -209,6 +255,8 @@ export interface WorkflowDefinitionNode {
   type: "workflow";
   position: WorkflowPosition;
   data: WorkflowNodeData;
+  /** React Flow layout parent; must match `data.containerId` for Loop children. */
+  parentId?: string;
   deletable?: boolean;
   initialWidth?: number;
   initialHeight?: number;
@@ -279,6 +327,11 @@ export interface WorkflowNodeFileChange {
 
 export interface GraphWorkflowNodeState {
   status: GraphWorkflowNodeStatus;
+  /**
+   * Composite-region round this state belongs to; present only for region rows, where the
+   * same node holds one state per round.
+   */
+  iteration?: number;
   /** Session bound to this node execution; opaque to the workflow UI. */
   sessionId?: string;
   startedAt?: string;
@@ -294,6 +347,18 @@ export interface GraphWorkflowNodeState {
   conversation?: WorkflowNodeConversationItem[];
   /** Incremental worktree changes recorded in `payload.file_changes`. */
   fileChanges?: WorkflowNodeFileChange[];
+}
+
+/** One persisted Loop round with node states keyed inside that execution scope. */
+export interface GraphWorkflowRound {
+  id: string;
+  parentLoopNodeRunId: string;
+  parentLoopNodeId: string;
+  roundIndex: number;
+  status: "pending" | "running" | "succeeded" | "failed" | "cancelled";
+  nodeStates: Record<string, GraphWorkflowNodeState>;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /** Lifecycle state for one projected session item. */
@@ -353,6 +418,15 @@ export interface GraphWorkflowRun {
   status: GraphWorkflowRunStatus;
   kickoffInput?: string;
   nodeStates: Record<string, GraphWorkflowNodeState>;
+  /** Complete Loop-round history; repeated child node ids remain isolated per round. */
+  rounds?: GraphWorkflowRound[];
+  /**
+   * Per-round states of composite-region nodes, grouped by `(nodeId, iteration)`. Region
+   * nodes hold one state per executed round; `nodeStates` keeps only each region node's
+   * latest round plus every outer node, so existing consumers stay unchanged while Theater
+   * and Overview can group rounds under the owning iteration node.
+   */
+  roundStates?: Record<string, GraphWorkflowNodeState[]>;
   /** Open HITL gates (parallel prompts may all wait at once). Cleared on resolve / cancel. */
   openHitls: HitlRequest[];
   createdAt: string;

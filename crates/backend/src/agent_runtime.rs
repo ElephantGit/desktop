@@ -9,6 +9,7 @@ mod load;
 mod operations;
 pub(crate) mod plugin_agent;
 mod prompt_liveness;
+mod prompt_retry;
 mod record;
 mod replay;
 mod restart_circuit;
@@ -18,6 +19,7 @@ mod session_followers;
 mod start;
 mod stream;
 mod support;
+mod suspend;
 mod title_acquisition;
 mod tool_timing;
 
@@ -36,6 +38,8 @@ use handoff::HandoffDebt;
 use history::{LocalHistoryClock, RecordOutcome, SessionRecorder};
 use limits::*;
 pub use operations::AgentRuntime;
+#[cfg(test)]
+pub(crate) use start::record_session_mcp_boundary;
 pub use stream::SessionEventStream;
 use support::*;
 use title_acquisition::TitleAcquisition;
@@ -47,12 +51,9 @@ use crate::session_setup::{
 };
 use crate::task::resolve_workspace_cwd;
 use crate::{BackendError, ErrorClassification};
-use agent_client_protocol_schema::v1::AvailableCommand;
-use agent_client_protocol_schema::v1::ContentBlock;
-use agent_client_protocol_schema::v1::SessionUpdate;
-use agent_client_protocol_schema::v1::{RequestPermissionOutcome, RequestPermissionResponse};
 use agent_client_protocol_schema::v1::{
-    SessionConfigId, SessionConfigOption, SessionConfigOptionValue,
+    AvailableCommand, ContentBlock, RequestPermissionOutcome, RequestPermissionResponse,
+    SessionConfigId, SessionConfigOption, SessionConfigOptionValue, SessionUpdate,
 };
 use connection::{ConnectionStatus, ConnectionSupervisor, ConnectionSupervisors};
 use ora_application::{Clock, SessionRepository};
@@ -375,9 +376,8 @@ impl AgentRuntimeManager {
 
     /// Reconciles supervised agent connections with the currently installed plugin set.
     ///
-    /// Every plugin operation that changes which packages exist calls this, so a plugin installed
-    /// or removed while Ora runs is reflected in the agent picker and in session routing without a
-    /// restart.
+    /// Every plugin operation that changes which packages exist calls this, so installs and
+    /// uninstalls are reflected in the agent picker and in session routing without a restart.
     pub(crate) fn sync_plugin_agents(&self) {
         self.inner.connections.sync_plugin_agents();
     }

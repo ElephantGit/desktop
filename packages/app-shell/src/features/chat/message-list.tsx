@@ -1,7 +1,9 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
+  forcePlainTextClipboard,
   selectElementContents,
+  serializeSelectionPlainText,
   TextEditContextMenu,
   writeClipboardText,
 } from "../editor/text-edit-context-menu";
@@ -104,12 +106,17 @@ export function MessageList({
   // just reads as noise. It returns for thoughts, tool calls, and the waits between.
   const streamingBody =
     lastItem?.kind === "message" && lastItem.role === "assistant";
+  // A retried turn keeps the indicator even under streaming text: the stalled
+  // attempt may have left an assistant message as the last item, and the retry
+  // count is the only thing telling the user why the answer restarted.
+  const retrying =
+    lastTurn?.status === "streaming" && lastTurn.retry !== undefined;
   const showRunning =
     isResponding &&
-    !streamingBody &&
     !sessionSetups.some((setup) => setup.status === "connecting") &&
     (sessionSetups.every((setup) => setup.turnIndex !== turns.length - 1) ||
-      lastTurn?.responseStartedAt !== undefined);
+      lastTurn?.responseStartedAt !== undefined) &&
+    (!streamingBody || retrying);
   const rows = useMemo(
     () => buildMessageListRows(turns, modelChanges, showRunning, sessionSetups),
     [modelChanges, sessionSetups, showRunning, turns],
@@ -235,9 +242,14 @@ export function MessageList({
                 aria-live="polite"
                 className="scrollbar-hide h-full min-h-0 flex-1 animate-in overflow-y-auto fade-in duration-500"
                 onContextMenu={() => {
-                  const text = window.getSelection()?.toString() ?? "";
+                  const text = serializeSelectionPlainText();
                   parkedSelectionTextRef.current = text;
                   setMenuHasSelection(text.length > 0);
+                }}
+                onCopy={(event) => {
+                  // Path dumps render as ChatFileLink buttons with user-select:none;
+                  // serialize from the DOM so filenames are not dropped.
+                  forcePlainTextClipboard(event);
                 }}
               />
             }
@@ -256,8 +268,7 @@ export function MessageList({
                 return;
               }
               selectElementContents(root);
-              parkedSelectionTextRef.current =
-                window.getSelection()?.toString() ?? "";
+              parkedSelectionTextRef.current = serializeSelectionPlainText();
               setMenuHasSelection(parkedSelectionTextRef.current.length > 0);
             }}
           >

@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
@@ -2357,8 +2358,16 @@ describe("ChatView", () => {
     const thread = screen.getByTestId("message-list");
     fireEvent.contextMenu(thread);
     await user.click(await screen.findByRole("menuitem", { name: "全选" }));
+    // Finish closing the first popup before reopening it; otherwise its pending
+    // focus restoration can race the next menu interaction on slower CI workers.
+    await waitFor(() =>
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+    );
+    expect(window.getSelection()?.toString()).toContain("hello from the user");
     fireEvent.contextMenu(thread);
-    await user.click(await screen.findByRole("menuitem", { name: "复制" }));
+    const copy = await screen.findByRole("menuitem", { name: "复制" });
+    expect(copy).not.toHaveAttribute("aria-disabled", "true");
+    await user.click(copy);
 
     await waitFor(() => expect(writeText).toHaveBeenCalled());
     expect(String(writeText.mock.calls[0]?.[0] ?? "")).toMatch(
@@ -3072,6 +3081,81 @@ describe("MessageList", () => {
     expect(
       screen.queryByLabelText(/正在运行|is working/),
     ).not.toBeInTheDocument();
+  });
+
+  it("reports the retry count in the running indicator, even under streamed text", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(65_100);
+    const retried: ChatTurn = {
+      ...turn(
+        "turn-1",
+        "hello",
+        100,
+        [assistantItem("assistant-1", "Half an answer", 200)],
+        "streaming",
+      ),
+      retry: { retry: 1, maxRetries: 3 },
+    };
+    const view = renderWithI18n(
+      <MessageList turns={[retried]} userName="Eric" isResponding />,
+    );
+    // The stalled attempt left an assistant message last, which would normally
+    // hide the indicator; the retry keeps it and replaces the rotating phrase.
+    const indicator = screen.getByLabelText(/正在运行|is working/);
+    expect(indicator).toHaveTextContent(
+      appI18n.t("chat.turnRetrying", { retry: 1, maxRetries: 3 }),
+    );
+    expect(indicator).toHaveTextContent(
+      `${appI18n.t("chat.elapsedTime")} 1m 05s`,
+    );
+    // The working dots give way to a slowly breathing Wi-Fi icon: the agent is
+    // unreachable, not busy.
+    const wifi = within(indicator).getByRole("img", {
+      name: appI18n.t("chat.turnRetryUnreachable"),
+    });
+    expect(wifi).toHaveClass("animate-retry-pulse");
+    expect(
+      within(indicator).queryByRole("img", { name: /正在运行|running/i }),
+    ).not.toBeInTheDocument();
+
+    // Settled: the indicator goes and the retry marker leaves no ending of its own.
+    view.rerender(
+      <MessageList
+        turns={[{ ...retried, status: "completed", stopReason: "end_turn" }]}
+        userName="Eric"
+        isResponding={false}
+      />,
+    );
+    expect(
+      screen.queryByLabelText(/正在运行|is working/),
+    ).not.toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent("1/3");
+  });
+
+  it("ends a turn whose every retry stalled with a slashed Wi-Fi icon", () => {
+    renderWithI18n(
+      <MessageList
+        turns={[
+          {
+            ...turn("turn-1", "hello", 100, [], "failed"),
+            error: appI18n.t("errors.agent_timed_out"),
+            retry: { retry: 3, maxRetries: 3, exhausted: true },
+          },
+        ]}
+        userName="Eric"
+        isResponding={false}
+      />,
+    );
+
+    const ending = screen
+      .getByRole("img", { name: appI18n.t("chat.turnRetryUnreachable") })
+      .closest("p");
+    expect(ending).toHaveClass("text-destructive");
+    expect(ending).toHaveTextContent(
+      appI18n.t("chat.turnRetriesExhausted", { maxRetries: 3 }),
+    );
+    // Nothing still breathes once the turn is over.
+    expect(document.querySelector(".animate-retry-pulse")).toBeNull();
   });
 
   it("renders streamed assistant text as markdown while keeping the thread responsive", () => {

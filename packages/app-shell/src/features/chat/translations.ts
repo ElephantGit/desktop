@@ -123,6 +123,9 @@ export const chatTranslations = {
     "chat.historyNotice.unreadableRecords":
       "有 {{count}} 条历史记录无法读取，缺失位置未知。",
     "chat.historyNotice.unrecordedContent": "部分对话未能记录：{{reason}}",
+    "chat.mcpHealth.title": "当前会话有 MCP 在 Host 侧连不上",
+    "chat.mcpHealth.member": "{{name}}（{{code}}）",
+    "chat.mcpHealth.configure": "配置",
     "chat.send": "发送消息",
     "chat.starting": "正在启动…",
     "chat.unsupportedCommand":
@@ -271,6 +274,9 @@ export const chatTranslations = {
     "chat.content.binaryResource": "二进制资源",
     "chat.content.download": "下载 {{name}}",
     "chat.turnCancelled": "本轮已停止",
+    "chat.turnRetrying": "正在重试 {{retry}}/{{maxRetries}}",
+    "chat.turnRetryUnreachable": "Agent 无响应",
+    "chat.turnRetriesExhausted": "Agent 仍无响应，已重试 {{maxRetries}} 次",
     "chat.turnFailed": "本轮执行失败",
     "chat.turnIncomplete": "响应可能不完整",
     "chat.turnRefused": "Agent 未执行此请求",
@@ -443,6 +449,10 @@ export const chatTranslations = {
       "{{count}} history records could not be read; their positions are unknown.",
     "chat.historyNotice.unrecordedContent":
       "Part of the conversation was not recorded: {{reason}}",
+    "chat.mcpHealth.title":
+      "Some MCP servers in this session are unreachable from the Host",
+    "chat.mcpHealth.member": "{{name}} ({{code}})",
+    "chat.mcpHealth.configure": "Configure",
     "chat.send": "Send message",
     "chat.starting": "Starting…",
     "chat.unsupportedCommand":
@@ -619,6 +629,10 @@ export const chatTranslations = {
     "chat.content.binaryResource": "Binary resource",
     "chat.content.download": "Download {{name}}",
     "chat.turnCancelled": "This turn was stopped",
+    "chat.turnRetrying": "Retrying {{retry}}/{{maxRetries}}",
+    "chat.turnRetryUnreachable": "The agent stopped responding",
+    "chat.turnRetriesExhausted":
+      "The agent never came back after {{maxRetries}} retries",
     "chat.turnFailed": "This turn failed",
     "chat.turnIncomplete": "The response may be incomplete",
     "chat.turnRefused": "The agent did not perform this request",

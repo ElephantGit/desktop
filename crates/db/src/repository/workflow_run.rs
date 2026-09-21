@@ -103,6 +103,7 @@ impl WorkflowRunRepository for SqliteWorkflowRunRepository {
                     workspace_id: run.workspace_id.clone(),
                     project_id: ProjectId::new(project_id),
                     nodes: list_node_runs(connection, run_id)?,
+                    scopes: super::workflow_scope::list_rounds(connection, run_id)?,
                     run,
                 }))
             })
@@ -350,6 +351,7 @@ pub(super) fn map_node_run_row(row: &Row<'_>) -> Result<WorkflowNodeRun, crate::
     Ok(WorkflowNodeRun::new(
         WorkflowNodeRunId::new(row.get::<_, String>("id")?),
         WorkflowRunId::new(row.get::<_, String>("run_id")?),
+        ora_domain::WorkflowScopeId::new(row.get::<_, String>("scope_id")?),
         row.get::<_, String>("node_id")?,
         row.get::<_, String>("node_type")?,
         row.get::<_, Option<String>>("session_id")?
@@ -366,7 +368,8 @@ pub(super) fn map_node_run_row(row: &Row<'_>) -> Result<WorkflowNodeRun, crate::
             row.get("updated_at")?,
             row.get::<_, i64>("is_deleted")? != 0,
         ),
-    ))
+    )
+    .in_iteration(row.get::<_, Option<u32>>("iteration")?))
 }
 
 /// Lists node-run rows of one run in stable ascending order.
@@ -375,13 +378,33 @@ pub(super) fn list_node_runs(
     run_id: &WorkflowRunId,
 ) -> Result<Vec<WorkflowNodeRun>, crate::DatabaseError> {
     let mut statement = connection.prepare(
-        "SELECT id, run_id, node_id, node_type, session_id, status, input, output, error, payload,
+        "SELECT id, run_id, scope_id, node_id, node_type, session_id, status, input, output, error, payload, iteration,
                 started_at, finished_at, created_at, updated_at, is_deleted
          FROM workflow_node_runs
          WHERE run_id = ?1 AND is_deleted = 0
          ORDER BY created_at, id",
     )?;
     let mut rows = statement.query(params![run_id.as_ref()])?;
+    let mut node_runs = Vec::new();
+    while let Some(row) = rows.next()? {
+        node_runs.push(map_node_run_row(row)?);
+    }
+    Ok(node_runs)
+}
+
+/// Lists node instances within one execution scope in stable creation order.
+pub(super) fn list_node_runs_in_scope(
+    connection: &rusqlite::Connection,
+    scope_id: &ora_domain::WorkflowScopeId,
+) -> Result<Vec<WorkflowNodeRun>, crate::DatabaseError> {
+    let mut statement = connection.prepare(
+        "SELECT id, run_id, scope_id, node_id, node_type, session_id, status, input, output, error, payload, iteration,
+                started_at, finished_at, created_at, updated_at, is_deleted
+         FROM workflow_node_runs
+         WHERE scope_id = ?1 AND is_deleted = 0
+         ORDER BY created_at, id",
+    )?;
+    let mut rows = statement.query(params![scope_id.as_ref()])?;
     let mut node_runs = Vec::new();
     while let Some(row) = rows.next()? {
         node_runs.push(map_node_run_row(row)?);

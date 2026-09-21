@@ -1,3 +1,5 @@
+import { useWorkflowAnalysis } from "../../state/data/workflow-analysis";
+import { WorkflowMembershipProvider } from "../workflow-node-chrome";
 import {
   useCallback,
   useEffect,
@@ -51,10 +53,12 @@ import { WindowControls } from "../../components/window-controls";
 import { useUiStore } from "../../state/stores/ui-store";
 import {
   createMockWorkflowCapabilities,
+  createMockWorkflowLoopGroup,
   createMockWorkflowNode,
   deriveWorkflowVariableCatalog,
   normalizeWorkflowGlobalVariables,
   normalizeWorkflowNodeAgentConfigs,
+  supportsWorkflowNodeScope,
   type DemoWorkflow,
   type MockWorkflowVersion,
   type WorkflowCapabilities,
@@ -65,7 +69,7 @@ import {
   type WorkflowNodeKind,
 } from "@ora/workflow-mock";
 import {
-  normalizeWorkflowDefinition,
+  normalizeWorkflowDocument,
   parseWorkflowGraph,
   serializeWorkflowGraph,
   workflowTimestampToIso,
@@ -78,9 +82,21 @@ import { availableSkills, useSkills } from "../../state/hooks/use-skills";
 import { useWorkflowAgentModels } from "../../state/hooks/use-workflow-agent-models";
 import { localizeContractError } from "../../i18n/contract-error";
 import { WorkflowCanvas } from "./workflow-canvas";
-import { organizeWorkflowNodes } from "./workflow-flow/layout";
+import {
+  organizeWorkflowNodes,
+  shouldPersistWorkflowNodeChanges,
+} from "./workflow-flow/layout";
 import type { WorkflowCanvasNode } from "./workflow-flow/types";
 import { WorkflowInspector } from "./workflow-inspector";
+import { applyIterationDragRules } from "./workflow-iteration-containment";
+import {
+  applyIterationFrameResize,
+  expandIterationFrames,
+  insertIterationMember,
+  repairIterationGraphAfterNodeDeletion,
+  resolveIterationDeletionCascade,
+  type IterationInsertion,
+} from "./workflow-iteration-graph";
 import { WorkflowGlobalVariablesDialog } from "./workflow-global-variables-dialog";
 import { workflowMcpChoices } from "./mcp-catalog";
 import { useInstalledPlugins } from "../../state/hooks/use-installed-plugins";
@@ -99,9 +115,23 @@ import {
   useUpdateWorkflowDraft,
   useWorkflowDraft,
   useWorkflowLibrary,
+  useWorkflowVersionSnapshot,
   useWorkflowVersions,
 } from "../../state/data/workflows";
 import { WorkflowDraftSaveStatusLabel } from "./workflow-draft-save-status";
+import {
+  WorkflowImportDialog,
+  type WorkflowImportChoices,
+  type WorkflowImportState,
+} from "./workflow-import-dialog";
+import { WorkflowExportDialog } from "./workflow-export-dialog";
+import {
+  MAX_WORKFLOW_IMPORT_BYTES,
+  collectWorkflowDependencies,
+  importPublishVersion,
+  parseWorkflowImportFile,
+  workflowExportDocument,
+} from "./workflow-transfer";
 import { useWorkflowDraftAutosave } from "./use-workflow-draft-autosave";
 import { useWorkflowHistory } from "./use-workflow-history";
 import {
@@ -130,6 +160,11 @@ interface WorkflowMutationOptions {
     meta?: WorkflowHistoryMeta;
     group?: string;
   };
+}
+
+interface PendingIterationDeleteConfirmation {
+  memberCount: number;
+  resolve: (confirmed: boolean) => void;
 }
 
 export interface WorkflowEditorProps {
@@ -197,10 +232,12 @@ function workflowFromCanvasSnapshot(
   );
   return {
     ...workflow,
-    nodes: graph.nodes.filter(
-      (node): node is Node<WorkflowNodeData, "workflow"> =>
-        !isWorkflowAnnotationNode(node),
-    ),
+    nodes: graph.nodes
+      .filter(
+        (node): node is Node<WorkflowNodeData, "workflow"> =>
+          !isWorkflowAnnotationNode(node),
+      )
+      .map(stripDerivedWorkflowNodeFields),
     annotations: graph.nodes
       .filter(isWorkflowAnnotationNode)
       .map((annotation) => ({
@@ -214,41 +251,18 @@ function workflowFromCanvasSnapshot(
   };
 }
 
-/** Produces a portable filename while retaining the workflow name for the save dialog. */
-function workflowExportFileName(name: string): string {
-  // `\p{Cc}` is the Unicode Control category; property escapes keep control
-  // characters out of the regex literal so no-control-regex stays satisfied.
-  const safeName = name.replace(/[<>:"/\\|?*\p{Cc}]/gu, " ").trim();
-  return `${safeName === "" ? "workflow" : safeName}.reactflow.json`;
-}
-
-/**
- * Picks a publish version for an imported file: prefer the filename stem (matching export
- * naming), then the workflow title, else let the backend mint an automatic version.
- */
-function importPublishVersion(
-  fileName: string,
-  workflowName: string,
-): string | null {
-  const stem = fileName
-    .replace(/\.reactflow\.json$/i, "")
-    .replace(/\.json$/i, "")
-    .trim();
-  const candidate = (stem !== "" ? stem : workflowName).trim();
-  if (
-    candidate === "" ||
-    candidate === "draft" ||
-    candidate === "." ||
-    candidate === ".." ||
-    candidate.length > 128 ||
-    [...candidate].some(
-      (character) =>
-        character === "/" || character === "\\" || character.charCodeAt(0) < 32,
-    )
-  ) {
-    return null;
-  }
-  return candidate;
+/** Removes render-only React Flow fields before a graph is saved or exported. */
+function stripDerivedWorkflowNodeFields(
+  node: Node<WorkflowNodeData, "workflow">,
+): Node<WorkflowNodeData, "workflow"> {
+  const persisted = { ...node };
+  delete persisted.extent;
+  delete persisted.expandParent;
+  delete persisted.hidden;
+  delete persisted.zIndex;
+  const data = { ...node.data };
+  delete data.regionMemberCount;
+  return { ...persisted, data };
 }
 
 /** Provides one React Flow store to the canvas and its sibling inspector. */
@@ -376,6 +390,21 @@ function WorkflowEditorContent({
   const [previewedVersion, setPreviewedVersion] =
     useState<MockWorkflowVersion | null>(null);
   const [publishDialogOpen, setPublishDialogOpen] = useState(false);
+  /** Open import dialog step; nothing is persisted until the preview is confirmed. */
+  const [importState, setImportState] = useState<WorkflowImportState | null>(
+    null,
+  );
+  const [importBusy, setImportBusy] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  /** Workflow whose export dialog is requested; it opens once that draft is mounted. */
+  const [exportRequestId, setExportRequestId] = useState<string | null>(null);
+  /** `null` exports the live draft; otherwise the named published version. */
+  const [exportVersion, setExportVersion] = useState<string | null>(null);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const markWorkflowImported = useWorkflowEditorStore(
+    (state) => state.markImported,
+  );
   const [globalVariablesDialogOpen, setGlobalVariablesDialogOpen] =
     useState(false);
   const [publishVersionName, setPublishVersionName] = useState("");
@@ -384,6 +413,9 @@ function WorkflowEditorContent({
   /** Bumps on every persistable edit so in-flight writes can detect they are stale. */
   const editGenerationRef = useRef(0);
   const workflowRef = useRef<DemoWorkflow | null>(null);
+  const dragStartWorkflowRef = useRef<DemoWorkflow | null>(null);
+  /** Names the iteration frame whose manual resize owns the open history transaction. */
+  const iterationResizeRef = useRef<string | null>(null);
   const previewedVersionRef = useRef<MockWorkflowVersion | null>(null);
   /** Last name known to be persisted, so autosave skips no-op renames. */
   const persistedNameRef = useRef<string | null>(null);
@@ -393,6 +425,8 @@ function WorkflowEditorContent({
   const inspectorCurrentWidthRef = useRef(0);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
   const [inspectorVisualWidth, setInspectorVisualWidth] = useState(0);
+  const [iterationDeleteConfirmation, setIterationDeleteConfirmation] =
+    useState<PendingIterationDeleteConfirmation | null>(null);
 
   const restoreHistorySnapshot = useCallback(
     (snapshot: Parameters<typeof restoreWorkflowHistorySnapshot>[1]): void => {
@@ -544,6 +578,8 @@ function WorkflowEditorContent({
   // History belongs to the mounted draft session, so a workflow switch or
   // activation starts at a clean baseline while ordinary edits keep the stack.
   useEffect(() => {
+    // A workflow switch also abandons any in-flight frame resize gesture.
+    iterationResizeRef.current = null;
     if (
       hydratedWorkflowId === resolvedWorkflowId &&
       workflowRef.current !== null
@@ -578,6 +614,70 @@ function WorkflowEditorContent({
     [versionsQuery.data, i18n.resolvedLanguage],
   );
 
+  const exportVersionQuery = useWorkflowVersionSnapshot(
+    exportRequestId,
+    exportVersion,
+  );
+  /** Plugin references of the export source, resolved against local catalogs. */
+  const exportDependencies = useMemo(() => {
+    if (exportRequestId === null) {
+      return [];
+    }
+    const nodes =
+      exportVersion === null
+        ? (workflow?.nodes ?? [])
+        : exportVersionQuery.data === undefined
+          ? []
+          : parseWorkflowGraph(exportVersionQuery.data.graph).nodes;
+    return collectWorkflowDependencies(
+      nodes,
+      pluginsQuery.data ?? [],
+      skillsQuery.data ?? [],
+    );
+  }, [
+    exportRequestId,
+    exportVersion,
+    exportVersionQuery.data,
+    pluginsQuery.data,
+    skillsQuery.data,
+    workflow?.nodes,
+  ]);
+  /** The exact document export will write, shown in the dialog's structure preview. */
+  const exportPreviewJson = useMemo(() => {
+    if (exportRequestId === null || workflow === null) {
+      return null;
+    }
+    if (exportVersion === null) {
+      return JSON.stringify(workflowExportDocument(workflow, null), null, 2);
+    }
+    if (exportVersionQuery.data === undefined) {
+      return null;
+    }
+    const envelope = parseWorkflowGraph(exportVersionQuery.data.graph);
+    return JSON.stringify(
+      workflowExportDocument(workflow, {
+        ...envelope,
+        globalVariables: normalizeWorkflowGlobalVariables(
+          envelope.globalVariables,
+        ),
+      }),
+      null,
+      2,
+    );
+  }, [exportRequestId, exportVersion, exportVersionQuery.data, workflow]);
+  /** Plugin references of the previewed import file. */
+  const importDependencies = useMemo(
+    () =>
+      importState?.stage === "preview"
+        ? collectWorkflowDependencies(
+            importState.workflow.nodes,
+            pluginsQuery.data ?? [],
+            skillsQuery.data ?? [],
+          )
+        : [],
+    [importState, pluginsQuery.data, skillsQuery.data],
+  );
+
   /** Formatted last-edit time of the draft (workflow_snapshots.updated_at). */
   const draftUpdatedAt = useMemo(() => {
     const updatedAt = draftQuery.data?.draft.updatedAt;
@@ -600,6 +700,20 @@ function WorkflowEditorContent({
         : { ...workflow, ...previewedVersion.graph },
     [previewedVersion, workflow],
   );
+  const analysisGraph = useMemo(
+    () =>
+      serializeWorkflowGraph({
+        nodes: displayedWorkflow?.nodes ?? [],
+        edges: (displayedWorkflow?.edges ?? []).map((edge) => ({
+          id: edge.id,
+          source: edge.source,
+          target: edge.target,
+        })),
+        viewport: displayedWorkflow?.viewport ?? { x: 0, y: 0, zoom: 1 },
+      }),
+    [displayedWorkflow],
+  );
+  const analysis = useWorkflowAnalysis(resolvedWorkflowId ?? "", analysisGraph);
   const loadCause =
     library.error ?? (resolvedWorkflowId !== null ? draftQuery.error : null);
   const selectedNode = useMemo(
@@ -770,7 +884,7 @@ function WorkflowEditorContent({
     const startedGeneration = editGenerationRef.current;
     setManagerError(null);
     try {
-      const definition = normalizeWorkflowDefinition({
+      const definition = normalizeWorkflowDocument({
         id: snapshot.id,
         name: snapshot.name,
         description: snapshot.description,
@@ -1052,29 +1166,75 @@ function WorkflowEditorContent({
     }
   }
 
-  /** Parses and validates an exported workflow before persisting it as a new workflow. */
-  async function importWorkflow(file: File): Promise<boolean> {
+  /** Opens the import dialog on its file-selection step. */
+  function openImportDialog(): void {
     setManagerError(null);
-    let imported: DemoWorkflow;
+    setImportError(null);
+    setImportState({ stage: "pick" });
+  }
+
+  /**
+   * Reads a chosen file into a preview or a failure explanation. Size is checked before
+   * reading so an accidental large file is never loaded into memory.
+   */
+  async function readImportFile(file: File): Promise<void> {
+    const info = { name: file.name, size: file.size };
+    setImportError(null);
+    if (file.size > MAX_WORKFLOW_IMPORT_BYTES) {
+      setImportState({
+        stage: "failure",
+        file: info,
+        failure: { reason: "fileTooLarge" },
+      });
+      return;
+    }
+    let text: string;
     try {
-      imported = JSON.parse(await file.text()) as DemoWorkflow;
+      text = await file.text();
     } catch {
-      setManagerError(t("settings.workflow.importError"));
-      return false;
+      setImportState({
+        stage: "failure",
+        file: info,
+        failure: { reason: "invalidJson", location: null },
+      });
+      return;
     }
-    const name = imported.name.trim();
-    if (name === "") {
-      setManagerError(t("settings.workflow.importError"));
-      return false;
+    const parsed = parseWorkflowImportFile(text);
+    setImportState(
+      parsed.ok
+        ? {
+            stage: "preview",
+            file: info,
+            workflow: parsed.workflow,
+            suggestedVersion: importPublishVersion(
+              file.name,
+              parsed.workflow.name.trim(),
+            ),
+          }
+        : { stage: "failure", file: info, failure: parsed.failure },
+    );
+  }
+
+  /** Persists the previewed workflow as a new library entry, optionally publishing it. */
+  async function confirmImport(choices: WorkflowImportChoices): Promise<void> {
+    if (importState?.stage !== "preview") {
+      return;
     }
-    const saved = await autosave.flush({ force: true });
-    if (!saved) {
-      return false;
-    }
+    const imported = importState.workflow;
+    setImportBusy(true);
+    setImportError(null);
     try {
-      const definition = normalizeWorkflowDefinition({
+      const saved = await autosave.flush({ force: true });
+      if (!saved) {
+        setImportError(
+          useWorkflowEditorStore.getState().managerError ??
+            t("settings.workflow.saveError"),
+        );
+        return;
+      }
+      const definition = normalizeWorkflowDocument({
         id: imported.id,
-        name: imported.name,
+        name: choices.name,
         description: imported.description,
         updatedAt: imported.updatedAt,
         viewport: imported.viewport,
@@ -1085,7 +1245,7 @@ function WorkflowEditorContent({
         ),
       });
       const result = await createWorkflowMutation.mutateAsync({
-        name,
+        name: choices.name,
         graph: serializeWorkflowGraph({
           nodes: definition.nodes,
           edges: definition.edges,
@@ -1100,38 +1260,105 @@ function WorkflowEditorContent({
       setHydratedWorkflowId(null);
       setWorkflow(null);
       setSelectedWorkflowId(result.workflow.id);
+      setImportState(null);
+      markWorkflowImported(result.workflow.id);
+      if (!choices.publish) {
+        toast.success(
+          t("settings.workflow.transfer.importDraftSuccess", {
+            name: choices.name,
+          }),
+        );
+        return;
+      }
       // Import should leave a runnable published snapshot, not only an editable draft.
       const published = await publishWorkflowMutation.mutateAsync({
         workflowId: result.workflow.id,
-        version: importPublishVersion(file.name, name),
+        version: choices.version,
       });
       toast.success(
         t("settings.workflow.importPublishSuccess", {
-          name,
+          name: choices.name,
           version: published.snapshot.version,
         }),
       );
-      return true;
     } catch (cause) {
-      setManagerError(localizeContractError(cause, t));
-      return false;
+      const message = localizeContractError(cause, t);
+      // Once the dialog has closed, the sidebar alert is the only visible surface.
+      setImportError(message);
+      setManagerError(message);
+    } finally {
+      setImportBusy(false);
     }
   }
 
-  /** Serializes the live React Flow snapshot and sends it through the host save flow. */
-  async function exportWorkflow(): Promise<void> {
-    const snapshot = commitCurrentWorkflowSnapshot();
-    if (snapshot === null) {
+  /** Opens the export dialog for the mounted draft. */
+  function openExportDialog(): void {
+    if (workflow === null) {
       return;
     }
-    setManagerError(null);
+    setExportVersion(null);
+    setExportError(null);
+    setExportRequestId(workflow.id);
+  }
+
+  /** Switches to a sidebar row (flushing the open draft) and then requests its export. */
+  async function exportLibraryWorkflow(workflowId: string): Promise<void> {
+    await selectWorkflow(workflowId);
+    // A failed flush keeps the previous selection; only open for the requested row.
+    if (useWorkflowEditorStore.getState().selectedWorkflowId !== workflowId) {
+      return;
+    }
+    setExportVersion(null);
+    setExportError(null);
+    setExportRequestId(workflowId);
+  }
+
+  /** Serializes the chosen source and sends it through the host save flow. */
+  async function exportWorkflow(fileName: string): Promise<void> {
+    if (workflow === null) {
+      return;
+    }
+    setExportBusy(true);
+    setExportError(null);
     try {
-      await platform.saveTextFile({
-        defaultFileName: workflowExportFileName(snapshot.name),
-        content: `${JSON.stringify(snapshot, null, 2)}\n`,
+      let exported: DemoWorkflow;
+      if (exportVersion === null) {
+        const snapshot = commitCurrentWorkflowSnapshot();
+        if (snapshot === null) {
+          return;
+        }
+        exported = snapshot;
+      } else {
+        const envelope = parseWorkflowGraph(
+          exportVersionQuery.data?.graph ??
+            (
+              await client.workflow.getVersion({
+                workflowId: workflow.id,
+                version: exportVersion,
+              })
+            ).snapshot.graph,
+        );
+        exported = workflowExportDocument(workflow, {
+          ...envelope,
+          globalVariables: normalizeWorkflowGlobalVariables(
+            envelope.globalVariables,
+          ),
+        });
+      }
+      const written = await platform.saveTextFile({
+        defaultFileName: fileName,
+        content: `${JSON.stringify(exported, null, 2)}\n`,
       });
+      if (written) {
+        toast.success(
+          t("settings.workflow.transfer.exportSuccess", { name: fileName }),
+        );
+        setExportRequestId(null);
+      }
     } catch {
-      setManagerError(t("settings.workflow.exportError"));
+      setExportError(t("settings.workflow.exportError"));
+    } finally {
+      setExportBusy(false);
     }
   }
 
@@ -1257,6 +1484,45 @@ function WorkflowEditorContent({
       ...(currentWorkflow.annotations ?? []).map((node) => node.id),
       ...currentWorkflow.edges.map((edge) => edge.id),
     ]);
+    if (kind === "loop") {
+      const group = createMockWorkflowLoopGroup({
+        sequence,
+        position,
+        locale,
+        agentConfig: capabilities.defaultAgentConfig,
+      });
+      const loop = group.nodes[0]!;
+      updateWorkflow(
+        (current) => ({
+          ...current,
+          nodes: [
+            ...current.nodes.map((candidate) => ({
+              ...candidate,
+              selected: false,
+            })),
+            ...group.nodes.map((candidate) => ({
+              ...candidate,
+              selected: candidate.id === loop.id,
+            })),
+          ],
+          edges: [...current.edges, ...group.edges],
+        }),
+        {
+          history: {
+            event: "node.add",
+            meta: {
+              nodeIds: group.nodes.map((candidate) => candidate.id),
+              edgeIds: group.edges.map((edge) => edge.id),
+              subject: loop.data.title,
+              nodeTitle: loop.data.title,
+              nodeKind: kind,
+            },
+          },
+        },
+      );
+      expandInspector();
+      return;
+    }
     const node = createMockWorkflowNode({
       kind,
       sequence,
@@ -1289,6 +1555,102 @@ function WorkflowEditorContent({
       },
     );
     expandInspector();
+  }
+
+  /** Adds one capability-approved member through an explicit iteration graph seam. */
+  function insertIterationNode(
+    kind: WorkflowNodeKind,
+    insertion: IterationInsertion,
+  ): void {
+    const currentWorkflow = workflowRef.current ?? workflow;
+    const nodeType = capabilities.nodeTypes.find(
+      (candidate) => candidate.kind === kind,
+    );
+    if (
+      currentWorkflow === null ||
+      nodeType === undefined ||
+      !supportsWorkflowNodeScope(nodeType, "iteration")
+    ) {
+      return;
+    }
+    const { sequence } = uniqueGraphId(kind, [
+      ...currentWorkflow.nodes.map((node) => node.id),
+      ...(currentWorkflow.annotations ?? []).map((node) => node.id),
+      ...currentWorkflow.edges.map((edge) => edge.id),
+    ]);
+    const node = {
+      ...createMockWorkflowNode({
+        kind,
+        sequence,
+        position: { x: 0, y: 0 },
+        locale,
+        agentConfig:
+          kind === "agent" ? capabilities.defaultAgentConfig : undefined,
+      }),
+      selected: true,
+    };
+    updateWorkflow(
+      (current) =>
+        insertIterationMember(
+          {
+            ...current,
+            nodes: current.nodes.map((candidate) => ({
+              ...candidate,
+              selected: false,
+            })),
+          },
+          insertion,
+          node,
+        ),
+      {
+        history: {
+          event: "node.add",
+          meta: {
+            nodeIds: [node.id],
+            subject: node.data.title,
+            nodeTitle: node.data.title,
+            nodeKind: kind,
+          },
+        },
+      },
+    );
+    expandInspector();
+  }
+
+  /** Persists only the presentation collapse flag; expanded geometry remains unchanged. */
+  function toggleIterationCollapsed(iterationId: string): void {
+    const current = workflowRef.current ?? workflow;
+    const iteration = current?.nodes.find((node) => node.id === iterationId);
+    if (iteration === undefined || iteration.data.kind !== "iteration") {
+      return;
+    }
+    updateWorkflow(
+      (workflow) => ({
+        ...workflow,
+        nodes: workflow.nodes.map((node) =>
+          node.id === iterationId
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  collapsed: node.data.collapsed !== true,
+                },
+              }
+            : node,
+        ),
+      }),
+      {
+        history: {
+          event: "node.edit",
+          meta: {
+            nodeIds: [iterationId],
+            subject: iteration.data.title,
+            nodeTitle: iteration.data.title,
+            nodeKind: "iteration",
+          },
+        },
+      },
+    );
   }
 
   /** Creates a selected editor note at the canvas-provided position. */
@@ -1489,6 +1851,7 @@ function WorkflowEditorContent({
     if (current === null || previewedVersion !== null) {
       return;
     }
+    dragStartWorkflowRef.current = structuredClone(current);
     workflowHistory.beginTransaction(
       captureWorkflowHistorySnapshot(current),
       "node.move",
@@ -1513,14 +1876,43 @@ function WorkflowEditorContent({
     );
   }
 
-  /** Finishes a node drag transaction after React Flow has applied its final position. */
-  function stopNodeDrag(): void {
+  /** Finishes a drag without ever changing authored iteration membership. */
+  function stopNodeDrag(
+    _event: MouseEvent | TouchEvent,
+    _dragged: WorkflowCanvasNode,
+    draggedNodes: WorkflowCanvasNode[],
+  ): void {
     const current = workflowRef.current ?? workflow;
     if (current === null || previewedVersion !== null) {
       workflowHistory.cancelTransaction();
+      dragStartWorkflowRef.current = null;
       return;
     }
-    workflowHistory.commitTransaction(captureWorkflowHistorySnapshot(current));
+    const draggedWorkflowNodes = draggedNodes.filter(
+      (candidate): candidate is Node<WorkflowNodeData, "workflow"> =>
+        !isWorkflowAnnotationNode(candidate),
+    );
+    const result = applyIterationDragRules(
+      current,
+      dragStartWorkflowRef.current ?? current,
+      draggedWorkflowNodes.map((node) => node.id),
+    );
+    dragStartWorkflowRef.current = null;
+    if (result.workflow !== current) {
+      updateWorkflow(() => result.workflow as typeof current, {
+        persist: true,
+      });
+      workflowHistory.commitTransaction(
+        captureWorkflowHistorySnapshot(result.workflow as typeof current),
+      );
+    } else {
+      workflowHistory.commitTransaction(
+        captureWorkflowHistorySnapshot(current),
+      );
+    }
+    if (result.rejectedNodeIds.length > 0) {
+      toast.message(t("settings.workflow.iteration.useInternalAdd"));
+    }
   }
 
   /** Captures the elements React Flow is about to remove for one delete history step. */
@@ -1530,35 +1922,79 @@ function WorkflowEditorContent({
   }: {
     nodes: WorkflowCanvasNode[];
     edges: Edge[];
-  }): Promise<boolean> {
+  }): Promise<boolean | { nodes: WorkflowCanvasNode[]; edges: Edge[] }> {
     const current = workflowRef.current ?? workflow;
     if (current === null || previewedVersion !== null) {
       return false;
     }
-    const firstNode = nodes[0];
+    const requestedNodeIds = new Set(nodes.map((node) => node.id));
+    const cascade = resolveIterationDeletionCascade(
+      current,
+      new Set(
+        nodes
+          .filter(
+            (node): node is Node<WorkflowNodeData, "workflow"> =>
+              !isWorkflowAnnotationNode(node),
+          )
+          .map((node) => node.id),
+      ),
+    );
+    const cascadingMembers = current.nodes.filter(
+      (node) => cascade.nodeIds.has(node.id) && !requestedNodeIds.has(node.id),
+    );
+    if (cascade.memberCount > 0) {
+      const confirmed = await new Promise<boolean>((resolve) => {
+        setIterationDeleteConfirmation({
+          memberCount: cascade.memberCount,
+          resolve,
+        });
+      });
+      if (!confirmed) {
+        return false;
+      }
+    }
+    for (const member of cascadingMembers) {
+      requestedNodeIds.add(member.id);
+    }
+    const cascadeEdges = current.edges.filter((edge) =>
+      cascade.edgeIds.has(edge.id),
+    );
+    const edgeById = new Map(
+      [...edges, ...cascadeEdges].map((edge) => [edge.id, edge]),
+    );
+    const deletingNodes = [
+      ...nodes,
+      ...cascadingMembers.filter(
+        (member) => !nodes.some((node) => node.id === member.id),
+      ),
+    ];
+    const firstNode = deletingNodes[0];
     const nodeTitle =
       firstNode !== undefined && !isWorkflowAnnotationNode(firstNode)
         ? firstNode.data.title
         : undefined;
     const subject =
-      nodes.length > 0
-        ? historySubjectForNodes(nodes)
-        : edges
+      deletingNodes.length > 0
+        ? historySubjectForNodes(deletingNodes)
+        : [...edgeById.values()]
             .map((edge) =>
               historySubjectForEdge(current, edge.source, edge.target),
             )
             .join("、");
     workflowHistory.beginTransaction(
       captureWorkflowHistorySnapshot(current),
-      nodes.length > 0 ? "node.delete" : "edge.delete",
+      deletingNodes.length > 0 ? "node.delete" : "edge.delete",
       {
-        nodeIds: nodes.map((node) => node.id),
-        edgeIds: edges.map((edge) => edge.id),
+        nodeIds: deletingNodes.map((node) => node.id),
+        edgeIds: [...edgeById.keys()],
         subject,
         nodeTitle,
       },
     );
-    return true;
+    return {
+      nodes: deletingNodes,
+      edges: [...edgeById.values()],
+    };
   }
 
   /** Commits the delete transaction once React Flow has removed its elements. */
@@ -1573,26 +2009,123 @@ function WorkflowEditorContent({
 
   /** Applies React Flow node changes directly to the active graph. */
   function changeNodes(changes: NodeChange<WorkflowCanvasNode>[]): void {
-    const persistable = changes.some(
-      (change) => change.type !== "select" && change.type !== "dimensions",
+    const persistable = shouldPersistWorkflowNodeChanges(changes);
+    const removedNodeIds = new Set(
+      changes
+        .filter((change) => change.type === "remove")
+        .map((change) => change.id),
     );
+    let clearedCollectSelectorIterationIds: string[] = [];
+    // Real card sizes arrive only after render, so the insert-time frame estimate can
+    // undershoot a tall member and React Flow's parent extent then clamps that member
+    // up over the region's internal affordances. Re-fitting frames whenever plain
+    // measurements arrive releases the clamp without persisting a no-edit workflow.
+    const measured = changes.some(
+      (change) => change.type === "dimensions" && change.resizing !== true,
+    );
+    beginIterationResizeHistory(changes);
     updateWorkflow(
       (current) => {
         const nextNodes = applyNodeChanges<WorkflowCanvasNode>(changes, [
           ...current.nodes,
           ...(current.annotations ?? []),
         ]);
-        return {
+        let nextWorkflow = {
           ...current,
-          nodes: nextNodes.filter(
-            (node): node is Node<WorkflowNodeData, "workflow"> =>
-              !isWorkflowAnnotationNode(node),
+          nodes: applyIterationFrameResize(
+            nextNodes.filter(
+              (node): node is Node<WorkflowNodeData, "workflow"> =>
+                !isWorkflowAnnotationNode(node),
+            ),
+            changes,
           ),
           annotations: nextNodes.filter(isWorkflowAnnotationNode),
         };
+        if (measured) {
+          nextWorkflow = expandIterationFrames(nextWorkflow);
+        }
+        if (removedNodeIds.size === 0) {
+          return nextWorkflow;
+        }
+        const repaired = repairIterationGraphAfterNodeDeletion(
+          nextWorkflow,
+          removedNodeIds,
+        );
+        clearedCollectSelectorIterationIds =
+          repaired.clearedCollectSelectorIterationIds;
+        return repaired.graph;
       },
       { persist: persistable },
     );
+    commitIterationResizeHistory(changes);
+    if (clearedCollectSelectorIterationIds.length > 0) {
+      toast.warning(
+        t("settings.workflow.iteration.collectTargetDeleted", {
+          count: clearedCollectSelectorIterationIds.length,
+        }),
+      );
+    }
+  }
+
+  /** Opens one undo step when a manual iteration frame resize gesture starts. */
+  function beginIterationResizeHistory(
+    changes: NodeChange<WorkflowCanvasNode>[],
+  ): void {
+    if (iterationResizeRef.current !== null || previewedVersion !== null) {
+      return;
+    }
+    const current = workflowRef.current ?? workflow;
+    if (current === null) {
+      return;
+    }
+    for (const change of changes) {
+      if (change.type !== "dimensions" || change.resizing !== true) {
+        continue;
+      }
+      const node = current.nodes.find(
+        (candidate) => candidate.id === change.id,
+      );
+      if (node?.data.kind !== "iteration") {
+        continue;
+      }
+      iterationResizeRef.current = change.id;
+      workflowHistory.beginTransaction(
+        captureWorkflowHistorySnapshot(current),
+        "iteration.resize",
+        {
+          nodeIds: [change.id],
+          subject: historySubjectForNode(node),
+          nodeTitle: node.data.title,
+          nodeKind: node.data.kind,
+        },
+      );
+      return;
+    }
+  }
+
+  /** Closes the resize undo step once its final dimension change has been applied. */
+  function commitIterationResizeHistory(
+    changes: NodeChange<WorkflowCanvasNode>[],
+  ): void {
+    const resizedId = iterationResizeRef.current;
+    if (
+      resizedId === null ||
+      !changes.some(
+        (change) =>
+          change.type === "dimensions" &&
+          change.resizing === false &&
+          change.id === resizedId,
+      )
+    ) {
+      return;
+    }
+    iterationResizeRef.current = null;
+    const current = workflowRef.current ?? workflow;
+    if (current === null) {
+      workflowHistory.cancelTransaction();
+      return;
+    }
+    workflowHistory.commitTransaction(captureWorkflowHistorySnapshot(current));
   }
 
   /** Applies React Flow edge changes directly to the active graph. */
@@ -1628,7 +2161,8 @@ function WorkflowEditorContent({
       copy: copyWorkflow,
       rename: renameWorkflow,
       delete: deleteWorkflow,
-      importFile: importWorkflow,
+      openImport: openImportDialog,
+      exportFile: exportLibraryWorkflow,
       leave: leaveEditor,
     };
   });
@@ -1646,8 +2180,9 @@ function WorkflowEditorContent({
         Promise.resolve(false),
       delete: (workflowId) =>
         libraryActionsRef.current?.delete(workflowId) ?? Promise.resolve(),
-      importFile: (file) =>
-        libraryActionsRef.current?.importFile(file) ?? Promise.resolve(false),
+      openImport: () => libraryActionsRef.current?.openImport(),
+      exportFile: (workflowId) =>
+        libraryActionsRef.current?.exportFile(workflowId) ?? Promise.resolve(),
       leave: () => libraryActionsRef.current?.leave() ?? Promise.resolve(),
     });
     return () => {
@@ -1746,7 +2281,7 @@ function WorkflowEditorContent({
             variant="outline"
             size="sm"
             disabled={workflow === null}
-            onClick={() => void exportWorkflow()}
+            onClick={openExportDialog}
           >
             <IconDownload />
             {t("settings.workflow.exportWorkflow")}
@@ -1786,58 +2321,74 @@ function WorkflowEditorContent({
             minSize={MIN_WORKFLOW_CANVAS_WIDTH}
           >
             {displayedWorkflow !== null ? (
-              <WorkflowCanvas
-                key={displayedWorkflow.id}
-                capabilities={capabilities}
-                nodes={displayedWorkflow.nodes}
-                annotations={displayedWorkflow.annotations ?? []}
-                edges={displayedWorkflow.edges}
-                initialViewport={displayedWorkflow.viewport}
-                onNodesChange={changeNodes}
-                onEdgesChange={changeEdges}
-                onAddNode={addNode}
-                onAddAnnotation={addAnnotation}
-                onUpdateAnnotation={updateAnnotation}
-                onOrganize={organizeNodes}
-                onConnect={connectNodes}
-                onReconnect={reconnectEdge}
-                onBeforeDelete={beforeDelete}
-                onDelete={completeDelete}
-                onNodeDragStart={startNodeDrag}
-                onNodeDragStop={stopNodeDrag}
-                onDeleteAnnotation={deleteAnnotation}
-                canUndo={workflowHistory.canUndo}
-                canRedo={workflowHistory.canRedo}
-                historyPast={workflowHistory.past}
-                historyFuture={workflowHistory.future}
-                historyCurrentEvent={workflowHistory.currentEvent}
-                historyCurrentMeta={workflowHistory.currentMeta}
-                onUndo={undoWorkflow}
-                onRedo={redoWorkflow}
-                onHistoryJump={jumpWorkflowHistory}
-                onClearHistory={workflowHistory.clear}
-                inspectorCollapsed={inspectorCollapsed}
-                inspectorAvailable={inspectorAvailable}
-                onExpandInspector={expandInspector}
-                onConfigureGlobalVariables={() =>
-                  setGlobalVariablesDialogOpen(true)
-                }
-                versionHistory={versionHistory}
-                previewedVersion={previewedVersion}
-                activeVersion={draftQuery.data?.published?.version ?? null}
-                draftUpdatedAt={draftUpdatedAt}
-                onPreviewVersion={(version) =>
-                  void previewWorkflowVersion(version)
-                }
-                onActivateVersion={(version) =>
-                  void activateWorkflowVersion(version)
-                }
-                onPublishDraft={() => void openPublishDialog()}
-                onDeleteVersion={(version) =>
-                  void deleteWorkflowVersion(version)
-                }
-                readOnly={previewedVersion !== null}
-              />
+              <WorkflowMembershipProvider
+                unusedNodeIds={analysis.data?.unusedNodeIds ?? []}
+              >
+                {(analysis.data?.unusedNodeIds.length ?? 0) > 0 && (
+                  <p
+                    role="status"
+                    className="px-3 py-1 text-xs text-muted-foreground"
+                  >
+                    {t("workflowNode.unusedCount", {
+                      count: analysis.data?.unusedNodeIds.length,
+                    })}
+                  </p>
+                )}
+                <WorkflowCanvas
+                  key={displayedWorkflow.id}
+                  capabilities={capabilities}
+                  nodes={displayedWorkflow.nodes}
+                  annotations={displayedWorkflow.annotations ?? []}
+                  edges={displayedWorkflow.edges}
+                  initialViewport={displayedWorkflow.viewport}
+                  onNodesChange={changeNodes}
+                  onEdgesChange={changeEdges}
+                  onAddNode={addNode}
+                  onInsertIterationNode={insertIterationNode}
+                  onToggleIterationCollapsed={toggleIterationCollapsed}
+                  onAddAnnotation={addAnnotation}
+                  onUpdateAnnotation={updateAnnotation}
+                  onOrganize={organizeNodes}
+                  onConnect={connectNodes}
+                  onReconnect={reconnectEdge}
+                  onBeforeDelete={beforeDelete}
+                  onDelete={completeDelete}
+                  onNodeDragStart={startNodeDrag}
+                  onNodeDragStop={stopNodeDrag}
+                  onDeleteAnnotation={deleteAnnotation}
+                  canUndo={workflowHistory.canUndo}
+                  canRedo={workflowHistory.canRedo}
+                  historyPast={workflowHistory.past}
+                  historyFuture={workflowHistory.future}
+                  historyCurrentEvent={workflowHistory.currentEvent}
+                  historyCurrentMeta={workflowHistory.currentMeta}
+                  onUndo={undoWorkflow}
+                  onRedo={redoWorkflow}
+                  onHistoryJump={jumpWorkflowHistory}
+                  onClearHistory={workflowHistory.clear}
+                  inspectorCollapsed={inspectorCollapsed}
+                  inspectorAvailable={inspectorAvailable}
+                  onExpandInspector={expandInspector}
+                  onConfigureGlobalVariables={() =>
+                    setGlobalVariablesDialogOpen(true)
+                  }
+                  versionHistory={versionHistory}
+                  previewedVersion={previewedVersion}
+                  activeVersion={draftQuery.data?.published?.version ?? null}
+                  draftUpdatedAt={draftUpdatedAt}
+                  onPreviewVersion={(version) =>
+                    void previewWorkflowVersion(version)
+                  }
+                  onActivateVersion={(version) =>
+                    void activateWorkflowVersion(version)
+                  }
+                  onPublishDraft={() => void openPublishDialog()}
+                  onDeleteVersion={(version) =>
+                    void deleteWorkflowVersion(version)
+                  }
+                  readOnly={previewedVersion !== null}
+                />
+              </WorkflowMembershipProvider>
             ) : loadCause !== null ? (
               <WorkflowLoadError
                 message={localizeContractError(loadCause, t)}
@@ -1916,6 +2467,10 @@ function WorkflowEditorContent({
                 node={selectedNode}
                 capabilities={capabilities}
                 variableCatalog={variableCatalog}
+                graphNodes={workflow?.nodes ?? []}
+                globalVariables={normalizeWorkflowGlobalVariables(
+                  workflow?.globalVariables,
+                )}
                 mcpCatalog={
                   capabilitiesOverride === undefined
                     ? {
@@ -1987,6 +2542,39 @@ function WorkflowEditorContent({
           }
         />
       )}
+      <AlertDialog
+        open={iterationDeleteConfirmation !== null}
+        onOpenChange={(open) => {
+          if (!open && iterationDeleteConfirmation !== null) {
+            iterationDeleteConfirmation.resolve(false);
+            setIterationDeleteConfirmation(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("settings.workflow.iteration.deleteTitle")}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("settings.workflow.iteration.deleteDescription", {
+                count: iterationDeleteConfirmation?.memberCount ?? 0,
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                iterationDeleteConfirmation?.resolve(true);
+                setIterationDeleteConfirmation(null);
+              }}
+            >
+              {t("settings.workflow.deleteNode")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <AlertDialog open={publishDialogOpen} onOpenChange={setPublishDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -2019,6 +2607,48 @@ function WorkflowEditorContent({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {importState !== null && (
+        <WorkflowImportDialog
+          state={importState}
+          dependencies={importDependencies}
+          busy={importBusy}
+          error={importError}
+          onFile={(file) => void readImportFile(file)}
+          onChooseAnother={() => setImportState({ stage: "pick" })}
+          onCancel={() => {
+            setImportState(null);
+            setImportError(null);
+          }}
+          onConfirm={(choices) => void confirmImport(choices)}
+        />
+      )}
+      {exportRequestId !== null &&
+        workflow !== null &&
+        workflow.id === exportRequestId && (
+          <WorkflowExportDialog
+            key={exportRequestId}
+            workflowName={workflow.name}
+            versions={versionHistory.map((version) => ({
+              version: version.version,
+              createdAt: version.createdAt,
+              active: draftQuery.data?.published?.version === version.version,
+            }))}
+            draftSavedAt={draftUpdatedAt}
+            selectedVersion={exportVersion}
+            dependencies={exportDependencies}
+            previewJson={exportPreviewJson}
+            busy={exportBusy}
+            error={
+              exportError ??
+              (exportVersionQuery.error === null
+                ? null
+                : localizeContractError(exportVersionQuery.error, t))
+            }
+            onSelectVersion={setExportVersion}
+            onCancel={() => setExportRequestId(null)}
+            onExport={(fileName) => void exportWorkflow(fileName)}
+          />
+        )}
     </main>
   );
 }

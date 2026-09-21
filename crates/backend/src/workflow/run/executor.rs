@@ -81,7 +81,10 @@ impl NodeExecutor for WorkflowRunNodeExecutor {
         &self,
         node_run_id: &WorkflowNodeRunId,
         node: &WorkflowGraphNode,
+        graph: &ora_application::WorkflowGraph,
         context: &ExecutionContext,
+        scope_id: &ora_domain::WorkflowScopeId,
+        variable_pool: &ora_application::WorkflowVariablePool,
     ) {
         let agent_runtime = self.agent_runtime.clone();
         let pool = self.pool.clone();
@@ -92,7 +95,10 @@ impl NodeExecutor for WorkflowRunNodeExecutor {
         let transitions = self.transitions.clone();
         let node_run_id = node_run_id.clone();
         let node = node.clone();
+        let graph = graph.clone();
         let context = context.clone();
+        let scope_id = scope_id.clone();
+        let variable_pool = variable_pool.clone();
         tokio::spawn(async move {
             match drive_agent_node(
                 &agent_runtime,
@@ -103,7 +109,10 @@ impl NodeExecutor for WorkflowRunNodeExecutor {
                 &transitions,
                 &node_run_id,
                 &node,
+                &graph,
                 &context,
+                &scope_id,
+                &variable_pool,
             )
             .await
             {
@@ -240,7 +249,10 @@ async fn drive_agent_node(
     transitions: &WorkflowRunTransitions,
     node_run_id: &WorkflowNodeRunId,
     node: &WorkflowGraphNode,
+    graph: &ora_application::WorkflowGraph,
     context: &ExecutionContext,
+    scope_id: &ora_domain::WorkflowScopeId,
+    variable_pool: &ora_application::WorkflowVariablePool,
 ) -> Result<AgentNodeOutcome, NodeExecutionError> {
     let config =
         node.agent_config
@@ -316,16 +328,16 @@ async fn drive_agent_node(
         // variable pool, so an unresolvable reference fails the node before it starts.
         let mut rendered_node = node.clone();
         if let Some(agent_config) = rendered_node.agent_config.as_mut() {
-            agent_config.prompt =
-                render_variable_template(&config.prompt, &run_payload.variable_pool)
-                    .map_err(|source| NodeExecutionError::PromptTemplate {
-                        node_id: node.id.clone(),
-                        source,
-                    })?;
+            agent_config.prompt = render_variable_template(&config.prompt, variable_pool).map_err(
+                |source| NodeExecutionError::PromptTemplate {
+                    node_id: node.id.clone(),
+                    source,
+                },
+            )?;
         }
 
         // Assemble one explicit workflow handoff while preserving leading slash-command parsing.
-        let node_runs = repository.list_node_runs(&context.run.id)?;
+        let node_runs = repository.list_node_runs_in_scope(scope_id)?;
         let workspace_root = agent_runtime.workspace_cwd(&context.workspace.id)?;
         let required_skills = resolve_required_skills(
             &run_payload,
@@ -335,6 +347,7 @@ async fn drive_agent_node(
         )?;
         let prompt = assemble_workflow_prompt(WorkflowPromptRequest {
             node: &rendered_node,
+            graph: Some(graph),
             worktree_root: &workspace_root,
             role_content: role_content.as_deref(),
             graph_json: &context.graph_json,
@@ -383,6 +396,11 @@ async fn drive_agent_node(
                     accumulator.consume(&update);
                 }
                 PromptSessionEvent::PermissionRequest(_) => {}
+                // The re-sent prompt answers the node afresh; text the stalled attempt got out
+                // before Ora gave up on it is not part of the deliverable.
+                PromptSessionEvent::Retrying { .. } => {
+                    accumulator = AssistantOutputAccumulator::default();
+                }
                 PromptSessionEvent::Completed {
                     stop_reason: reason,
                     ..

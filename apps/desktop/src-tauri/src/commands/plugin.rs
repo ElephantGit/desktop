@@ -101,6 +101,20 @@ backend_command!(
     plugins.read_readme,
     "Reads one marketplace plugin's published README for its detail page."
 );
+backend_command!(
+    list_pack_installations,
+    ListPackInstallationsRequest,
+    ListPackInstallationsResponse,
+    plugins.list_pack_installations,
+    "Lists every recorded pack installation with its reconciled member states."
+);
+backend_command!(
+    pack_uninstall_plan,
+    PackUninstallPlanRequest,
+    PackUninstallPlanResponse,
+    plugins.pack_uninstall_plan,
+    "Computes the ownership-aware uninstall plan for one recorded pack."
+);
 
 backend_command!(
     list_marketplace_sources,
@@ -215,4 +229,18 @@ async_backend_command!(
     ImportPluginResponse,
     plugins.import,
     "Imports one local .orax release archive; the installed plugin is immediately available."
+);
+backend_command!(
+    list_mcp_health,
+    ListMcpHealthRequest,
+    ListMcpHealthResponse,
+    plugins.list_mcp_health,
+    "Lists Host MCP health for currently eligible installed members."
+);
+async_backend_command!(
+    probe_mcp_health,
+    ProbeMcpHealthRequest,
+    ProbeMcpHealthResponse,
+    plugins.probe_mcp_health,
+    "Awaits one Host MCP health probe for a currently eligible member."
 );

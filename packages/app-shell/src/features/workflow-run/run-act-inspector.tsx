@@ -18,10 +18,12 @@ import { RunActAgentConfig } from "./run-act-agent-config";
 import { RunActArtifacts } from "./run-act-artifacts";
 import { RunActFileChanges } from "./run-act-file-changes";
 import { RunBriefPopover } from "./run-brief-popover";
+import { RunLoopRoundHistory } from "./run-loop-round-history";
 import { RunStatusBadge } from "./run-status-mark";
 import { shouldPreviewBrief } from "./should-preview-brief";
 import type {
   GraphWorkflowNodeState,
+  GraphWorkflowRound,
   GraphWorkflowSnapshotNodePatch,
   WorkflowArtifact,
   WorkflowNodeData,
@@ -33,8 +35,19 @@ interface RunActInspectorProps {
   nodeId: string | null;
   data: WorkflowNodeData | null;
   state: GraphWorkflowNodeState | null;
+  /** Per-round states of composite-region nodes, keyed by node id. */
+  roundStates?: Record<string, GraphWorkflowNodeState[]>;
+  /** Currently viewed round; `null` shows the node-level (latest) state. */
+  selectedRound: number | null;
+  onRoundChange: (round: number | null) => void;
+  /** Region navigation owns round selection when false, avoiding duplicate controls. */
+  showRoundSelector?: boolean;
   artifacts: WorkflowArtifact[];
   revealedArtifactId: string | null;
+  loopRounds?: GraphWorkflowRound[];
+  loopChildTitles?: Record<string, string>;
+  selectedLoopRoundId?: string | null;
+  onSelectedLoopRoundChange?: (roundId: string) => void;
   /**
    * When true, description and a human-approval prompt are editable for this run only
    * (`pending` overrides on the frozen snapshot).
@@ -105,8 +118,16 @@ export function RunActInspector({
   nodeId,
   data,
   state,
+  roundStates,
+  selectedRound,
+  onRoundChange,
+  showRoundSelector = true,
   artifacts,
   revealedArtifactId,
+  loopRounds = [],
+  loopChildTitles = {},
+  selectedLoopRoundId,
+  onSelectedLoopRoundChange,
   editable = false,
   onPatchNode,
   instructionDraft,
@@ -119,8 +140,17 @@ export function RunActInspector({
   onClose,
 }: RunActInspectorProps) {
   const { t } = useTranslation();
+  // Region nodes hold one state per round; the round strip lets the viewer switch rounds.
+  const rounds =
+    nodeId !== null && roundStates !== undefined
+      ? (roundStates[nodeId] ?? [])
+      : [];
+  const effectiveState =
+    selectedRound === null || rounds.length === 0
+      ? state
+      : (rounds.find((round) => round.iteration === selectedRound) ?? state);
   // The node's incremental worktree changes arrive in its run payload, captured by the engine.
-  const fileChanges = state?.fileChanges ?? [];
+  const fileChanges = effectiveState?.fileChanges ?? [];
 
   if (nodeId === null || data === null || state === null) {
     return (
@@ -152,9 +182,17 @@ export function RunActInspector({
     <RunActInspectorPanel
       nodeId={nodeId}
       data={data}
-      state={state}
+      state={effectiveState ?? state}
+      rounds={rounds}
+      selectedRound={selectedRound}
+      onRoundChange={onRoundChange}
+      showRoundSelector={showRoundSelector}
       artifacts={artifacts}
       revealedArtifactId={revealedArtifactId}
+      loopRounds={loopRounds}
+      loopChildTitles={loopChildTitles}
+      selectedLoopRoundId={selectedLoopRoundId}
+      onSelectedLoopRoundChange={onSelectedLoopRoundChange}
       editable={editable}
       onPatchNode={onPatchNode}
       instructionDraft={instructionDraft}
@@ -174,8 +212,16 @@ function RunActInspectorPanel({
   nodeId,
   data,
   state,
+  rounds,
+  selectedRound,
+  onRoundChange,
+  showRoundSelector,
   artifacts,
   revealedArtifactId,
+  loopRounds,
+  loopChildTitles,
+  selectedLoopRoundId,
+  onSelectedLoopRoundChange,
   editable,
   onPatchNode,
   instructionDraft,
@@ -191,8 +237,16 @@ function RunActInspectorPanel({
   nodeId: string;
   data: WorkflowNodeData;
   state: GraphWorkflowNodeState;
+  rounds: GraphWorkflowNodeState[];
+  selectedRound: number | null;
+  onRoundChange: (round: number | null) => void;
+  showRoundSelector: boolean;
   artifacts: WorkflowArtifact[];
   revealedArtifactId: string | null;
+  loopRounds: GraphWorkflowRound[];
+  loopChildTitles: Record<string, string>;
+  selectedLoopRoundId?: string | null;
+  onSelectedLoopRoundChange?: (roundId: string) => void;
   editable: boolean;
   onPatchNode?: (patch: GraphWorkflowSnapshotNodePatch) => void;
   instructionDraft?: string | null;
@@ -239,6 +293,49 @@ function RunActInspectorPanel({
       className="flex min-h-0 min-w-0 flex-1 flex-col bg-background"
       aria-label={t("workflowRun.inspector.label")}
     >
+      {showRoundSelector && rounds.length > 1 && (
+        <div
+          className="flex items-center gap-1 overflow-x-auto border-b border-border px-3 py-2"
+          role="tablist"
+          aria-label={t("workflowRun.inspector.rounds")}
+        >
+          {rounds.map((round) => {
+            const roundIndex = round.iteration ?? 0;
+            const active = selectedRound === roundIndex;
+            return (
+              <button
+                key={roundIndex}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                className={cn(
+                  "flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium tabular-nums transition-colors",
+                  active
+                    ? "bg-violet-500/15 text-violet-700 dark:text-violet-300"
+                    : "text-muted-foreground hover:bg-muted",
+                )}
+                onClick={() => onRoundChange(roundIndex)}
+              >
+                R{roundIndex + 1}
+                <span
+                  className={cn(
+                    "inline-block size-1.5 rounded-full",
+                    round.status === "succeeded" && "bg-emerald-500",
+                    round.status === "failed" && "bg-destructive",
+                    round.status === "running" &&
+                      "bg-sky-500 theater-live-breathe",
+                    (round.status === "idle" ||
+                      round.status === "inactive" ||
+                      round.status === "cancelled") &&
+                      "bg-muted-foreground/40",
+                    round.status === "awaiting_input" && "bg-amber-500",
+                  )}
+                />
+              </button>
+            );
+          })}
+        </div>
+      )}
       <div className="border-b border-border px-4 py-3">
         <div className="flex items-center gap-2.5">
           <span
@@ -384,6 +481,22 @@ function RunActInspectorPanel({
                 mono
               />
             )}
+          {nodeType.configFields.includes("maxIterations") &&
+            data.loopConfig !== undefined && (
+              <ReadOnlyField
+                label={t("settings.workflow.field.maxIterations")}
+                value={String(data.loopConfig.maxIterations)}
+                mono
+              />
+            )}
+          {nodeType.configFields.includes("loopInitialValue") &&
+            data.loopConfig?.variables[0]?.initial.kind === "constant" && (
+              <ReadOnlyField
+                label={t("settings.workflow.field.loopInitialValue")}
+                value={String(data.loopConfig.variables[0].initial.value ?? "")}
+                mono
+              />
+            )}
           {promptLabel !== null &&
             (canEdit ? (
               <div className="space-y-1.5">
@@ -463,6 +576,17 @@ function RunActInspectorPanel({
             </p>
           )}
         </InspectorSection>
+
+        {data.kind === "loop" && (
+          <InspectorSection title={t("workflowRun.loopRounds.title")}>
+            <RunLoopRoundHistory
+              rounds={loopRounds}
+              nodeTitles={loopChildTitles}
+              selectedRoundId={selectedLoopRoundId}
+              onSelectedRoundChange={onSelectedLoopRoundChange}
+            />
+          </InspectorSection>
+        )}
 
         <InspectorSection title={t("workflowRun.artifacts.title")}>
           {fileChanges.length > 0 ? (

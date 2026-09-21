@@ -1,12 +1,14 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { TFunction } from "i18next";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type {
   AvailablePlugin,
   InstalledPlugin,
-  InstallOutcome,
+  PackInstallationStatus,
+  PackMemberReconciliationState,
 } from "@ora/contracts";
 import {
+  Badge,
   Button,
   DropdownMenu,
   DropdownMenuContent,
@@ -25,8 +27,15 @@ import {
   IconSettings,
 } from "@tabler/icons-react";
 import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
+import { useContractsClient } from "../../contracts-client-context";
+import {
+  invalidateInstalledPlugins,
+  invalidatePackInstallations,
+} from "../../state/data/plugins";
 import { usePlatform } from "../../platform";
 import { useAvailablePlugins } from "../../state/hooks/use-available-plugins";
+import { PackUninstallConfirm } from "./pack-uninstall-confirm";
+import { usePackInstallations } from "../../state/hooks/use-pack-installations";
 import { useInstallPlugin } from "../../state/hooks/use-install-plugin";
 import { useUpdatePlugin } from "../../state/hooks/use-update-plugin";
 import { useInstalledPlugins } from "../../state/hooks/use-installed-plugins";
@@ -40,6 +49,8 @@ import { PluginReadmeView } from "./plugin-readme-view";
 import { PluginConfigurationEditor } from "./plugin-configuration-editor";
 import type { PluginConfigurationNavigationGuard } from "./plugin-configuration-editor";
 import { PluginDownloadProgress } from "./plugin-download-progress";
+import { showPluginInstallOutcome } from "./plugin-install-feedback";
+import { useUiStore } from "../../state/stores/ui-store";
 
 /** The registry kind order shown in the marketplace, mirroring the contracts docs. */
 const MARKETPLACE_KIND_ORDER = [
@@ -79,17 +90,61 @@ export function PluginsSettings({
 }) {
   const { t } = useTranslation();
   const showContractError = useContractErrorToast();
-  const [query, setQuery] = useState("");
-  const [managing, setManaging] = useState(false);
+  // Another surface may deep-link here (e.g. a workflow dependency to install or
+  // configure). Adopt the request once so later visits start from the default view.
+  const [initialRequest] = useState(
+    () => useUiStore.getState().pluginSettingsRequest,
+  );
+  const clearPluginSettingsRequest = useUiStore(
+    (state) => state.clearPluginSettingsRequest,
+  );
+  useEffect(() => {
+    clearPluginSettingsRequest();
+  }, [clearPluginSettingsRequest]);
+  const [query, setQuery] = useState(
+    initialRequest?.kind === "marketplaceSearch" ? initialRequest.query : "",
+  );
+  const [managing, setManaging] = useState(
+    initialRequest?.kind === "manage" || initialRequest?.kind === "configure",
+  );
   const [managingSources, setManagingSources] = useState(false);
   const [configurationPlugin, setConfigurationPlugin] = useState<{
     id: string;
     displayName: string;
-  } | null>(null);
+  } | null>(
+    initialRequest?.kind === "configure"
+      ? {
+          id: initialRequest.pluginId,
+          displayName: initialRequest.displayName,
+        }
+      : null,
+  );
   const [selecting, setSelecting] = useState(false);
   const [readmePlugin, setReadmePlugin] = useState<AvailablePlugin | null>(
     null,
   );
+  const [uninstallingPack, setUninstallingPack] = useState<string | null>(null);
+  const packInstallations = usePackInstallations();
+  const queryClient = useQueryClient();
+  const client = useContractsClient();
+  const uninstallPackMutation = useMutation({
+    mutationFn: (packId: string) =>
+      client.plugin.uninstall({
+        pluginId: packId,
+        dataDisposition: "delete" as const,
+      }),
+    onSuccess: () => {
+      toast.success(t("settings.plugins.packUninstallSuccess"));
+      setUninstallingPack(null);
+    },
+    onError: (cause) => {
+      showContractError(cause, t("settings.plugins.uninstallFailed"));
+    },
+    onSettled: async () => {
+      await invalidatePackInstallations(queryClient);
+      await invalidateInstalledPlugins(queryClient);
+    },
+  });
 
   const platform = usePlatform();
   const available = useAvailablePlugins();
@@ -172,12 +227,10 @@ export function PluginsSettings({
         { path },
         {
           onSuccess: (response) =>
-            toast.success(
-              installOutcomeMessage(
-                response.outcome,
-                t,
-                "settings.plugins.importSuccess",
-              ),
+            showPluginInstallOutcome(
+              response.outcome,
+              t,
+              "settings.plugins.importSuccess",
             ),
           onError: (cause) =>
             showContractError(cause, t("settings.plugins.importFailed")),
@@ -338,7 +391,120 @@ export function PluginsSettings({
           ))}
         </div>
       )}
+
+      <InstalledPacksSection
+        packs={packInstallations.data ?? []}
+        availableById={availableById}
+        onUninstall={(packId) => setUninstallingPack(packId)}
+      />
+
+      {uninstallingPack !== null && (
+        <PackUninstallConfirm
+          packId={uninstallingPack}
+          open
+          onOpenChange={(open) => {
+            if (!open) setUninstallingPack(null);
+          }}
+          onConfirm={() => {
+            uninstallPackMutation.mutate(uninstallingPack);
+          }}
+          busy={uninstallPackMutation.isPending}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * The installed-packs presentation is sourced from the ownership journal plus its
+ * reconciliation — packs are never faked into the installed-plugin directory (extension-pack
+ * decision D7 / D3-A).
+ */
+function InstalledPacksSection({
+  packs,
+  availableById,
+  onUninstall,
+}: {
+  packs: PackInstallationStatus[];
+  availableById: Map<string, AvailablePlugin>;
+  onUninstall: (packId: string) => void;
+}) {
+  const { t } = useTranslation();
+  if (packs.length === 0) return null;
+
+  return (
+    <section>
+      <h3 className="mb-2 text-sm font-semibold">
+        {t("settings.plugins.packsSection")}
+      </h3>
+      <div className="space-y-3">
+        {packs.map((pack) => {
+          const listing = availableById.get(pack.packId);
+          return (
+            <div
+              key={pack.packId}
+              className="rounded-lg border border-border p-3"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium">
+                  {listing?.title ?? pack.packId}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {t("settings.plugins.packMembersCount", {
+                    count: pack.members.length,
+                  })}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="ml-auto"
+                  onClick={() => onUninstall(pack.packId)}
+                >
+                  {t("settings.plugins.packUninstall")}
+                </Button>
+              </div>
+              <ul className="mt-2 space-y-1">
+                {pack.members.map((member) => (
+                  <li
+                    key={member.memberId}
+                    className="flex items-center justify-between text-xs"
+                  >
+                    <span className="truncate text-muted-foreground">
+                      {member.memberId}
+                      {member.ownership === "pre_existing" &&
+                        ` · ${t("settings.plugins.packMemberPreExisting")}`}
+                    </span>
+                    <PackMemberStateBadge state={member.state} />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+/** Presents one reconciled pack member state as a restrained badge. */
+function PackMemberStateBadge({
+  state,
+}: {
+  state: PackMemberReconciliationState;
+}) {
+  const { t } = useTranslation();
+  const label =
+    state.state === "expected_and_present"
+      ? t("settings.plugins.packMemberExpected")
+      : state.state === "version_changed"
+        ? t("settings.plugins.packMemberVersionChanged", {
+            version: state.currentVersion,
+          })
+        : t("settings.plugins.packMemberMissing");
+  const destructive =
+    state.state === "missing" || state.state === "version_changed";
+  return (
+    <Badge variant={destructive ? "destructive" : "secondary"}>{label}</Badge>
   );
 }
 
@@ -362,15 +528,9 @@ function AvailablePluginCard({
   const failInstall = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.installFailed"));
   };
-  const succeedInstall = (response: { outcome: InstallOutcome }) => {
-    toast.success(
-      installOutcomeMessage(
-        response.outcome,
-        t,
-        "settings.plugins.installSuccess",
-      ),
-    );
-  };
+  const succeedInstall = (response: {
+    outcome: Parameters<typeof showPluginInstallOutcome>[0];
+  }) => showPluginInstallOutcome(response.outcome, t);
   const failUpdate = (cause: unknown) => {
     showContractError(cause, t("settings.plugins.updateFailed"));
   };
@@ -399,6 +559,15 @@ function AvailablePluginCard({
         {plugin.description !== "" && (
           <span className="mt-0.5 block truncate text-xs text-muted-foreground">
             {plugin.description}
+          </span>
+        )}
+        {plugin.packMembers !== null && plugin.packMembers !== undefined && (
+          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+            {t("settings.plugins.packMembersCount", {
+              count: plugin.packMembers.length,
+            })}
+            {": "}
+            {plugin.packMembers.join(", ")}
           </span>
         )}
         {incompatible && (
@@ -516,19 +685,4 @@ function CompletedInstallIcon({
       />
     </span>
   );
-}
-
-/** Maps a typed install outcome to the toast the settings surface already shows. */
-function installOutcomeMessage(
-  outcome: InstallOutcome,
-  t: TFunction,
-  successKey:
-    "settings.plugins.installSuccess" | "settings.plugins.importSuccess",
-): string {
-  if (outcome.state === "installed_with_command_conflict") {
-    return t("settings.plugins.installCommandConflict", {
-      pluginId: outcome.conflictPluginId,
-    });
-  }
-  return t(successKey);
 }

@@ -1,5 +1,7 @@
 mod log_level;
 mod marketplace_sync;
+mod pack_install;
+mod pack_status;
 
 pub use log_level::{GetPluginLogLevelRequest, PluginLogLevelResponse, SetPluginLogLevelRequest};
 pub use marketplace_sync::MarketplaceAutoSyncEvent;
@@ -7,6 +9,18 @@ pub use marketplace_sync::MarketplaceAutoSyncEvent;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt};
 use ts_rs::TS;
+
+pub(crate) use pack_install::export as export_pack_install;
+pub use pack_install::{
+    PackInstallFailure, PackInstalledMember, PackMemberInstallOutcome, PackRollbackFailure,
+};
+pub(crate) use pack_status::export as export_pack_status;
+pub use pack_status::{
+    ListPackInstallationsRequest, ListPackInstallationsResponse, PackInstallationStatus,
+    PackMemberOwnership, PackMemberReconciliationState, PackMemberStatus, PackUninstallPlan,
+    PackUninstallPlanRequest, PackUninstallPlanResponse, PackUninstallPreservation,
+    PackUninstallPreservationReason,
+};
 
 /// Describes the kind-specific contribution of one installed plugin, discriminated by `kind`.
 ///
@@ -256,6 +270,12 @@ pub struct AvailablePlugin {
     pub description: String,
     /// Host-local asset URLs for the marketplace icon, absent when none is published.
     pub logo: Option<PluginLogo>,
+    /// Declared member identifiers when this listing is a pack (`kind = "pack"`), absent for
+    /// every other kind. Display data only: the ownership journal stays the authority for
+    /// what a pack installation actually created.
+    #[serde(default)]
+    #[ts(optional)]
+    pub pack_members: Option<Vec<String>>,
     /// Host compatibility as a closed enum so a listing cannot be both compatible and carry a
     /// reason, or incompatible without one.
     #[serde(flatten)]
@@ -644,6 +664,20 @@ pub enum InstallOutcome {
     /// the same command alias. The colliding plugin identity is carried so a future consumer can
     /// refuse ambiguous PATH resolution instead of silently selecting the wrong Hook.
     InstalledWithCommandConflict { conflict_plugin_id: String },
+    /// The pack orchestration outcome: applicable members were installed in declaration order
+    /// through the ordinary single-plugin chain, already-installed members were skipped, and the
+    /// first member failure stopped the run without rolling back what had landed. A partial
+    /// outcome is still an `Ok` result — the caller needs to know which members are present to
+    /// decide between retrying and giving up (extension-pack decision D6/D7).
+    PackInstalled {
+        /// Applicable members that were installed by this operation, in declaration order.
+        members: Vec<PackInstalledMember>,
+        /// Applicable members that were already installed (any version) and therefore skipped;
+        /// their existing versions were left untouched.
+        skipped: Vec<String>,
+        /// The first member that failed, when one did; members after it were not attempted.
+        failed: Option<PackInstallFailure>,
+    },
 }
 
 /// Requests updating one installed marketplace plugin to the version its source publishes.
@@ -770,6 +804,8 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     InstalledPlugin::export(config)?;
     PluginHostCompatibility::export(config)?;
     AvailablePlugin::export(config)?;
+    export_pack_status(config)?;
+    export_pack_install(config)?;
     ListAvailablePluginsRequest::export(config)?;
     ListAvailablePluginsResponse::export(config)?;
     SyncAvailablePluginsRequest::export(config)?;
@@ -1046,6 +1082,7 @@ mod tests {
                     version: "1.2.0".to_string(),
                     description: "Weather plugin".to_string(),
                     logo: None,
+                    pack_members: None,
                     compatibility: super::PluginHostCompatibility::Compatible,
                 }],
             })
@@ -1062,6 +1099,7 @@ mod tests {
                     "version": "1.2.0",
                     "description": "Weather plugin",
                     "logo": null,
+                    "packMembers": null,
                     "compatibility": "compatible"
                 }]
             })

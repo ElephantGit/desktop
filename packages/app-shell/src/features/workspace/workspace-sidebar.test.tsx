@@ -98,6 +98,7 @@ const SESSION: Session = {
   status: "running",
   title: null,
   historyState: { type: "writable" },
+  mcpSelection: { mode: "automatic" },
 };
 const DIRECT_SESSION: Session = {
   id: "s-direct",
@@ -106,6 +107,7 @@ const DIRECT_SESSION: Session = {
   status: "running",
   title: null,
   historyState: { type: "writable" },
+  mcpSelection: { mode: "automatic" },
 };
 
 /** Renders the sidebar with the same provider stack AppShell gives it. */
@@ -243,6 +245,7 @@ beforeEach(() => {
     expandedProjects: new Set(),
     expandedTasks: new Set(),
     treeExpansionBootstrapped: false,
+    workflowRunStatusFilterByProjectId: {},
     dialog: null,
     deleteTarget: null,
     workflowEditorOpen: false,
@@ -728,6 +731,7 @@ describe("WorkspaceSidebar", () => {
       status: "running",
       title: null,
       historyState: { type: "writable" },
+      mcpSelection: { mode: "automatic" },
     });
     renderSidebar(state);
 
@@ -935,6 +939,194 @@ describe("WorkspaceSidebar", () => {
 
     expect(treeRow("Task workflow")!.style.paddingLeft).toBe("44px");
     expect(treeRow("Project workflow")!.style.paddingLeft).toBe("26px");
+  });
+
+  it("always shows workflow, session, and worktree section headers", async () => {
+    renderSidebar(workspaceWithOneSession());
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: /工作流|Workflows/ }),
+      ).not.toBeNull();
+    });
+    const workflowSection = screen
+      .getByRole("heading", { name: /工作流|Workflows/ })
+      .closest("section");
+    const sessionSection = screen
+      .getByRole("heading", { name: /会话|Sessions/ })
+      .closest("section");
+    expect(workflowSection).not.toBeNull();
+    expect(sessionSection).not.toBeNull();
+    expect(
+      within(workflowSection!).getByText(/暂无工作流|No workflows/),
+    ).not.toBeNull();
+    expect(
+      within(sessionSection!).getByText(/暂无会话|No sessions/),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: /工作树|Worktrees/ }),
+    ).not.toBeNull();
+    expect(treeRow(TASK.title)).not.toBeNull();
+  });
+
+  it("filters project and nested task workflow rows by display status", async () => {
+    const user = userEvent.setup();
+    const state = workspaceWithOneSession();
+    state.workflowRuns = [
+      {
+        id: "run-ok",
+        projectId: PROJECT.id,
+        workflowId: "wf-ok",
+        snapshotId: "snap-ok",
+        version: "v1",
+        name: "Green run",
+        status: "succeeded",
+        workspaceId: "workspace-p1",
+        createdAt: 0n,
+        updatedAt: 0n,
+      },
+      {
+        id: "run-hitl",
+        projectId: PROJECT.id,
+        workflowId: "wf-hitl",
+        snapshotId: "snap-hitl",
+        version: "v1",
+        name: "HITL run",
+        status: "awaitingInput",
+        workspaceId: "workspace-p1",
+        createdAt: 0n,
+        updatedAt: 0n,
+      },
+      {
+        id: "run-task-hitl",
+        projectId: PROJECT.id,
+        workflowId: "wf-task-hitl",
+        snapshotId: "snap-task-hitl",
+        version: "v1",
+        name: "Task HITL",
+        status: "awaitingInput",
+        workspaceId: TASK.workspaceId,
+        createdAt: 0n,
+        updatedAt: 0n,
+      },
+      {
+        id: "run-task-pending",
+        projectId: PROJECT.id,
+        workflowId: "wf-task-pending",
+        snapshotId: "snap-task-pending",
+        version: "v1",
+        name: "Task pending",
+        status: "pending",
+        workspaceId: TASK.workspaceId,
+        createdAt: 0n,
+        updatedAt: 0n,
+      },
+    ];
+    renderSidebar(state);
+
+    await waitFor(() => {
+      expect(treeRow("Green run")).not.toBeNull();
+      expect(treeRow("Task pending")).not.toBeNull();
+    });
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /筛选工作流状态|Filter workflow status/,
+      }),
+    );
+    const awaitingOption = await screen.findByRole("menuitemradio", {
+      name: /等待参与|Awaiting input/,
+    });
+    expect(awaitingOption.querySelector(".bg-amber-500")).not.toBeNull();
+    expect(
+      screen
+        .getByRole("menuitemradio", { name: /失败|Failed/ })
+        .querySelector(".bg-rose-500"),
+    ).not.toBeNull();
+    expect(
+      screen
+        .getByRole("menuitemradio", { name: /全部状态|All statuses/ })
+        .querySelector(".rounded-full"),
+    ).toBeNull();
+    await user.click(awaitingOption);
+
+    await waitFor(() => {
+      expect(treeRow("HITL run")).not.toBeNull();
+      expect(treeRow("Task HITL")).not.toBeNull();
+      expect(treeRow("Green run")).toBeNull();
+      expect(treeRow("Task pending")).toBeNull();
+    });
+    expect(
+      useUiStore.getState().workflowRunStatusFilterByProjectId[PROJECT.id],
+    ).toBe("awaiting_input");
+  });
+
+  it("keeps search and status filters combined on workflow rows", async () => {
+    const user = userEvent.setup();
+    const state = workspaceWithOneSession();
+    state.workflowRuns = [
+      {
+        id: "run-needle-ok",
+        projectId: PROJECT.id,
+        workflowId: "wf-needle-ok",
+        snapshotId: "snap-needle-ok",
+        version: "v1",
+        name: "Needle success",
+        status: "succeeded",
+        workspaceId: "workspace-p1",
+        createdAt: 0n,
+        updatedAt: 0n,
+      },
+      {
+        id: "run-needle-fail",
+        projectId: PROJECT.id,
+        workflowId: "wf-needle-fail",
+        snapshotId: "snap-needle-fail",
+        version: "v1",
+        name: "Needle failed",
+        status: "failed",
+        workspaceId: "workspace-p1",
+        createdAt: 0n,
+        updatedAt: 0n,
+      },
+      {
+        id: "run-other",
+        projectId: PROJECT.id,
+        workflowId: "wf-other",
+        snapshotId: "snap-other",
+        version: "v1",
+        name: "Other failed",
+        status: "failed",
+        workspaceId: "workspace-p1",
+        createdAt: 0n,
+        updatedAt: 0n,
+      },
+    ];
+    renderSidebar(state);
+
+    await waitFor(() => expect(treeRow("Needle success")).not.toBeNull());
+    const search = screen.getByPlaceholderText(/搜索工作区|Search workspace/);
+    await user.type(search, "Needle");
+    await waitFor(() => {
+      expect(treeRow("Needle success")).not.toBeNull();
+      expect(treeRow("Needle failed")).not.toBeNull();
+      expect(treeRow("Other failed")).toBeNull();
+    });
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /筛选工作流状态|Filter workflow status/,
+      }),
+    );
+    await user.click(
+      await screen.findByRole("menuitemradio", { name: /失败|Failed/ }),
+    );
+
+    await waitFor(() => {
+      expect(treeRow("Needle failed")).not.toBeNull();
+      expect(treeRow("Needle success")).toBeNull();
+      expect(treeRow("Other failed")).toBeNull();
+    });
   });
 
   it("opens delete confirmation from the session context menu", async () => {
@@ -1574,6 +1766,7 @@ describe("WorkspaceSidebar", () => {
         status: "running",
         title: "Direct chat",
         historyState: { type: "writable" },
+        mcpSelection: { mode: "automatic" },
       },
     ];
     renderSidebar(state);
@@ -1790,7 +1983,8 @@ describe("WorkspaceSidebar", () => {
           copy: async () => true,
           rename: async () => true,
           delete: async () => undefined,
-          importFile: async () => true,
+          openImport: () => undefined,
+          exportFile: async () => undefined,
           leave: async () => {
             useUiStore.getState().setWorkflowEditorOpen(false);
           },

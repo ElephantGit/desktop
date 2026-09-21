@@ -19,6 +19,16 @@ pub(super) const BINDINGS: &[Binding] = &[
         permission: Permission::MainWebview,
     },
     Binding::Unary {
+        operation: "listPackInstallations",
+        handler: "commands::plugin::list_pack_installations",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
+        operation: "packUninstallPlan",
+        handler: "commands::plugin::pack_uninstall_plan",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
         operation: "listMarketplaceSources",
         handler: "commands::plugin::list_marketplace_sources",
         permission: Permission::MainWebview,
@@ -101,6 +111,16 @@ pub(super) const BINDINGS: &[Binding] = &[
     Binding::Unary {
         operation: "importPlugin",
         handler: "commands::plugin::import_plugin",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
+        operation: "listMcpHealth",
+        handler: "commands::plugin::list_mcp_health",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
+        operation: "probeMcpHealth",
+        handler: "commands::plugin::probe_mcp_health",
         permission: Permission::MainWebview,
     },
 ];

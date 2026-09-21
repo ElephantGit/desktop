@@ -3,6 +3,43 @@ export const pluginTranslations = {
   "zh-CN": {
     "errors.plugin_not_found": "未找到该插件。",
     "errors.plugin_host_incompatible": "当前主机不支持此插件的发布制品。",
+    "errors.pack_member_duplicate": "集合包重复声明了成员 {{pluginId}}。",
+    "errors.pack_self_reference":
+      "集合包不能把自身声明为成员（{{pluginId}}）。",
+    "errors.pack_member_not_found":
+      "集合包成员 {{pluginId}} 不在其所属插件源中。",
+    "errors.pack_member_nested":
+      "集合包成员 {{pluginId}} 自身也是一个集合包，暂不支持嵌套。",
+    "errors.pack_no_applicable_members":
+      "集合包 {{pluginId}} 没有适用于本次安装的成员。",
+    "settings.plugins.packsSection": "已安装集合包",
+    "settings.plugins.packMembersCount": "{{count}} 个成员",
+    "settings.plugins.packUninstall": "卸载集合包",
+    "settings.plugins.packMemberPreExisting": "预装",
+    "settings.plugins.packMemberExpected": "正常",
+    "settings.plugins.packMemberVersionChanged": "已变更至 {{version}}",
+    "settings.plugins.packMemberMissing": "缺失",
+    "settings.plugins.packInstallTitle": "集合包安装完成",
+    "settings.plugins.packInstallFailedTitle": "集合包安装失败",
+    "settings.plugins.packInstalledMembers": "已安装 {{count}} 个成员",
+    "settings.plugins.packSkippedMembers": "跳过 {{count}} 个已存在成员",
+    "settings.plugins.packFailedMember": "{{pluginId}} 安装失败",
+    "settings.plugins.packRollbackFailedMember":
+      "{{pluginId}} 回滚失败，已保留",
+    "settings.plugins.packUninstallTitle": "卸载集合包",
+    "settings.plugins.packUninstallDescription":
+      "根据所有权记录，卸载将按以下方式处理各成员：",
+    "settings.plugins.packUninstallRemoved": "将移除",
+    "settings.plugins.packUninstallPreserved": "将保留",
+    "settings.plugins.packUninstallPreservedPreExisting":
+      "{{member}}（非本集合包安装）将保留",
+    "settings.plugins.packUninstallPreservedVersionChanged":
+      "{{member}}（已被独立修改）将保留",
+    "settings.plugins.packUninstallAlreadyMissing": "以下成员已不存在",
+    "settings.plugins.packUninstallConfirm": "确认卸载",
+    "settings.plugins.packUninstallPlanLoading": "正在计算卸载范围…",
+    "settings.plugins.packUninstallPlanFailed": "无法加载集合包卸载计划。",
+    "settings.plugins.packUninstallSuccess": "集合包已卸载",
     "errors.marketplace_s3_credentials_required":
       "启用 S3 签名获取时，请填写 Access Key ID 和 Secret Access Key。",
     "errors.marketplace_artifact_retrieval_field_invalid":
@@ -33,6 +70,26 @@ export const pluginTranslations = {
     "settings.plugins.configuration.needsConfiguration": "需要配置",
     "settings.plugins.configuration.unavailableBadge": "配置不可用",
     "settings.plugins.invalidDeclaration": "配置声明无效",
+    "settings.plugins.mcpHealth.healthy": "Host 已完成握手",
+    "settings.plugins.mcpHealth.healthyHint":
+      "检测成功只说明 Host 当前能完成握手与工具列表读取，不代表该 MCP 已在会话内生效。",
+    "settings.plugins.mcpHealth.unhealthy": "Host 当前连不上：{{reason}}",
+    "settings.plugins.mcpHealth.notProbed": "尚未检测",
+    "settings.plugins.mcpHealth.contextMissing": "需要会话的工作目录",
+    "settings.plugins.mcpHealth.contextMissingHint":
+      "打开会话后按该会话的工作目录检测。",
+    "settings.plugins.mcpHealth.reDetect": "重新检测",
+    "settings.plugins.mcpHealth.reDetecting": "检测中",
+    "settings.plugins.mcpHealth.probeFailed": "重新检测失败",
+    "settings.plugins.mcpHealth.code.mcpSpawnFailed": "无法启动 MCP 进程",
+    "settings.plugins.mcpHealth.code.mcpExitedPrematurely":
+      "进程在握手完成前退出",
+    "settings.plugins.mcpHealth.code.mcpHandshakeFailed": "握手失败",
+    "settings.plugins.mcpHealth.code.mcpProbeTimeout": "检测超时",
+    "settings.plugins.mcpHealth.code.mcpToolsUnavailable": "无法读取工具列表",
+    "settings.plugins.mcpHealth.code.mcpHttpUnreachable": "无法连接 HTTP 端点",
+    "settings.plugins.mcpHealth.code.mcpHttpUnauthorized": "HTTP 鉴权失败",
+    "settings.plugins.mcpHealth.code.mcpHttpServerError": "HTTP 服务端错误",
     "settings.plugins.configuration.default": "默认值",
     "settings.plugins.configuration.notSet": "未设置",
     "settings.plugins.configuration.configuredSecret": "已配置；输入新值以替换",
@@ -281,6 +338,46 @@ export const pluginTranslations = {
     "errors.plugin_not_found": "The plugin was not found.",
     "errors.plugin_host_incompatible":
       "This plugin's release artifact is not supported on the current host.",
+    "errors.pack_member_duplicate":
+      "The pack declares member {{pluginId}} more than once.",
+    "errors.pack_self_reference":
+      "The pack cannot declare itself as a member ({{pluginId}}).",
+    "errors.pack_member_not_found":
+      "Pack member {{pluginId}} was not found in its marketplace source.",
+    "errors.pack_member_nested":
+      "Pack member {{pluginId}} is itself a pack, and nesting is not supported yet.",
+    "errors.pack_no_applicable_members":
+      "Pack {{pluginId}} has no member that applies to this installation.",
+    "settings.plugins.packsSection": "Installed packs",
+    "settings.plugins.packMembersCount": "{{count}} members",
+    "settings.plugins.packUninstall": "Uninstall pack",
+    "settings.plugins.packMemberPreExisting": "pre-existing",
+    "settings.plugins.packMemberExpected": "up to date",
+    "settings.plugins.packMemberVersionChanged": "changed to {{version}}",
+    "settings.plugins.packMemberMissing": "missing",
+    "settings.plugins.packInstallTitle": "Pack installed",
+    "settings.plugins.packInstallFailedTitle": "Pack installation failed",
+    "settings.plugins.packInstalledMembers": "Installed {{count}} members",
+    "settings.plugins.packSkippedMembers": "Skipped {{count}} existing members",
+    "settings.plugins.packFailedMember": "{{pluginId}} failed to install",
+    "settings.plugins.packRollbackFailedMember":
+      "Rollback failed for {{pluginId}}; it remains installed",
+    "settings.plugins.packUninstallTitle": "Uninstall pack",
+    "settings.plugins.packUninstallDescription":
+      "Based on the ownership journal, uninstalling handles each member as follows:",
+    "settings.plugins.packUninstallRemoved": "Will be removed",
+    "settings.plugins.packUninstallPreserved": "Will be preserved",
+    "settings.plugins.packUninstallPreservedPreExisting":
+      "{{member}} (not installed by this pack) will be preserved",
+    "settings.plugins.packUninstallPreservedVersionChanged":
+      "{{member}} (independently changed) will be preserved",
+    "settings.plugins.packUninstallAlreadyMissing":
+      "The following members are already missing",
+    "settings.plugins.packUninstallConfirm": "Uninstall",
+    "settings.plugins.packUninstallPlanLoading": "Calculating uninstall scope…",
+    "settings.plugins.packUninstallPlanFailed":
+      "Unable to load the pack uninstall plan.",
+    "settings.plugins.packUninstallSuccess": "Pack uninstalled",
     "errors.marketplace_s3_credentials_required":
       "Enter an Access Key ID and Secret Access Key to enable S3 signed retrieval.",
     "errors.marketplace_artifact_retrieval_field_invalid":
@@ -318,6 +415,34 @@ export const pluginTranslations = {
     "settings.plugins.configuration.unavailableBadge":
       "Configuration unavailable",
     "settings.plugins.invalidDeclaration": "Invalid configuration declaration",
+    "settings.plugins.mcpHealth.healthy": "Host completed the handshake",
+    "settings.plugins.mcpHealth.healthyHint":
+      "A successful probe only means the Host can handshake and list tools right now; it does not mean this MCP is in effect inside a session.",
+    "settings.plugins.mcpHealth.unhealthy":
+      "The Host cannot reach it right now: {{reason}}",
+    "settings.plugins.mcpHealth.notProbed": "Not probed yet",
+    "settings.plugins.mcpHealth.contextMissing":
+      "Needs a session workspace directory",
+    "settings.plugins.mcpHealth.contextMissingHint":
+      "Open a session to probe against that session's workspace directory.",
+    "settings.plugins.mcpHealth.reDetect": "Re-detect",
+    "settings.plugins.mcpHealth.reDetecting": "Detecting",
+    "settings.plugins.mcpHealth.probeFailed": "Re-detection failed",
+    "settings.plugins.mcpHealth.code.mcpSpawnFailed":
+      "The MCP process could not start",
+    "settings.plugins.mcpHealth.code.mcpExitedPrematurely":
+      "The process exited before the handshake finished",
+    "settings.plugins.mcpHealth.code.mcpHandshakeFailed":
+      "The handshake failed",
+    "settings.plugins.mcpHealth.code.mcpProbeTimeout": "The probe timed out",
+    "settings.plugins.mcpHealth.code.mcpToolsUnavailable":
+      "Tools could not be listed",
+    "settings.plugins.mcpHealth.code.mcpHttpUnreachable":
+      "The HTTP endpoint is unreachable",
+    "settings.plugins.mcpHealth.code.mcpHttpUnauthorized":
+      "HTTP authentication failed",
+    "settings.plugins.mcpHealth.code.mcpHttpServerError":
+      "The HTTP endpoint returned an error",
     "settings.plugins.configuration.default": "Default",
     "settings.plugins.configuration.notSet": "Not set",
     "settings.plugins.configuration.configuredSecret":

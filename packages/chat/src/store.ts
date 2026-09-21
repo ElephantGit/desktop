@@ -37,6 +37,7 @@ export type {
   ChatToolCallStatus,
   ChatTurn,
   ChatTurnItem,
+  ChatTurnRetry,
   ChatTurnStatus,
   ContextUsageSnapshot,
   ContextUsageState,
@@ -644,6 +645,17 @@ export function createChatStore(
           } else if (event.type === "permission_request") {
             flushPendingTextChunk();
             appendPermission(set, key, event);
+          } else if (event.type === "retrying") {
+            flushPendingTextChunk();
+            // The stalled attempt was cancelled before the re-send, so tools it
+            // left open are interrupted now rather than ticking until the turn
+            // ends; its pending permissions were answered by that cancel too.
+            const retriedAt = now();
+            updateTurn(set, key, turnId, (current) => ({
+              ...settleActiveToolCalls(current, "cancelled", retriedAt),
+              retry: { retry: event.retry, maxRetries: event.maxRetries },
+            }));
+            clearPendingPermissions(set, key);
           } else {
             flushPendingTextChunk();
             usageCompleted = true;
@@ -698,6 +710,10 @@ export function createChatStore(
           clearPendingPermissions(set, key);
         } else {
           const message = errorMessage(error);
+          // A timeout after the backend already re-sent the prompt means every
+          // retry stalled too; the turn keeps that so the UI can say the agent
+          // never came back rather than showing a generic failure.
+          const retriesExhausted = isAgentTimedOutError(error);
           // The failure ended the turn, so tools the agent never settled were
           // interrupted by it. They are not marked failed: the stream broke, and
           // whether the tool itself succeeded is exactly what was never reported.
@@ -708,6 +724,9 @@ export function createChatStore(
                     ...current,
                     status: "failed",
                     error: message,
+                    ...(retriesExhausted && current.retry !== undefined
+                      ? { retry: { ...current.retry, exhausted: true } }
+                      : {}),
                     durationMs: elapsedDuration(
                       current.responseStartedAt ?? current.createdAt,
                       now(),
@@ -1561,6 +1580,13 @@ async function* promptWithReattach(
     { signal },
   );
 }
+/** Reports whether a failure is the backend giving up on a prompt that made no progress. */
+function isAgentTimedOutError(error: unknown): boolean {
+  return (
+    error instanceof RemoteContractError && error.code === "agent_timed_out"
+  );
+}
+
 /** Reports whether a failure is the backend refusing a session that holds no live route. */
 function isSessionStoppedError(error: unknown): boolean {
   return (
