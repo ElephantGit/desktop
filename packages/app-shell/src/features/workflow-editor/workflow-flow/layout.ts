@@ -73,9 +73,9 @@ export function isPlainMeasurementOnly(
  * those clamps rewrites React state every frame and thrash the canvas.
  * Real drags always set `dragging` true while moving and false on drop.
  */
-export function withoutExtentClampPositions(
-  changes: readonly NodeChange[],
-): NodeChange[] {
+export function withoutExtentClampPositions<TNode extends Node = Node>(
+  changes: readonly NodeChange<TNode>[],
+): NodeChange<TNode>[] {
   return changes.filter(
     (change) =>
       change.type !== "position" ||
@@ -85,8 +85,8 @@ export function withoutExtentClampPositions(
 }
 
 /** True when changes are only selection and/or plain size probes (no authored edit). */
-export function isNonAuthoringNodeChanges(
-  changes: readonly NodeChange[],
+export function isNonAuthoringNodeChanges<TNode extends Node = Node>(
+  changes: readonly NodeChange<TNode>[],
 ): boolean {
   return (
     changes.length > 0 &&
