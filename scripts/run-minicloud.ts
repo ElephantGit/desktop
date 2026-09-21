@@ -204,8 +204,10 @@ async function run(): Promise<void> {
     stopping = true;
     finish();
   };
-  Deno.addSignalListener("SIGINT", stop);
-  Deno.addSignalListener("SIGTERM", stop);
+  // Children run in their own sessions, so a terminal hangup reaches only the launcher; without a
+  // handler Deno would exit at once and skip the ordered stop, leaving every component orphaned.
+  const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+  for (const signal of signals) Deno.addSignalListener(signal, stop);
 
   /** Retains exit evidence and wakes the supervisor on unexpected service loss. */
   function start(
@@ -526,8 +528,7 @@ async function run(): Promise<void> {
         await delay(100);
       }
     }
-    Deno.removeSignalListener("SIGINT", stop);
-    Deno.removeSignalListener("SIGTERM", stop);
+    for (const signal of signals) Deno.removeSignalListener(signal, stop);
     lock.close();
   }
 }
