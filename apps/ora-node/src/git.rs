@@ -7,6 +7,7 @@ use gitlancer::git::{
 use gitlancer::{Git, GitRunner, RepoRoot, Repository, WorktreeKind};
 use ora_node_db::Target;
 use ora_node_protocol::{BranchName, CommitId, WorktreeFailure, WorktreeFailureCode};
+use ora_utils::path::{canonicalize, canonicalize_longest_existing_prefix, strip_verbatim_prefix};
 use std::path::{Path, PathBuf};
 
 /// Filesystem evidence is distinct from Git registration; neither alone proves success.
@@ -128,13 +129,7 @@ impl<R: ExecutionGitRunner> WorktreeGit for Git<R> {
         let repository = self
             .discover_repository(RepoRoot::new(main))
             .map_err(git_failure)?;
-        if repository
-            .root()
-            .as_path()
-            .canonicalize()
-            .map_err(io_failure)?
-            != main
-        {
+        if canonicalize(repository.root().as_path()).map_err(io_failure)? != main {
             return Err(failure(
                 WorktreeFailureCode::InvalidMainWorkspace,
                 "binding is not the main checkout",
@@ -147,17 +142,14 @@ impl<R: ExecutionGitRunner> WorktreeGit for Git<R> {
             .map_err(git_failure)?;
         if !list.worktrees.iter().any(|w| {
             matches!(w.kind(), WorktreeKind::Main)
-                && w.worktree_root().as_path().canonicalize().ok().as_deref() == Some(main)
+                && canonicalize(w.worktree_root().as_path()).ok().as_deref() == Some(main)
         }) {
             return Err(failure(
                 WorktreeFailureCode::InvalidMainWorkspace,
                 "main checkout registration is missing",
             ));
         }
-        let directory = self
-            .checkout_git_directory(main)
-            .map_err(git_failure)?
-            .canonicalize()
+        let directory = canonicalize(&self.checkout_git_directory(main).map_err(git_failure)?)
             .map_err(io_failure)?;
         // Repository discovery already excluded linked checkouts; this also excludes bare roots.
         // A valid main checkout can keep its Git directory outside the checkout via a .git file.
@@ -198,9 +190,11 @@ impl<R: ExecutionGitRunner> WorktreeGit for Git<R> {
         let mut checkout = None;
         let mut branch_elsewhere = false;
         for worktree in worktrees {
-            let path = ora_utils::path::canonicalize_longest_existing_prefix(
+            // Registered roots are compared against and passed back to Git, so they must share
+            // the target's plain (non-verbatim) spelling.
+            let path = strip_verbatim_prefix(&canonicalize_longest_existing_prefix(
                 worktree.worktree_root().as_path(),
-            );
+            ));
             if path != target.path {
                 if worktree
                     .branch_name()
@@ -311,9 +305,7 @@ impl<R: ExecutionGitRunner> WorktreeGit for Git<R> {
             .map_err(git_failure)?
             .worktrees
             .into_iter()
-            .find(|w| {
-                w.worktree_root().as_path().canonicalize().ok().as_ref() == Some(&target.path)
-            })
+            .find(|w| canonicalize(w.worktree_root().as_path()).ok().as_ref() == Some(&target.path))
             .ok_or_else(|| {
                 failure(
                     WorktreeFailureCode::WorktreeConflict,

@@ -5,6 +5,7 @@
 //! [`StrictRelativePath`] is the strict parser for untrusted archive and package entries (any
 //! irregular spelling is rejected and length/depth limits apply). Callers must not blur the two.
 
+mod canonical;
 mod containment;
 #[cfg(unix)]
 mod identity;
@@ -15,6 +16,7 @@ mod strict;
 #[cfg(unix)]
 mod trusted;
 
+pub use canonical::{canonicalize, strip_verbatim_prefix};
 pub use containment::{CanonicalPathRoot, PathContainmentError};
 #[cfg(unix)]
 pub use identity::DirectoryIdentity;

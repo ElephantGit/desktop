@@ -1,7 +1,9 @@
 use crate::{Clock, Node, RepositoryBinding, WorktreeGit};
 use ora_node_db::{Command, Target, WriteGuard};
 use ora_node_protocol::{WorktreeFailure, WorktreeFailureCode, WorktreePathPolicy};
-use ora_utils::path::{CanonicalPathRoot, RelativePathLimits, StrictRelativePath};
+use ora_utils::path::{
+    CanonicalPathRoot, RelativePathLimits, StrictRelativePath, strip_verbatim_prefix,
+};
 use std::path::Path;
 
 impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
@@ -174,17 +176,24 @@ fn resolve_paths(
             format!("{e:?}"),
         )
     })?;
-    let main = authorized
-        .resolve_existing_absolute(Path::new(binding.main_workspace.path.as_str()))
-        .map_err(|e| failure(WorktreeFailureCode::InvalidMainWorkspace, format!("{e:?}")))?;
-    let root = authorized
-        .resolve_existing_absolute(&binding.worktree_root)
-        .map_err(|e| {
-            failure(
-                WorktreeFailureCode::PathOutsideAuthorizedRoot,
-                format!("{e:?}"),
-            )
-        })?;
+    // Every path leaving here is handed to Git or compared against paths Git prints, so the
+    // verbatim spelling of canonical Windows paths is dropped once containment is established.
+    let main = strip_verbatim_prefix(
+        &authorized
+            .resolve_existing_absolute(Path::new(binding.main_workspace.path.as_str()))
+            .map_err(|e| failure(WorktreeFailureCode::InvalidMainWorkspace, format!("{e:?}")))?,
+    );
+    let root = strip_verbatim_prefix(
+        &authorized
+            .resolve_existing_absolute(&binding.worktree_root)
+            .map_err(|e| {
+                failure(
+                    WorktreeFailureCode::PathOutsideAuthorizedRoot,
+                    format!("{e:?}"),
+                )
+            })?,
+    );
+    let authorized = strip_verbatim_prefix(authorized.as_path());
     let target = name.to_path(&root);
     if std::fs::symlink_metadata(&target).is_ok_and(|m| m.file_type().is_symlink()) {
         return Err(failure(
@@ -194,7 +203,7 @@ fn resolve_paths(
     }
     if target.starts_with(&main)
         || main.starts_with(&target)
-        || target == authorized.as_path()
+        || target == authorized
         || root == main
     {
         return Err(failure(
@@ -202,7 +211,7 @@ fn resolve_paths(
             "target overlaps a protected checkout or authorization root",
         ));
     }
-    Ok((main, authorized.as_path().to_path_buf(), root, target))
+    Ok((main, authorized, root, target))
 }
 
 /// Builds structured diagnostics without requiring consumers to parse Git or filesystem messages.

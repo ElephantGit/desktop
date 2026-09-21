@@ -1,6 +1,7 @@
 //! Read-only facts and a mutation-only creation seam for callers that own durable recovery.
 use super::worktree::{CreateWorktreeRequest, build_create_worktree_command};
 use crate::{CommitId, Git, GitCommand, GitEnv, GitIntent, GitRunner, GitlancerError, Repository};
+use ora_utils::path::canonicalize;
 use std::path::{Path, PathBuf};
 
 impl<R: GitRunner> Git<R> {
@@ -25,6 +26,9 @@ impl<R: GitRunner> Git<R> {
     }
 
     /// Returns the live checkout root, rejecting bare repositories and metadata-only directories.
+    ///
+    /// The result and every other canonical path in this module use the plain spelling Git itself
+    /// prints, so callers can compare them against paths Git reports and feed them back to Git.
     pub fn checkout_root(&self, checkout: &Path) -> Result<PathBuf, GitlancerError> {
         let output = self.runner().run(&GitCommand::new(
             checkout.to_path_buf(),
@@ -32,7 +36,7 @@ impl<R: GitRunner> Git<R> {
             GitEnv::default(),
             GitIntent::ReadOnly,
         ))?;
-        Ok(PathBuf::from(output.stdout.trim_end()).canonicalize()?)
+        Ok(canonicalize(Path::new(output.stdout.trim_end()))?)
     }
 
     /// Reads Git's actual checkout metadata directory, allowing callers to compare registration facts.
@@ -52,12 +56,12 @@ impl<R: GitRunner> Git<R> {
         checkout: &Path,
         main_git_directory: &Path,
     ) -> Result<(), GitlancerError> {
-        let directory = self.checkout_git_directory(checkout)?.canonicalize()?;
+        let directory = canonicalize(&self.checkout_git_directory(checkout)?)?;
         let common = std::fs::read_to_string(directory.join("commondir"))?;
         let backlink = std::fs::read_to_string(directory.join("gitdir"))?;
-        if directory.join(common.trim_end()).canonicalize()? != main_git_directory
-            || Path::new(backlink.trim_end()).canonicalize()?
-                != checkout.join(".git").canonicalize()?
+        if canonicalize(&directory.join(common.trim_end()))? != main_git_directory
+            || canonicalize(Path::new(backlink.trim_end()))?
+                != canonicalize(&checkout.join(".git"))?
             || !directory.starts_with(main_git_directory.join("worktrees"))
         {
             return Err(crate::DomainError::NotAWorktree(checkout.to_path_buf()).into());

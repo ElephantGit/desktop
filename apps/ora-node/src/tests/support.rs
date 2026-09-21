@@ -152,8 +152,8 @@ impl Fixture {
         );
         Self {
             directory,
-            main: main.canonicalize().unwrap(),
-            root: root.canonicalize().unwrap(),
+            main: ora_utils::path::canonicalize(&main).unwrap(),
+            root: ora_utils::path::canonicalize(&root).unwrap(),
             faults: Faults::default(),
         }
     }
