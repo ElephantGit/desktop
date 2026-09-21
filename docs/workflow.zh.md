@@ -37,6 +37,17 @@
 
 `graph` 字段保存完整 React Flow JSON。工作流定义 CRUD 将其视为不透明字符串；[工作流运行引擎](../crates/application/src/workflow_run/engine/README.md)在启动时解析和校验冻结快照。
 
+## 未参与运行的节点
+
+编辑器允许保留未接入执行路径的节点和备用节点组。草稿、发布快照、回滚及导入导出保留完整画布；运行时从冻结快照派生入口可达的执行子图，不修改原始文档。
+根图从 Start 计算有向可达性；活动 Loop 内从子 Start 计算，活动 Iteration 内从容器入口边计算。未使用容器的全部成员均不参与运行。
+Condition 的全部分支参与静态分析，运行时分支未命中与未参与运行是不同状态。
+
+备用节点及其边不会进入调度、变量池或角色和 Skill 准备，不创建 NodeRun 或 Session。备用节点指向活动节点的边被排除，活动节点不会等待它；活动节点引用备用节点输出时，运行前返回校验错误。重新连通节点后恢复正常执行校验。
+所有文档仍检查重复 ID、悬空边及非法容器归属或跨作用域边，配置和可执行性检查只针对执行子图。
+
+编辑器和运行全图通过后端分析显示“未参与运行”，编辑器显示节点数量提示。运行全图保留备用节点，Theater 执行路径排除这些节点，点击备用节点不会进入等待执行视图。该状态由拓扑推导，不持久化节点开关。分析结果绑定文档身份，切换文档或卸载会取消过期请求。
+
 ## Loop 容器
 
 可执行 Loop 图使用 `schemaVersion: 2`。根 Loop 持有 `data.loopConfig`；每个子节点通过
@@ -48,7 +59,7 @@ Start、子 Agent 和内部边的合法容器组。根图与子图禁止跨作�
 
 `loopConfig` 定义 1–100 的轮次上限、有类型跨轮变量、同时反馈选择器、有类型 `until`
 条件及命名输出。每个 Loop 体是独立 DAG，必须有且仅有一个可达 Start。嵌套 Loop、归属
-不一致、跨作用域边或选择器、类型错误及不可达子节点都会在创建 Session 前被拒绝。编辑器
+不一致、跨作用域边或选择器、活动节点的类型错误都会在创建 Session 前被拒绝。未从子 Start 可达的备用子节点保留在快照中，不参与执行。编辑器
 默认组把子 Agent 输出反馈为下一轮 `value`，输出非空时结束并导出为 `result`；作者可设置
 初始值与最大轮次。
 
@@ -184,10 +195,10 @@ Start 表单控件与变量类型分离：文本、段落、选择框、数字�
 `resumable` 只表示「同一快照再跑一次是否像环境/瞬时问题」，不决定界面是否允许续跑——失败或
 已取消且空闲的运行始终可以续跑：
 
-| Kind | `resumable` |
-| --- | --- |
-| `workflow_model_not_found`、`missing_agent_config`、`session`、`session_ended_without_stop_reason`、`session_binding_rejected`、`interrupted_by_restart`、`repository`、`baseline_persist` | true |
-| `structured_output`、`agent_refusal`、`prompt_template`、`missing_agent_ref`、`missing_skill_materialization`、`invalid_run_payload`、`unknown_stop_reason`、`multiple_outputs`、`condition_evaluation` | false |
+| Kind                                                                                                                                                                                                    | `resumable` |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| `workflow_model_not_found`、`missing_agent_config`、`session`、`session_ended_without_stop_reason`、`session_binding_rejected`、`interrupted_by_restart`、`repository`、`baseline_persist`              | true        |
+| `structured_output`、`agent_refusal`、`prompt_template`、`missing_agent_ref`、`missing_skill_materialization`、`invalid_run_payload`、`unknown_stop_reason`、`multiple_outputs`、`condition_evaluation` | false       |
 
 只有智能体自身行为导致的失败会注入后续提示词（`injects_previous_failure`）：
 `structured_output`、`agent_refusal`、`unknown_stop_reason`、`multiple_outputs`。

@@ -473,7 +473,7 @@ mod tests {
                 {"id":"agent","data":{"kind":"agent","agentConfig":{"executor":{"agentCli":"c","modelId":"m"},"prompt":"do"}}},
                 {"id":"c","data":{"kind":"condition"}},
                 {"id":"out","data":{"kind":"output"}}
-            ],"edges":[]}"#,
+            ],"edges":[{"source":"start","target":"agent"},{"source":"agent","target":"c"},{"source":"c","target":"out"}]}"#,
         )
         .unwrap();
         let context = execution_context_with_input(Some("kickoff"));

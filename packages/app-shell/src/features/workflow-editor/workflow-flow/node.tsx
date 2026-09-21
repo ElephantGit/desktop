@@ -24,6 +24,8 @@ import {
 import {
   AgentExecutionModeMark,
   WorkflowNodeCardShell,
+  useWorkflowNodeUnused,
+  WorkflowUnusedBadge,
 } from "../../workflow-node-chrome";
 import { useWorkflowConnectionState } from "./use-connection-state";
 import { WorkflowNodeParameterSummary } from "./node-parameter-summary";
@@ -53,6 +55,7 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
   positionAbsoluteY,
 }: NodeProps<Node<WorkflowNodeData, "workflow">>) {
   const { i18n, t } = useTranslation();
+  const unused = useWorkflowNodeUnused(id);
   const { deleteElements } = useReactFlow<Node<WorkflowNodeData, "workflow">>();
   const { connectionCandidateEndpoint, connectionCandidateNodeId } =
     useWorkflowConnectionState();
@@ -105,6 +108,7 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
         description={data.description}
         kindLabel={id}
         density="editor"
+        headerAccessory={unused ? <WorkflowUnusedBadge /> : undefined}
         selected={selected}
         width={
           data.kind === "loop"
@@ -127,6 +131,7 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
         }
         ariaLabel={`${t("settings.workflow.nodeSuffix", { type: nodeKindLabel })}: ${data.title}`}
         frameClassName={cn(
+          unused && "opacity-60",
           parentId !== undefined && "group/iteration-member",
           isConnectionCandidate &&
             "border-ring/60 shadow-md ring-2 ring-ring/10",

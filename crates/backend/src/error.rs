@@ -156,7 +156,9 @@ impl From<PluginLifecycleError> for BackendError {
             ),
             PluginLifecycleError::RuntimeStop { .. }
             | PluginLifecycleError::PackageRemoval { .. }
-            | PluginLifecycleError::UninstallStaging { .. } => (
+            | PluginLifecycleError::UninstallStaging { .. }
+            | PluginLifecycleError::LogLevelPersistence { .. }
+            | PluginLifecycleError::LogWriterActive { .. } => (
                 ErrorClassification::Internal,
                 PublicError::InternalError(EmptyErrorParams {}),
                 "plugin lifecycle operation failed",

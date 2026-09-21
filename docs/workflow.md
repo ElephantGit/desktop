@@ -39,6 +39,17 @@ Snapshot versions are strings. The draft is identified by the reserved string `"
 
 The `graph` column stores the complete React Flow JSON document. Workflow definition CRUD treats it as an opaque string; the [workflow run engine](../crates/application/src/workflow_run/engine/README.md) parses and validates the frozen snapshot when a run starts.
 
+## Nodes excluded from execution
+
+Authors can retain spare nodes and connected groups outside the execution path. Drafts, published snapshots, rollback, and import/export preserve the complete canvas; execution derives an entry-reachable subgraph from the frozen snapshot without rewriting it.
+Root reachability starts at Start; active Loops use their child Start, and active Iterations use their entry edges. Every member of an unused container is excluded.
+Static analysis follows every Condition outlet; runtime branch selection remains distinct from static exclusion.
+
+Spare nodes and their edges never enter scheduling, variable pools, or role and Skill preparation, and create no NodeRun or Session. An edge from a spare node into an active node is excluded so it cannot block a join. Active nodes referencing spare outputs fail validation before execution. Reconnecting a node restores normal execution validation.
+Document-wide checks still reject duplicate IDs, dangling edges, invalid ownership, and illegal cross-scope edges; configuration and executability checks apply to the execution subgraph.
+
+The editor and run overview use backend analysis to show “Excluded from execution”; the editor also shows a count. Overview retains spare nodes, while Theater excludes them from its execution path; clicking a spare node does not open a waiting-to-execute view. Membership is derived from topology rather than a persisted node switch. Analysis results are bound to document identity, and switching documents or unmounting cancels obsolete requests.
+
 ## Loop containers
 
 Executable Loop graphs use `schemaVersion: 2`. A root Loop owns `data.loopConfig`; every child
@@ -53,7 +64,7 @@ published snapshots and run Overview.
 `loopConfig` defines a 1–100 round bound, typed carried variables, simultaneous feedback selectors,
 a typed `until` condition, and named exports. Each Loop body is a separate DAG with exactly one
 reachable Start. Nested Loops, ownership mismatches, cross-scope edges and selectors, invalid
-types, and unreachable children are rejected before sessions start. The default editor group feeds
+types on active nodes are rejected before sessions start. Spare children unreachable from the child Start remain in the snapshot and do not execute. The default editor group feeds
 the child Agent output into the next round's `value`, stops on a non-empty output, and exports it as
 `result`; authors can set the initial value and maximum rounds.
 
@@ -233,10 +244,10 @@ inferred by a model.
 (environment / transient), not whether the UI allows resume — resume is always offered for a
 failed or cancelled idle run:
 
-| Kind | `resumable` |
-| --- | --- |
-| `workflow_model_not_found`, `missing_agent_config`, `session`, `session_ended_without_stop_reason`, `session_binding_rejected`, `interrupted_by_restart`, `repository`, `baseline_persist` | true |
-| `structured_output`, `agent_refusal`, `prompt_template`, `missing_agent_ref`, `missing_skill_materialization`, `invalid_run_payload`, `unknown_stop_reason`, `multiple_outputs`, `condition_evaluation` | false |
+| Kind                                                                                                                                                                                                    | `resumable` |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| `workflow_model_not_found`, `missing_agent_config`, `session`, `session_ended_without_stop_reason`, `session_binding_rejected`, `interrupted_by_restart`, `repository`, `baseline_persist`              | true        |
+| `structured_output`, `agent_refusal`, `prompt_template`, `missing_agent_ref`, `missing_skill_materialization`, `invalid_run_payload`, `unknown_stop_reason`, `multiple_outputs`, `condition_evaluation` | false       |
 
 Only agent-behaviour failures are injected into a later prompt (`injects_previous_failure`):
 `structured_output`, `agent_refusal`, `unknown_stop_reason`, `multiple_outputs`.

@@ -192,8 +192,16 @@ impl<'a> BranchProjection<'a> {
     fn compute_projected_state(&self, node_id: &str) -> ProjectedNodeState {
         let edges = self.graph.incoming_edges(node_id);
         if edges.is_empty() {
-            // The start node has no incoming edges and begins ready.
-            return ProjectedNodeState::Ready;
+            // Only the scope's explicit entry may start without a predecessor.
+            return if self
+                .graph
+                .start_node()
+                .is_some_and(|node| node.id == node_id)
+            {
+                ProjectedNodeState::Ready
+            } else {
+                ProjectedNodeState::Inactive
+            };
         }
         let mut any_active = false;
         for edge in &edges {

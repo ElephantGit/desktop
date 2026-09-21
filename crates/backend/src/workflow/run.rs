@@ -32,6 +32,8 @@ mod snapshot_switch_tests;
 #[cfg(test)]
 mod test_fixture;
 mod transitions;
+#[cfg(test)]
+mod unused_tests;
 mod worktree;
 
 pub(crate) use engine::build_workflow_run_engine;

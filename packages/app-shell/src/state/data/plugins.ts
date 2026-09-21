@@ -27,7 +27,16 @@ export const pluginKeys = {
   packInstallations: ["pack-installations"] as const,
   pluginConfiguration: (pluginId: string) =>
     ["plugin-configuration", pluginId] as const,
+  pluginLogLevel: (pluginId: string) => ["plugin-log-level", pluginId] as const,
 };
+
+/** Drops one plugin's cached log level once its identity has been uninstalled. */
+export function forgetPluginLogLevel(
+  queryClient: QueryClient,
+  pluginId: string,
+): void {
+  queryClient.removeQueries({ queryKey: pluginKeys.pluginLogLevel(pluginId) });
+}
 
 /** Refreshes installed state after a scan without forcing a marketplace fetch. */
 export function invalidateInstalledPlugins(queryClient: QueryClient) {

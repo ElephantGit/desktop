@@ -27,6 +27,10 @@ import {
   type WorkflowNodeData,
 } from "@ora/workflow-mock";
 import { cn } from "@ora/ui";
+import {
+  useWorkflowNodeUnused,
+  WorkflowUnusedBadge,
+} from "../../workflow-node-chrome";
 import { IterationInsertMenu } from "./iteration-actions";
 import { useWorkflowIterationActions } from "./iteration-actions-context";
 
@@ -64,6 +68,7 @@ export function IterationNodeFrame({
   nodeKindLabel,
 }: IterationNodeFrameProps) {
   const { t } = useTranslation();
+  const unused = useWorkflowNodeUnused(id);
   const { deleteElements, getNode } =
     useReactFlow<Node<WorkflowNodeData, "workflow">>();
   const updateNodeInternals = useUpdateNodeInternals();
@@ -102,6 +107,7 @@ export function IterationNodeFrame({
       data-collapsed={collapsed}
       aria-label={`${data.title}: ${nodeKindLabel}`}
       className={cn(
+        unused && "opacity-60",
         // The frame keeps one constant background; selection only repaints the
         // border and shadow (Dify shows a green border, never a fill change).
         "group/iteration-frame relative overflow-visible rounded-2xl border bg-violet-500/[0.035] shadow-sm transition-[border-color,box-shadow]",
@@ -150,6 +156,7 @@ export function IterationNodeFrame({
         <span className="min-w-0 flex-1 truncate text-sm font-semibold">
           {data.title}
         </span>
+        {unused && <WorkflowUnusedBadge />}
         <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
           {t("settings.workflow.iteration.regionSummary", {
             total: memberCount,

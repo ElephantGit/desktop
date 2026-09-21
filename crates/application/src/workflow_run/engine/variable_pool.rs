@@ -550,7 +550,7 @@ mod tests {
                     {"id":"condition-1","data":{"kind":"condition"}},
                     {"id":"output-1","data":{"kind":"output"}}
                 ],
-                "edges": []
+                "edges": [{"source":"start","target":"agent-1"},{"source":"agent-1","target":"condition-1"},{"source":"condition-1","target":"output-1"}]
             }"#,
         )
         .unwrap();

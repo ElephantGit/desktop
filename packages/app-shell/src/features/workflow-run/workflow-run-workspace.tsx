@@ -1,3 +1,7 @@
+import { useWorkflowAnalysis } from "../../state/data/workflow-analysis";
+import { executableRun } from "./executable-run";
+import { WorkflowMembershipProvider } from "../workflow-node-chrome";
+import { serializeWorkflowGraph } from "@ora/workflow-runtime";
 import { isTerminalRunStatus } from "@ora/workflow-runtime";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -80,7 +84,26 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   );
   const projectId = useWorkspaceSelectionStore((s) => s.selection.projectId);
   const runQuery = useRealWorkflowRun(runId);
-  const run = runQuery.data?.run ?? null;
+  const fullRun = runQuery.data?.run ?? null;
+  const analysisGraph = useMemo(
+    () =>
+      serializeWorkflowGraph(
+        fullRun?.definitionSnapshot ?? {
+          nodes: [],
+          edges: [],
+          viewport: { x: 0, y: 0, zoom: 1 },
+        },
+      ),
+    [fullRun?.definitionSnapshot],
+  );
+  const analysis = useWorkflowAnalysis(runId, analysisGraph);
+  const run = useMemo(
+    () =>
+      fullRun === null
+        ? null
+        : executableRun(fullRun, analysis.data?.unusedNodeIds ?? []),
+    [fullRun, analysis.data],
+  );
   const workspaceId = runQuery.data?.workspaceId ?? null;
   // WorkflowRun is Workspace-owned and no longer creates an implicit Task
   // projection, so its generic project review surface has no task diff count.
@@ -410,6 +433,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   }
 
   function focusNodeFromOverview(nodeId: string): void {
+    if (analysis.data?.unusedNodeIds.includes(nodeId)) return;
     setConversationNodeId(null);
     setFocusNodeId(nodeId);
     const waiting =
@@ -696,13 +720,17 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
                 }}
               />
             ) : (
-              <RunOverviewCanvas
-                run={run}
-                focusedNodeId={stageFocusNodeId}
-                onFocusNode={focusNodeFromOverview}
-                artifacts={artifactsQuery.artifacts}
-                fitRequestKey={overviewFitRequestKey}
-              />
+              <WorkflowMembershipProvider
+                unusedNodeIds={analysis.data?.unusedNodeIds ?? []}
+              >
+                <RunOverviewCanvas
+                  run={fullRun ?? run}
+                  focusedNodeId={stageFocusNodeId}
+                  onFocusNode={focusNodeFromOverview}
+                  artifacts={artifactsQuery.artifacts}
+                  fitRequestKey={overviewFitRequestKey}
+                />
+              </WorkflowMembershipProvider>
             )}
           </div>
         </WorkspaceReviewLayout>

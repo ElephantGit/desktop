@@ -606,7 +606,7 @@ mod tests {
                     { "id": "x", "logic": "and", "conditions": [] }
                 ] } }
             ],
-            "edges": []
+            "edges": [{"source":"start","target":"c"}]
         }));
         assert_eq!(
             validate_executable_graph(&g).unwrap_err(),
@@ -654,7 +654,7 @@ mod tests {
                     { "name": "result", "variableSelector": ["y", "text"] }
                 ] } }
             ],
-            "edges": []
+            "edges": [{"source":"start","target":"a"},{"source":"start","target":"b"}]
         }));
         assert!(validate_executable_graph(&g).is_ok());
     }
@@ -670,7 +670,7 @@ mod tests {
                     { "name": "result", "variableSelector": ["y", "text"] }
                 ] } }
             ],
-            "edges": []
+            "edges": [{"source":"start","target":"out"}]
         }));
         assert_eq!(
             validate_executable_graph(&g).unwrap_err(),
