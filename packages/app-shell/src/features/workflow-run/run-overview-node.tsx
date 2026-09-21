@@ -1,3 +1,7 @@
+import {
+  useWorkflowNodeUnused,
+  WorkflowUnusedBadge,
+} from "../workflow-node-chrome";
 import { createContext, memo, type ReactNode, useContext } from "react";
 import { Handle, type Node, type NodeProps, Position } from "@xyflow/react";
 import { useTranslation } from "react-i18next";
@@ -77,6 +81,7 @@ export const RunOverviewNode = memo(function RunOverviewNode({
   const locale =
     i18n.resolvedLanguage === "en-US" ? ("en-US" as const) : ("zh-CN" as const);
   const state = states[id] ?? { status: "idle" as const };
+  const unused = useWorkflowNodeUnused(id);
   const tone = runStatusTone(state.status);
   const kindLabel = createMockWorkflowNodeType(data.kind, locale).label;
   const focused = focusedNodeId === id || selected;
@@ -136,8 +141,9 @@ export const RunOverviewNode = memo(function RunOverviewNode({
           />
         ) : undefined
       }
-      ariaLabel={`${data.title}: ${t(tone.labelKey)}`}
+      ariaLabel={`${data.title}: ${t(unused ? "workflowNode.unused" : tone.labelKey)}`}
       frameClassName={cn(
+        unused && "opacity-60",
         tone.ring,
         "ring-1 transition-[box-shadow,ring-color] duration-300",
         state.status === "running" && "ring-sky-500/35 theater-live-breathe",
@@ -171,11 +177,15 @@ export const RunOverviewNode = memo(function RunOverviewNode({
               <span className="tabular-nums">{artifactCount}</span>
             </span>
           )}
-          <RunStatusBadge
-            status={state.status}
-            live={isNodeWorking(state.status)}
-            className="px-1.5 py-0 text-[9px]"
-          />
+          {unused ? (
+            <WorkflowUnusedBadge />
+          ) : (
+            <RunStatusBadge
+              status={state.status}
+              live={isNodeWorking(state.status)}
+              className="px-1.5 py-0 text-[9px]"
+            />
+          )}
         </div>
       }
       footer={

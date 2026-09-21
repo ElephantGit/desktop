@@ -20,6 +20,35 @@ mod install_tests;
 #[cfg(test)]
 mod tests;
 
+/// Renders one lifecycle level state in the closed wire vocabulary.
+fn plugin_log_level_response(
+    plugin_id: String,
+    state: ora_plugin_lifecycle::PluginLogLevelState,
+) -> PluginLogLevelResponse {
+    PluginLogLevelResponse {
+        plugin_id,
+        level: match state.level {
+            ora_logging::LogLevel::Trace => RuntimeLogLevel::Trace,
+            ora_logging::LogLevel::Debug => RuntimeLogLevel::Debug,
+            ora_logging::LogLevel::Info => RuntimeLogLevel::Info,
+            ora_logging::LogLevel::Warn => RuntimeLogLevel::Warn,
+            ora_logging::LogLevel::Error => RuntimeLogLevel::Error,
+        },
+        configured: state.configured,
+    }
+}
+
+/// Converts a validated contract level into the shared logging vocabulary.
+fn internal_log_level(level: RuntimeLogLevel) -> ora_logging::LogLevel {
+    match level {
+        RuntimeLogLevel::Trace => ora_logging::LogLevel::Trace,
+        RuntimeLogLevel::Debug => ora_logging::LogLevel::Debug,
+        RuntimeLogLevel::Info => ora_logging::LogLevel::Info,
+        RuntimeLogLevel::Warn => ora_logging::LogLevel::Warn,
+        RuntimeLogLevel::Error => ora_logging::LogLevel::Error,
+    }
+}
+
 /// Owns plugin operations and their runtime coordination without exposing host internals.
 #[derive(Clone)]
 pub struct Plugins {
@@ -263,6 +292,12 @@ impl Plugins {
         }
         let plugin_id = request.plugin_id.clone();
         self.agent_runtime.suspend_plugin_agent(&plugin_id);
+        // Deinitialization runs before the package is removed, and only when the user authorized
+        // it: the command is the package's own program, and it can only run while the package is
+        // still on disk. A Hook whose command fails still uninstalls (D8).
+        if request.hook_execution_acknowledged {
+            self.host.deinitialize_installed_hook(&plugin_id).await;
+        }
         let result = self.host.uninstall(request).await;
         self.agent_runtime.resume_plugin_agent(&plugin_id);
         let response = result?;
@@ -274,6 +309,37 @@ impl Plugins {
         Ok(response)
     }
 
+    /// Resolves the active plugin log file the desktop export copies for one installed plugin.
+    pub fn log_file_path(&self, plugin_id: &str) -> Result<PathBuf, BackendError> {
+        Ok(self.host.lifecycle.plugin_log_file(plugin_id)?)
+    }
+
+    /// Reads the effective host-owned log level of one plugin identity.
+    pub fn get_log_level(
+        &self,
+        request: GetPluginLogLevelRequest,
+    ) -> Result<PluginLogLevelResponse, BackendError> {
+        let state = self.host.lifecycle.plugin_log_level(&request.plugin_id)?;
+        Ok(plugin_log_level_response(request.plugin_id, state))
+    }
+
+    /// Persists a plugin's log level and applies it to its running generation, if any.
+    ///
+    /// The lifecycle persists before it applies, so a returned error means nothing changed and
+    /// the frontend must not show the requested level as current. The call is ordered against
+    /// uninstalls of the same plugin by the lifecycle's per-plugin operation lock.
+    pub async fn set_log_level(
+        &self,
+        request: SetPluginLogLevelRequest,
+    ) -> Result<PluginLogLevelResponse, BackendError> {
+        let state = self
+            .host
+            .lifecycle
+            .set_plugin_log_level(&request.plugin_id, internal_log_level(request.level))
+            .await?;
+        Ok(plugin_log_level_response(request.plugin_id, state))
+    }
+
     /// Installs a marketplace plugin by resolving its release manifest from the synced source and
     /// downloading, verifying, and extracting its package through the network-backed installer.
     ///
@@ -283,10 +349,13 @@ impl Plugins {
         &self,
         request: InstallPluginRequest,
     ) -> Result<InstallPluginResponse, BackendError> {
+        let acknowledged = request.hook_execution_acknowledged;
         let plugin_id = PluginId::parse(&request.plugin_id).ok();
         let response = self.host.install(request).await?;
         self.probe_installed_mcp(plugin_id);
         self.agent_runtime.sync_plugin_agents();
+        self.initialize_hook_landed(&response.plugin_id, &response.outcome, acknowledged)
+            .await;
         Ok(response)
     }
 
@@ -296,10 +365,13 @@ impl Plugins {
         request: InstallPluginRequest,
         progress: ProgressCallback,
     ) -> Result<InstallPluginResponse, BackendError> {
+        let acknowledged = request.hook_execution_acknowledged;
         let plugin_id = PluginId::parse(&request.plugin_id).ok();
         let response = self.host.install_with_progress(request, progress).await?;
         self.probe_installed_mcp(plugin_id);
         self.agent_runtime.sync_plugin_agents();
+        self.initialize_hook_landed(&response.plugin_id, &response.outcome, acknowledged)
+            .await;
         Ok(response)
     }
 
@@ -315,6 +387,7 @@ impl Plugins {
         request: UpdatePluginRequest,
     ) -> Result<UpdatePluginResponse, BackendError> {
         let plugin_id = request.plugin_id.clone();
+        let acknowledged = request.hook_execution_acknowledged;
         self.agent_runtime.suspend_plugin_agent(&plugin_id);
         let result = self.host.update(request).await;
         self.agent_runtime.resume_plugin_agent(&plugin_id);
@@ -325,6 +398,11 @@ impl Plugins {
             self.refresh_mcp_health(plugin_id);
         }
         self.agent_runtime.sync_plugin_agents();
+        // Every update re-runs `init`, because only the tool knows whether the version it is
+        // replacing needs its Agent configuration migrated (D2).
+        if acknowledged {
+            self.host.initialize_installed_hook(&plugin_id).await;
+        }
         Ok(response)
     }
 
@@ -336,6 +414,7 @@ impl Plugins {
         progress: ProgressCallback,
     ) -> Result<UpdatePluginResponse, BackendError> {
         let plugin_id = request.plugin_id.clone();
+        let acknowledged = request.hook_execution_acknowledged;
         self.agent_runtime.suspend_plugin_agent(&plugin_id);
         let result = self.host.update_with_progress(request, progress).await;
         self.agent_runtime.resume_plugin_agent(&plugin_id);
@@ -344,6 +423,9 @@ impl Plugins {
             self.refresh_mcp_health(plugin_id);
         }
         self.agent_runtime.sync_plugin_agents();
+        if acknowledged {
+            self.host.initialize_installed_hook(&plugin_id).await;
+        }
         Ok(response)
     }
 
@@ -358,6 +440,7 @@ impl Plugins {
         &self,
         request: ImportPluginRequest,
     ) -> Result<ImportPluginResponse, BackendError> {
+        let acknowledged = request.hook_execution_acknowledged;
         let ImportedPlugin {
             plugin_id,
             outcome,
@@ -365,12 +448,56 @@ impl Plugins {
         } = self.host.import(request).await?;
         self.probe_installed_mcp(PluginId::parse(&plugin_id).ok());
         self.agent_runtime.sync_plugin_agents();
+        self.initialize_hook_landed(&plugin_id, &outcome, acknowledged)
+            .await;
         let workflows = self.workflow_import.handle(workflow_documents);
         Ok(ImportPluginResponse {
             plugin_id,
             outcome,
             workflows,
         })
+    }
+
+    /// Lists this session's Hook lifecycle results for the settings surface to merge by plugin.
+    ///
+    /// Reading the store cannot fail; the result type keeps this operation shaped like every other
+    /// one the Desktop surface drives, so the transport does not need a second response mode for
+    /// an operation that happens to be infallible.
+    pub fn list_hook_lifecycle_reports(
+        &self,
+        _request: ListHookLifecycleReportsRequest,
+    ) -> Result<ListHookLifecycleReportsResponse, BackendError> {
+        Ok(ListHookLifecycleReportsResponse {
+            reports: self.host.hook_lifecycle_reports(),
+        })
+    }
+
+    /// Runs one user-requested `init` for an installed Hook package.
+    ///
+    /// This is the retry path for a failed `init` and the only way a pack-installed Hook member
+    /// is initialized: the pack landed the package without running anything, so the user
+    /// authorizes that member on its own afterwards (D2).
+    pub async fn initialize_hook(
+        &self,
+        request: InitializeHookRequest,
+    ) -> Result<InitializeHookResponse, BackendError> {
+        self.host.initialize_hook(request).await
+    }
+
+    /// Runs `init` for a Hook that a single-plugin install or import just landed.
+    ///
+    /// Pack members are excluded by the outcome rather than by the caller: a pack reports
+    /// `PackInstalled`, so nothing the pack brought in is executed, which is exactly the
+    /// authorization boundary the decision draws.
+    async fn initialize_hook_landed(
+        &self,
+        plugin_id: &str,
+        outcome: &InstallOutcome,
+        acknowledged: bool,
+    ) {
+        if acknowledged && matches!(outcome, InstallOutcome::Installed) {
+            self.host.initialize_installed_hook(plugin_id).await;
+        }
     }
 
     /// Lists secret-free Host MCP health for the plugin card (no cwd) or one Session view.

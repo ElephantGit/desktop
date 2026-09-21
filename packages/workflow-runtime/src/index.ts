@@ -31,6 +31,8 @@ export type {
   WorkflowNodeConversationItemStatus,
   WorkflowNodeConversationMessage,
   WorkflowNodeConversationMessageRole,
+  WorkflowNodeErrorDetail,
+  WorkflowNodeAiDiagnosis,
   WorkflowNodeFileChange,
   WorkflowRunEvent,
   WorkflowRunEventEnvelope,
@@ -41,6 +43,7 @@ export type {
 export { findOpenHitlForNode, listOpenHitls } from "./types";
 export {
   normalizeWorkflowDefinition,
+  normalizeWorkflowDocument,
   validateWorkflowDefinition,
   WorkflowDefinitionValidationError,
   type WorkflowDefinitionInput,

@@ -1,6 +1,9 @@
 import {
   RemoteContractError,
   type AvailablePlugin,
+  type HookLifecycleOutcome,
+  type HookLifecyclePhase,
+  type HookLifecycleReport,
   type MarketplaceSource,
   type InstalledPlugin,
   type ImportedWorkflowOutcome,
@@ -11,6 +14,7 @@ import {
   type PluginConfigurationDetails,
   type PluginSettingValue,
 } from "@ora/contracts";
+import type { RuntimeLogLevel } from "@ora/contracts";
 import type { TestHandlers } from "../contracts-transport";
 import { seededAgentPackages } from "./agent-packages";
 
@@ -18,11 +22,20 @@ import { seededAgentPackages } from "./agent-packages";
 export interface PluginMemoryState {
   installedPlugins: InstalledPlugin[];
   pluginConfigurations: Map<string, PluginConfigurationDetails>;
+  /** Host-owned per-plugin log levels; absence means the default `info` applies. */
+  pluginLogLevels: Map<string, RuntimeLogLevel>;
   availablePlugins: AvailablePlugin[];
   /** README text served for one marketplace listing keyed by plugin id. */
   pluginReadmes: Map<string, string>;
   availablePluginsUpdatedAt: bigint;
   marketplaceSources: MarketplaceSource[];
+  /** This session's Hook lifecycle results, keyed by plugin id the way the host stores them. */
+  hookLifecycleReports: Map<string, HookLifecycleReport>;
+  /**
+   * The outcome every authorized Hook execution should produce. Defaults to success; a failure
+   * here is how a test exercises the visible-failure and retry path.
+   */
+  hookOutcome?: HookLifecycleOutcome;
   /**
    * The package a local `.orax` import should materialize; `null` rejects that import.
    * Undefined means imports are not configured and always fail in tests. A concrete target is
@@ -31,7 +44,7 @@ export interface PluginMemoryState {
   importTarget?: InstalledPlugin | null;
   /**
    * The typed install/import outcome returned by the mock plugin commands. Defaults to
-   * `installed`; a conflict test supplies `installed_with_command_conflict`.
+   * `installed`; a pack test supplies `pack_installed`.
    */
   installOutcome?: InstallOutcome;
   /**
@@ -64,6 +77,7 @@ export function createPluginMemory(): PluginMemoryState {
   return {
     installedPlugins,
     pluginConfigurations: new Map(),
+    pluginLogLevels: new Map(),
     availablePlugins: [],
     pluginReadmes: new Map(),
     availablePluginsUpdatedAt: 0n,
@@ -72,7 +86,36 @@ export function createPluginMemory(): PluginMemoryState {
     packInstallations: [],
     packMemberPlugins: new Map(),
     packUninstallPlans: new Map(),
+    hookLifecycleReports: new Map(),
   };
+}
+
+/**
+ * Records one Hook lifecycle result the way the host would after running a command.
+ *
+ * The store is keyed by plugin id and holds the latest result, so a retried initialization
+ * replaces the failure a test previously produced instead of accumulating results.
+ */
+function recordHookExecution(
+  state: PluginMemoryState,
+  plugin: InstalledPlugin,
+  phase: HookLifecyclePhase,
+): void {
+  const outcome = state.hookOutcome ?? {
+    state: "succeeded" as const,
+    durationMs: 12,
+  };
+  state.hookLifecycleReports.set(plugin.id, {
+    pluginId: plugin.id,
+    phase,
+    executable: plugin.kind === "hook" ? plugin.executable : "",
+    outcome,
+    output:
+      outcome.state === "failed"
+        ? "the tool could not write the agent configuration"
+        : "",
+    outputTruncated: false,
+  });
 }
 
 /** Seeds one Host MCP health view: the card view for `null`, a Session workspace otherwise. */
@@ -104,10 +147,9 @@ function installedFromAvailable(available: AvailablePlugin): InstalledPlugin {
     return {
       ...shared,
       kind: "hook",
-      protocol: "rtk-rewrite-v1",
-      command: "rtk",
+      executable: "assets/rtk.exe",
+      supportedAgents: ["claude-code", "codex"],
       target: "x86_64-pc-windows-msvc",
-      toolVersion: "0.45.0",
     };
   }
   return {
@@ -177,10 +219,7 @@ function installPack(
       );
     }
     state.installedPlugins.push({ ...member });
-    installedMembers.push({
-      pluginId: member.id,
-      outcome: { state: "installed" },
-    });
+    installedMembers.push(member.id);
     return {
       memberId: member.id,
       versionAtInstall: member.version,
@@ -470,10 +509,31 @@ export function pluginHandlers(state: PluginMemoryState) {
       );
       if (idx < 0)
         throw new Error(`installed plugin ${req.pluginId} not found`);
+      const removed = state.installedPlugins[idx];
+      // `deinit` runs while the package is still in place, which is why the report is recorded
+      // from the entry that is about to be spliced out rather than after its removal.
+      if (removed.kind === "hook" && req.hookExecutionAcknowledged)
+        recordHookExecution(state, removed, "deinit");
       state.installedPlugins.splice(idx, 1);
-      if (req.dataDisposition === "delete")
+      if (req.dataDisposition === "delete") {
         state.pluginConfigurations.delete(req.pluginId);
+        state.pluginLogLevels.delete(req.pluginId);
+      }
       return { pluginId: req.pluginId };
+    },
+    getPluginLogLevel: async (req) => {
+      const level = state.pluginLogLevels.get(req.pluginId);
+      return {
+        pluginId: req.pluginId,
+        level: level ?? "info",
+        configured: level !== undefined,
+      };
+    },
+    setPluginLogLevel: async (req) => {
+      if (!state.installedPlugins.some((p) => p.id === req.pluginId))
+        throw new Error(`installed plugin ${req.pluginId} not found`);
+      state.pluginLogLevels.set(req.pluginId, req.level);
+      return { pluginId: req.pluginId, level: req.level, configured: true };
     },
     importPlugin: async (req) => {
       const target = state.importTarget;
@@ -484,6 +544,8 @@ export function pluginHandlers(state: PluginMemoryState) {
         state: "installed" as const,
       };
       state.installedPlugins.push({ ...target });
+      if (target.kind === "hook" && req.hookExecutionAcknowledged)
+        recordHookExecution(state, target, "init");
       return {
         pluginId: target.id,
         outcome,
@@ -497,6 +559,8 @@ export function pluginHandlers(state: PluginMemoryState) {
       if (!available)
         throw new Error(`available plugin ${req.pluginId} not found`);
       if (available.kind === "pack") {
+        // Pack members land without running anything, exactly like the host: the member Hook
+        // shows up uninitialized until the user authorizes it on its own.
         return {
           pluginId: req.pluginId,
           outcome: installPack(state, available),
@@ -505,7 +569,10 @@ export function pluginHandlers(state: PluginMemoryState) {
       const outcome = state.installOutcome ?? {
         state: "installed" as const,
       };
-      state.installedPlugins.push(installedFromAvailable(available));
+      const installed = installedFromAvailable(available);
+      state.installedPlugins.push(installed);
+      if (installed.kind === "hook" && req.hookExecutionAcknowledged)
+        recordHookExecution(state, installed, "init");
       return {
         pluginId: req.pluginId,
         outcome,
@@ -525,7 +592,24 @@ export function pluginHandlers(state: PluginMemoryState) {
       installed.version = available.version;
       installed.description = available.description;
       installed.logo = available.logo;
+      if (installed.kind === "hook" && req.hookExecutionAcknowledged)
+        recordHookExecution(state, installed, "init");
       return { pluginId: req.pluginId };
+    },
+    listHookLifecycleReports: async () => ({
+      reports: [...state.hookLifecycleReports.values()],
+    }),
+    initializeHook: async (req) => {
+      const plugin = state.installedPlugins.find((p) => p.id === req.pluginId);
+      if (!plugin)
+        throw new Error(`installed plugin ${req.pluginId} not found`);
+      if (!req.hookExecutionAcknowledged)
+        throw new Error(`hook execution was not authorized: ${req.pluginId}`);
+      recordHookExecution(state, plugin, "init");
+      const report = state.hookLifecycleReports.get(req.pluginId);
+      if (report === undefined)
+        throw new Error(`no hook report for ${req.pluginId}`);
+      return { report };
     },
     listPackInstallations: async () => ({
       packs: [...state.packInstallations],

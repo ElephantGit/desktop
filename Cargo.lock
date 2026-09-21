@@ -3387,7 +3387,6 @@ dependencies = [
  "ora-domain",
  "ora-utils",
  "pretty_assertions",
- "semver",
  "serde",
  "serde_json",
  "tempfile",
@@ -3419,6 +3418,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -3492,13 +3492,16 @@ dependencies = [
 name = "ora-plugin-runtime"
 version = "0.0.0"
 dependencies = [
+ "libc",
  "ora-logging",
  "ora-plugin-protocol",
  "ora-process",
+ "ora-utils",
  "pretty_assertions",
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
+ "time",
  "tokio",
  "tracing",
 ]
@@ -3621,6 +3624,7 @@ dependencies = [
  "flate2",
  "futures",
  "hmac",
+ "libc",
  "pretty_assertions",
  "proc-macro2",
  "quick-xml",

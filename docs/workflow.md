@@ -39,6 +39,17 @@ Snapshot versions are strings. The draft is identified by the reserved string `"
 
 The `graph` column stores the complete React Flow JSON document. Workflow definition CRUD treats it as an opaque string; the [workflow run engine](../crates/application/src/workflow_run/engine/README.md) parses and validates the frozen snapshot when a run starts.
 
+## Nodes excluded from execution
+
+Authors can retain spare nodes and connected groups outside the execution path. Drafts, published snapshots, rollback, and import/export preserve the complete canvas; execution derives an entry-reachable subgraph from the frozen snapshot without rewriting it.
+Root reachability starts at Start; active Loops use their child Start, and active Iterations use their entry edges. Every member of an unused container is excluded.
+Static analysis follows every Condition outlet; runtime branch selection remains distinct from static exclusion.
+
+Spare nodes and their edges never enter scheduling, variable pools, or role and Skill preparation, and create no NodeRun or Session. An edge from a spare node into an active node is excluded so it cannot block a join. Active nodes referencing spare outputs fail validation before execution. Reconnecting a node restores normal execution validation.
+Document-wide checks still reject duplicate IDs, dangling edges, invalid ownership, and illegal cross-scope edges; configuration and executability checks apply to the execution subgraph.
+
+The editor and run overview use backend analysis to show “Excluded from execution”; the editor also shows a count. Overview retains spare nodes, while Theater excludes them from its execution path; clicking a spare node does not open a waiting-to-execute view. Membership is derived from topology rather than a persisted node switch. Analysis results are bound to document identity, and switching documents or unmounting cancels obsolete requests.
+
 ## Loop containers
 
 Executable Loop graphs use `schemaVersion: 2`. A root Loop owns `data.loopConfig`; every child
@@ -53,7 +64,7 @@ published snapshots and run Overview.
 `loopConfig` defines a 1–100 round bound, typed carried variables, simultaneous feedback selectors,
 a typed `until` condition, and named exports. Each Loop body is a separate DAG with exactly one
 reachable Start. Nested Loops, ownership mismatches, cross-scope edges and selectors, invalid
-types, and unreachable children are rejected before sessions start. The default editor group feeds
+types on active nodes are rejected before sessions start. Spare children unreachable from the child Start remain in the snapshot and do not execute. The default editor group feeds
 the child Agent output into the next round's `value`, stops on a non-empty output, and exports it as
 `result`; authors can set the initial value and maximum rounds.
 
@@ -219,6 +230,79 @@ The production regression suite exercises the same boundaries through SQLite and
 provider: a second round receives a new session, round bindings are available while rendering its
 prompt, and synchronous failures settle under both `fail` and `continue` without leaving a run
 stuck.
+
+### Failure visibility and resuming from failure
+
+Failed nodes stay visible. When a node fails, the run fails immediately (D2) while any
+in-flight siblings keep running to completion and remain bindable; the scheduler then
+dispatches nothing on a `Failed` or `Cancelled` run. `payload.error_detail` on the failed
+node-run records `kind`, `message`, `source_chain`, `attempt`, `resumable`,
+`injects_previous_failure`, and `recorded_at`. `kind` is a mechanical classification, never
+inferred by a model.
+
+`resumable` predicts whether re-running the same snapshot is a sensible first move
+(environment / transient), not whether the UI allows resume — resume is always offered for a
+failed or cancelled idle run:
+
+| Kind                                                                                                                                                                                                    | `resumable` |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| `workflow_model_not_found`, `missing_agent_config`, `session`, `session_ended_without_stop_reason`, `session_binding_rejected`, `interrupted_by_restart`, `repository`, `baseline_persist`              | true        |
+| `structured_output`, `agent_refusal`, `prompt_template`, `missing_agent_ref`, `missing_skill_materialization`, `invalid_run_payload`, `unknown_stop_reason`, `multiple_outputs`, `condition_evaluation` | false       |
+
+Only agent-behaviour failures are injected into a later prompt (`injects_previous_failure`):
+`structured_output`, `agent_refusal`, `unknown_stop_reason`, `multiple_outputs`.
+
+Resume soft-deletes the failed or cancelled node runs and all of their descendants
+(`is_deleted = 1`) and reschedules from the surviving state. Attempt numbering counts those
+soft-deleted predecessors per `(run_id, node_id, iteration)` (`iteration IS NULL` for outer
+rows). `find_last_failed_attempt` uses the same scope.
+
+Each node records a pre-node git checkpoint under `refs/ora/checkpoints/<node_run_id>` before
+it runs. Rollback first snapshots the worktree as `pre-rollback-<run>-<ts>` so the operator
+can undo. Provenance lives on the node-run payload as `checkpoint`, `checkpoint_error`, and
+`file_changes`. The three rollback modes are `keep` (leave the worktree), `node_files`
+(restore only paths the failed nodes recorded), and `checkpoint` (restore the whole worktree
+to the resume unit's checkpoint). `node_files` is unavailable with
+`nodeFilesUnavailableReason` `"no_file_changes"` when a failed node has no checkpoint or
+recorded changes, and `"composite_region"` when the resume unit is an iteration composite.
+`checkpoint` is unavailable with `"no_checkpoint"`, `"siblings_ran_after_checkpoint"` (a live
+node outside the resume unit was still active after the unit's earliest start: `finished_at`
+is none or later, or `started_at` is later; Start/Condition/Output rows that finished before
+that instant do not count), or `"not_resumable"`.
+
+The run-level switch `inject_last_failure` (default on) injects the previous attempt of the
+same `(node_id, iteration)` into the prompt when that attempt's kind is one of the four
+injectable kinds. The rendered block is stored as `payload.injected_failure_context`.
+
+A failed or cancelled run may resume on a newer published snapshot when the two graphs are
+compatible: removed nodes, changed node types, and Start-contract changes are incompatible
+(`node_missing:<id>`, `node_type_changed:<id>`, `start_node_changed`,
+`start_variables_changed`, `variable_type_changed:<selector>`, `variable_missing:<selector>`).
+A succeeded iteration composite that is not in the resume unit cannot change its
+`iterationConfig` or region member set (`iteration node <id> changed after it completed`); a
+composite that is itself the resume unit may change freely because the loop restarts. The
+snapshot the node last ran is recorded as `payload.snapshot_id`.
+
+On-demand AI diagnosis writes `payload.ai_diagnosis`. It is labelled as a guess and is never
+read by scheduling, resume, rollback, or snapshot-switch decisions.
+
+The resume unit for anything inside a region is the owning composite node. When any
+failed or cancelled row belongs to a region (`iteration IS NOT NULL`), or the composite's own
+row is failed or cancelled, resume soft-deletes the composite row, every region row of every
+round, every ledger entry and every pool binding the composite wrote (`{iter}.item`,
+`{iter}.index`, and the exposed `{iter}.output` / `{iter}.entries` / `{iter}.failed_count` if
+present), and all outer descendants of the composite, then reschedules; the loop restarts from
+round 1. Partial in-loop resume is out of scope. `node_files` rollback is unavailable for that
+unit (`composite_region`); `checkpoint` restores the worktree to the composite's pre-loop
+checkpoint. The boot sweep stays region-aware for interrupted region rows
+(`interrupted_by_restart` on the member, composite and run survive, the round settles as
+failed); whole-run `InterruptedByRestart` handling remains for non-region rows.
+
+Loop containers (`kind: "loop"`, see [Loop containers](#loop-containers)) resume the same way:
+the Loop node is the resume unit, and clearing it also closes its round scopes and soft-deletes
+every node run those rounds created, so the rerun starts from round 1 with no active round.
+Inside a round the Loop keeps its own failure semantics (siblings in the round are cancelled and
+the failure climbs to the Loop node); D2 sibling survival applies to the root scope.
 
 ### Entities and tables
 

@@ -1,3 +1,5 @@
+import { useWorkflowAnalysis } from "../../state/data/workflow-analysis";
+import { WorkflowMembershipProvider } from "../workflow-node-chrome";
 import {
   useCallback,
   useEffect,
@@ -67,7 +69,7 @@ import {
   type WorkflowNodeKind,
 } from "@ora/workflow-mock";
 import {
-  normalizeWorkflowDefinition,
+  normalizeWorkflowDocument,
   parseWorkflowGraph,
   serializeWorkflowGraph,
   workflowTimestampToIso,
@@ -698,6 +700,20 @@ function WorkflowEditorContent({
         : { ...workflow, ...previewedVersion.graph },
     [previewedVersion, workflow],
   );
+  const analysisGraph = useMemo(
+    () =>
+      serializeWorkflowGraph({
+        nodes: displayedWorkflow?.nodes ?? [],
+        edges: (displayedWorkflow?.edges ?? []).map((edge) => ({
+          id: edge.id,
+          source: edge.source,
+          target: edge.target,
+        })),
+        viewport: displayedWorkflow?.viewport ?? { x: 0, y: 0, zoom: 1 },
+      }),
+    [displayedWorkflow],
+  );
+  const analysis = useWorkflowAnalysis(resolvedWorkflowId ?? "", analysisGraph);
   const loadCause =
     library.error ?? (resolvedWorkflowId !== null ? draftQuery.error : null);
   const selectedNode = useMemo(
@@ -868,7 +884,7 @@ function WorkflowEditorContent({
     const startedGeneration = editGenerationRef.current;
     setManagerError(null);
     try {
-      const definition = normalizeWorkflowDefinition({
+      const definition = normalizeWorkflowDocument({
         id: snapshot.id,
         name: snapshot.name,
         description: snapshot.description,
@@ -1216,7 +1232,7 @@ function WorkflowEditorContent({
         );
         return;
       }
-      const definition = normalizeWorkflowDefinition({
+      const definition = normalizeWorkflowDocument({
         id: imported.id,
         name: choices.name,
         description: imported.description,
@@ -2305,60 +2321,74 @@ function WorkflowEditorContent({
             minSize={MIN_WORKFLOW_CANVAS_WIDTH}
           >
             {displayedWorkflow !== null ? (
-              <WorkflowCanvas
-                key={displayedWorkflow.id}
-                capabilities={capabilities}
-                nodes={displayedWorkflow.nodes}
-                annotations={displayedWorkflow.annotations ?? []}
-                edges={displayedWorkflow.edges}
-                initialViewport={displayedWorkflow.viewport}
-                onNodesChange={changeNodes}
-                onEdgesChange={changeEdges}
-                onAddNode={addNode}
-                onInsertIterationNode={insertIterationNode}
-                onToggleIterationCollapsed={toggleIterationCollapsed}
-                onAddAnnotation={addAnnotation}
-                onUpdateAnnotation={updateAnnotation}
-                onOrganize={organizeNodes}
-                onConnect={connectNodes}
-                onReconnect={reconnectEdge}
-                onBeforeDelete={beforeDelete}
-                onDelete={completeDelete}
-                onNodeDragStart={startNodeDrag}
-                onNodeDragStop={stopNodeDrag}
-                onDeleteAnnotation={deleteAnnotation}
-                canUndo={workflowHistory.canUndo}
-                canRedo={workflowHistory.canRedo}
-                historyPast={workflowHistory.past}
-                historyFuture={workflowHistory.future}
-                historyCurrentEvent={workflowHistory.currentEvent}
-                historyCurrentMeta={workflowHistory.currentMeta}
-                onUndo={undoWorkflow}
-                onRedo={redoWorkflow}
-                onHistoryJump={jumpWorkflowHistory}
-                onClearHistory={workflowHistory.clear}
-                inspectorCollapsed={inspectorCollapsed}
-                inspectorAvailable={inspectorAvailable}
-                onExpandInspector={expandInspector}
-                onConfigureGlobalVariables={() =>
-                  setGlobalVariablesDialogOpen(true)
-                }
-                versionHistory={versionHistory}
-                previewedVersion={previewedVersion}
-                activeVersion={draftQuery.data?.published?.version ?? null}
-                draftUpdatedAt={draftUpdatedAt}
-                onPreviewVersion={(version) =>
-                  void previewWorkflowVersion(version)
-                }
-                onActivateVersion={(version) =>
-                  void activateWorkflowVersion(version)
-                }
-                onPublishDraft={() => void openPublishDialog()}
-                onDeleteVersion={(version) =>
-                  void deleteWorkflowVersion(version)
-                }
-                readOnly={previewedVersion !== null}
-              />
+              <WorkflowMembershipProvider
+                unusedNodeIds={analysis.data?.unusedNodeIds ?? []}
+              >
+                {(analysis.data?.unusedNodeIds.length ?? 0) > 0 && (
+                  <p
+                    role="status"
+                    className="px-3 py-1 text-xs text-muted-foreground"
+                  >
+                    {t("workflowNode.unusedCount", {
+                      count: analysis.data?.unusedNodeIds.length,
+                    })}
+                  </p>
+                )}
+                <WorkflowCanvas
+                  key={displayedWorkflow.id}
+                  capabilities={capabilities}
+                  nodes={displayedWorkflow.nodes}
+                  annotations={displayedWorkflow.annotations ?? []}
+                  edges={displayedWorkflow.edges}
+                  initialViewport={displayedWorkflow.viewport}
+                  onNodesChange={changeNodes}
+                  onEdgesChange={changeEdges}
+                  onAddNode={addNode}
+                  onInsertIterationNode={insertIterationNode}
+                  onToggleIterationCollapsed={toggleIterationCollapsed}
+                  onAddAnnotation={addAnnotation}
+                  onUpdateAnnotation={updateAnnotation}
+                  onOrganize={organizeNodes}
+                  onConnect={connectNodes}
+                  onReconnect={reconnectEdge}
+                  onBeforeDelete={beforeDelete}
+                  onDelete={completeDelete}
+                  onNodeDragStart={startNodeDrag}
+                  onNodeDragStop={stopNodeDrag}
+                  onDeleteAnnotation={deleteAnnotation}
+                  canUndo={workflowHistory.canUndo}
+                  canRedo={workflowHistory.canRedo}
+                  historyPast={workflowHistory.past}
+                  historyFuture={workflowHistory.future}
+                  historyCurrentEvent={workflowHistory.currentEvent}
+                  historyCurrentMeta={workflowHistory.currentMeta}
+                  onUndo={undoWorkflow}
+                  onRedo={redoWorkflow}
+                  onHistoryJump={jumpWorkflowHistory}
+                  onClearHistory={workflowHistory.clear}
+                  inspectorCollapsed={inspectorCollapsed}
+                  inspectorAvailable={inspectorAvailable}
+                  onExpandInspector={expandInspector}
+                  onConfigureGlobalVariables={() =>
+                    setGlobalVariablesDialogOpen(true)
+                  }
+                  versionHistory={versionHistory}
+                  previewedVersion={previewedVersion}
+                  activeVersion={draftQuery.data?.published?.version ?? null}
+                  draftUpdatedAt={draftUpdatedAt}
+                  onPreviewVersion={(version) =>
+                    void previewWorkflowVersion(version)
+                  }
+                  onActivateVersion={(version) =>
+                    void activateWorkflowVersion(version)
+                  }
+                  onPublishDraft={() => void openPublishDialog()}
+                  onDeleteVersion={(version) =>
+                    void deleteWorkflowVersion(version)
+                  }
+                  readOnly={previewedVersion !== null}
+                />
+              </WorkflowMembershipProvider>
             ) : loadCause !== null ? (
               <WorkflowLoadError
                 message={localizeContractError(loadCause, t)}

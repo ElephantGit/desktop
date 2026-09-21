@@ -202,6 +202,7 @@ async fn import_mcp(plugins: &Plugins, root: &Path, identifier: &str, config: &s
     write_mcp_orax(&archive, identifier, config);
     let response = plugins
         .import(ImportPluginRequest {
+            hook_execution_acknowledged: false,
             path: archive.to_string_lossy().into_owned(),
         })
         .await
@@ -528,6 +529,7 @@ fn uninstall_removes_the_health_row() {
 
                 plugins
                     .uninstall(UninstallPluginRequest {
+                        hook_execution_acknowledged: false,
                         plugin_id: plugin_id.clone(),
                         data_disposition: ora_contracts::PluginDataDisposition::Delete,
                     })
@@ -1011,6 +1013,7 @@ fn healthy_stdio_mcp_imports_as_healthy() {
                 );
                 let plugin_id = plugins
                     .import(ImportPluginRequest {
+                        hook_execution_acknowledged: false,
                         path: archive.to_string_lossy().into_owned(),
                     })
                     .await
@@ -1058,6 +1061,7 @@ fn save_probes_exactly_once_without_automatic_retry() {
                 );
                 let plugin_id = plugins
                     .import(ImportPluginRequest {
+                        hook_execution_acknowledged: false,
                         path: archive.to_string_lossy().into_owned(),
                     })
                     .await
