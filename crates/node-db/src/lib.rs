@@ -12,12 +12,9 @@ pub use process::{ProcessAttempt, ProcessJournal};
 pub use repository_model::{CloneExecution, ClonePhase, CloneProgress, CloneTarget};
 
 use ora_node_protocol::NodeId;
+use ora_utils::fs::SidecarLease;
 use rusqlite::Connection;
-use std::{
-    fs::{File, OpenOptions},
-    path::Path,
-    sync::Arc,
-};
+use std::{fs::OpenOptions, path::Path, sync::Arc};
 use thiserror::Error;
 
 /// Storage failures never authorize a caller to proceed with an external mutation.
@@ -63,8 +60,9 @@ pub struct NodeDatabase<G = DurableWrites> {
     guard: Arc<G>,
     connection: Connection,
     node_id: NodeId,
-    // Lock the database inode itself so alternate spellings cannot acquire another lease.
-    _lease: Arc<Lease>,
+    // A sibling lock inode resolves the same for every spelling of the home, while leaving the
+    // database file free for SQLite's own locks (see `SidecarLease` for why that matters).
+    _lease: Arc<SidecarLease>,
 }
 
 impl NodeDatabase<DurableWrites> {
@@ -80,26 +78,30 @@ impl<G: WriteGuard> NodeDatabase<G> {
         if matches!(&identity, NodeIdentity::Require(id) if id.as_str().trim().is_empty()) {
             return Err(Error::NodeMismatch);
         }
-        let (lease, created) = match OpenOptions::new()
+        // Creating the file first settles `created` atomically and rejects directories or
+        // unwritable paths before any lease is taken beside them.
+        let created = match OpenOptions::new()
             .read(/*read*/ true)
             .write(/*write*/ true)
             .create_new(/*create_new*/ true)
             .open(path)
         {
-            Ok(file) => (file, true),
+            Ok(_) => true,
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                (
+                drop(
                     OpenOptions::new()
                         .read(/*read*/ true)
                         .write(/*write*/ true)
                         .open(path)?,
-                    false,
-                )
+                );
+                false
             }
             Err(error) => return Err(error.into()),
         };
-        lease.try_lock().map_err(|_| Error::AlreadyRunning)?;
-        let lease = Lease(lease);
+        let lease = SidecarLease::try_acquire(path).map_err(|error| match error.kind() {
+            std::io::ErrorKind::WouldBlock => Error::AlreadyRunning,
+            _ => Error::Io(error),
+        })?;
         let mut connection = Connection::open(path)?;
         let node_id = schema::initialize(&mut connection, created, &identity)?;
         connection.pragma_update(/*schema_name*/ None, "foreign_keys", "ON")?;
@@ -120,12 +122,3 @@ impl<G: WriteGuard> NodeDatabase<G> {
 
 #[cfg(test)]
 mod tests;
-
-/// Explicit unlock prevents transient inherited descriptors in concurrent child spawns retaining the lease.
-struct Lease(File);
-impl Drop for Lease {
-    /// Releases ownership after SQLite has closed, even if a forked child still holds a descriptor.
-    fn drop(&mut self) {
-        let _ = self.0.unlock();
-    }
-}

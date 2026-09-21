@@ -6,6 +6,8 @@
 //! see the module README for why multi-part extensions such as `.tar.gz` are not special-cased.
 //!
 //! On Linux, `LinuxFileLock` supplies transferable advisory ownership of an already opened file.
+//! `SidecarLease` is the portable single-owner lease for a data file whose engine (for example
+//! SQLite) takes its own locks on that file, so the lease lives on a `<name>.lock` sibling instead.
 //! Trusted path resolution and persistent filesystem layout remain the caller's responsibility.
 //! `LinuxFilesystem` classifies an open inode's filesystem; callers choose their own supported
 //! set and must separately verify mount/device durability and failure behavior.
@@ -15,6 +17,7 @@ mod file_name;
 mod linux_file_lock;
 #[cfg(target_os = "linux")]
 mod linux_filesystem;
+mod sidecar_lease;
 mod unique_path;
 
 #[cfg(target_os = "linux")]
@@ -23,4 +26,5 @@ pub use linux_file_lock::LinuxFileLock;
 pub use linux_filesystem::LinuxFilesystem;
 
 pub use file_name::sanitize_file_name;
+pub use sidecar_lease::SidecarLease;
 pub use unique_path::next_available_file_name;

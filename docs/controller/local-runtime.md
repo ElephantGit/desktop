@@ -14,8 +14,9 @@ target Node before returning; repeating a request returns the original command, 
 rejected. `result(execution_id)` reads a durable terminal result; absence is not proof of failure.
 
 The explicitly injected private directory contains `ora-controller.sqlite3`, independent of Node and
-process state. Application ID `0x4f524143`, schema version 1, exact schema/integrity checks and an OS file
-lease protect reopening. A different ControllerId or unknown existing file is rejected. No HOME-derived
+process state. Application ID `0x4f524143`, schema version 1, exact schema/integrity checks and an OS lease on
+the sibling `ora-controller.sqlite3.lock` protect reopening; the lease lives beside the database so
+SQLite's own file locks never collide with it on macOS or Windows. A different ControllerId or unknown existing file is rejected. No HOME-derived
 storage location, database reset, task import or automatic Controller rebinding is provided.
 
 `clone_operations` stores acceptance and the immutable terminal result. `clone_receipts` stores exact

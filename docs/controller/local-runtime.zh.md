@@ -13,7 +13,9 @@
 改变输入则拒绝。`result(execution_id)` 查询持久终态，没有结果不表示失败。
 
 显式注入的私有目录保存 `ora-controller.sqlite3`，与 Node／process 状态独立。
-application ID 为 `0x4f524143`、schema version 为 1；精确结构／完整性校验和 OS 文件锁保护重开。
+application ID 为 `0x4f524143`、schema version 为 1；精确结构／完整性校验和同级文件
+`ora-controller.sqlite3.lock` 上的 OS 租约保护重开。租约放在数据库旁边，避免在 macOS 或 Windows 上
+与 SQLite 自身的文件锁冲突。
 不同 ControllerId 或未知已有文件会被拒绝。不从 HOME 推导目录，不清库，不导入历史任务或自动重绑定。
 
 `clone_operations` 保存接受记录和不可变终态，`clone_receipts` 保存 Node 原事件精确身份与内容。

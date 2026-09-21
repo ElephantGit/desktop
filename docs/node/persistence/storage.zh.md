@@ -10,7 +10,11 @@
 guardian 分别拥有独立日志。OS 锁排除另一个 Node 数据库所有者，但不证明旧 Git 进程已停止。
 SQLite 使用 workspace 统一的 bundled 版本，不导入旧引擎或 host schema。
 
-数据库打开期间持有独占 OS 文件锁。SQLite 使用默认 rollback journal 和 FULL 同步写入。
+数据库打开期间在同级文件 `ora-node.sqlite3.lock` 上持有独占 OS 租约，而不是锁数据库文件本身：
+SQLite 会在数据库文件上加自己的锁，整文件租约在 macOS（`flock` 与 `fcntl` 共用一张锁表）和
+Windows（`LockFileEx` 为强制锁）上会与之冲突，表现为 "database is locked" 或磁盘 I/O 错误。
+sidecar 是数据库旁的 inode，同一 home 的任何拼写都解析到同一租约。SQLite 使用默认 rollback journal
+和 FULL 同步写入。
 新库的 application ID 为 `0x4f52414e`，schema version 为 4。精确 v1／v2／v3 结构在身份与完整性校验后事务迁移，
 保留执行、结果与待确认事件。已有空文件、其他数据库、不支持的版本、
 目录和损坏数据库均拒绝打开，不自动重建。重开保留 NodeId，每个 Node 运行实例生成新的

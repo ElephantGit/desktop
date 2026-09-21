@@ -30,29 +30,33 @@ impl<W: WriteGuard> Controller<W> {
             )?;
         }
         let path = home.join("ora-controller.sqlite3");
-        let (file, created) = match OpenOptions::new()
+        // Creating the file first settles `created` atomically and rejects non-files before any
+        // lease is taken beside them.
+        let created = match OpenOptions::new()
             .read(/*read*/ true)
             .write(/*write*/ true)
             .create_new(/*create_new*/ true)
             .open(&path)
         {
-            Ok(file) => (file, true),
+            Ok(_) => true,
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 if !fs::symlink_metadata(&path)?.is_file() {
                     return Err(Error::InvalidStorage);
                 }
-                (
+                drop(
                     OpenOptions::new()
                         .read(/*read*/ true)
                         .write(/*write*/ true)
                         .open(&path)?,
-                    false,
-                )
+                );
+                false
             }
             Err(error) => return Err(error.into()),
         };
-        file.try_lock().map_err(|_| Error::AlreadyRunning)?;
-        let lease = Lease(file);
+        let lease = SidecarLease::try_acquire(&path).map_err(|error| match error.kind() {
+            std::io::ErrorKind::WouldBlock => Error::AlreadyRunning,
+            _ => Error::Io(error),
+        })?;
         let mut connection = Connection::open(path)?;
         if created {
             let tx = connection.transaction()?;

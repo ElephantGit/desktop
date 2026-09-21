@@ -8,15 +8,13 @@ mod storage;
 mod takeover;
 pub use operations::CloneOperation;
 use ora_node_protocol::*;
+use ora_utils::fs::SidecarLease;
 #[cfg(target_os = "linux")]
 pub use runtime::{ControllerHandle, ControllerRuntime, RuntimeConfig};
 use rusqlite::Connection;
 #[cfg(target_os = "linux")]
 pub use session::{NodeEndpoint, SessionConfig, run_session};
-use std::{
-    fs::File,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 /// Local persistence failures never authorize dispatch or acknowledgement.
 #[derive(Debug, thiserror::Error)]
@@ -66,14 +64,8 @@ pub struct Controller<W = DurableWrites> {
     id: ControllerId,
     home: PathBuf,
     writes: W,
-    _lease: Lease,
-}
-struct Lease(File);
-impl Drop for Lease {
-    /// Releases process ownership after the connection closes, including transient fork duplicates.
-    fn drop(&mut self) {
-        let _ = self.0.unlock();
-    }
+    // Held beside the database rather than on it so SQLite's own locks never collide with ours.
+    _lease: SidecarLease,
 }
 
 impl Controller {

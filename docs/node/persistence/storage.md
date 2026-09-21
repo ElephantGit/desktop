@@ -11,8 +11,12 @@ business execution, resource and event records; the host and guardian own their 
 The OS lock excludes another Node database owner, but is not proof that an older Git process stopped.
 The workspace's bundled SQLite version is shared; no older engine or host schema is imported.
 
-Opening a database holds an exclusive OS file lock for its lifetime. SQLite uses its default
-rollback journal and FULL synchronous writes. A new database receives application ID `0x4f52414e`
+Opening a database holds an exclusive OS lease for its lifetime on the sibling file
+`ora-node.sqlite3.lock`, never on the database file itself: SQLite takes its own locks on that file,
+and a whole-file lease there collides with them on macOS (`flock` and `fcntl` share one lock table)
+and on Windows (mandatory `LockFileEx` regions), which surfaces as "database is locked" or a disk I/O
+error. The sidecar is an inode beside the database, so every spelling of the same home resolves to
+the same lease. SQLite uses its default rollback journal and FULL synchronous writes. A new database receives application ID `0x4f52414e`
 and schema version 4. Exact version 1/2/3 schemas migrate transactionally after identity and integrity
 validation, preserving executions, results and pending events. Existing empty files, foreign databases, unsupported versions, directories
 and corrupt databases are rejected without rebuilding them. The persistent NodeId survives
