@@ -214,9 +214,10 @@ tasks:
       - deno task --filter @ora/minicloud-client lint
       - deno task --filter @ora/minicloud-client test
       - deno task --filter @ora/minicloud-client build
-      - cargo build -p ora-minicloud-server -p ora-node -p ora-process-host -p ora-process-guardian
-      - cargo test -p ora-minicloud-server
+      - cargo build -p ora-controller -p ora-node -p ora-process-host -p ora-process-guardian
+      - cargo test -p ora-controller
       - cargo test -p ora-node --test standalone minicloud -- --include-ignored
+      - cargo test -p ora-node --test standalone single_node
 
   test:crates:
     desc: Run all Rust workspace package test suites

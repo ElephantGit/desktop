@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    "apps/minicloud/server",
     "apps/desktop/src-tauri",
     "apps/ora-reaper",
     "apps/ora-process-helper",
@@ -46,7 +45,6 @@ members = [
     "xtask",
 ]
 default-members = [
-    "apps/minicloud/server",
     "apps/ora-controller",
     "apps/ora-reaper",
     "apps/ora-process-helper",
@@ -151,6 +149,7 @@ flate2 = "1"
 hmac = "0.12"
 futures-util = { version = "0.3", features = ["sink"] }
 gray_matter = { version = "0.3", default-features = false, features = ["yaml"] }
+clap = { version = "4", features = ["derive"] }
 libc = "0.2"
 log = "0.4"
 # ora-fs native release receipts audit notify backend destruction order; see crates/fs/src/watch/retirement.rs.
