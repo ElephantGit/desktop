@@ -26,7 +26,9 @@ This module adapts workflow-run application use cases to the production backend 
   iteration region fail as `interrupted_by_restart` while the composite row and its run survive,
   so the runtime settles the interrupted round as a failed ledger entry on the next advance
   (ADR "iteration composite runtime" D2); anything else keeps the pre-composite whole-run
-  failure. `iteration_tests.rs` holds the end-to-end iteration verification against real SQLite.
+  failure. The recovery regression also restarts the engine between rounds and records real
+  dispatches, proving that completed rounds are not replayed and remaining rounds still start.
+  `iteration_tests.rs` holds the end-to-end iteration verification against real SQLite.
 - `iteration_tests.rs` verifies the composite runtime end to end: serial foreach, the empty
   source, the startup safety ceiling, both error strategies, per-round Condition decisions, the
   outer `current_nodes` anchor, and restart resets.

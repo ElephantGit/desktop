@@ -6,6 +6,8 @@ mod executor;
 pub(crate) mod interactive;
 #[cfg(test)]
 mod iteration_tests;
+#[cfg(test)]
+mod mixed_scope_tests;
 mod operations;
 mod prerequisites;
 mod prompt;
@@ -13,6 +15,8 @@ mod recovery;
 #[cfg(test)]
 mod test_fixture;
 mod transitions;
+#[cfg(test)]
+mod unused_tests;
 mod worktree;
 
 pub(crate) use engine::build_workflow_run_engine;

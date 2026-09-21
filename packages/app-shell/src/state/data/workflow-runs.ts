@@ -369,7 +369,17 @@ export function buildDisplayRun(
     projectId: string;
     variables: Array<{ selector: string[]; value?: unknown }>;
     conditionDecisions: Record<string, string>;
+    scopes?: Array<{
+      id: string;
+      parentLoopNodeRunId: string;
+      roundIndex: number;
+      status: "pending" | "running" | "succeeded" | "failed" | "cancelled";
+      createdAt: bigint;
+      updatedAt: bigint;
+    }>;
     nodes: Array<{
+      id?: string;
+      scopeId?: string;
       nodeId: string;
       status: string;
       startedAt: bigint | null;
@@ -429,11 +439,18 @@ export function buildDisplayRun(
     nodes,
     edges: envelope.edges,
   };
+  const rootNodeIds = new Set(
+    definitionSnapshot.nodes
+      .filter((node) => node.data.containerId === undefined)
+      .map((node) => node.id),
+  );
   // Region nodes hold one row per iteration round; outer nodes hold at most one row. Group
   // rows by node id in (iteration, createdAt) order so each region node exposes its rounds
   // while outer nodes keep their single row (ADR "iteration composite runtime" D7).
   const rowsByNodeId = new Map<string, typeof detail.nodes>();
-  for (const nodeRun of detail.nodes) {
+  for (const nodeRun of detail.nodes.filter((row) =>
+    rootNodeIds.has(row.nodeId),
+  )) {
     const rows = rowsByNodeId.get(nodeRun.nodeId) ?? [];
     rows.push(nodeRun);
     rowsByNodeId.set(nodeRun.nodeId, rows);
@@ -449,56 +466,6 @@ export function buildDisplayRun(
     });
   }
 
-  /** Projects one persisted row onto one display state, tagged with its round. */
-  const stateFromRow = (
-    nodeId: string,
-    kind: string,
-    nodeRun: (typeof detail.nodes)[number],
-  ): GraphWorkflowNodeState => {
-    const payload =
-      nodeRun.payload != null ? parseNodePayload(nodeRun.payload) : null;
-    const conversation =
-      kind === "agent" && nodeRun.output != null
-        ? conversationFromNodeOutput(
-            nodeRun.output,
-            detail.run.id,
-            nodeId,
-            nodeRun.sessionId ?? undefined,
-            nodeRun.startedAt != null ? Number(nodeRun.startedAt) : undefined,
-          )
-        : undefined;
-    return {
-      status: projectNodeStatus(
-        nodeRun as {
-          status: "pending" | "running" | "succeeded" | "failed" | "cancelled";
-        },
-      ),
-      ...(nodeRun.iteration != null ? { iteration: nodeRun.iteration } : {}),
-      ...(nodeRun.sessionId != null && nodeRun.sessionId !== ""
-        ? { sessionId: nodeRun.sessionId }
-        : {}),
-      ...(nodeRun.startedAt != null
-        ? { startedAt: toIso(nodeRun.startedAt) }
-        : {}),
-      ...(nodeRun.finishedAt != null
-        ? { finishedAt: toIso(nodeRun.finishedAt) }
-        : {}),
-      ...(nodeRun.error != null ? { errorMessage: nodeRun.error } : {}),
-      ...(payload?.stop_reason != null
-        ? { stopReason: payload.stop_reason }
-        : {}),
-      ...(payload?.file_changes != null && payload.file_changes.length > 0
-        ? { fileChanges: payload.file_changes }
-        : {}),
-      ...(nodeRun.output != null
-        ? { output: { summary: nodeRun.output } }
-        : {}),
-      ...(conversation != null && conversation.length > 0
-        ? { conversation }
-        : {}),
-    };
-  };
-
   const nodeStates: Record<string, GraphWorkflowNodeState> = {};
   const roundStates: Record<string, GraphWorkflowNodeState[]> = {};
   for (const node of definitionSnapshot.nodes) {
@@ -508,7 +475,7 @@ export function buildDisplayRun(
       continue;
     }
     const states = rows.map((row) =>
-      stateFromRow(node.id, node.data.kind, row),
+      projectPersistedNodeState(node.data.kind, row, detail.run.id),
     );
     if (states.length > 1 || states[0]?.iteration != null) {
       roundStates[node.id] = states;
@@ -548,12 +515,96 @@ export function buildDisplayRun(
     ),
     kickoffInput: kickoffInput ?? undefined,
     nodeStates,
+    rounds: (detail.scopes ?? []).map((scope) => {
+      const parentRun = detail.nodes.find(
+        (node) => node.id === scope.parentLoopNodeRunId,
+      );
+      const scopedRuns = detail.nodes.filter(
+        (node) => node.scopeId === scope.id,
+      );
+      return {
+        id: scope.id,
+        parentLoopNodeRunId: scope.parentLoopNodeRunId,
+        parentLoopNodeId: parentRun?.nodeId ?? "",
+        roundIndex: scope.roundIndex,
+        status: scope.status,
+        nodeStates: Object.fromEntries(
+          scopedRuns.map((nodeRun) => {
+            const definitionNode = definitionSnapshot.nodes.find(
+              (node) => node.id === nodeRun.nodeId,
+            );
+            return [
+              nodeRun.nodeId,
+              projectPersistedNodeState(
+                definitionNode?.data.kind,
+                nodeRun,
+                detail.run.id,
+              ),
+            ];
+          }),
+        ),
+        createdAt: toIso(scope.createdAt),
+        updatedAt: toIso(scope.updatedAt),
+      };
+    }),
     ...(Object.keys(roundStates).length > 0 ? { roundStates } : {}),
     openHitls: [],
     createdAt: toIso(detail.run.createdAt),
     updatedAt: toIso(detail.run.updatedAt),
     ...(detail.run.finishedAt != null
       ? { finishedAt: toIso(detail.run.finishedAt) }
+      : {}),
+  };
+}
+
+type PersistedNodeRunProjection = Parameters<
+  typeof buildDisplayRun
+>[0]["nodes"][number];
+
+/** Maps one execution instance without mixing it with another Loop round sharing the node id. */
+function projectPersistedNodeState(
+  nodeKind: string | undefined,
+  nodeRun: PersistedNodeRunProjection | null,
+  runId: string,
+): GraphWorkflowNodeState {
+  const payload =
+    nodeRun?.payload != null ? parseNodePayload(nodeRun.payload) : null;
+  const conversation =
+    nodeKind === "agent" && nodeRun?.output != null
+      ? conversationFromNodeOutput(
+          nodeRun.output,
+          runId,
+          nodeRun.nodeId,
+          nodeRun.sessionId ?? undefined,
+          nodeRun.startedAt != null ? Number(nodeRun.startedAt) : undefined,
+        )
+      : undefined;
+  return {
+    ...(nodeRun?.iteration != null ? { iteration: nodeRun.iteration } : {}),
+    status: projectNodeStatus(
+      nodeRun as {
+        status: "pending" | "running" | "succeeded" | "failed" | "cancelled";
+      } | null,
+    ),
+    ...(nodeRun?.sessionId != null && nodeRun.sessionId !== ""
+      ? { sessionId: nodeRun.sessionId }
+      : {}),
+    ...(nodeRun?.startedAt != null
+      ? { startedAt: toIso(nodeRun.startedAt) }
+      : {}),
+    ...(nodeRun?.finishedAt != null
+      ? { finishedAt: toIso(nodeRun.finishedAt) }
+      : {}),
+    ...(nodeRun?.error != null ? { errorMessage: nodeRun.error } : {}),
+    ...(payload?.stop_reason != null
+      ? { stopReason: payload.stop_reason }
+      : {}),
+    ...(payload?.file_changes != null && payload.file_changes.length > 0
+      ? { fileChanges: payload.file_changes }
+      : {}),
+    ...(nodeRun?.output != null ? { output: { summary: nodeRun.output } } : {}),
+    ...(conversation != null && conversation.length > 0
+      ? { conversation }
       : {}),
   };
 }
