@@ -4,6 +4,7 @@ use super::PluginApi;
 use crate::BackendError;
 use crate::agent_runtime::AgentRuntimeManager;
 use crate::plugin_gateway::PluginGateway;
+use crate::session_setup::SessionMcpHost;
 use ora_contracts::*;
 use ora_domain::PluginId;
 use ora_plugin_asset::LogoAssetRoot;
@@ -12,9 +13,40 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 #[cfg(test)]
+mod health_tests;
+#[cfg(test)]
 mod install_tests;
 #[cfg(test)]
 mod tests;
+
+/// Renders one lifecycle level state in the closed wire vocabulary.
+fn plugin_log_level_response(
+    plugin_id: String,
+    state: ora_plugin_lifecycle::PluginLogLevelState,
+) -> PluginLogLevelResponse {
+    PluginLogLevelResponse {
+        plugin_id,
+        level: match state.level {
+            ora_logging::LogLevel::Trace => RuntimeLogLevel::Trace,
+            ora_logging::LogLevel::Debug => RuntimeLogLevel::Debug,
+            ora_logging::LogLevel::Info => RuntimeLogLevel::Info,
+            ora_logging::LogLevel::Warn => RuntimeLogLevel::Warn,
+            ora_logging::LogLevel::Error => RuntimeLogLevel::Error,
+        },
+        configured: state.configured,
+    }
+}
+
+/// Converts a validated contract level into the shared logging vocabulary.
+fn internal_log_level(level: RuntimeLogLevel) -> ora_logging::LogLevel {
+    match level {
+        RuntimeLogLevel::Trace => ora_logging::LogLevel::Trace,
+        RuntimeLogLevel::Debug => ora_logging::LogLevel::Debug,
+        RuntimeLogLevel::Info => ora_logging::LogLevel::Info,
+        RuntimeLogLevel::Warn => ora_logging::LogLevel::Warn,
+        RuntimeLogLevel::Error => ora_logging::LogLevel::Error,
+    }
+}
 
 /// Owns plugin operations and their runtime coordination without exposing host internals.
 #[derive(Clone)]
@@ -77,7 +109,14 @@ impl Plugins {
         &self,
         request: SavePluginConfigurationRequest,
     ) -> Result<SavePluginConfigurationResponse, BackendError> {
-        self.host.save_configuration(request)
+        let plugin_id = PluginId::parse(&request.plugin_id).ok();
+        let response = self.host.save_configuration(request)?;
+        // A save publishes a new configuration revision, so every result on the previous revision
+        // is stale immediately; a member that is now complete is re-probed once.
+        if let Some(plugin_id) = plugin_id {
+            self.refresh_mcp_health(plugin_id);
+        }
+        Ok(response)
     }
 
     /// Executes an explicit Reset All or damaged-data recovery operation.
@@ -85,7 +124,14 @@ impl Plugins {
         &self,
         request: ResetPluginConfigurationRequest,
     ) -> Result<ResetPluginConfigurationResponse, BackendError> {
-        self.host.reset_configuration(request)
+        let plugin_id = PluginId::parse(&request.plugin_id).ok();
+        let response = self.host.reset_configuration(request)?;
+        // Clearing settings changes the revision or removes eligibility; either way the old health
+        // result may not be presented any more.
+        if let Some(plugin_id) = plugin_id {
+            self.refresh_mcp_health(plugin_id);
+        }
+        Ok(response)
     }
 
     /// Returns the directory one plugin's icon candidates are served from under `root`.
@@ -226,6 +272,14 @@ impl Plugins {
             for member_id in &member_ids {
                 self.agent_runtime.resume_plugin_agent(member_id);
             }
+            // A removed member's health identity may not keep presenting once its package is gone.
+            if result.is_ok() {
+                for member_id in &plan.remove {
+                    if let Ok(plugin_id) = PluginId::parse(member_id) {
+                        self.host.mcp_health().invalidate_plugin(&plugin_id);
+                    }
+                }
+            }
             self.agent_runtime.sync_plugin_agents();
             return result;
         }
@@ -240,8 +294,43 @@ impl Plugins {
         let result = self.host.uninstall(request).await;
         self.agent_runtime.resume_plugin_agent(&plugin_id);
         let response = result?;
+        // The package is gone, so no identity of it may keep presenting health.
+        if let Ok(plugin_id) = PluginId::parse(&plugin_id) {
+            self.host.mcp_health().invalidate_plugin(&plugin_id);
+        }
         self.agent_runtime.sync_plugin_agents();
         Ok(response)
+    }
+
+    /// Resolves the active plugin log file the desktop export copies for one installed plugin.
+    pub fn log_file_path(&self, plugin_id: &str) -> Result<PathBuf, BackendError> {
+        Ok(self.host.lifecycle.plugin_log_file(plugin_id)?)
+    }
+
+    /// Reads the effective host-owned log level of one plugin identity.
+    pub fn get_log_level(
+        &self,
+        request: GetPluginLogLevelRequest,
+    ) -> Result<PluginLogLevelResponse, BackendError> {
+        let state = self.host.lifecycle.plugin_log_level(&request.plugin_id)?;
+        Ok(plugin_log_level_response(request.plugin_id, state))
+    }
+
+    /// Persists a plugin's log level and applies it to its running generation, if any.
+    ///
+    /// The lifecycle persists before it applies, so a returned error means nothing changed and
+    /// the frontend must not show the requested level as current. The call is ordered against
+    /// uninstalls of the same plugin by the lifecycle's per-plugin operation lock.
+    pub async fn set_log_level(
+        &self,
+        request: SetPluginLogLevelRequest,
+    ) -> Result<PluginLogLevelResponse, BackendError> {
+        let state = self
+            .host
+            .lifecycle
+            .set_plugin_log_level(&request.plugin_id, internal_log_level(request.level))
+            .await?;
+        Ok(plugin_log_level_response(request.plugin_id, state))
     }
 
     /// Installs a marketplace plugin by resolving its release manifest from the synced source and
@@ -254,7 +343,9 @@ impl Plugins {
         request: InstallPluginRequest,
     ) -> Result<InstallPluginResponse, BackendError> {
         let acknowledged = request.hook_execution_acknowledged;
+        let plugin_id = PluginId::parse(&request.plugin_id).ok();
         let response = self.host.install(request).await?;
+        self.probe_installed_mcp(plugin_id);
         self.agent_runtime.sync_plugin_agents();
         self.initialize_hook_landed(&response.plugin_id, &response.outcome, acknowledged)
             .await;
@@ -268,7 +359,9 @@ impl Plugins {
         progress: ProgressCallback,
     ) -> Result<InstallPluginResponse, BackendError> {
         let acknowledged = request.hook_execution_acknowledged;
+        let plugin_id = PluginId::parse(&request.plugin_id).ok();
         let response = self.host.install_with_progress(request, progress).await?;
+        self.probe_installed_mcp(plugin_id);
         self.agent_runtime.sync_plugin_agents();
         self.initialize_hook_landed(&response.plugin_id, &response.outcome, acknowledged)
             .await;
@@ -292,6 +385,11 @@ impl Plugins {
         let result = self.host.update(request).await;
         self.agent_runtime.resume_plugin_agent(&plugin_id);
         let response = result?;
+        // The exact package version is part of the health identity, so the replaced version's
+        // result is dropped before the new version is probed once.
+        if let Ok(plugin_id) = PluginId::parse(&plugin_id) {
+            self.refresh_mcp_health(plugin_id);
+        }
         self.agent_runtime.sync_plugin_agents();
         // Every update re-runs `init`, because only the tool knows whether the version it is
         // replacing needs its Agent configuration migrated (D2).
@@ -314,6 +412,9 @@ impl Plugins {
         let result = self.host.update_with_progress(request, progress).await;
         self.agent_runtime.resume_plugin_agent(&plugin_id);
         let response = result?;
+        if let Ok(plugin_id) = PluginId::parse(&plugin_id) {
+            self.refresh_mcp_health(plugin_id);
+        }
         self.agent_runtime.sync_plugin_agents();
         if acknowledged {
             self.host.initialize_installed_hook(&plugin_id).await;
@@ -331,6 +432,7 @@ impl Plugins {
     ) -> Result<ImportPluginResponse, BackendError> {
         let acknowledged = request.hook_execution_acknowledged;
         let response = self.host.import(request).await?;
+        self.probe_installed_mcp(PluginId::parse(&response.plugin_id).ok());
         self.agent_runtime.sync_plugin_agents();
         self.initialize_hook_landed(&response.plugin_id, &response.outcome, acknowledged)
             .await;
@@ -377,6 +479,48 @@ impl Plugins {
         if acknowledged && matches!(outcome, InstallOutcome::Installed) {
             self.host.initialize_installed_hook(plugin_id).await;
         }
+    }
+
+    /// Lists secret-free Host MCP health for the plugin card (no cwd) or one Session view.
+    ///
+    /// Only currently eligible installed members appear, and a workspace-context member without a
+    /// real cwd reports `context_missing` instead of a fabricated result.
+    pub fn list_mcp_health(
+        &self,
+        request: ListMcpHealthRequest,
+    ) -> Result<ListMcpHealthResponse, BackendError> {
+        let host = SessionMcpHost::from_plugin_api(self.host.clone());
+        self.host.mcp_health().list(&host, &host, request)
+    }
+
+    /// Runs or joins one Host MCP probe for a currently eligible member and awaits its result.
+    ///
+    /// This is the user-initiated "re-detect" path: waiting is allowed because completing the probe
+    /// is exactly what the request asked for, and the probe's hard timeout still bounds it.
+    pub async fn probe_mcp_health(
+        &self,
+        request: ProbeMcpHealthRequest,
+    ) -> Result<ProbeMcpHealthResponse, BackendError> {
+        let host = SessionMcpHost::from_plugin_api(self.host.clone());
+        self.host.mcp_health().probe(&host, &host, request).await
+    }
+
+    /// Probes one freshly installed member for the plugin card.
+    ///
+    /// The probe is independent of any Session selection; ineligible packages (not MCP, or still
+    /// configuration-incomplete) are simply not probed.
+    fn probe_installed_mcp(&self, plugin_id: Option<PluginId>) {
+        let Some(plugin_id) = plugin_id else {
+            return;
+        };
+        let host = SessionMcpHost::from_plugin_api(self.host.clone());
+        self.host.mcp_health().spawn_card_probe(host, plugin_id);
+    }
+
+    /// Drops a plugin's old health result, then probes it once when it is currently eligible.
+    fn refresh_mcp_health(&self, plugin_id: PluginId) {
+        self.host.mcp_health().invalidate_plugin(&plugin_id);
+        self.probe_installed_mcp(Some(plugin_id));
     }
 }
 

@@ -6,6 +6,11 @@ runtime registered for its node type.
 
 ## Responsibilities
 
+- **Execution membership** (`execution_document.rs`, `unused_references.rs`): validate document
+  identity and ownership, then derive the entry-reachable nodes before parsing executable
+  configuration. `WorkflowGraph::parse` always returns this projection; editor analysis uses
+  the same owner to report unused node IDs. Spare nodes and incoming edges from spare nodes
+  never enter prerequisites, scheduling, or variable pools. The original snapshot is retained.
 - **Graph parsing and topology** (`graph.rs`, `node_type.rs`): deserialize a frozen React Flow
   document into a validated `petgraph` DAG, validate structural invariants, and answer topology
   queries (full topological order, successors/predecessors, transitive closures, ready set,
@@ -58,6 +63,11 @@ runtime registered for its node type.
   The scheduling core (`run_schedule`) recomputes state from persistence, hands in-flight nodes to
   their registered runtimes, advances composite nodes each wave, and finishes drained runs; it
   contains no node-type branching.
+- **Resume, failure detail, and snapshot switch** (`failure.rs`, `region.rs`,
+  `snapshot_switch.rs`): classified `payload.error_detail`, the composite-as-resume-unit
+  clear set (partial in-loop resume is out of scope), and compatibility planning when a failed
+  run takes over a newer published snapshot. Checkpoint, rollback, previous-failure injection,
+  and AI diagnosis adapters live in the backend.
 
 ## Non-responsibilities
 

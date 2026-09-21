@@ -1,5 +1,6 @@
 mod configuration;
 mod hook_lifecycle;
+mod log_level;
 mod marketplace_sync;
 mod pack_install;
 mod pack_status;
@@ -12,6 +13,7 @@ pub use configuration::{
     ResetPluginConfigurationResponse, SavePluginConfigurationRequest,
     SavePluginConfigurationResponse,
 };
+pub use log_level::{GetPluginLogLevelRequest, PluginLogLevelResponse, SetPluginLogLevelRequest};
 pub use marketplace_sync::MarketplaceAutoSyncEvent;
 
 use serde::{Deserialize, Serialize};
@@ -648,6 +650,7 @@ pub struct ImportPluginResponse {
 pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     configuration::export(config)?;
     marketplace_sync::export(config)?;
+    log_level::export(config)?;
     InstalledPluginContribution::export(config)?;
     PluginInstallationValidity::export(config)?;
     PluginRuntimeStatus::export(config)?;

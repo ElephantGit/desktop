@@ -179,6 +179,20 @@ async_backend_command!(
     plugins.uninstall,
     "Stops and removes one installed plugin."
 );
+backend_command!(
+    get_plugin_log_level,
+    GetPluginLogLevelRequest,
+    PluginLogLevelResponse,
+    plugins.get_log_level,
+    "Reads one plugin's host-owned log level."
+);
+async_backend_command!(
+    set_plugin_log_level,
+    SetPluginLogLevelRequest,
+    PluginLogLevelResponse,
+    plugins.set_log_level,
+    "Persists and applies one plugin's host-owned log level."
+);
 /// Installs one marketplace plugin and emits throttled byte-level download progress.
 #[tauri::command]
 pub async fn install_plugin(
@@ -229,4 +243,18 @@ async_backend_command!(
     InitializeHookResponse,
     plugins.initialize_hook,
     "Runs one installed Hook package's declared `init` command."
+);
+backend_command!(
+    list_mcp_health,
+    ListMcpHealthRequest,
+    ListMcpHealthResponse,
+    plugins.list_mcp_health,
+    "Lists Host MCP health for currently eligible installed members."
+);
+async_backend_command!(
+    probe_mcp_health,
+    ProbeMcpHealthRequest,
+    ProbeMcpHealthResponse,
+    plugins.probe_mcp_health,
+    "Awaits one Host MCP health probe for a currently eligible member."
 );

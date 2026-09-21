@@ -34,6 +34,7 @@ import {
   IconUpload,
 } from "@tabler/icons-react";
 import { filterDiscoveredPlugins } from "./filter-discovered-plugins";
+import { McpHealthRow } from "./mcp-health-row";
 import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 import { PluginLogo } from "./plugin-logo";
 import { usePluginMutations } from "../../state/hooks/use-plugin-mutations";
@@ -46,6 +47,8 @@ import {
   HookExecutionConfirm,
   HookRemovalDisclosure,
 } from "./hook-execution-confirm";
+import { PluginLogMenuItems } from "./plugin-log-menu";
+import { useDeveloperMode } from "../../state/hooks/use-developer-mode";
 
 /** The installed-plugin manager exposes package lifecycle commands without process start/stop. */
 export function PluginManager({
@@ -66,6 +69,8 @@ export function PluginManager({
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const scan = usePluginScan();
+  // Plugin log controls are developer tooling: they only appear once developer mode is on.
+  const developerTools = useDeveloperMode().state?.enabled === true;
 
   const needle = query.trim().toLowerCase();
   const visible = useMemo(
@@ -166,6 +171,7 @@ export function PluginManager({
               plugin={plugin}
               onConfigure={onConfigure}
               available={availableById?.get(plugin.id)}
+              developerTools={developerTools}
             />
           ))}
         </div>
@@ -178,10 +184,12 @@ function InstalledPluginRow({
   plugin,
   onConfigure,
   available,
+  developerTools,
 }: {
   plugin: InstalledPlugin;
   onConfigure: (plugin: Pick<InstalledPlugin, "id" | "displayName">) => void;
   available: AvailablePlugin | undefined;
+  developerTools: boolean;
 }) {
   const { t } = useTranslation();
   const showContractError = useContractErrorToast();
@@ -319,6 +327,17 @@ function InstalledPluginRow({
               )}
             </>
           )}
+          {plugin.kind === "mcp" &&
+            // Host health is a third, independent fact shown for every eligible MCP. That covers
+            // a member which declares no Settings (`not_declared`) as well as one whose required
+            // Settings are present (`available`/`complete`). A member that still needs
+            // configuration or whose configuration is unavailable is not probed at all, so it
+            // keeps exactly its existing display.
+            (plugin.configuration.state === "not_declared" ||
+              (plugin.configuration.state === "available" &&
+                plugin.configuration.completeness === "complete")) && (
+              <McpHealthRow pluginId={plugin.id} />
+            )}
         </span>
 
         {hasUpdate && (
@@ -376,7 +395,14 @@ function InstalledPluginRow({
           >
             <IconDots />
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-44">
+          <DropdownMenuContent align="end" className="w-56">
+            {developerTools &&
+              plugin.installationValidity.validity === "valid" && (
+                <PluginLogMenuItems
+                  pluginId={plugin.id}
+                  displayName={plugin.displayName}
+                />
+              )}
             <DropdownMenuItem
               variant="destructive"
               disabled={uninstalling}

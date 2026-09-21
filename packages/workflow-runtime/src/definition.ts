@@ -54,8 +54,8 @@ export interface WorkflowDefinitionInput {
   edges: readonly WorkflowDefinitionInputEdge[];
 }
 
-/** Removes React Flow runtime fields and produces the serializable execution DTO. */
-export function normalizeWorkflowDefinition(
+/** Removes React Flow runtime fields while preserving unfinished authoring topology. */
+export function normalizeWorkflowDocument(
   input: WorkflowDefinitionInput,
 ): WorkflowDefinition {
   const containerNodes = workflowContainerNodes(input.nodes);
@@ -97,7 +97,7 @@ export function normalizeWorkflowDefinition(
         : {}),
     })),
   };
-  validateWorkflowDefinition(definition);
+  validateWorkflowDocument(definition);
   return definition;
 }
 
@@ -116,13 +116,9 @@ function normalizeWorkflowNodeData(data: WorkflowNodeData): WorkflowNodeData {
 }
 
 /**
- * Rejects graph shapes that the DAG scheduler cannot execute deterministically.
- * Keeping this validation transport-neutral lets memory and Tauri
- * adapters enforce the same client-side deployment contract.
+ * Checks document identity and geometry without imposing runtime reachability or DAG rules.
  */
-export function validateWorkflowDefinition(
-  definition: WorkflowDefinition,
-): void {
+function validateWorkflowDocument(definition: WorkflowDefinition): void {
   const issues: string[] = [];
   if (definition.id.trim() === "") {
     issues.push("definition id must not be empty");
@@ -148,10 +144,6 @@ export function validateWorkflowDefinition(
   }
 
   const edgeIds = new Set<string>();
-  const adjacency = new Map(
-    [...nodeIds].map((nodeId) => [nodeId, [] as string[]]),
-  );
-  const indegree = new Map([...nodeIds].map((nodeId) => [nodeId, 0]));
   for (const edge of definition.edges) {
     if (edge.id.trim() === "") {
       issues.push("edge id must not be empty");
@@ -163,26 +155,6 @@ export function validateWorkflowDefinition(
       issues.push(`edge ${edge.id || "<empty>"} references an unknown node`);
       continue;
     }
-    adjacency.get(edge.source)!.push(edge.target);
-    indegree.set(edge.target, indegree.get(edge.target)! + 1);
-  }
-
-  // Kahn's algorithm establishes the scheduler invariant without recursion.
-  const queue = [...nodeIds].filter((nodeId) => indegree.get(nodeId) === 0);
-  let visited = 0;
-  for (let index = 0; index < queue.length; index += 1) {
-    const nodeId = queue[index]!;
-    visited += 1;
-    for (const target of adjacency.get(nodeId) ?? []) {
-      const nextDegree = indegree.get(target)! - 1;
-      indegree.set(target, nextDegree);
-      if (nextDegree === 0) {
-        queue.push(target);
-      }
-    }
-  }
-  if (visited !== nodeIds.size) {
-    issues.push("graph must be acyclic");
   }
 
   if (
@@ -196,5 +168,42 @@ export function validateWorkflowDefinition(
 
   if (issues.length > 0) {
     throw new WorkflowDefinitionValidationError(issues);
+  }
+}
+
+/** Preserves the stricter executable contract used by the in-memory runtime. */
+export function normalizeWorkflowDefinition(
+  input: WorkflowDefinitionInput,
+): WorkflowDefinition {
+  const definition = normalizeWorkflowDocument(input);
+  validateWorkflowDefinition(definition);
+  return definition;
+}
+
+/** Execution adapters validate DAGs separately from authoring document persistence. */
+export function validateWorkflowDefinition(
+  definition: WorkflowDefinition,
+): void {
+  validateWorkflowDocument(definition);
+  const adjacency = new Map(
+    definition.nodes.map((node) => [node.id, [] as string[]]),
+  );
+  const indegree = new Map(definition.nodes.map((node) => [node.id, 0]));
+  for (const edge of definition.edges) {
+    adjacency.get(edge.source)!.push(edge.target);
+    indegree.set(edge.target, indegree.get(edge.target)! + 1);
+  }
+  const queue = definition.nodes
+    .filter((node) => indegree.get(node.id) === 0)
+    .map((node) => node.id);
+  for (let index = 0; index < queue.length; index += 1) {
+    for (const target of adjacency.get(queue[index]!) ?? []) {
+      const degree = indegree.get(target)! - 1;
+      indegree.set(target, degree);
+      if (degree === 0) queue.push(target);
+    }
+  }
+  if (queue.length !== definition.nodes.length) {
+    throw new WorkflowDefinitionValidationError(["graph must be acyclic"]);
   }
 }
