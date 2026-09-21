@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type DragEvent,
@@ -187,7 +188,9 @@ function PickStage({
   const { t } = useTranslation();
   const platform = useOptionalPlatform();
   const selectFileRef = useRef(selectFile);
-  selectFileRef.current = selectFile;
+  useLayoutEffect(() => {
+    selectFileRef.current = selectFile;
+  }, [selectFile]);
   const [dragging, setDragging] = useState(false);
 
   /** Accepts the first dropped file; folders and multi-select are not meaningful here. */
