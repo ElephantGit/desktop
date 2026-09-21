@@ -8,7 +8,9 @@
 host、Node、内嵌 Controller 的 server 和 Vite，打开 `http://127.0.0.1:5174`。
 需要 Linux、Deno、Cargo、Node.js、Git 和 `setsid`，不需要 root。
 
-所有开发配置及运行数据都在 `.data/minicloud/`：
+所有开发配置及运行数据都在 `~/.ora/minicloud/<digest>/`，其中 `<digest>` 由 checkout 路径推导，
+`workspace` 文件记录该路径。因此每个 checkout 各有独立状态；被其他 checkout 占用的目录会被拒绝。
+启动器不向仓库内写入任何内容：
 
 - `config/node.json`、`server.json`、`client.json`：部署配置及前端端口。
 - `config/clone.gitconfig`：非交互 Git 配置；默认只适用于无需凭据的 HTTPS 仓库，私有仓库凭据需自行配置。
@@ -26,7 +28,8 @@ Ctrl+C 或组件异常退出会停止 Vite／server，再等待 Node 收尾受�
 
 debug 构建跳过受信路径的 Unix 权限位检查，允许组可写的项目目录，不修改已有目录权限。
 所有者、符号链接、硬链接、类型、目录隔离及数据库独占校验仍生效；release 构建仍强制权限位检查。
-过长的真实 checkout 路径仍会超过 Unix socket 长度限制，需要使用较短的真实路径，不能用符号链接绕过。
+状态目录以家目录而非 checkout 为基准，因为 Unix socket 路径上限为 108 字节；异常长的真实家目录路径会被拒绝，
+不会被截短，也不能用符号链接绕过。
 
 ## 手动部署
 

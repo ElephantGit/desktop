@@ -8,7 +8,10 @@ Run `task run:minicloud` at the repository root. The launcher installs frontend 
 debug binaries, then starts host, Node, the server embedding Controller, and Vite. Open
 `http://127.0.0.1:5174`. Linux, Deno, Cargo, Node.js, Git and `setsid` are required; root is not.
 
-Development configuration and runtime data live under `.data/minicloud/`:
+Development configuration and runtime data live under `~/.ora/minicloud/<digest>/`, where `<digest>`
+is derived from the checkout path and the `workspace` file records that path. Each checkout therefore
+keeps separate state; a directory claimed by another checkout is rejected. The launcher writes nothing
+into the repository:
 
 - `config/node.json`, `server.json`, `client.json`: deployment configuration and frontend port.
 - `config/clone.gitconfig`: noninteractive Git configuration; the default supports credential-free HTTPS repositories. Configure private-repository credentials explicitly.
@@ -29,8 +32,9 @@ rejects a second launcher for the same data directory.
 
 Debug builds skip Unix permission-bit checks on trusted paths, allowing group-writable checkouts
 without changing existing permissions. Owner, symlink, hard-link, type, directory-isolation and database
-ownership checks remain enabled; release builds still enforce permission bits. Long real checkout
-paths may exceed Unix socket limits; use a shorter real path, not a symlink workaround.
+ownership checks remain enabled; release builds still enforce permission bits. State is keyed to the
+home directory rather than the checkout because Unix socket paths are limited to 108 bytes; an
+unusually long real home path is rejected, not shortened or redirected through a symlink.
 
 ## Manual deployment
 

@@ -63,7 +63,7 @@ export async function initialize(root: string): Promise<void> {
     ).length >= 108
   ) {
     throw new Error(
-      "Repository path is too long for minicloud Unix sockets; use a shorter real checkout path (not a symlink).",
+      `State path is too long for minicloud Unix sockets: ${root}`,
     );
   }
   const node = path.join(root, "node");
@@ -145,18 +145,14 @@ async function run(): Promise<void> {
     throw new Error("minicloud currently requires Linux.");
   if (Deno.args.some((arg) => !["--init-only", "--no-build"].includes(arg)))
     throw new Error("Usage: run-minicloud.ts [--init-only] [--no-build]");
-  const data = path.join(workspace, ".data");
-  // .data may already belong to Desktop and need not be private; never chmod it.
-  try {
-    await Deno.mkdir(data, { mode: 0o700 });
-  } catch (error) {
-    if (!(error instanceof Deno.errors.AlreadyExists)) throw error;
-  }
-  const dataInfo = await Deno.lstat(data);
-  if (!dataInfo.isDirectory || dataInfo.isSymlink)
-    throw new Error(".data must be a real directory.");
-  const root = path.join(data, "minicloud");
-  for (let ancestor = data; ; ancestor = path.dirname(ancestor)) {
+  // State lives under the home directory, not the checkout: Unix socket paths are limited to
+  // 108 bytes, and checkout locations (especially generated worktree names) are not under the
+  // launcher's control. The real home path is what the kernel sees, so resolve it before measuring.
+  const home = Deno.env.get("HOME");
+  if (!home) throw new Error("HOME must be set to locate minicloud state.");
+  const realHome = await Deno.realPath(home);
+  const base = path.join(realHome, ".ora", "minicloud");
+  for (let ancestor = realHome; ; ancestor = path.dirname(ancestor)) {
     const info = await Deno.lstat(ancestor);
     if (info.isSymlink || (info.uid !== 0 && info.uid !== Deno.uid())) {
       throw new Error(
@@ -165,7 +161,30 @@ async function run(): Promise<void> {
     }
     if (ancestor === path.dirname(ancestor)) break;
   }
+  await directory(path.dirname(base));
+  await directory(base);
+  // Each checkout keeps separate state so host journals on different branches never share
+  // schema migrations; the marker makes the owner visible and catches a reused digest.
+  const digest = Array.from(
+    new Uint8Array(
+      await crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode(workspace),
+      ),
+    ),
+  )
+    .slice(0, 4)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  const root = path.join(base, digest);
   await directory(root);
+  const marker = path.join(root, "workspace");
+  await defaultFile(marker, `${workspace}\n`);
+  if ((await Deno.readTextFile(marker)).trim() !== workspace) {
+    throw new Error(
+      `State directory ${root} belongs to another checkout; remove it or use that checkout.`,
+    );
+  }
   await defaultFile(path.join(root, "dev.lock"), "");
   const lock = await Deno.open(path.join(root, "dev.lock"), {
     read: true,
@@ -353,7 +372,7 @@ async function run(): Promise<void> {
       serverConfig.controller.home_directory !== path.join(root, "controller")
     ) {
       throw new Error(
-        "Launcher-owned state paths must remain under .data/minicloud; use the standalone binaries for other deployments.",
+        "Launcher-owned state paths must remain under the launcher's state directory; use the standalone binaries for other deployments.",
       );
     }
     const url = new URL(`http://${serverConfig.listen}`);
