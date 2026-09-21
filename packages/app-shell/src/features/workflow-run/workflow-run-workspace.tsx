@@ -16,6 +16,10 @@ import {
   AlertDialogTitle,
   Button,
   Spinner,
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
   toast,
 } from "@ora/ui";
 import {
@@ -32,6 +36,7 @@ import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selecti
 import { useGraphWorkflowRunLive } from "../../state/data/mock-workflow-runs";
 import {
   useCancelWorkflowRun,
+  usePreviewWorkflowRunResume,
   useRealWorkflowRun,
   useRestartWorkflowRun,
   useStartWorkflowRun,
@@ -52,6 +57,7 @@ import { RunStatusBadge } from "./run-status-mark";
 import { runStatusTone } from "./run-status-style";
 import type { WorkflowRunViewMode } from "./run-view-mode";
 import { WorkflowRunStartDialog } from "./workflow-run-start-dialog";
+import { ResumeRunDialog } from "./resume-run-dialog";
 import { LocationActionsButton } from "../workspace/location-actions-button";
 import {
   WorkspaceReviewLayout,
@@ -106,6 +112,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   const updateRunInput = useUpdateWorkflowRunInput();
   const cancelRun = useCancelWorkflowRun();
   const rerun = useRestartWorkflowRun();
+  const previewResume = usePreviewWorkflowRunResume();
 
   const [viewMode, setViewMode] = useState<WorkflowRunViewMode>("overview");
   const [focusNodeId, setFocusNodeId] = useState<string | null>(null);
@@ -118,6 +125,7 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     useState<string | null>(null);
   const [stopOpen, setStopOpen] = useState(false);
   const [startOpen, setStartOpen] = useState(false);
+  const [resumeOpen, setResumeOpen] = useState(false);
   /** One-shot: Overview node click should open Theater's act inspector. */
   const [openInspectorOnTheaterEnter, setOpenInspectorOnTheaterEnter] =
     useState(false);
@@ -379,6 +387,17 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
     run !== null &&
     (run.status === "running" || run.status === "awaiting_input");
   const canRunAgain = run !== null && isTerminalRunStatus(run.status);
+  const canResume =
+    run !== null && (run.status === "failed" || run.status === "cancelled");
+  const resumeDisabled =
+    previewResume.data !== undefined && previewResume.data.resumable === false;
+  const previewResumeMutate = previewResume.mutate;
+  useEffect(() => {
+    if (!canResume || run === null) {
+      return;
+    }
+    previewResumeMutate({ runId: run.id });
+  }, [canResume, run, previewResumeMutate]);
   const startNode =
     run?.definitionSnapshot.nodes.find((node) => node.data.kind === "start") ??
     null;
@@ -629,6 +648,29 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
               {t("workflowRun.runAgainAction")}
             </Button>
           )}
+          {canResume && run && (
+            <TooltipProvider>
+              <Tooltip disabled={!resumeDisabled}>
+                <TooltipTrigger render={<span className="inline-flex" />}>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-7 gap-1.5 px-2.5 text-xs"
+                    disabled={actionBusy || resumeDisabled}
+                    onClick={() => setResumeOpen(true)}
+                  >
+                    <IconPlayerPlay className="size-3.5" />
+                    {t("workflowRun.resumeFromFailure")}
+                  </Button>
+                </TooltipTrigger>
+                {resumeDisabled ? (
+                  <TooltipContent>
+                    {t("workflowRun.resume.reason.not_resumable")}
+                  </TooltipContent>
+                ) : null}
+              </Tooltip>
+            </TooltipProvider>
+          )}
         </div>
         <LocationActionsButton workspaceId={workspaceId} />
         <WindowControls />
@@ -734,6 +776,14 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
           }
           onOpenChange={setStartOpen}
           onStart={handleStartFromDialog}
+        />
+      )}
+      {run !== null && (
+        <ResumeRunDialog
+          open={resumeOpen}
+          runId={run.id}
+          onOpenChange={setResumeOpen}
+          onResumed={() => selectWorkflowRun(run.id, run.projectId)}
         />
       )}
     </main>
