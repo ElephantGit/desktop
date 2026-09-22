@@ -118,6 +118,7 @@ ora-history = { path = "crates/history" }
 ora-logging = { path = "crates/logging" }
 ora-node-db = { path = "crates/node-db" }
 ora-controller = { path = "apps/ora-controller" }
+ora-controller-proto = { path = "crates/controller-proto" }
 ora-node-protocol = { path = "crates/node-protocol" }
 ora-plugin-asset = { path = "crates/plugin-asset" }
 ora-plugin-config = { path = "crates/plugin-config" }

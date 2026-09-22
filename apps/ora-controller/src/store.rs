@@ -1,5 +1,5 @@
 use crate::*;
-use std::future::Future;
+use std::{future::Future, io};
 
 /// The durable coordination boundary between clone coordination logic and whichever authority
 /// persists it: the local SQLite adapter or the Cloud RPC adapter of a cloud deployment.
@@ -57,6 +57,15 @@ pub trait CoordinationStore: Clone + Send + Sync + 'static {
         &self,
         execution: &ExecutionId,
     ) -> impl Future<Output = Result<Option<ExecutionOutcome>, Error>> + Send;
+
+    /// Runs the adapter's own coordination with its authority until `shutdown` resolves, then
+    /// releases what it held. A remote authority needs its lease kept and accepted work claimed
+    /// and registered; the local adapter, which accepts work itself, has nothing to do. The
+    /// runtime runs it once, beside the Node sessions, and stops it after they stopped.
+    fn serve(
+        &self,
+        shutdown: impl Future<Output = ()> + Send + 'static,
+    ) -> impl Future<Output = io::Result<()>> + Send;
 }
 
 /// The intake side of an authority that accepts caller requests itself and can catalogue every

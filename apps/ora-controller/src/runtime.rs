@@ -1,6 +1,7 @@
 use super::*;
 use serde::{Deserialize, Serialize};
 use std::{future::Future, io, sync::Arc, time::Duration};
+use tokio::sync::watch;
 
 /// Which authority persists coordination for this deployment. Chosen once at deployment time: a
 /// running Controller never switches adapters, and neither adapter is a fallback for the other,
@@ -59,16 +60,40 @@ impl<S: CoordinationStore> Clone for ControllerHandle<S> {
 
 impl ControllerRuntime<SqliteStore> {
     /// Validates deployment before opening local state, preserving protected roots and exclusive ownership.
-    /// Only SQLite persistence can be opened here; a cloud deployment is refused before any state exists.
+    /// Only SQLite persistence opens here; a cloud deployment is a different adapter, not a fallback.
     pub fn open(config: RuntimeConfig) -> Result<Self, Error> {
         match &config.persistence {
             Persistence::Sqlite => {}
-            Persistence::Cloud { endpoint, .. } => {
-                return Err(Error::Configuration(format!(
-                    "cloud persistence at {endpoint} is not available in this build; use sqlite"
-                )));
+            Persistence::Cloud { .. } => {
+                return Err(Error::Configuration(
+                    "persistence.kind is cloud; open the cloud adapter instead of sqlite".into(),
+                ));
             }
         }
+        Self::validate(&config)?;
+        let store = SqliteStore::open(&config.home_directory, config.controller_id.clone())?;
+        Ok(Self::with_store(config, store))
+    }
+}
+
+impl ControllerRuntime<CloudStore> {
+    /// Validates deployment and binds the Cloud adapter. No local database, lease or directory is
+    /// created: `home_directory` stays the process-private root for the API socket and nothing else.
+    pub fn open(config: RuntimeConfig) -> Result<Self, Error> {
+        if config.persistence == Persistence::Sqlite {
+            return Err(Error::Configuration(
+                "persistence.kind is sqlite; open the sqlite adapter instead of cloud".into(),
+            ));
+        }
+        Self::validate(&config)?;
+        let store = CloudStore::open(&config)?;
+        Ok(Self::with_store(config, store))
+    }
+}
+
+impl<S: CoordinationStore> ControllerRuntime<S> {
+    /// Deployment checks shared by every adapter, all before any state is touched.
+    fn validate(config: &RuntimeConfig) -> Result<(), Error> {
         if !config.home_directory.is_absolute()
             || config.reconnect_ms == 0
             || config.session.query_interval_ms == 0
@@ -106,12 +131,9 @@ impl ControllerRuntime<SqliteStore> {
                 return Err(Error::InvalidStorage);
             }
         }
-        let store = SqliteStore::open(&config.home_directory, config.controller_id.clone())?;
-        Ok(Self::with_store(config, store))
+        Ok(())
     }
-}
 
-impl<S: CoordinationStore> ControllerRuntime<S> {
     /// Binds validated deployment to an already opened store; adapters validate their own state.
     fn with_store(config: RuntimeConfig, store: S) -> Self {
         let nodes = Arc::new(
@@ -132,7 +154,8 @@ impl<S: CoordinationStore> ControllerRuntime<S> {
         self.handle.clone()
     }
 
-    /// Reconnects configured Nodes until shutdown; cancellation drops the JoinSet and aborts every session.
+    /// Reconnects configured Nodes and runs the adapter's authority coordination until shutdown.
+    /// Sessions are aborted first so nothing writes under a lease the adapter is about to release.
     pub async fn run(&self, shutdown: impl Future<Output = ()>) -> io::Result<()> {
         let mut sessions = tokio::task::JoinSet::new();
         for target in self.config.nodes.clone() {
@@ -146,13 +169,36 @@ impl<S: CoordinationStore> ControllerRuntime<S> {
                 }
             });
         }
+        let (stop_serving, serving_stopping) = watch::channel(false);
+        let store = self.handle.store.clone();
+        let mut serving = tokio::spawn(async move {
+            store
+                .serve(async move {
+                    let mut stopping = serving_stopping;
+                    let _ = stopping.changed().await;
+                })
+                .await
+        });
+        let mut serving_done = false;
         ora_logging::ora_info!("Controller recovery started");
         let result = tokio::select! {
             _ = shutdown => Ok(()),
             result = sessions.join_next(), if !sessions.is_empty() => Err(io::Error::other(format!("Controller session task stopped: {result:?}"))),
+            result = &mut serving => {
+                serving_done = true;
+                Err(io::Error::other(format!("Controller authority coordination stopped: {result:?}")))
+            }
         };
         sessions.abort_all();
         while sessions.join_next().await.is_some() {}
+        let _ = stop_serving.send(true);
+        if !serving_done {
+            // Releasing a remote lease is bounded; a hung authority must not hold up shutdown.
+            match tokio::time::timeout(Duration::from_secs(/*secs*/ 5), &mut serving).await {
+                Ok(_) => {}
+                Err(_) => serving.abort(),
+            }
+        }
         result
     }
 }

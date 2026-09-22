@@ -31,16 +31,38 @@ fn embedded_owner_reopens_original_operations_and_rejects_overlap() {
         };
         let mut overlap = config.clone();
         overlap.home_directory = root.path().join("process").join("nested");
-        assert!(ControllerRuntime::open(overlap).is_err());
+        assert!(ControllerRuntime::<SqliteStore>::open(overlap).is_err());
         assert!(!root.path().join("process").exists());
-        // A cloud deployment is a different adapter, not a fallback: refused before any local state.
+        // Each adapter opens only its own persistence kind: neither is a fallback for the other.
         let mut cloud = config.clone();
         cloud.persistence = Persistence::Cloud {
-            endpoint: "http://127.0.0.1:8082".into(),
+            endpoint: "http://127.0.0.1:1".into(),
             claim_interval_ms: 1000,
         };
         assert!(matches!(
-            ControllerRuntime::open(cloud),
+            ControllerRuntime::<SqliteStore>::open(cloud.clone()),
+            Err(Error::Configuration(_))
+        ));
+        assert!(matches!(
+            ControllerRuntime::<CloudStore>::open(config.clone()),
+            Err(Error::Configuration(_))
+        ));
+        // Cloud persistence dispatches to one Node and never creates local state, even when run.
+        let mut two_nodes = cloud.clone();
+        two_nodes.nodes.push(NodeEndpoint {
+            node_id: NodeId::new("second"),
+            endpoint: root.path().join("second").join("control.sock"),
+        });
+        assert!(matches!(
+            ControllerRuntime::<CloudStore>::open(two_nodes),
+            Err(Error::Configuration(_))
+        ));
+        let mut bad_endpoint = cloud.clone();
+        if let Persistence::Cloud { endpoint, .. } = &mut bad_endpoint.persistence {
+            *endpoint = "not a uri".into();
+        }
+        assert!(matches!(
+            ControllerRuntime::<CloudStore>::open(bad_endpoint),
             Err(Error::Configuration(_))
         ));
         assert!(!root.path().join("controller").exists());
@@ -49,9 +71,13 @@ fn embedded_owner_reopens_original_operations_and_rejects_overlap() {
             .build()
             .unwrap()
             .block_on(async {
-                let runtime = ControllerRuntime::open(config.clone()).unwrap();
+                let remote = ControllerRuntime::<CloudStore>::open(cloud).unwrap();
+                remote.run(async {}).await.unwrap();
+                drop(remote);
+                assert!(!root.path().join("controller").exists());
+                let runtime = ControllerRuntime::<SqliteStore>::open(config.clone()).unwrap();
                 assert!(matches!(
-                    ControllerRuntime::open(config.clone()),
+                    ControllerRuntime::<SqliteStore>::open(config.clone()),
                     Err(Error::AlreadyRunning)
                 ));
                 let handle = runtime.handle();
@@ -83,7 +109,7 @@ fn embedded_owner_reopens_original_operations_and_rejects_overlap() {
                 runtime.run(async {}).await.unwrap();
                 drop(handle);
                 drop(runtime);
-                let replacement = ControllerRuntime::open(config).unwrap();
+                let replacement = ControllerRuntime::<SqliteStore>::open(config).unwrap();
                 assert_eq!(
                     replacement
                         .handle()

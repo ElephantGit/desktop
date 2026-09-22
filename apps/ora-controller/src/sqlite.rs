@@ -251,6 +251,12 @@ impl<W: WriteGuard> CoordinationStore for SqliteStore<W> {
                 .map(ExecutionOutcome::from))
         })
     }
+
+    /// The local authority is this process; there is no lease to keep and no queue to claim.
+    async fn serve(&self, shutdown: impl Future<Output = ()> + Send + 'static) -> io::Result<()> {
+        shutdown.await;
+        Ok(())
+    }
 }
 
 impl<W: WriteGuard> CloneIntake for SqliteStore<W> {

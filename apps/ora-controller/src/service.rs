@@ -32,7 +32,7 @@ impl Service<SqliteStore> {
             Some(single) => Some(ManagedNode::prepare(single, &config.controller).await?),
             None => None,
         };
-        let runtime = ControllerRuntime::open(config.controller.clone())?;
+        let runtime = ControllerRuntime::<SqliteStore>::open(config.controller.clone())?;
         let managed = match launch {
             Some(launch) => Some(launch.start().await?),
             None => None,

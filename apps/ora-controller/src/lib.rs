@@ -1,8 +1,10 @@
 //! Local durable clone coordination; no Desktop/Backend writer or Cloud authority is installed.
-//! Coordination logic reaches persistence only through [`CoordinationStore`]; the SQLite adapter
-//! under `sqlite` is the only implementation today.
+//! Coordination logic reaches persistence only through [`CoordinationStore`]: the SQLite adapter
+//! under `sqlite` for local deployments, the Cloud RPC adapter under `cloud` for cloud ones.
 #[cfg(target_os = "linux")]
 mod api;
+#[cfg(target_os = "linux")]
+mod cloud;
 mod coordination;
 #[cfg(target_os = "linux")]
 mod deployment;
@@ -18,6 +20,8 @@ mod sqlite;
 mod store;
 #[cfg(target_os = "linux")]
 mod transport;
+#[cfg(target_os = "linux")]
+pub use cloud::CloudStore;
 #[cfg(target_os = "linux")]
 pub use coordination::take_over;
 #[cfg(target_os = "linux")]
