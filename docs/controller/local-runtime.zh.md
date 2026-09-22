@@ -54,10 +54,15 @@ ora-controller --config /absolute/path/controller.json [--single-node]
 
 非法参数组合与配置都在获取数据库租约前拒绝。
 
+`persistence` 在部署期选定持久适配器：`{ "kind": "sqlite" }` 用 `home_directory` 内的 SQLite 与文件租约；
+`{ "kind": "cloud", "endpoint": "..." }` 让每个持久操作成为对 Cloud 内部控制契约的调用，不在本机开库。
+运行中不切换，两者互不为后备；当前构建尚未提供 Cloud 适配器，`cloud` 在打开任何本机状态之前被拒绝。
+
 ```json
 {
   "controller": {
     "home_directory": "/home/node/controller",
+    "persistence": { "kind": "sqlite" },
     "controller_id": "deployment-controller",
     "protected_state_directories": ["/home/node/state", "/home/node/process"],
     "nodes": [

@@ -113,6 +113,7 @@ export async function initialize(root: string): Promise<void> {
     json({
       controller: {
         home_directory: controller,
+        persistence: { kind: "sqlite" },
         protected_state_directories: [node, host],
         controller_id: "minicloud-controller",
         nodes: [

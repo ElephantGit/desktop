@@ -116,6 +116,7 @@ fn deployment(mode: FakeNode, ready_timeout_ms: u64, stop_timeout_ms: u64) -> De
         serde_json::to_vec(&serde_json::json!({
             "controller": {
                 "home_directory": home,
+                "persistence": { "kind": "sqlite" },
                 "protected_state_directories": [path.join("node")],
                 "controller_id": "owner",
                 "nodes": [{ "node_id": "node", "endpoint": endpoint }],

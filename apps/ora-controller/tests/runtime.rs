@@ -15,6 +15,7 @@ fn embedded_owner_reopens_original_operations_and_rejects_overlap() {
             .unwrap();
         let config = RuntimeConfig {
             home_directory: root.path().join("controller"),
+            persistence: Persistence::Sqlite,
             protected_state_directories: vec![root.path().join("process")],
             controller_id: ControllerId::new("owner"),
             nodes: vec![NodeEndpoint {
@@ -32,6 +33,16 @@ fn embedded_owner_reopens_original_operations_and_rejects_overlap() {
         overlap.home_directory = root.path().join("process").join("nested");
         assert!(ControllerRuntime::open(overlap).is_err());
         assert!(!root.path().join("process").exists());
+        // A cloud deployment is a different adapter, not a fallback: refused before any local state.
+        let mut cloud = config.clone();
+        cloud.persistence = Persistence::Cloud {
+            endpoint: "http://127.0.0.1:8082".into(),
+        };
+        assert!(matches!(
+            ControllerRuntime::open(cloud),
+            Err(Error::Configuration(_))
+        ));
+        assert!(!root.path().join("controller").exists());
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

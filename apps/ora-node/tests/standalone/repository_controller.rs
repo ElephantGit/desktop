@@ -110,7 +110,7 @@ pub(super) fn launch(fixture: &Fixture, proxy: &Proxy) -> ChildGuard {
     let path = fixture.path().join("controller.json");
     fs::write(&path, serde_json::to_vec(&serde_json::json!({
         "controller": {
-            "home_directory": fixture.path().join("controller"), "controller_id": "owner",
+            "home_directory": fixture.path().join("controller"), "persistence": { "kind": "sqlite" }, "controller_id": "owner",
             "protected_state_directories": [fixture.config().home_directory, fixture.process().host_directory],
             "nodes": [{ "node_id": "test-node", "endpoint": proxy.endpoint }],
             "session": { "io_timeout_ms": 5000, "query_interval_ms": 100 }, "reconnect_ms": 100, "timezone": "Asia/Shanghai",

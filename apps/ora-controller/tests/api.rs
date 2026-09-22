@@ -2,8 +2,8 @@
 #![allow(clippy::unwrap_used)]
 use ora_contracts::controller_api::*;
 use ora_controller::{
-    ApiConfig, CoordinationStore, DeploymentConfig, NodeEndpoint, NodeHosting, RuntimeConfig,
-    Service, SessionConfig, SingleNodeConfig, SqliteStore, Transport,
+    ApiConfig, CoordinationStore, DeploymentConfig, NodeEndpoint, NodeHosting, Persistence,
+    RuntimeConfig, Service, SessionConfig, SingleNodeConfig, SqliteStore, Transport,
 };
 use ora_node_protocol::{BranchName, CloneExecutionSpec, CloneRepositoryUrl, ControllerId, NodeId};
 use pretty_assertions::assert_eq;
@@ -42,6 +42,7 @@ fn http_acceptance_is_idempotent_and_survives_service_restart() {
             single_node: None,
             controller: RuntimeConfig {
                 home_directory: root.path().join("controller"),
+                persistence: Persistence::Sqlite,
                 protected_state_directories: vec![root.path().join("process")],
                 controller_id: ControllerId::new("owner"),
                 nodes: vec![NodeEndpoint {

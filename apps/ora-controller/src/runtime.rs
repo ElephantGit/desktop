@@ -2,11 +2,27 @@ use super::*;
 use serde::{Deserialize, Serialize};
 use std::{future::Future, io, sync::Arc, time::Duration};
 
+/// Which authority persists coordination for this deployment. Chosen once at deployment time: a
+/// running Controller never switches adapters, and neither adapter is a fallback for the other,
+/// because two authorities would leave nobody able to say which record is the fact.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Persistence {
+    /// Local single-node deployments: the SQLite database and its lease live in `home_directory`.
+    Sqlite,
+    /// Cloud deployments: every durable operation is a call to the Cloud internal control contract
+    /// at `endpoint`; no database is opened locally. The adapter itself lands in a later change.
+    Cloud { endpoint: String },
+}
+
 /// Shared deployment configuration for the standalone executable and embedded HTTP composition.
+/// `home_directory` is the process-private state root in both modes (API socket, and in SQLite
+/// mode the database); it never holds cloud-authoritative records.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeConfig {
     pub home_directory: PathBuf,
+    pub persistence: Persistence,
     pub protected_state_directories: Vec<PathBuf>,
     pub controller_id: ControllerId,
     pub nodes: Vec<NodeEndpoint>,
@@ -39,7 +55,16 @@ impl<S: CoordinationStore> Clone for ControllerHandle<S> {
 
 impl ControllerRuntime<SqliteStore> {
     /// Validates deployment before opening local state, preserving protected roots and exclusive ownership.
+    /// Only SQLite persistence can be opened here; a cloud deployment is refused before any state exists.
     pub fn open(config: RuntimeConfig) -> Result<Self, Error> {
+        match &config.persistence {
+            Persistence::Sqlite => {}
+            Persistence::Cloud { endpoint } => {
+                return Err(Error::Configuration(format!(
+                    "cloud persistence at {endpoint} is not available in this build; use sqlite"
+                )));
+            }
+        }
         if !config.home_directory.is_absolute()
             || config.reconnect_ms == 0
             || config.session.query_interval_ms == 0

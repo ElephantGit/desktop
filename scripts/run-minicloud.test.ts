@@ -70,6 +70,7 @@ Deno.test(
       );
       assert.deepEqual(controller.api, { node_id: "minicloud-node" });
       assert.equal(controller.controller.controller_id, "minicloud-controller");
+      assert.deepEqual(controller.controller.persistence, { kind: "sqlite" });
       assert.deepEqual(controller.controller.nodes, [
         {
           node_id: "minicloud-node",

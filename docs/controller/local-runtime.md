@@ -59,10 +59,17 @@ ora-controller --config /absolute/path/controller.json [--single-node]
 
 Invalid flag combinations and configuration are rejected before the database lease is taken.
 
+`persistence` selects the persistence adapter at deployment time: `{ "kind": "sqlite" }` uses the
+SQLite database and file lease inside `home_directory`; `{ "kind": "cloud", "endpoint": "..." }` turns
+every durable operation into a call to the Cloud internal control contract and opens no local
+database. A running Controller never switches, and neither is a fallback for the other; this build
+does not ship the Cloud adapter yet, so `cloud` is refused before any local state is opened.
+
 ```json
 {
   "controller": {
     "home_directory": "/home/node/controller",
+    "persistence": { "kind": "sqlite" },
     "controller_id": "deployment-controller",
     "protected_state_directories": ["/home/node/state", "/home/node/process"],
     "nodes": [
