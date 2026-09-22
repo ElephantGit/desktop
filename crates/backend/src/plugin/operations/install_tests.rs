@@ -1141,7 +1141,12 @@ async fn pack_install_applies_an_agent_gated_member_whose_agent_is_installed() {
 /// honest way to keep the qualification deterministic; Linux CI cannot produce the same fault.
 #[cfg(windows)]
 struct DirectoryHolder {
-    child: std::process::Child,
+    /// The holder process, owned until it is terminated.
+    ///
+    /// `release` takes it so `Drop` cannot issue a second `taskkill` for a PID the OS may already
+    /// have reused for an unrelated process — including the holder of the test running beside this
+    /// one, whose directory has to stay pinned for its own rollback assertion.
+    child: Option<std::process::Child>,
 }
 
 #[cfg(windows)]
@@ -1155,25 +1160,32 @@ impl DirectoryHolder {
             .stderr(Stdio::null())
             .spawn()
             .expect("spawn the directory holder");
-        Self { child }
+        Self { child: Some(child) }
     }
 
     /// Terminates the holding process tree so the pinned directory becomes replaceable.
     fn release(&mut self) {
-        let _ = Command::new("taskkill")
-            .args(["/F", "/T", "/PID", &self.child.id().to_string()])
-            .output();
-        let _ = self.child.wait();
+        if let Some(mut child) = self.child.take() {
+            terminate_holder(&mut child);
+        }
     }
+}
+
+/// Terminates one holder process tree and reaps it before its PID can be reused.
+#[cfg(windows)]
+fn terminate_holder(child: &mut std::process::Child) {
+    let _ = Command::new("taskkill")
+        .args(["/F", "/T", "/PID", &child.id().to_string()])
+        .output();
+    let _ = child.wait();
 }
 
 #[cfg(windows)]
 impl Drop for DirectoryHolder {
     fn drop(&mut self) {
-        let _ = Command::new("taskkill")
-            .args(["/F", "/T", "/PID", &self.child.id().to_string()])
-            .output();
-        let _ = self.child.wait();
+        if let Some(mut child) = self.child.take() {
+            terminate_holder(&mut child);
+        }
     }
 }
 
