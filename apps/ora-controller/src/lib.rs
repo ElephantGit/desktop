@@ -36,7 +36,12 @@ pub use store::{CloneIntake, CoordinationStore, ExecutionOutcome};
 #[cfg(target_os = "linux")]
 pub use transport::{DEFAULT_PORT, Listener, Transport};
 
-/// Local persistence failures never authorize dispatch or acknowledgement.
+/// Persistence failures never authorize dispatch or acknowledgement. The classes an adapter must
+/// distinguish are fixed here: a conflict is never retried as-is, an unavailable authority means
+/// nothing was committed and the same call may be retried later, an unknown outcome may already
+/// be committed and is only ever retried with the same submission identity, and stale eligibility
+/// means the coordination lease must be re-acquired before any further write. A missing record is
+/// reported as `None` by reads and as a conflict where a fact was required.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("controller I/O: {0}")]
@@ -57,6 +62,15 @@ pub enum Error {
     Injected,
     #[error("invalid deployment composition: {0}")]
     Configuration(String),
+    /// The authority did not accept the call and committed nothing; retrying later is safe.
+    #[error("persistence unavailable: {0}")]
+    Unavailable(String),
+    /// The reply was lost after the call may have been committed; only the same submission may retry.
+    #[error("persistence outcome unknown: {0}")]
+    Unknown(String),
+    /// The coordination lease this Controller wrote under is no longer current.
+    #[error("coordination eligibility is stale; re-acquire the lease before continuing")]
+    StaleEligibility,
 }
 
 /// Test seams refuse writes before transactions commit, using the same real SQLite and reconciliation.

@@ -41,7 +41,10 @@ fn failure(error: Error) -> Failure {
         | Error::Encoding(_)
         | Error::InvalidStorage
         | Error::Injected
-        | Error::Configuration(_) => (StatusCode::SERVICE_UNAVAILABLE, MiniErrorCode::Unavailable),
+        | Error::Configuration(_)
+        | Error::Unavailable(_)
+        | Error::Unknown(_)
+        | Error::StaleEligibility => (StatusCode::SERVICE_UNAVAILABLE, MiniErrorCode::Unavailable),
     };
     (status, Json(MiniError { code }))
 }
