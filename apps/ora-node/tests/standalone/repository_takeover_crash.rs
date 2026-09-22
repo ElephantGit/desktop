@@ -125,7 +125,7 @@ fn killed_controller_before_commit_replays_without_losing_node_responsibility() 
         let owner = SqliteStore::open(&home, ControllerId::new("owner")).unwrap();
         assert_eq!(block_on(owner.result(&command.execution_id)).unwrap(), None);
         assert_eq!(
-            block_on(owner.dispatches(&NodeId::new("test-node"))).unwrap(),
+            block_on(owner.pending_dispatches(&NodeId::new("test-node"))).unwrap(),
             vec![command.clone()]
         );
         drop(owner);

@@ -11,13 +11,15 @@
 
 协调逻辑只通过 `CoordinationStore` 接口读写持久状态：接口按完整原子业务操作定义
 （`accept_request`、`take_over_node_event`、`record_queried_result`、`original_dispatch`、
-`dispatches`、`result`、`operations`、`operation`），异步形态，不暴露事务、连接或表。本机唯一实现是
+`pending_dispatches`、`result`、`operations`、`operation`），异步形态，不暴露事务、连接或表。本机唯一实现是
 `SqliteStore::open(home, controller_id)`；它的每个操作在 blocking pool 上执行，SQLite 的 fsync 不占用
 承载 Node 会话与 API 的异步运行时。云端部署将以 Cloud RPC 适配器实现同一接口，见
 [Controller–Cloud 契约](../protocols/controller-cloud-contract.zh.md)；适配器在部署期选定，不互为后备。
 
 `accept_request(request_id, spec)` 返回的命令包含稳定 operation／execution。完整输入及目标 Node 落盘后
 才返回；相同请求返回原命令，改变输入则拒绝。`result(execution_id)` 查询持久终态，没有结果不表示失败。
+`pending_dispatches(node)` 只列出尚无持久结果的执行：它们是重连后会话周期查询的对象；已完成执行
+重放的事件仍经 `original_dispatch` 校验。
 
 显式注入的私有目录保存 `ora-controller.sqlite3`，与 Node／process 状态独立。
 application ID 为 `0x4f524143`、schema version 为 1；精确结构／完整性校验和同级文件

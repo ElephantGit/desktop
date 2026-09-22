@@ -167,9 +167,10 @@ fn independent_controller_replays_durable_takeover_after_lost_ack_and_kill() {
             .unwrap()
             .expect("Ack requires committed result");
         assert!(matches!(result, CloneExecutionResult::CloneReady(_)));
+        // The committed result retires the execution from periodic queries.
         assert_eq!(
-            block_on(owner.dispatches(&NodeId::new("test-node"))).unwrap(),
-            vec![command.clone()]
+            block_on(owner.pending_dispatches(&NodeId::new("test-node"))).unwrap(),
+            vec![]
         );
         drop(owner);
         server.reject_auth.store(true, Ordering::SeqCst);

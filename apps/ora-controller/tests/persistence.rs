@@ -93,7 +93,10 @@ async fn acceptance_is_durable_idempotent_and_exclusive() {
     drop(owner);
     let owner = SqliteStore::open(directory.path(), ControllerId::new("owner")).unwrap();
     assert_eq!(
-        owner.dispatches(&NodeId::new("node")).await.unwrap(),
+        owner
+            .pending_dispatches(&NodeId::new("node"))
+            .await
+            .unwrap(),
         vec![accepted]
     );
     drop(owner);
@@ -144,6 +147,13 @@ async fn takeover_is_atomic_in_both_delivery_orders_and_conflicts_never_ack() {
             Err(Error::Injected)
         ));
         assert_eq!(owner.result(&command.execution_id).await.unwrap(), None);
+        assert_eq!(
+            owner
+                .pending_dispatches(&NodeId::new("node"))
+                .await
+                .unwrap(),
+            vec![command.clone()]
+        );
         *fault.lock().unwrap() = None;
         if query_first {
             assert_eq!(take_over(&owner, &session, &query).await.unwrap(), None);
@@ -168,6 +178,15 @@ async fn takeover_is_atomic_in_both_delivery_orders_and_conflicts_never_ack() {
             expected
         );
         assert_eq!(take_over(&owner, &session, &query).await.unwrap(), None);
+        // A committed result retires the execution from periodic queries; replayed events are
+        // still recognized through the original dispatch.
+        assert_eq!(
+            owner
+                .pending_dispatches(&NodeId::new("node"))
+                .await
+                .unwrap(),
+            vec![]
+        );
         drop(owner);
         let owner = SqliteStore::open(directory.path(), ControllerId::new("owner")).unwrap();
         assert_eq!(
@@ -237,7 +256,10 @@ async fn failed_acceptance_and_unknown_files_remain_untouched() {
         Err(Error::Injected)
     ));
     assert_eq!(
-        owner.dispatches(&NodeId::new("node")).await.unwrap(),
+        owner
+            .pending_dispatches(&NodeId::new("node"))
+            .await
+            .unwrap(),
         vec![]
     );
     drop(owner);

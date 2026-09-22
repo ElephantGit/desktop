@@ -53,8 +53,10 @@ pub trait CoordinationStore: Clone + Send + Sync + 'static {
         execution: &ExecutionId,
     ) -> impl Future<Output = Result<CloneRepositoryMessage, Error>> + Send;
 
-    /// Lists every command dispatched to one Node, including completed ones whose events may still replay.
-    fn dispatches(
+    /// Lists the commands dispatched to one Node that have no durable result yet: the executions a
+    /// session keeps querying after reconnecting. Completed executions leave this list; their replayed
+    /// events are still verified through `original_dispatch`, so nothing is lost by not polling them.
+    fn pending_dispatches(
         &self,
         node: &NodeId,
     ) -> impl Future<Output = Result<Vec<CloneRepositoryMessage>, Error>> + Send;

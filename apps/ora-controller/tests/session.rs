@@ -88,7 +88,7 @@ fn mismatched_node_or_missing_clone_capability_rejects_before_dispatch() {
                     let (result, ()) = tokio::join!(run_session(&store, &target, &settings), peer);
                     assert!(result.is_err());
                     assert_eq!(
-                        store.dispatches(&target.node_id).await.unwrap(),
+                        store.pending_dispatches(&target.node_id).await.unwrap(),
                         vec![command.clone()]
                     );
                     assert_eq!(store.result(&command.execution_id).await.unwrap(), None);

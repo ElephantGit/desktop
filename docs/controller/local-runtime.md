@@ -11,7 +11,7 @@ Backend writers, or act as Cloud authority. Linux sessions use the existing
 
 Coordination logic reaches persistent state only through the `CoordinationStore` interface: one atomic
 business operation per method (`accept_request`, `take_over_node_event`, `record_queried_result`,
-`original_dispatch`, `dispatches`, `result`, `operations`, `operation`), asynchronous, exposing no
+`original_dispatch`, `pending_dispatches`, `result`, `operations`, `operation`), asynchronous, exposing no
 transaction, connection or table. The only local implementation is `SqliteStore::open(home,
 controller_id)`; each of its operations runs on the blocking pool so SQLite's fsync never occupies the
 async runtime that hosts Node sessions and the API. Cloud deployments will implement the same interface
@@ -21,7 +21,9 @@ the adapter is chosen at deployment time and neither one is a fallback for the o
 The command returned by `accept_request(request_id, spec)` contains stable operation/execution IDs.
 Acceptance writes the complete input and target Node before returning; repeating a request returns the
 original command, while changed input is rejected. `result(execution_id)` reads a durable terminal
-result; absence is not proof of failure.
+result; absence is not proof of failure. `pending_dispatches(node)` lists only the executions
+without a durable result: they are what a reconnected session keeps querying, while replayed events of
+completed executions are still verified against `original_dispatch`.
 
 The explicitly injected private directory contains `ora-controller.sqlite3`, independent of Node and
 process state. Application ID `0x4f524143`, schema version 1, exact schema/integrity checks and an OS lease on

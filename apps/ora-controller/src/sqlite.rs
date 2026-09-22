@@ -239,12 +239,12 @@ impl<W: WriteGuard> CoordinationStore for SqliteStore<W> {
         self.blocking(move |inner| inner.original(&session, &operation, &execution))
     }
 
-    fn dispatches(
+    fn pending_dispatches(
         &self,
         node: &NodeId,
     ) -> impl Future<Output = Result<Vec<CloneRepositoryMessage>, Error>> + Send {
         let node = node.clone();
-        self.blocking(move |inner| inner.dispatches(&node))
+        self.blocking(move |inner| inner.pending_dispatches(&node))
     }
 
     fn result(
@@ -329,10 +329,12 @@ impl<W: WriteGuard> Inner<W> {
             .transpose()
     }
 
-    /// Restores original commands for one Node, including completed operations that may still replay events.
-    fn dispatches(&self, node: &NodeId) -> Result<Vec<CloneRepositoryMessage>, Error> {
+    /// Restores the original commands still awaiting a result on one Node, in acceptance order.
+    fn pending_dispatches(&self, node: &NodeId) -> Result<Vec<CloneRepositoryMessage>, Error> {
         self.connection
-            .prepare("SELECT input FROM clone_operations WHERE node=?1 ORDER BY rowid")?
+            .prepare(
+                "SELECT input FROM clone_operations WHERE node=?1 AND result IS NULL ORDER BY rowid",
+            )?
             .query_map([node.as_str()], |r| r.get::<_, String>(/*idx*/ 0))?
             .map(|row| Ok(serde_json::from_str(&row?)?))
             .collect()

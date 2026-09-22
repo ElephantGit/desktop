@@ -80,7 +80,7 @@ pub async fn run_session<S: CoordinationStore>(
                 message = &mut read => break message.map_err(io::Error::other)?.map_err(io::Error::other)?.ok_or_else(|| io::Error::other("Node disconnected"))?,
                 _ = tick.tick() => {
                     let command = {
-                        let commands = store.dispatches(&target.node_id).await.map_err(io::Error::other)?;
+                        let commands = store.pending_dispatches(&target.node_id).await.map_err(io::Error::other)?;
                         if commands.is_empty() { None } else { let command = commands[cursor % commands.len()].clone(); cursor = cursor.wrapping_add(1); Some(command) }
                     };
                     if let Some(command) = command {
