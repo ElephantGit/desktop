@@ -61,6 +61,9 @@ tasks:
 
   proto:init:
     desc: Initialize the Cloud contract submodule at its pinned commit (partial clone, sparse-checkout of proto/); idempotent
+    # The generated client is committed, so Windows builds never need the submodule or buf; the
+    # contract checks are platform-independent and run where Task can drive git: Linux and macOS.
+    platforms: [linux, darwin]
     cmds:
       # A fresh clone is partial so blobs outside the contract are never fetched; a submodule whose
       # git directory already exists (deinitialized, or checked out in full by a generic tool) is
@@ -86,6 +89,7 @@ tasks:
 
   proto:check:
     desc: Fail when the Cloud contract submodule is off its pinned commit or edited, or the committed client drifts from it
+    platforms: [linux, darwin]
     cmds:
       # The contract must be exactly the pinned commit: lint and breaking checks belong to the Cloud
       # repository, this side only proves it consumes what it declares.

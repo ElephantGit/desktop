@@ -30,7 +30,7 @@ Cloud 已授权的 opaque 身份，没有 tenant、user 或 membership 字段。
 `third_party/cloud` 是指向 Cloud 仓库的 git submodule，gitlink 锁定契约 commit；工作区用 partial
 clone（`--filter=blob:none`）与 sparse-checkout 只展开 `proto/`。
 
-- `task proto:init`：首次以 `--no-checkout --filter=blob:none --sparse` clone，`sparse-checkout set proto`，
+- `task proto:init`（Linux／macOS；生成物已提交，Windows 构建不需要 submodule 与 buf）：首次以 `--no-checkout --filter=blob:none --sparse` clone，`sparse-checkout set proto`，
   再 `git submodule update --init` 到锁定 commit；已初始化时只移动到锁定 commit。CI 的 crates job 执行同一任务。
 - 普通 `git clone` 或 `actions/checkout` 不会初始化它；依赖初始化是显式动作。
 - `/specs` 仍是被忽略的独立 checkout，不作为契约依赖。

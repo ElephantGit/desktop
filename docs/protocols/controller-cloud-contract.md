@@ -39,7 +39,7 @@ logic never sees gRPC.
 commit; the working tree is a partial clone (`--filter=blob:none`) with a sparse-checkout limited
 to `proto/`.
 
-- `task proto:init`: a first run clones with `--no-checkout --filter=blob:none --sparse`, runs
+- `task proto:init` (Linux / macOS; the generated client is committed, so Windows builds need neither the submodule nor buf): a first run clones with `--no-checkout --filter=blob:none --sparse`, runs
   `sparse-checkout set proto`, then `git submodule update --init` to the pinned commit; an already
   initialized submodule is only moved to the pinned commit. The crates CI job runs the same task.
 - A plain `git clone` or `actions/checkout` does not initialize it; dependency initialization is an

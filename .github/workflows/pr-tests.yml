@@ -133,10 +133,12 @@ jobs:
       # `task lint:crates` proves the committed Cloud contract client matches the submodule's pinned
       # commit by regenerating it with buf's remote plugins; the submodule is initialized sparse.
       - uses: bufbuild/buf-action@v1
+        if: runner.os != 'Windows'
         with:
           setup_only: true
           version: 1.73.0
       - run: task proto:init
+        if: runner.os != 'Windows'
       # The root workspace now contains both shared crates and Tauri packages.
       - uses: Swatinem/rust-cache@v2
         with:
