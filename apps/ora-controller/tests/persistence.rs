@@ -225,7 +225,14 @@ async fn takeover_is_atomic_in_both_delivery_orders_and_conflicts_never_ack() {
         ));
         assert_eq!(
             owner.result(&command.execution_id).await.unwrap(),
-            Some(event.payload)
+            Some(ExecutionOutcome::from(&event.payload))
+        );
+        assert_eq!(
+            owner.operation(&command.execution_id).await.unwrap(),
+            Some(CloneOperation {
+                command: command.clone(),
+                result: Some(event.payload)
+            })
         );
         let inspect =
             rusqlite::Connection::open(directory.path().join("ora-controller.sqlite3")).unwrap();

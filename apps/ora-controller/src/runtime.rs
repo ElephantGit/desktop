@@ -153,7 +153,7 @@ impl<S: CoordinationStore> ControllerRuntime<S> {
     }
 }
 
-impl<S: CoordinationStore> ControllerHandle<S> {
+impl<S: CloneIntake> ControllerHandle<S> {
     /// Accepts only a deployment-configured target before any Node dispatch observes the operation.
     pub async fn accept_clone(
         &self,

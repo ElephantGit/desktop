@@ -1,7 +1,8 @@
 use super::*;
 use crate::support::{ChildGuard, block_on, until};
 use ora_controller::{
-    CoordinationStore, NodeEndpoint, SessionConfig, SqliteStore, WriteGuard, WritePoint,
+    CloneIntake, CoordinationStore, ExecutionOutcome, NodeEndpoint, SessionConfig, SqliteStore,
+    WriteGuard, WritePoint,
 };
 use pretty_assertions::assert_eq;
 use std::{
@@ -141,7 +142,7 @@ fn killed_controller_before_commit_replays_without_losing_node_responsibility() 
         let owner = SqliteStore::open(&home, ControllerId::new("owner")).unwrap();
         assert!(matches!(
             block_on(owner.result(&command.execution_id)).unwrap(),
-            Some(CloneExecutionResult::CloneReady(_))
+            Some(ExecutionOutcome::Ready { .. })
         ));
         node.terminate();
         let node = Node::open(fixture.config(), fixture.process(), Shutdown::default()).unwrap();
@@ -157,8 +158,10 @@ fn killed_controller_before_commit_replays_without_losing_node_responsibility() 
         assert_eq!(
             status.payload.state,
             ExecutionState::Completed(ExecutionResult::Clone(
-                block_on(owner.result(&query.execution_id))
+                block_on(owner.operation(&query.execution_id))
                     .unwrap()
+                    .unwrap()
+                    .result
                     .unwrap()
             ))
         );

@@ -32,7 +32,7 @@ pub use session::{NodeEndpoint, SessionConfig, run_session};
 pub use sqlite::SqliteStore;
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;
-pub use store::CoordinationStore;
+pub use store::{CloneIntake, CoordinationStore, ExecutionOutcome};
 #[cfg(target_os = "linux")]
 pub use transport::{DEFAULT_PORT, Listener, Transport};
 
@@ -81,7 +81,8 @@ impl WriteGuard for DurableWrites {
     }
 }
 
-/// An accepted operation and its durable terminal fact; no result means awaiting reconciliation, not failure.
+/// An accepted operation and its durable terminal fact as the local catalogue keeps it, at full wire
+/// fidelity; no result means awaiting reconciliation, not failure.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CloneOperation {
     pub command: CloneRepositoryMessage,

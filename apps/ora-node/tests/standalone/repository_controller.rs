@@ -1,6 +1,6 @@
 use super::*;
 use crate::support::{ChildGuard, block_on, until};
-use ora_controller::{CoordinationStore, SqliteStore};
+use ora_controller::{CloneIntake, CoordinationStore, ExecutionOutcome, SqliteStore};
 use pretty_assertions::assert_eq;
 use std::{
     process::{Command, Stdio},
@@ -166,7 +166,7 @@ fn independent_controller_replays_durable_takeover_after_lost_ack_and_kill() {
         let result = block_on(owner.result(&command.execution_id))
             .unwrap()
             .expect("Ack requires committed result");
-        assert!(matches!(result, CloneExecutionResult::CloneReady(_)));
+        assert!(matches!(result, ExecutionOutcome::Ready { .. }));
         // The committed result retires the execution from periodic queries.
         assert_eq!(
             block_on(owner.pending_dispatches(&NodeId::new("test-node"))).unwrap(),

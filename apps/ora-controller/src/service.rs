@@ -3,12 +3,19 @@ use single_node::ManagedNode;
 use std::{future::Future, io, time::Duration};
 use tokio::{sync::watch, task::JoinHandle};
 
-/// One process hosting the API listener, the sole Controller owner and optionally its Node.
+/// One process hosting the sole Controller owner, optionally its Node, and the JSON surface when
+/// the persistence adapter accepts requests locally.
 pub struct Service<S: CoordinationStore> {
-    listener: Listener,
+    surface: Option<Surface>,
     runtime: ControllerRuntime<S>,
-    node_id: NodeId,
     managed: Option<ManagedNode>,
+}
+
+/// The bound transitional JSON surface: composed only by adapters that implement [`CloneIntake`],
+/// so a deployment without local intake has no listener at all rather than one answering errors.
+struct Surface {
+    listener: Listener,
+    router: axum::Router,
 }
 
 impl Service<SqliteStore> {
@@ -40,19 +47,24 @@ impl Service<SqliteStore> {
                 return Err(error.into());
             }
         };
+        let router = api::router(runtime.handle(), config.api.node_id);
         Ok(Self {
-            listener,
+            surface: Some(Surface { listener, router }),
             runtime,
-            node_id: config.api.node_id,
             managed,
         })
     }
 }
 
 impl<S: CoordinationStore> Service<S> {
-    /// Reports the actual bound endpoint, including an ephemeral test port.
+    /// Reports the actual bound endpoint, including an ephemeral test port; a composition without
+    /// local intake has none.
     pub fn endpoint(&self) -> io::Result<Transport> {
-        self.listener.endpoint()
+        self.surface
+            .as_ref()
+            .ok_or_else(|| io::Error::other("this deployment serves no JSON surface"))?
+            .listener
+            .endpoint()
     }
 
     /// Runs until shutdown or an unexpected component stop, then stops in order: API admission,
@@ -60,8 +72,15 @@ impl<S: CoordinationStore> Service<S> {
     pub async fn run(self, shutdown: impl Future<Output = ()>) -> io::Result<()> {
         let (stop_api, api_stopping) = watch::channel(false);
         let (stop_sessions, sessions_stopping) = watch::channel(false);
-        let router = api::router(self.runtime.handle(), self.node_id);
-        let mut api = serve(self.listener, router, api_stopping);
+        let mut api = match self.surface {
+            Some(Surface { listener, router }) => serve(listener, router, api_stopping),
+            // Nothing to admit: the task resolves only when told to stop, like an idle listener.
+            None => tokio::spawn(async move {
+                let mut stopping = api_stopping;
+                let _ = stopping.changed().await;
+                Ok(())
+            }),
+        };
         let runtime = self.runtime;
         let mut sessions: JoinHandle<(ControllerRuntime<S>, io::Result<()>)> =
             tokio::spawn(async move {

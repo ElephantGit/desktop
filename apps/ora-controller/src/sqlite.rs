@@ -193,14 +193,6 @@ impl<W: WriteGuard> CoordinationStore for SqliteStore<W> {
         &self.id
     }
 
-    fn accept_request(
-        &self,
-        request: RequestId,
-        spec: CloneExecutionSpec,
-    ) -> impl Future<Output = Result<CloneRepositoryMessage, Error>> + Send {
-        self.blocking(move |inner| inner.accept(request, spec))
-    }
-
     fn take_over_node_event(
         &self,
         session: &NodeRuntimeIdentity,
@@ -250,9 +242,24 @@ impl<W: WriteGuard> CoordinationStore for SqliteStore<W> {
     fn result(
         &self,
         execution: &ExecutionId,
-    ) -> impl Future<Output = Result<Option<CloneExecutionResult>, Error>> + Send {
+    ) -> impl Future<Output = Result<Option<ExecutionOutcome>, Error>> + Send {
         let execution = execution.clone();
-        self.blocking(move |inner| inner.result(&execution))
+        self.blocking(move |inner| {
+            Ok(inner
+                .result(&execution)?
+                .as_ref()
+                .map(ExecutionOutcome::from))
+        })
+    }
+}
+
+impl<W: WriteGuard> CloneIntake for SqliteStore<W> {
+    fn accept_request(
+        &self,
+        request: RequestId,
+        spec: CloneExecutionSpec,
+    ) -> impl Future<Output = Result<CloneRepositoryMessage, Error>> + Send {
+        self.blocking(move |inner| inner.accept(request, spec))
     }
 
     fn operations(&self) -> impl Future<Output = Result<Vec<CloneOperation>, Error>> + Send {

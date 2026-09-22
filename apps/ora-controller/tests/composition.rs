@@ -3,7 +3,7 @@
 //! Executable-level composition tests. A child-only stand-in replaces `ora-node` at the process
 //! boundary so readiness, stop and crash behavior can be shaped without Git, host or guardian.
 use ora_contracts::controller_api::*;
-use ora_controller::{CoordinationStore, SqliteStore};
+use ora_controller::{CloneIntake, SqliteStore};
 use ora_node_protocol::{ControllerId, RequestId};
 use ora_utils::process::{LinuxPidFd, ProcessSignal, linux_process};
 use pretty_assertions::assert_eq;

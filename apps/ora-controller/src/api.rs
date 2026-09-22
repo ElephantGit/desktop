@@ -1,4 +1,4 @@
-use crate::{CloneOperation, ControllerHandle, CoordinationStore, Error};
+use crate::{CloneIntake, CloneOperation, ControllerHandle, Error};
 use axum::{
     Json, Router,
     extract::{Path, State, rejection::JsonRejection},
@@ -8,12 +8,12 @@ use axum::{
 use ora_contracts::controller_api::*;
 use ora_node_protocol::*;
 
-struct App<S: CoordinationStore> {
+struct App<S: CloneIntake> {
     controller: ControllerHandle<S>,
     node: NodeId,
 }
 
-impl<S: CoordinationStore> Clone for App<S> {
+impl<S: CloneIntake> Clone for App<S> {
     fn clone(&self) -> Self {
         Self {
             controller: self.controller.clone(),
@@ -24,10 +24,7 @@ impl<S: CoordinationStore> Clone for App<S> {
 type Failure = (StatusCode, Json<MiniError>);
 
 /// Composes only the transitional clone surface; no Desktop bindings or Node wire messages leak through HTTP.
-pub(super) fn router<S: CoordinationStore>(
-    controller: ControllerHandle<S>,
-    node: NodeId,
-) -> Router {
+pub(super) fn router<S: CloneIntake>(controller: ControllerHandle<S>, node: NodeId) -> Router {
     Router::new()
         .route("/api/clones", get(list::<S>).post(submit::<S>))
         .route("/api/clones/{execution}", get(detail::<S>))
@@ -50,7 +47,7 @@ fn failure(error: Error) -> Failure {
 }
 
 /// Returns acceptance only after Controller commits the original request identity and full intent.
-async fn submit<S: CoordinationStore>(
+async fn submit<S: CloneIntake>(
     State(app): State<App<S>>,
     input: Result<Json<MiniCloneRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<MiniCloneAccepted>), Failure> {
@@ -93,7 +90,7 @@ async fn submit<S: CoordinationStore>(
 }
 
 /// Lists durable intent regardless of current Node connectivity.
-async fn list<S: CoordinationStore>(
+async fn list<S: CloneIntake>(
     State(app): State<App<S>>,
 ) -> Result<Json<Vec<MiniCloneOperation>>, Failure> {
     Ok(Json(
@@ -108,7 +105,7 @@ async fn list<S: CoordinationStore>(
 }
 
 /// An absent execution is not the same as a pending result.
-async fn detail<S: CoordinationStore>(
+async fn detail<S: CloneIntake>(
     State(app): State<App<S>>,
     Path(execution): Path<String>,
 ) -> Result<Json<MiniCloneOperation>, Failure> {
