@@ -90,6 +90,23 @@ fn http_acceptance_is_idempotent_and_survives_service_restart() {
                     .await
                     .is_err()
                 );
+                // Hosting is only defined for exactly the one Node the API dispatches to.
+                let mut many = config.clone();
+                many.single_node = Some(SingleNodeConfig {
+                    node_executable: root.path().join("ora-node"),
+                    node_config: root.path().join("node.json"),
+                    ready_timeout_ms: 1000,
+                    stop_timeout_ms: 1000,
+                });
+                many.controller.nodes.push(NodeEndpoint {
+                    node_id: NodeId::new("second"),
+                    endpoint: root.path().join("second").join("control.sock"),
+                });
+                assert!(
+                    Service::start(many, Transport::loopback(/*port*/ 0), NodeHosting::Managed)
+                        .await
+                        .is_err()
+                );
                 assert!(!config.controller.home_directory.exists());
                 let mut overlap = config.clone();
                 overlap.controller.home_directory = root.path().join("process").join("nested");
@@ -139,6 +156,31 @@ fn http_acceptance_is_idempotent_and_survives_service_restart() {
                         .await
                         .is_err()
                 );
+                // An existing regular file or symlink at the socket path is never replaced.
+                let occupied = config.controller.home_directory.join("occupied.sock");
+                fs::write(&occupied, b"user file").unwrap();
+                assert!(
+                    Transport::Unix(occupied.clone())
+                        .bind(&config.controller.home_directory)
+                        .await
+                        .is_err()
+                );
+                assert_eq!(fs::read(&occupied).unwrap(), b"user file");
+                let linked = config.controller.home_directory.join("linked.sock");
+                std::os::unix::fs::symlink(&occupied, &linked).unwrap();
+                assert!(
+                    Transport::Unix(linked.clone())
+                        .bind(&config.controller.home_directory)
+                        .await
+                        .is_err()
+                );
+                assert!(
+                    fs::symlink_metadata(&linked)
+                        .unwrap()
+                        .file_type()
+                        .is_symlink()
+                );
+                assert_eq!(fs::read(&occupied).unwrap(), b"user file");
                 let base = clones_url(&service);
                 let (stop, stopped) = tokio::sync::oneshot::channel();
                 let task = tokio::spawn(service.run(async {

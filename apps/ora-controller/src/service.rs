@@ -19,6 +19,7 @@ impl Service {
         hosting: NodeHosting,
     ) -> Result<Self, Error> {
         let single = config.validate(hosting)?.cloned();
+        transport.validate(&config.controller.home_directory)?;
         // Every composition check precedes the database lease so a refusal leaves no state behind.
         let launch = match &single {
             Some(single) => Some(ManagedNode::prepare(single, &config.controller).await?),
@@ -97,6 +98,7 @@ impl Service {
                 Err(io::Error::other(format!("managed Node exited unexpectedly: {status:?}")))
             }
         };
+        // Each phase logs its completion so operators and tests can verify the stop order.
         let _ = stop_api.send(true);
         let api = if api_done {
             Ok(())
@@ -113,6 +115,7 @@ impl Service {
                 }
             }
         };
+        ora_logging::ora_info!("API admission stopped");
         let _ = stop_sessions.send(true);
         let sessions = if sessions_done {
             Ok(())
@@ -121,8 +124,13 @@ impl Service {
             runtime = Some(stopped);
             result
         };
+        ora_logging::ora_info!("Node sessions stopped");
         let node = match managed {
-            Some(node) if !node_gone => node.stop().await,
+            Some(node) if !node_gone => {
+                let stopped = node.stop().await;
+                ora_logging::ora_info!("managed Node stopped");
+                stopped
+            }
             Some(_) | None => Ok(()),
         };
         // Release the lease only after the hosted Node has been asked to stop.

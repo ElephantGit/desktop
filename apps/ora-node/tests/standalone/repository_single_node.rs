@@ -10,7 +10,7 @@ use pretty_assertions::assert_eq;
 use std::time::Duration;
 
 /// Pins the Node the Controller started; test failure must not leave it listening in a deleted root.
-struct HostedNode(LinuxPidFd);
+struct HostedNode(LinuxPidFd, u32);
 impl Drop for HostedNode {
     fn drop(&mut self) {
         let _ = self.0.signal(ProcessSignal::Kill);
@@ -32,12 +32,48 @@ fn hosted_node(config: &std::path::Path) -> HostedNode {
                     && cmdline
                         .split(|byte| *byte == 0)
                         .any(|arg| arg == config.as_os_str().as_encoded_bytes()))
-                .then(|| LinuxPidFd::from_observation(&stat).ok())
+                .then(|| {
+                    LinuxPidFd::from_observation(&stat)
+                        .ok()
+                        .map(|handle| (handle, stat.pid))
+                })
                 .flatten()
             });
         handle.is_some()
     });
-    HostedNode(handle.unwrap())
+    let (handle, pid) = handle.unwrap();
+    HostedNode(handle, pid)
+}
+
+/// Reads the process group from procfs; `LinuxProcessStat` deliberately exposes only the session.
+fn process_group(pid: u32) -> u32 {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+    stat[stat.rfind(')').unwrap() + 2..]
+        .split(' ')
+        .nth(2)
+        .unwrap()
+        .parse()
+        .unwrap()
+}
+
+/// Pins the fixture's live Git process so cleanup can be asserted independently of Node's view.
+fn live_git(fixture: &Fixture) -> LinuxPidFd {
+    let mut git = None;
+    until(|| {
+        git = linux_process_snapshot()
+            .unwrap()
+            .flatten()
+            .find_map(|stat| {
+                let executable = std::path::Path::new("/proc")
+                    .join(stat.pid.to_string())
+                    .join("exe");
+                (fs::read_link(executable).ok().as_ref() == Some(&fixture.path().join("git")))
+                    .then(|| LinuxPidFd::from_observation(&stat).ok())
+                    .flatten()
+            });
+        git.is_some()
+    });
+    git.unwrap()
 }
 
 /// The composed executable hosts its Node: Controller death leaves Node and Git running, a live
@@ -94,10 +130,14 @@ fn single_node_composition_hosts_and_retires_its_node() {
         assert!(!rejected.0.wait().unwrap().success());
         assert!(!fixture.path().join("controller").exists());
 
+        let node_config_bytes = fs::read(&node_config).unwrap();
         let (mut controller, address) =
             minicloud::launch(&fixture, &config, /*port*/ 0, NodeHosting::Managed);
         let port: u16 = address.rsplit(':').next().unwrap().parse().unwrap();
         let first = hosted_node(&node_config);
+        // The hosted Node shares the Controller's process group without a new session of its own.
+        let group = controller.0.id();
+        assert_eq!(process_group(first.1), group);
         let execution = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -173,7 +213,12 @@ fn single_node_composition_hosts_and_retires_its_node() {
                 })
                 .await
                 .unwrap();
-                first.0.signal(ProcessSignal::Terminate).unwrap();
+                // With the Controller gone, a group-level stop still reaches the Node it started.
+                // SAFETY: signals only the process group this test created and observed.
+                assert_eq!(
+                    unsafe { libc::kill(-(group as libc::pid_t), libc::SIGTERM) },
+                    0
+                );
                 until(|| first.0.has_exited().unwrap());
                 // A replacement composition starts a fresh Node, which replays the original result.
                 let (replacement, _) =
@@ -204,12 +249,62 @@ fn single_node_composition_hosts_and_retires_its_node() {
                 };
                 assert_eq!(commit, &expected_commit);
                 assert_eq!(record.execution_id, receipt.execution_id);
-                // Normal stop retires the hosted Node before the Controller exits.
+                // Normal stop during a live clone: the hosted Node finishes its managed-Git cleanup
+                // and exits before the Controller does; the accepted record is neither lost nor
+                // turned into a fresh execution when the composition comes back.
+                source.paused.store(true, Ordering::SeqCst);
+                let interrupted: MiniCloneAccepted = client
+                    .post(&clones)
+                    .json(&MiniCloneRequest {
+                        request_id: "hosted-interrupted".into(),
+                        repository: source.address.clone(),
+                        branch: "main".into(),
+                    })
+                    .send()
+                    .await
+                    .unwrap()
+                    .json()
+                    .await
+                    .unwrap();
+                let git = live_git(&fixture);
                 controller.terminate();
                 assert!(controller.0.try_wait().unwrap().unwrap().success());
                 assert!(second.0.has_exited().unwrap());
+                assert!(git.has_exited().unwrap());
+                let (replacement, _) =
+                    minicloud::launch(&fixture, &config, port, NodeHosting::Managed);
+                controller = replacement;
+                let third = hosted_node(&node_config);
+                let mut records: Vec<MiniCloneOperation> = client
+                    .get(&clones)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json()
+                    .await
+                    .unwrap();
+                records.sort_by(|a, b| a.execution_id.cmp(&b.execution_id));
+                let mut expected_ids = vec![receipt.execution_id.clone(), interrupted.execution_id];
+                expected_ids.sort();
+                assert_eq!(
+                    records
+                        .iter()
+                        .map(|r| r.execution_id.clone())
+                        .collect::<Vec<_>>(),
+                    expected_ids
+                );
+                assert!(
+                    records
+                        .iter()
+                        .any(|r| r.execution_id == receipt.execution_id && r.state == record.state)
+                );
+                source.paused.store(false, Ordering::SeqCst);
+                controller.terminate();
+                assert!(controller.0.try_wait().unwrap().unwrap().success());
+                assert!(third.0.has_exited().unwrap());
                 ExecutionId::new(receipt.execution_id)
             });
+        assert_eq!(fs::read(&node_config).unwrap(), node_config_bytes);
         let database = ora_node_db::NodeDatabase::open(
             &fixture.config().home_directory.join("ora-node.sqlite3"),
             fixture.config().identity,

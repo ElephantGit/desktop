@@ -6,6 +6,7 @@ use ora_controller::{
 };
 use pretty_assertions::assert_eq;
 use std::{
+    os::unix::process::CommandExt,
     process::{Command, Stdio},
     time::Duration,
 };
@@ -90,8 +91,11 @@ pub(super) fn launch(
         }
         NodeHosting::External => {}
     }
+    // Lead a fresh process group like the launcher's setsid does, so hosting tests can address the
+    // Controller and its Node together without signaling the test runner's own group.
     let child = ChildGuard(
         command
+            .process_group(/*pgroup*/ 0)
             .stdin(Stdio::null())
             .stdout(fs::File::create(&log).unwrap())
             .stderr(Stdio::inherit())

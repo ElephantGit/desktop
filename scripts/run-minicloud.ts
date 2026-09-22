@@ -141,6 +141,24 @@ export async function initialize(root: string): Promise<void> {
   );
 }
 
+/** Builds the hosted Controller command line; the API stays on loopback by explicit argument. */
+export function controllerArguments(
+  configFile: string,
+  port: number,
+): string[] {
+  return [
+    "--config",
+    configFile,
+    "--single-node",
+    "--transport",
+    "tcp",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    String(port),
+  ];
+}
+
 type Child = {
   name: string;
   process: Deno.ChildProcess;
@@ -515,15 +533,10 @@ async function run(): Promise<void> {
     // The Controller starts Node inside its own process group; a group stop below reaches both.
     const controller = start("controller", [
       binary("ora-controller"),
-      "--config",
-      path.join(config, "controller.json"),
-      "--single-node",
-      "--transport",
-      "tcp",
-      "--host",
-      "127.0.0.1",
-      "--port",
-      String(controllerPort),
+      ...controllerArguments(
+        path.join(config, "controller.json"),
+        controllerPort,
+      ),
     ]);
     const http = async (address: string) => {
       try {

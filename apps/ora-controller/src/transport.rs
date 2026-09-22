@@ -28,8 +28,23 @@ impl Transport {
         Self::Tcp(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port))
     }
 
-    /// Binds after deployment validation; a Unix socket must sit directly inside the Controller home.
+    /// Checks everything that can be known before any state opens: a Unix socket must be an
+    /// absolute path directly inside the Controller home, so a refusal never costs a lease.
+    pub fn validate(&self, controller_home: &Path) -> io::Result<()> {
+        match self {
+            Self::Tcp(_) => Ok(()),
+            Self::Unix(path) if path.is_absolute() && path.parent() == Some(controller_home) => {
+                Ok(())
+            }
+            Self::Unix(_) => Err(io::Error::other(
+                "Unix API socket must be an absolute path directly inside the Controller home directory",
+            )),
+        }
+    }
+
+    /// Binds a validated transport; the Unix branch re-checks so it cannot be misused on its own.
     pub async fn bind(&self, controller_home: &Path) -> io::Result<Listener> {
+        self.validate(controller_home)?;
         match self {
             Self::Tcp(address) => {
                 if !address.ip().is_loopback() {
@@ -41,11 +56,6 @@ impl Transport {
                 TcpListener::bind(address).await.map(Listener::Tcp)
             }
             Self::Unix(path) => {
-                if !path.is_absolute() || path.parent() != Some(controller_home) {
-                    return Err(io::Error::other(
-                        "Unix API socket must be directly inside the Controller home directory",
-                    ));
-                }
                 // SAFETY: reads identity only; the caller already holds the Controller database lease.
                 let uid = unsafe { libc::geteuid() };
                 ora_utils::local_ipc::bind_private_endpoint(
