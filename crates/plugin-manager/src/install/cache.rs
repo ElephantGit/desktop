@@ -125,7 +125,7 @@ pub(super) fn discard_downloaded_archive(archive_path: &Path) {
 /// removed is never the cache root that holds the durable marketplace index. A directory that
 /// still holds anything is not ours to remove; `remove_dir` refuses it and that refusal is the
 /// expected outcome, so only an unexpected failure is worth reporting.
-pub(super) fn remove_empty_namespace_dir(namespace_dir: &Path) {
+fn remove_empty_namespace_dir(namespace_dir: &Path) {
     match std::fs::remove_dir(namespace_dir) {
         Ok(()) => {}
         Err(error)
@@ -146,7 +146,7 @@ pub(super) fn remove_empty_namespace_dir(namespace_dir: &Path) {
 /// The bytes have already served their purpose whether the install committed or failed, so an
 /// unremovable file is a hygiene problem to surface in logs rather than a reason to tell a user
 /// whose package is installed and working that the install failed.
-pub(super) fn discard_archive(archive_path: &Path) {
+fn discard_archive(archive_path: &Path) {
     match std::fs::remove_file(archive_path) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
