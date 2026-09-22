@@ -1,11 +1,6 @@
 use super::*;
 use serde::{Deserialize, Serialize};
-use std::{
-    future::Future,
-    io,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{future::Future, io, sync::Arc, time::Duration};
 
 /// Shared deployment configuration for the standalone executable and embedded HTTP composition.
 #[derive(Clone, Serialize, Deserialize)]
@@ -26,10 +21,10 @@ pub struct ControllerRuntime {
     config: RuntimeConfig,
 }
 
-/// Narrow application access to the single Controller owner; SQLite runs on a blocking executor.
+/// Narrow application access to the durable store; the store itself decides how its work is executed.
 #[derive(Clone)]
 pub struct ControllerHandle {
-    owner: Arc<Mutex<SqliteStore>>,
+    store: SqliteStore,
     nodes: Arc<Vec<NodeId>>,
 }
 
@@ -73,7 +68,7 @@ impl ControllerRuntime {
                 return Err(Error::InvalidStorage);
             }
         }
-        let owner = SqliteStore::open(&config.home_directory, config.controller_id.clone())?;
+        let store = SqliteStore::open(&config.home_directory, config.controller_id.clone())?;
         let nodes = Arc::new(
             config
                 .nodes
@@ -82,10 +77,7 @@ impl ControllerRuntime {
                 .collect(),
         );
         Ok(Self {
-            handle: ControllerHandle {
-                owner: Arc::new(Mutex::new(owner)),
-                nodes,
-            },
+            handle: ControllerHandle { store, nodes },
             config,
         })
     }
@@ -99,12 +91,12 @@ impl ControllerRuntime {
     pub async fn run(&self, shutdown: impl Future<Output = ()>) -> io::Result<()> {
         let mut sessions = tokio::task::JoinSet::new();
         for target in self.config.nodes.clone() {
-            let owner = self.handle.owner.clone();
+            let store = self.handle.store.clone();
             let settings = self.config.session.clone();
             let delay = Duration::from_millis(self.config.reconnect_ms);
             sessions.spawn(async move {
                 loop {
-                    if run_session(&owner, &target, &settings).await.is_err() { ora_logging::ora_warn!(node_id = %target.node_id.as_str(), "Controller connection unavailable; original execution responsibility retained"); }
+                    if run_session(&store, &target, &settings).await.is_err() { ora_logging::ora_warn!(node_id = %target.node_id.as_str(), "Controller connection unavailable; original execution responsibility retained"); }
                     tokio::time::sleep(delay).await;
                 }
             });
@@ -121,22 +113,6 @@ impl ControllerRuntime {
 }
 
 impl ControllerHandle {
-    /// Executes a short durable operation on a blocking executor while sharing the sole owner.
-    async fn access<T: Send + 'static>(
-        &self,
-        action: impl FnOnce(&mut SqliteStore) -> Result<T, Error> + Send + 'static,
-    ) -> Result<T, Error> {
-        let owner = self.owner.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut owner = owner
-                .lock()
-                .map_err(|_| io::Error::other("Controller lock poisoned"))?;
-            action(&mut owner)
-        })
-        .await
-        .map_err(|error| io::Error::other(error.to_string()))?
-    }
-
     /// Accepts only a deployment-configured target before any Node dispatch observes the operation.
     pub async fn accept_clone(
         &self,
@@ -146,17 +122,16 @@ impl ControllerHandle {
         if !self.nodes.contains(&spec.node_id) {
             return Err(Error::Conflict);
         }
-        self.access(move |owner| owner.accept_clone(request, spec))
-            .await
+        self.store.accept_request(request, spec).await
     }
 
     /// Returns accepted operations, including pending responsibility while Nodes are disconnected.
     pub async fn operations(&self) -> Result<Vec<CloneOperation>, Error> {
-        self.access(|owner| owner.operations()).await
+        self.store.operations().await
     }
 
     /// Reads one operation without confusing missing identity with an unknown terminal result.
     pub async fn operation(&self, execution: ExecutionId) -> Result<Option<CloneOperation>, Error> {
-        self.access(move |owner| owner.operation(&execution)).await
+        self.store.operation(&execution).await
     }
 }

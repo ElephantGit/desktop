@@ -3,7 +3,7 @@
 //! Executable-level composition tests. A child-only stand-in replaces `ora-node` at the process
 //! boundary so readiness, stop and crash behavior can be shaped without Git, host or guardian.
 use ora_contracts::controller_api::*;
-use ora_controller::SqliteStore;
+use ora_controller::{CoordinationStore, SqliteStore};
 use ora_node_protocol::{ControllerId, RequestId};
 use ora_utils::process::{LinuxPidFd, ProcessSignal, linux_process};
 use pretty_assertions::assert_eq;
@@ -438,7 +438,12 @@ fn node_exit_stops_admission_and_keeps_records() {
     );
     assert!(std::net::TcpStream::connect(&address).is_err());
     let owner = SqliteStore::open(&deployment.home, ControllerId::new("owner")).unwrap();
-    let operations = owner.operations().unwrap();
+    let operations = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(owner.operations())
+        .unwrap();
     assert_eq!(operations.len(), 1);
     assert_eq!(
         operations[0].command.execution_id.as_str(),

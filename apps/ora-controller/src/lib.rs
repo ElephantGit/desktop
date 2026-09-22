@@ -1,7 +1,9 @@
 //! Local durable clone coordination; no Desktop/Backend writer or Cloud authority is installed.
-//! The SQLite adapter under `sqlite` is the only persistence implementation today.
+//! Coordination logic reaches persistence only through [`CoordinationStore`]; the SQLite adapter
+//! under `sqlite` is the only implementation today.
 #[cfg(target_os = "linux")]
 mod api;
+mod coordination;
 #[cfg(target_os = "linux")]
 mod deployment;
 #[cfg(target_os = "linux")]
@@ -13,9 +15,11 @@ mod session;
 #[cfg(target_os = "linux")]
 mod single_node;
 mod sqlite;
+mod store;
 #[cfg(target_os = "linux")]
 mod transport;
 #[cfg(target_os = "linux")]
+pub use coordination::take_over;
 pub use deployment::{ApiConfig, DeploymentConfig, NodeHosting, SingleNodeConfig};
 use ora_node_protocol::*;
 #[cfg(target_os = "linux")]
@@ -25,7 +29,8 @@ pub use service::Service;
 #[cfg(target_os = "linux")]
 pub use session::{NodeEndpoint, SessionConfig, run_session};
 pub use sqlite::SqliteStore;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+pub use store::CoordinationStore;
 #[cfg(target_os = "linux")]
 pub use transport::{DEFAULT_PORT, Listener, Transport};
 
@@ -53,7 +58,8 @@ pub enum Error {
 }
 
 /// Test seams refuse writes before transactions commit, using the same real SQLite and reconciliation.
-pub trait WriteGuard {
+/// Guards travel with the store onto the blocking pool, hence the thread-safety bounds.
+pub trait WriteGuard: Send + 'static {
     /// Prevents a durable boundary; callers must not dispatch or acknowledge on failure.
     fn before_write(&self, point: WritePoint) -> Result<(), Error>;
 }
