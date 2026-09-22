@@ -59,6 +59,46 @@ tasks:
     cmds:
       - cargo xtask check-rust-size
 
+  proto:init:
+    desc: Initialize the Cloud contract submodule at its pinned commit (partial clone, sparse-checkout of proto/); idempotent
+    cmds:
+      # A fresh clone stays sparse: only the contract directory is materialized, blobs are fetched
+      # lazily. An already initialized submodule is only moved to the pinned commit.
+      - |
+        set -e
+        path=third_party/cloud
+        if ! git -C "$path" rev-parse --git-dir >/dev/null 2>&1; then
+          url=$(git config -f .gitmodules "submodule.$path.url")
+          git clone --no-checkout --filter=blob:none --sparse "$url" "$path"
+          git -C "$path" sparse-checkout set proto
+          git submodule absorbgitdirs -- "$path"
+        fi
+        git submodule update --init -- "$path"
+
+  proto:generate:
+    desc: Regenerate crates/controller-proto/src/gen from the pinned Cloud contract (remote buf plugins need network)
+    dir: crates/controller-proto
+    cmds:
+      - buf generate
+
+  proto:check:
+    desc: Fail when the Cloud contract submodule is off its pinned commit or edited, or the committed client drifts from it
+    cmds:
+      # The contract must be exactly the pinned commit: lint and breaking checks belong to the Cloud
+      # repository, this side only proves it consumes what it declares.
+      - |
+        set -e
+        status=$(git submodule status -- third_party/cloud)
+        case "$status" in
+          " "*) ;;
+          *) echo "third_party/cloud is not at its pinned commit (run task proto:init): $status"; exit 1;;
+        esac
+        if [ -n "$(git -C third_party/cloud status --porcelain -- proto)" ]; then
+          echo "third_party/cloud/proto has local changes; the contract only comes from the pinned commit"; exit 1
+        fi
+      - task: proto:generate
+      - git diff --exit-code -- crates/controller-proto/src/gen
+
   build:
     desc: Build all Rust workspace packages
     cmds:
@@ -166,6 +206,7 @@ tasks:
     cmds:
       - cargo fmt --all -- --check
       - task: check:rust-size
+      - task: proto:check
       - cargo clippy --workspace --exclude ora-desktop --exclude ora-desktop-tests -- -D warnings
 
   lint:tauri:
