@@ -4,15 +4,15 @@ use std::{future::Future, io, time::Duration};
 use tokio::{sync::watch, task::JoinHandle};
 
 /// One process hosting the API listener, the sole Controller owner and optionally its Node.
-pub struct Service {
+pub struct Service<S: CoordinationStore> {
     listener: Listener,
-    runtime: ControllerRuntime,
+    runtime: ControllerRuntime<S>,
     node_id: NodeId,
     managed: Option<ManagedNode>,
 }
 
-impl Service {
-    /// Validates composition, opens the exclusive owner, hosts the Node when requested, then binds the API.
+impl Service<SqliteStore> {
+    /// Validates composition, opens the exclusive local owner, hosts the Node when requested, then binds the API.
     pub async fn start(
         config: DeploymentConfig,
         transport: Transport,
@@ -47,7 +47,9 @@ impl Service {
             managed,
         })
     }
+}
 
+impl<S: CoordinationStore> Service<S> {
     /// Reports the actual bound endpoint, including an ephemeral test port.
     pub fn endpoint(&self) -> io::Result<Transport> {
         self.listener.endpoint()
@@ -61,7 +63,7 @@ impl Service {
         let router = api::router(self.runtime.handle(), self.node_id);
         let mut api = serve(self.listener, router, api_stopping);
         let runtime = self.runtime;
-        let mut sessions: JoinHandle<(ControllerRuntime, io::Result<()>)> =
+        let mut sessions: JoinHandle<(ControllerRuntime<S>, io::Result<()>)> =
             tokio::spawn(async move {
                 let mut stopping = sessions_stopping;
                 let result = runtime

@@ -16,20 +16,29 @@ pub struct RuntimeConfig {
 }
 
 /// Owns deployment and the reconnect lifetime; callers supply their own process shutdown signal.
-pub struct ControllerRuntime {
-    handle: ControllerHandle,
+/// The store type is fixed at construction: one deployment runs exactly one persistence adapter.
+pub struct ControllerRuntime<S: CoordinationStore> {
+    handle: ControllerHandle<S>,
     config: RuntimeConfig,
 }
 
 /// Narrow application access to the durable store; the store itself decides how its work is executed.
-#[derive(Clone)]
-pub struct ControllerHandle {
-    store: SqliteStore,
+pub struct ControllerHandle<S: CoordinationStore> {
+    store: S,
     nodes: Arc<Vec<NodeId>>,
 }
 
-impl ControllerRuntime {
-    /// Validates deployment before opening state, preserving protected roots and exclusive ownership.
+impl<S: CoordinationStore> Clone for ControllerHandle<S> {
+    fn clone(&self) -> Self {
+        Self {
+            store: self.store.clone(),
+            nodes: self.nodes.clone(),
+        }
+    }
+}
+
+impl ControllerRuntime<SqliteStore> {
+    /// Validates deployment before opening local state, preserving protected roots and exclusive ownership.
     pub fn open(config: RuntimeConfig) -> Result<Self, Error> {
         if !config.home_directory.is_absolute()
             || config.reconnect_ms == 0
@@ -69,6 +78,13 @@ impl ControllerRuntime {
             }
         }
         let store = SqliteStore::open(&config.home_directory, config.controller_id.clone())?;
+        Ok(Self::with_store(config, store))
+    }
+}
+
+impl<S: CoordinationStore> ControllerRuntime<S> {
+    /// Binds validated deployment to an already opened store; adapters validate their own state.
+    fn with_store(config: RuntimeConfig, store: S) -> Self {
         let nodes = Arc::new(
             config
                 .nodes
@@ -76,14 +92,14 @@ impl ControllerRuntime {
                 .map(|node| node.node_id.clone())
                 .collect(),
         );
-        Ok(Self {
+        Self {
             handle: ControllerHandle { store, nodes },
             config,
-        })
+        }
     }
 
-    /// Supplies application access without exposing the database, mutex or reconnect implementation.
-    pub fn handle(&self) -> ControllerHandle {
+    /// Supplies application access without exposing the store, mutex or reconnect implementation.
+    pub fn handle(&self) -> ControllerHandle<S> {
         self.handle.clone()
     }
 
@@ -112,7 +128,7 @@ impl ControllerRuntime {
     }
 }
 
-impl ControllerHandle {
+impl<S: CoordinationStore> ControllerHandle<S> {
     /// Accepts only a deployment-configured target before any Node dispatch observes the operation.
     pub async fn accept_clone(
         &self,

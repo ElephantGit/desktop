@@ -3,14 +3,14 @@
 use ora_contracts::controller_api::*;
 use ora_controller::{
     ApiConfig, CoordinationStore, DeploymentConfig, NodeEndpoint, NodeHosting, RuntimeConfig,
-    Service, SessionConfig, SingleNodeConfig, Transport,
+    Service, SessionConfig, SingleNodeConfig, SqliteStore, Transport,
 };
 use ora_node_protocol::{BranchName, CloneExecutionSpec, CloneRepositoryUrl, ControllerId, NodeId};
 use pretty_assertions::assert_eq;
 use std::{fs, os::unix::fs::PermissionsExt};
 
 /// Starts the composition without a hosted Node on an ephemeral loopback port.
-async fn start(config: DeploymentConfig) -> Result<Service, ora_controller::Error> {
+async fn start(config: DeploymentConfig) -> Result<Service<SqliteStore>, ora_controller::Error> {
     Service::start(
         config,
         Transport::loopback(/*port*/ 0),
@@ -20,7 +20,7 @@ async fn start(config: DeploymentConfig) -> Result<Service, ora_controller::Erro
 }
 
 /// Resolves the HTTP base of a bound service; the transitional surface only binds TCP in this test.
-fn clones_url(service: &Service) -> String {
+fn clones_url(service: &Service<SqliteStore>) -> String {
     match service.endpoint().unwrap() {
         Transport::Tcp(address) => format!("http://{address}/api/clones"),
         Transport::Unix(path) => panic!("unexpected Unix endpoint {}", path.display()),
