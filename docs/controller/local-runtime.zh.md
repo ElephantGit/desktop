@@ -10,11 +10,15 @@
 ## 接受与存储
 
 协调逻辑只通过 `CoordinationStore` 接口读写持久状态：接口按完整原子业务操作定义
-（`accept_request`、`take_over_node_event`、`record_queried_result`、`original_dispatch`、
-`pending_dispatches`、`result`、`operations`、`operation`），异步形态，不暴露事务、连接或表。本机唯一实现是
-`SqliteStore::open(home, controller_id)`；它的每个操作在 blocking pool 上执行，SQLite 的 fsync 不占用
-承载 Node 会话与 API 的异步运行时。云端部署将以 Cloud RPC 适配器实现同一接口，见
-[Controller–Cloud 契约](../protocols/controller-cloud-contract.zh.md)；适配器在部署期选定，不互为后备。
+（`take_over_node_event`、`record_queried_result`、`original_dispatch`、`pending_dispatches`、`result`，
+以及适配器与其权威方自有协调的 `serve`），异步形态，不暴露事务、连接或表。两个适配器实现它，在部署期
+选定其一，不互为后备：本机部署用 `SqliteStore::open(home, controller_id)`，每个操作在 blocking pool 上
+执行，SQLite 的 fsync 不占用承载 Node 会话与 API 的异步运行时；云端部署用 `CloudStore::open(&config)`，
+每个操作是对 [Controller–Cloud 契约](../protocols/controller-cloud-contract.zh.md) 的一次调用，由 Cloud
+在 PostgreSQL 中提交。接受调用方请求与目录列表（`accept_request`、`operations`、`operation`）是独立的
+`CloneIntake` 接口，只有 SQLite 适配器实现：云端部署的接受入口属于 Cloud 公开 API，所以 JSON 表面根本
+不会被组合。`result(execution_id)` 以 `ExecutionOutcome`（Node incarnation 加 `ready{path, commit}` 或
+`failed{reason, retained_path}`）报告终态，这是两种权威存储共同持久的形状；本机目录保留完整线上结果供展示。
 
 `accept_request(request_id, spec)` 返回的命令包含稳定 operation／execution。完整输入及目标 Node 落盘后
 才返回；相同请求返回原命令，改变输入则拒绝。`result(execution_id)` 查询持久终态，没有结果不表示失败。
@@ -56,9 +60,27 @@ ora-controller --config /absolute/path/controller.json [--single-node]
 
 非法参数组合与配置都在获取数据库租约前拒绝。
 
-`persistence` 在部署期选定持久适配器：`{ "kind": "sqlite" }` 用 `home_directory` 内的 SQLite 与文件租约；
-`{ "kind": "cloud", "endpoint": "..." }` 让每个持久操作成为对 Cloud 内部控制契约的调用，不在本机开库。
-运行中不切换，两者互不为后备；当前构建尚未提供 Cloud 适配器，`cloud` 在打开任何本机状态之前被拒绝。
+`persistence` 在部署期选定持久适配器；运行中不切换，两者互不为后备。`{ "kind": "sqlite" }` 用
+`home_directory` 内的 SQLite 与文件租约并提供 JSON 表面，因此 `api` 段必填。云端形态不开库、不取文件租约、
+不提供 JSON 表面，因此 `api` 必须缺省，监听器参数会被拒绝：
+
+```json
+"persistence": {
+  "kind": "cloud",
+  "endpoint": "http://127.0.0.1:8082",
+  "claim_interval_ms": 1000
+}
+```
+
+`endpoint` 是 Cloud 的 gRPC 地址；连接惰性建立，Cloud 不可达是调用时的"权威不可用"，不是启动失败。
+当前阶段不认证 Controller：每次调用以 `x-ora-controller-id` metadata 携带 `controller_id`（须为可打印
+ASCII），Cloud 把它记为租约与提交的持有者。`nodes` 必须恰好一个 Node：适配器的 `serve` 任务获取 Cloud 的全局租约、每十秒续期、每
+`claim_interval_ms` 领取已接受的工作、按 Node 命令校验后用 `RecordDispatch` 登记派发，再由现有 Node 会话
+经周期状态查询交付。每个写操作携带租约 epoch 与稳定的提交身份；只有回复丢失时才重传，且用同一身份，
+让 Cloud 回放已记录的响应而不是重复施加效果。Cloud 的裁决在适配器内一次映射为接口的错误分类：冲突
+（不按原样重试）、不可用（未提交，稍后重试）、未知（回复丢失，只能同身份重传）、资格失效（忘记租约，
+由下一次续期重新获取）。未持有租约时不领取、不派发、不确认，Controller 从不退回本机写入。`Watch`
+信号流尚未接入，领取是周期性的。
 
 ```json
 {
@@ -99,17 +121,22 @@ ora-controller --config /absolute/path/controller.json [--single-node]
 单独退出不会向 Node 发送任何信号，已接受的 clone 继续执行；运维或启动器按进程组停止时两者都会收到。
 托管的 Node 自行退出时，Controller 关停并以失败退出，而不是继续受理无法派发的请求。
 
-正常关停顺序固定为：API 受理（有限等待在途请求）→ Node 会话 → 托管 Node（`SIGTERM`，最多等待
-`stop_timeout_ms`，不升级为 `SIGKILL`）→ 数据库租约。本进程停止从不取消 Node 已接受的执行。
+正常关停顺序固定为：API 受理（有限等待在途请求）→ Node 会话 → 适配器自有协调（云端形态下有限时间内
+释放租约，放在会话之后，避免在即将释放的租约下写入）→ 托管 Node（`SIGTERM`，最多等待
+`stop_timeout_ms`，不升级为 `SIGKILL`）→ SQLite 形态的数据库租约。本进程停止从不取消 Node 已接受的执行。
 
 JSON 接口是 [minicloud](../minicloud/runtime.zh.md#http-接口) 文档描述的过渡 clone API，
-DTO 位于 `ora-contracts::controller_api`。面向 Cloud 的契约由 Cloud 仓库的 proto 定义，Controller 作为
-客户端拨出（见 [Controller–Cloud 契约](../protocols/controller-cloud-contract.zh.md)）；该监听器只服务
-JSON 接口与本机调用方。
+DTO 位于 `ora-contracts::controller_api`，只在 SQLite 持久模式下存在。面向 Cloud 的契约由 Cloud 仓库的
+proto 定义，Controller 作为客户端拨出（见 [Controller–Cloud 契约](../protocols/controller-cloud-contract.zh.md)），
+不向 Cloud 暴露任何服务。
 
 ## 验证与保留范围
 
-真实 SQLite 测试经 `CoordinationStore` 接口覆盖接受、独占、事务失败、查询／事件乱序、重复接管和冲突事实；
+真实 SQLite 测试经 `CoordinationStore` 与 `CloneIntake` 接口覆盖接受、独占、事务失败、查询／事件乱序、
+重复接管、冲突事实，以及已完成执行退出周期查询。Cloud 适配器的裁决映射、同身份重传与消息翻译有单元测试；
+运行时与可执行程序测试覆盖云端形态不建本机状态、不提供 JSON 表面、拒绝 `api` 段或监听器参数、Cloud
+不可达时保持运行。它对真实 Cloud 的行为（租约、领取、派发、接管、重启不重复 clone）经 minicloud 云端
+形态端到端验证，尚未自动化；
 framed 会话测试覆盖 Unknown 重传有界，以及错误 Node 身份或缺少 clone 能力时在派发前拒绝。
 独立 Controller–Node–host／guardian 测试执行真实 HTTPS clone，
 截住 Ack 后在持久接管之后强杀 Controller，再离线重启，检查原结果、精确 Ack、Node outbox 清空和唯一变更 Run。

@@ -10,13 +10,20 @@ Backend writers, or act as Cloud authority. Linux sessions use the existing
 ## Acceptance and persistence
 
 Coordination logic reaches persistent state only through the `CoordinationStore` interface: one atomic
-business operation per method (`accept_request`, `take_over_node_event`, `record_queried_result`,
-`original_dispatch`, `pending_dispatches`, `result`, `operations`, `operation`), asynchronous, exposing no
-transaction, connection or table. The only local implementation is `SqliteStore::open(home,
-controller_id)`; each of its operations runs on the blocking pool so SQLite's fsync never occupies the
-async runtime that hosts Node sessions and the API. Cloud deployments will implement the same interface
-with a Cloud RPC adapter, see the [Controller–Cloud contract](../protocols/controller-cloud-contract.md);
-the adapter is chosen at deployment time and neither one is a fallback for the other.
+business operation per method (`take_over_node_event`, `record_queried_result`, `original_dispatch`,
+`pending_dispatches`, `result`, plus `serve` for the adapter's own coordination with its authority),
+asynchronous, exposing no transaction, connection or table. Two adapters implement it and one is chosen
+at deployment time, never as a fallback for the other: `SqliteStore::open(home, controller_id)` for
+local deployments, whose operations run on the blocking pool so SQLite's fsync never occupies the
+async runtime that hosts Node sessions and the API; and `CloudStore::open(&config)` for cloud
+deployments, whose operations are calls on the
+[Controller–Cloud contract](../protocols/controller-cloud-contract.md) committed by Cloud in PostgreSQL.
+Accepting caller requests and cataloguing accepted operations (`accept_request`, `operations`,
+`operation`) is the separate `CloneIntake` interface that only the SQLite adapter implements: in a
+cloud deployment acceptance belongs to Cloud's public API, so the JSON surface is not composed at all.
+`result(execution_id)` reports the terminal fact as an `ExecutionOutcome` (Node incarnation plus
+`ready{path, commit}` or `failed{reason, retained_path}`), the shape both authorities persist; the local
+catalogue keeps the full wire result for presentation.
 
 The command returned by `accept_request(request_id, spec)` contains stable operation/execution IDs.
 Acceptance writes the complete input and target Node before returning; repeating a request returns the
@@ -61,11 +68,34 @@ ora-controller --config /absolute/path/controller.json [--single-node]
 
 Invalid flag combinations and configuration are rejected before the database lease is taken.
 
-`persistence` selects the persistence adapter at deployment time: `{ "kind": "sqlite" }` uses the
-SQLite database and file lease inside `home_directory`; `{ "kind": "cloud", "endpoint": "..." }` turns
-every durable operation into a call to the Cloud internal control contract and opens no local
-database. A running Controller never switches, and neither is a fallback for the other; this build
-does not ship the Cloud adapter yet, so `cloud` is refused before any local state is opened.
+`persistence` selects the persistence adapter at deployment time; a running Controller never switches,
+and neither adapter is a fallback for the other. `{ "kind": "sqlite" }` uses the SQLite database and file
+lease inside `home_directory` and serves the JSON surface, so the `api` section is required. The cloud
+form opens no database, takes no file lease and serves no JSON surface, so `api` must be absent and
+the listener flags are refused:
+
+```json
+"persistence": {
+  "kind": "cloud",
+  "endpoint": "http://127.0.0.1:8082",
+  "claim_interval_ms": 1000
+}
+```
+
+`endpoint` is Cloud's gRPC address; the channel connects lazily, so an unreachable Cloud is an
+unavailable authority at call time rather than a start-up failure. Controllers are not
+authenticated at this stage: every call carries `controller_id` as `x-ora-controller-id` metadata,
+which Cloud records as the lease and submission holder (it must be printable ASCII). `nodes` must contain exactly one Node: the adapter's
+`serve` task acquires Cloud's global lease, renews it every ten seconds, claims accepted work every
+`claim_interval_ms`, validates it as a Node command and registers the dispatch with `RecordDispatch`
+before the existing Node session delivers it through its periodic status query. Every write carries
+the lease epoch and a stable submission identity; only a lost reply is retransmitted, with the same
+identity, so Cloud replays its recorded response instead of applying the effect twice. Cloud's
+verdicts are mapped once, inside the adapter, to the interface's error classes: conflict (never
+retried as-is), unavailable (nothing committed, retry later), unknown (reply lost, same identity
+only), stale eligibility (the lease is forgotten and re-acquired by the next renewal). While the
+lease is not held nothing is claimed, dispatched or acknowledged, and the Controller never falls back
+to writing locally. The `Watch` signal stream is not consumed yet; claiming is periodic.
 
 ```json
 {
@@ -112,19 +142,26 @@ both. If the hosted Node exits on its own, the Controller shuts down and exits w
 accepting undispatchable requests.
 
 Normal shutdown stops in order: API admission (bounded wait for in-flight requests), Node sessions, the
-hosted Node (`SIGTERM`, waiting up to `stop_timeout_ms`; never escalated to `SIGKILL`), then the database
-lease. Accepted Node executions are never cancelled by this process stopping.
+adapter's own coordination (in the cloud form: a bounded attempt to release the lease, after the
+sessions so nothing writes under a lease about to be released), the hosted Node (`SIGTERM`, waiting up
+to `stop_timeout_ms`; never escalated to `SIGKILL`), then the database lease in the SQLite form.
+Accepted Node executions are never cancelled by this process stopping.
 
 The JSON surface is the transitional clone API documented under
 [minicloud](../minicloud/runtime.md#http-interface); its DTOs live in `ora-contracts::controller_api`.
-The Cloud-facing contract is defined by the Cloud repository's proto and the Controller dials out as its
-client (see the [Controller–Cloud contract](../protocols/controller-cloud-contract.md)); this listener
-serves only the JSON surface and local callers.
+It exists only with SQLite persistence. The Cloud-facing contract is defined by the Cloud repository's
+proto and the Controller dials out as its client (see the
+[Controller–Cloud contract](../protocols/controller-cloud-contract.md)); it exposes no service to Cloud.
 
 ## Verification and remaining scope
 
-Real SQLite tests, driven through the `CoordinationStore` interface, cover acceptance, exclusive ownership, transaction failure, query/event ordering,
-duplicate takeover and conflicting facts. Framed-session tests cover bounded Unknown retransmission
+Real SQLite tests, driven through the `CoordinationStore` and `CloneIntake` interfaces, cover acceptance, exclusive ownership, transaction failure, query/event ordering,
+duplicate takeover, conflicting facts and the retirement of completed executions from periodic queries.
+The Cloud adapter's verdict mapping, same-identity retransmission and message translation are unit
+tested; the runtime and executable tests cover that the cloud form opens no local state, serves no
+JSON surface, refuses a JSON section or listener flags, and stays up while Cloud is unreachable. Its
+behavior against a real Cloud (lease, claim, dispatch, takeover, restart without a second clone) is
+verified end to end with the minicloud cloud form and is not yet an automated test. Framed-session tests cover bounded Unknown retransmission
 and rejection of a wrong Node identity or missing clone capability before dispatch.
 The independent Controller–Node–host/guardian test performs real HTTPS clone, intercepts Ack, kills
 Controller after durable takeover, restarts it offline, then checks original result, exact Ack, cleared
