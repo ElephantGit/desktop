@@ -4,6 +4,7 @@ use super::Plugins;
 use crate::agent_runtime::{AgentRuntimeManager, AgentRuntimeSetup};
 use crate::app_event::AppEventHub;
 use crate::clock::SystemClock;
+use crate::error::ErrorClassification;
 use crate::plugin::PluginApi;
 use crate::plugin::hook_lifecycle::{
     HookCommandError, HookCommandExecution, HookCommandFinished, HookCommandOutput,
@@ -15,8 +16,8 @@ use ora_contracts::{
     HookLifecycleOutcome, HookLifecyclePhase, ImportPluginRequest, ImportedWorkflowOutcome,
     InitializeHookRequest, InstallOutcome, InstallPluginRequest, ListHookLifecycleReportsRequest,
     ListInstalledPluginsRequest, ListPackInstallationsRequest, PackInstallFailure,
-    PackUninstallPlanRequest, PluginDataDisposition, PublicError, UninstallPluginRequest,
-    UpdatePluginRequest,
+    PackUninstallPlanRequest, PluginDataDisposition, PluginPackageInvalidParams, PublicError,
+    UninstallPluginRequest, UpdatePluginRequest,
 };
 use ora_db::{
     DatabaseBootstrapper, DatabaseLocation, RepositoryPool, SqlitePackInstallationRepository,
@@ -3323,7 +3324,7 @@ async fn sha256_mismatch_aborts_install_without_phantom_ownership() {
             skipped: Vec::new(),
             failed: Some(PackInstallFailure {
                 plugin_id: MEMBER_ID.to_owned(),
-                error_code: "internal_error".to_owned(),
+                error_code: "plugin_package_invalid".to_owned(),
                 rollback_failures: Vec::new(),
             }),
         }
@@ -3453,6 +3454,117 @@ async fn missing_artifact_aborts_install_without_creating_directory() {
             .expect("load the failed member relation"),
         None,
         "the failed member gains no phantom pack_installation_member relation"
+    );
+}
+
+// ---- Release qualification: package content validation ----
+
+/// A marketplace package whose in-package manifest omits a required field is refused with the
+/// public `plugin_package_invalid` error naming that field, and nothing is committed.
+///
+/// Before the installer validated the package's own manifest, this archive installed
+/// "successfully", failed later during discovery, and left the bad package on disk.
+#[tokio::test]
+async fn incomplete_package_manifest_is_reported_as_a_package_error() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    const MEMBER: &str = "ora-space.incomplete";
+    const MEMBER_ID: &str = "official/ora-space.incomplete";
+
+    // The archive is a real, well-formed package whose manifest omits `description`.
+    let artifact = data_dir.path().join("incomplete.orax");
+    write_orax_zip(
+        &artifact,
+        &[
+            (
+                "orax.toml",
+                b"resolver = 1\nidentifier = \"ora-space.incomplete\"\nkind = \"skill\"\nversion = \"1.0.0\"\n"
+                    .as_slice(),
+            ),
+            (
+                "assets/demo/SKILL.md",
+                b"---\nname: demo\ndescription: Demo\n---\n\nBody.\n".as_slice(),
+            ),
+        ],
+    );
+    let sha = ora_utils::hash::sha256_file(&artifact).expect("hash artifact");
+    stage_marketplace_checkout(
+        data_dir.path(),
+        &[(
+            MEMBER,
+            skill_listing(MEMBER, &sha, /*marketplace_visible*/ true),
+        )],
+    );
+    host.use_local_marketplace_release(MEMBER_ID, artifact);
+
+    let error = plugins
+        .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: MEMBER_ID.to_owned(),
+        })
+        .await
+        .expect_err("a package missing a required manifest field is refused");
+
+    assert_eq!(error.classification(), ErrorClassification::Unprocessable);
+    assert_eq!(
+        error.public_error(),
+        &PublicError::PluginPackageInvalid(PluginPackageInvalidParams {
+            field: "description".to_owned(),
+            message: "missing field `description`".to_owned(),
+        })
+    );
+    assert!(
+        !member_installed(data_dir.path(), MEMBER, "1.0.0"),
+        "nothing is committed for a rejected package"
+    );
+}
+
+/// A package whose own manifest contradicts the listing's identity is refused, so the installed
+/// directory can never disagree with the manifest discovery reads back from it.
+#[tokio::test]
+async fn package_identity_mismatch_is_reported_as_a_package_error() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    const MEMBER: &str = "ora-space.version-drift";
+    const MEMBER_ID: &str = "official/ora-space.version-drift";
+
+    // The listing publishes 1.0.0, while the archive's own manifest says 1.1.0.
+    let (artifact, sha) = build_skill_artifact_v(data_dir.path(), MEMBER, "1.1.0");
+    stage_marketplace_checkout(
+        data_dir.path(),
+        &[(
+            MEMBER,
+            skill_listing(MEMBER, &sha, /*marketplace_visible*/ true),
+        )],
+    );
+    host.use_local_marketplace_release(MEMBER_ID, artifact);
+
+    let error = plugins
+        .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: MEMBER_ID.to_owned(),
+        })
+        .await
+        .expect_err("a package contradicting the listing identity is refused");
+
+    assert_eq!(error.classification(), ErrorClassification::Unprocessable);
+    assert_eq!(
+        error.public_error(),
+        &PublicError::PluginPackageInvalid(PluginPackageInvalidParams {
+            field: "version".to_owned(),
+            message:
+                "package version `1.1.0` does not match the marketplace listing version `1.0.0`"
+                    .to_owned(),
+        })
+    );
+    assert!(
+        !member_installed(data_dir.path(), MEMBER, "1.0.0")
+            && !member_installed(data_dir.path(), MEMBER, "1.1.0"),
+        "neither the listing's version nor the package's own version is committed"
     );
 }
 

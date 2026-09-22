@@ -8,19 +8,23 @@ use super::PluginApi;
 use crate::error::{BackendError, ErrorClassification};
 use crate::proxy;
 use ora_contracts::{
-    EmptyErrorParams, InstallOutcome, InstallPluginRequest, InstallPluginResponse, PublicError,
-    StopPluginRequest, UpdatePluginRequest, UpdatePluginResponse,
+    EmptyErrorParams, InstallOutcome, InstallPluginRequest, InstallPluginResponse,
+    PluginPackageInvalidParams, PublicError, StopPluginRequest, UpdatePluginRequest,
+    UpdatePluginResponse,
 };
 use ora_domain::{PluginId, PluginNamespace};
 use ora_logging::ora_info;
-use ora_plugin_manager::{HostTarget, InstallError, Installer, UpdateError, select_release};
-use ora_plugin_manifest::{PluginKind, PluginManifest};
+use ora_plugin_manager::{
+    HostTarget, InstallError, Installer, MANIFEST_FILE_NAME, UpdateError, select_release,
+};
+use ora_plugin_manifest::{ManifestError, PluginKind, PluginManifest};
 use ora_plugin_registry::RegistryIndex;
+use ora_utils::http::{
+    DownloadError, HttpDownload, ProgressCallback, ProxyConfig, ReqwestDownloader,
+    S3AwareDownloader, S3Config,
+};
 #[cfg(test)]
 use ora_utils::http::{DownloadSource, LocalFileDownloader};
-use ora_utils::http::{
-    HttpDownload, ProgressCallback, ProxyConfig, ReqwestDownloader, S3AwareDownloader, S3Config,
-};
 
 impl PluginApi {
     /// Installs a marketplace plugin by resolving its release manifest from the synced sources and
@@ -137,7 +141,7 @@ impl PluginApi {
                     .await
             }
         }
-        .map_err(|error| self.map_install_error("failed to install plugin", error))?;
+        .map_err(|error| map_install_error("failed to install plugin", error))?;
         self.finalize_new_install(&request.plugin_id).await?;
         ora_info!(plugin_id = %request.plugin_id, "installed marketplace plugin");
         Ok(InstallPluginResponse {
@@ -325,7 +329,7 @@ impl PluginApi {
     ) -> Result<ora_plugin_manager::ResolvedReleaseSource, BackendError> {
         let host_target = ora_plugin_registry::current_host_target();
         select_release(manifest, HostTarget::from_option(host_target.as_ref()))
-            .map_err(|error| self.map_install_error("failed to select plugin release", error))
+            .map_err(|error| map_install_error("failed to select plugin release", error))
     }
 
     /// Returns whether a pack has any test-local member transfer overrides.
@@ -360,30 +364,10 @@ impl PluginApi {
         Ok(self.local_marketplace_release(&plugin_id))
     }
 
-    /// Maps installer failures that describe host incompatibility onto the public contract error.
-    pub(super) fn map_install_error(
-        &self,
-        context: &'static str,
-        error: InstallError,
-    ) -> BackendError {
-        match error {
-            InstallError::NoArtifactForTarget { .. }
-            | InstallError::MissingRelease
-            | InstallError::UnsupportedHost
-            | InstallError::TargetMismatch { .. }
-            | InstallError::MissingArtifactTarget => BackendError::new(
-                ErrorClassification::Unprocessable,
-                PublicError::PluginHostIncompatible(EmptyErrorParams {}),
-                format!("{error}"),
-            ),
-            error => BackendError::internal(context, error),
-        }
-    }
-
     /// Maps update failures, preserving host-incompatibility from the nested install path.
     fn map_update_error(&self, context: &'static str, error: UpdateError) -> BackendError {
         match error {
-            UpdateError::Install(install_error) => self.map_install_error(context, install_error),
+            UpdateError::Install(install_error) => map_install_error(context, install_error),
             error => BackendError::internal(context, error),
         }
     }
@@ -413,6 +397,108 @@ impl PluginApi {
             s3_config,
         )))
     }
+}
+
+/// Maps one installer failure onto the public contract error the frontend can act on.
+///
+/// Host incompatibility and invalid package content are the two failure families a user can
+/// respond to — pick another release, or fix and republish the package — so both are classified
+/// explicitly and every other failure (transport, host I/O, installer defect) stays internal.
+pub(super) fn map_install_error(context: &'static str, error: InstallError) -> BackendError {
+    match error {
+        InstallError::NoArtifactForTarget { .. }
+        | InstallError::MissingRelease
+        | InstallError::UnsupportedHost
+        | InstallError::TargetMismatch { .. }
+        | InstallError::MissingArtifactTarget => BackendError::new(
+            ErrorClassification::Unprocessable,
+            PublicError::PluginHostIncompatible(EmptyErrorParams {}),
+            format!("{error}"),
+        ),
+        error => match package_invalid_params(&error) {
+            Some(params) => BackendError::new(
+                ErrorClassification::Unprocessable,
+                PublicError::PluginPackageInvalid(params),
+                format!("{error}"),
+            ),
+            None => BackendError::internal(context, error),
+        },
+    }
+}
+
+/// Describes the package field one install failure blames, or `None` when the failure is not
+/// attributable to package content.
+///
+/// The installer knows exactly which manifest field or file it refused, so carrying that through
+/// `plugin_package_invalid` is what turns a package defect from "quote this request ID" into a
+/// statement the user can act on. Transport failures, host I/O problems, and installer defects
+/// have no field to name and stay `internal_error`.
+pub(super) fn package_invalid_params(error: &InstallError) -> Option<PluginPackageInvalidParams> {
+    let (field, message) = match error {
+        InstallError::MissingManifest => (
+            MANIFEST_FILE_NAME.to_owned(),
+            format!("the package does not contain {MANIFEST_FILE_NAME} at its root"),
+        ),
+        InstallError::InvalidManifest(source) => {
+            (manifest_error_field(source), manifest_error_message(source))
+        }
+        InstallError::InvalidPackage {
+            field_path,
+            message,
+        } => (field_path.clone(), message.clone()),
+        // A declared digest the bytes do not match is a package-integrity failure: retrying may
+        // recover a truncated transfer, but no local fix makes the archive match its declaration.
+        InstallError::ChecksumMismatch { .. } => ("sha256".to_owned(), error.to_string()),
+        // The downloader verifies the digest while writing and removes its temporary file, so a
+        // mismatch here means the published bytes are not the bytes the listing describes.
+        InstallError::Download(source)
+            if matches!(source.as_ref(), DownloadError::ChecksumMismatch { .. }) =>
+        {
+            (
+                "sha256".to_owned(),
+                "the downloaded package does not match the sha256 its listing declares".to_owned(),
+            )
+        }
+        _ => return None,
+    };
+    Some(PluginPackageInvalidParams { field, message })
+}
+
+/// Returns the manifest field one parse failure is attributed to.
+fn manifest_error_field(error: &ManifestError) -> String {
+    match error {
+        ManifestError::UnsupportedResolver { .. } => "resolver".to_owned(),
+        ManifestError::InvalidField { field, .. } => field.to_string(),
+        // A nested structural failure carries its dotted TOML path. A root-level one — TOML
+        // syntax, or a missing top-level field — names no path, so the missing field is recovered
+        // from the deserializer's message and the manifest file is the fallback field.
+        ManifestError::InvalidToml { path, source, .. } => path
+            .clone()
+            .or_else(|| missing_field_name(source.message()).map(str::to_owned))
+            .unwrap_or_else(|| MANIFEST_FILE_NAME.to_owned()),
+    }
+}
+
+/// Returns the message one parse failure should show, without the installer's wrapper sentence.
+fn manifest_error_message(error: &ManifestError) -> String {
+    match error {
+        ManifestError::InvalidToml { source, .. } => source.message().to_owned(),
+        ManifestError::UnsupportedResolver { .. } | ManifestError::InvalidField { .. } => {
+            error.to_string()
+        }
+    }
+}
+
+/// Recovers the field name from serde's `missing field \`x\`` deserialization message.
+///
+/// The manifest schema declares its required fields in `serde`, so a missing one is reported by
+/// the deserializer rather than by a `ManifestError` variant, and its message is the only place
+/// the name appears. The install test
+/// `plugin::operations::install_tests::incomplete_package_manifest_is_reported_as_a_package_error`
+/// pins the extraction against a real parse, so a wording change fails there rather than silently
+/// degrading the reported field to the manifest file.
+fn missing_field_name(message: &str) -> Option<&str> {
+    message.strip_prefix("missing field `")?.strip_suffix('`')
 }
 
 /// Replaces only the selected transfer locator while preserving digest and target verification.
