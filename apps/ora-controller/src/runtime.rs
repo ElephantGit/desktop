@@ -11,8 +11,12 @@ pub enum Persistence {
     /// Local single-node deployments: the SQLite database and its lease live in `home_directory`.
     Sqlite,
     /// Cloud deployments: every durable operation is a call to the Cloud internal control contract
-    /// at `endpoint`; no database is opened locally. The adapter itself lands in a later change.
-    Cloud { endpoint: String },
+    /// at `endpoint` (a gRPC URI); no database is opened locally. Work accepted by Cloud is claimed
+    /// every `claim_interval_ms` and dispatched to the single configured Node.
+    Cloud {
+        endpoint: String,
+        claim_interval_ms: u64,
+    },
 }
 
 /// Shared deployment configuration for the standalone executable and embedded HTTP composition.
@@ -59,7 +63,7 @@ impl ControllerRuntime<SqliteStore> {
     pub fn open(config: RuntimeConfig) -> Result<Self, Error> {
         match &config.persistence {
             Persistence::Sqlite => {}
-            Persistence::Cloud { endpoint } => {
+            Persistence::Cloud { endpoint, .. } => {
                 return Err(Error::Configuration(format!(
                     "cloud persistence at {endpoint} is not available in this build; use sqlite"
                 )));

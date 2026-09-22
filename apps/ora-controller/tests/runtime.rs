@@ -37,6 +37,7 @@ fn embedded_owner_reopens_original_operations_and_rejects_overlap() {
         let mut cloud = config.clone();
         cloud.persistence = Persistence::Cloud {
             endpoint: "http://127.0.0.1:8082".into(),
+            claim_interval_ms: 1000,
         };
         assert!(matches!(
             ControllerRuntime::open(cloud),
