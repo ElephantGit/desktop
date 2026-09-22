@@ -9,10 +9,19 @@ Backend writers, or act as Cloud authority. Linux sessions use the existing
 
 ## Acceptance and persistence
 
-Embedding code opens `Controller::open(home, controller_id)` and calls `accept_clone(request_id, spec)`.
-The returned command contains stable operation/execution IDs. Acceptance writes the complete input and
-target Node before returning; repeating a request returns the original command, while changed input is
-rejected. `result(execution_id)` reads a durable terminal result; absence is not proof of failure.
+Coordination logic reaches persistent state only through the `CoordinationStore` interface: one atomic
+business operation per method (`accept_request`, `take_over_node_event`, `record_queried_result`,
+`original_dispatch`, `dispatches`, `result`, `operations`, `operation`), asynchronous, exposing no
+transaction, connection or table. The only local implementation is `SqliteStore::open(home,
+controller_id)`; each of its operations runs on the blocking pool so SQLite's fsync never occupies the
+async runtime that hosts Node sessions and the API. Cloud deployments will implement the same interface
+with a Cloud RPC adapter, see the [Controller–Cloud contract](../protocols/controller-cloud-contract.md);
+the adapter is chosen at deployment time and neither one is a fallback for the other.
+
+The command returned by `accept_request(request_id, spec)` contains stable operation/execution IDs.
+Acceptance writes the complete input and target Node before returning; repeating a request returns the
+original command, while changed input is rejected. `result(execution_id)` reads a durable terminal
+result; absence is not proof of failure.
 
 The explicitly injected private directory contains `ora-controller.sqlite3`, independent of Node and
 process state. Application ID `0x4f524143`, schema version 1, exact schema/integrity checks and an OS lease on
@@ -99,12 +108,13 @@ lease. Accepted Node executions are never cancelled by this process stopping.
 
 The JSON surface is the transitional clone API documented under
 [minicloud](../minicloud/runtime.md#http-interface); its DTOs live in `ora-contracts::controller_api`.
-The Cloud-facing contract will be defined by proto and served on the same listener; until then the JSON
-surface is the only client entry.
+The Cloud-facing contract is defined by the Cloud repository's proto and the Controller dials out as its
+client (see the [Controller–Cloud contract](../protocols/controller-cloud-contract.md)); this listener
+serves only the JSON surface and local callers.
 
 ## Verification and remaining scope
 
-Real SQLite tests cover acceptance, exclusive ownership, transaction failure, query/event ordering,
+Real SQLite tests, driven through the `CoordinationStore` interface, cover acceptance, exclusive ownership, transaction failure, query/event ordering,
 duplicate takeover and conflicting facts. Framed-session tests cover bounded Unknown retransmission
 and rejection of a wrong Node identity or missing clone capability before dispatch.
 The independent Controller–Node–host/guardian test performs real HTTPS clone, intercepts Ack, kills

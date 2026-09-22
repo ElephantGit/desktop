@@ -9,9 +9,15 @@
 
 ## 接受与存储
 
-嵌入调用方通过 `Controller::open(home, controller_id)` 打开协调者，调用 `accept_clone(request_id, spec)`。
-返回的命令包含稳定 operation／execution。完整输入及目标 Node 落盘后才返回；相同请求返回原命令，
-改变输入则拒绝。`result(execution_id)` 查询持久终态，没有结果不表示失败。
+协调逻辑只通过 `CoordinationStore` 接口读写持久状态：接口按完整原子业务操作定义
+（`accept_request`、`take_over_node_event`、`record_queried_result`、`original_dispatch`、
+`dispatches`、`result`、`operations`、`operation`），异步形态，不暴露事务、连接或表。本机唯一实现是
+`SqliteStore::open(home, controller_id)`；它的每个操作在 blocking pool 上执行，SQLite 的 fsync 不占用
+承载 Node 会话与 API 的异步运行时。云端部署将以 Cloud RPC 适配器实现同一接口，见
+[Controller–Cloud 契约](../protocols/controller-cloud-contract.zh.md)；适配器在部署期选定，不互为后备。
+
+`accept_request(request_id, spec)` 返回的命令包含稳定 operation／execution。完整输入及目标 Node 落盘后
+才返回；相同请求返回原命令，改变输入则拒绝。`result(execution_id)` 查询持久终态，没有结果不表示失败。
 
 显式注入的私有目录保存 `ora-controller.sqlite3`，与 Node／process 状态独立。
 application ID 为 `0x4f524143`、schema version 为 1；精确结构／完整性校验和同级文件
@@ -20,7 +26,8 @@ application ID 为 `0x4f524143`、schema version 为 1；精确结构／完整�
 不同 ControllerId 或未知已有文件会被拒绝。不从 HOME 推导目录，不清库，不导入历史任务或自动重绑定。
 
 `clone_operations` 保存接受记录和不可变终态，`clone_receipts` 保存 Node 原事件精确身份与内容。
-查询完成和事件交付使用同一接管事务；只有实际收到的事件在回执提交后才产生 Ack。
+查询完成和事件交付使用同一接管事务；`take_over` 只对实际收到的事件、且在 `take_over_node_event`
+返回后才构造 Ack，查询结果经 `record_queried_result` 保存但不产生 Ack 依据。
 相同内容幂等，冲突输入／结果／请求关联不确认。历史结果保留原 Node incarnation，
 查询报告者和心跳则必须匹配当前会话。
 
@@ -89,12 +96,13 @@ ora-controller --config /absolute/path/controller.json [--single-node]
 `stop_timeout_ms`，不升级为 `SIGKILL`）→ 数据库租约。本进程停止从不取消 Node 已接受的执行。
 
 JSON 接口是 [minicloud](../minicloud/runtime.zh.md#http-接口) 文档描述的过渡 clone API，
-DTO 位于 `ora-contracts::controller_api`。面向 Cloud 的契约将由 proto 定义并在同一监听器上提供；
-在此之前 JSON 接口是唯一的调用方入口。
+DTO 位于 `ora-contracts::controller_api`。面向 Cloud 的契约由 Cloud 仓库的 proto 定义，Controller 作为
+客户端拨出（见 [Controller–Cloud 契约](../protocols/controller-cloud-contract.zh.md)）；该监听器只服务
+JSON 接口与本机调用方。
 
 ## 验证与保留范围
 
-真实 SQLite 测试覆盖接受、独占、事务失败、查询／事件乱序、重复接管和冲突事实；
+真实 SQLite 测试经 `CoordinationStore` 接口覆盖接受、独占、事务失败、查询／事件乱序、重复接管和冲突事实；
 framed 会话测试覆盖 Unknown 重传有界，以及错误 Node 身份或缺少 clone 能力时在派发前拒绝。
 独立 Controller–Node–host／guardian 测试执行真实 HTTPS clone，
 截住 Ack 后在持久接管之后强杀 Controller，再离线重启，检查原结果、精确 Ack、Node outbox 清空和唯一变更 Run。
