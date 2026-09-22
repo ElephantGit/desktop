@@ -29,6 +29,18 @@ records at most one completion event. Session load, prompt, and `watchAppEvents`
 forwards ordered `data`, `error`, and `end` frames over a Tauri Channel. A private call id allows an
 `AbortSignal` to cancel only that stream, while one separate request id correlates the complete stream.
 
+The asynchronous executor (`run_async_backend` and its request-id variant) takes every domain call as an
+already-boxed future (`Box::pin(..)`), and hand-written commands that await domain futures directly box
+them the same way. Tauri constructs each async command's future on the main thread inside the WebView2
+IPC callback, whose roughly 1 MB stack the webview and Tauri frames below the handler already occupy for
+several hundred KB. A deep domain future held across the command's await — the marketplace install chain
+alone monomorphizes into a ~650 KB state machine — overflows that stack before the async runtime ever
+polls it; release 0.2.0 died exactly this way (WER `0xc00000fd`) the moment a marketplace install was
+clicked. Boxing at the call site keeps the command future pointer-sized, so the deep chain is only ever
+constructed on the runtime thread that first polls the wrapper, and the boxed parameter type makes the
+contract compiler-enforced. Desktop tests pin the marketplace transfer commands against an explicit
+IPC future size budget.
+
 The stream registry claims the call id before domain startup and retains it until its owning
 registration is dropped. Cancellation signals that owner instead of freeing the id for reuse.
 Startup already in progress is allowed to settle, because abandoning arbitrary domain work
