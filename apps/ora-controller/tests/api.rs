@@ -11,7 +11,7 @@ use std::{fs, os::unix::fs::PermissionsExt};
 
 /// Starts the composition without a hosted Node on an ephemeral loopback port.
 async fn start(config: DeploymentConfig) -> Result<Service<SqliteStore>, ora_controller::Error> {
-    Service::start(
+    Service::<SqliteStore>::start(
         config,
         Transport::loopback(/*port*/ 0),
         NodeHosting::External,
@@ -36,9 +36,9 @@ fn http_acceptance_is_idempotent_and_survives_service_restart() {
             .tempdir_in(std::env::var_os("HOME").unwrap())
             .unwrap();
         let config = DeploymentConfig {
-            api: ApiConfig {
+            api: Some(ApiConfig {
                 node_id: NodeId::new("node"),
-            },
+            }),
             single_node: None,
             controller: RuntimeConfig {
                 home_directory: root.path().join("controller"),
@@ -64,10 +64,15 @@ fn http_acceptance_is_idempotent_and_survives_service_restart() {
             .block_on(async {
                 // Composition errors are rejected before any Controller state exists on disk.
                 let mut unknown_target = config.clone();
-                unknown_target.api.node_id = NodeId::new("other");
+                unknown_target.api = Some(ApiConfig {
+                    node_id: NodeId::new("other"),
+                });
                 assert!(start(unknown_target).await.is_err());
+                let mut no_surface = config.clone();
+                no_surface.api = None;
+                assert!(start(no_surface).await.is_err());
                 assert!(
-                    Service::start(
+                    Service::<SqliteStore>::start(
                         config.clone(),
                         Transport::loopback(/*port*/ 0),
                         NodeHosting::Managed
@@ -83,7 +88,7 @@ fn http_acceptance_is_idempotent_and_survives_service_restart() {
                     stop_timeout_ms: 1000,
                 });
                 assert!(
-                    Service::start(
+                    Service::<SqliteStore>::start(
                         hosted,
                         Transport::loopback(/*port*/ 0),
                         NodeHosting::Managed
@@ -104,9 +109,13 @@ fn http_acceptance_is_idempotent_and_survives_service_restart() {
                     endpoint: root.path().join("second").join("control.sock"),
                 });
                 assert!(
-                    Service::start(many, Transport::loopback(/*port*/ 0), NodeHosting::Managed)
-                        .await
-                        .is_err()
+                    Service::<SqliteStore>::start(
+                        many,
+                        Transport::loopback(/*port*/ 0),
+                        NodeHosting::Managed
+                    )
+                    .await
+                    .is_err()
                 );
                 assert!(!config.controller.home_directory.exists());
                 let mut overlap = config.clone();
@@ -138,7 +147,7 @@ fn http_acceptance_is_idempotent_and_survives_service_restart() {
                     .accept_request(
                         ora_node_protocol::RequestId::new("original"),
                         CloneExecutionSpec {
-                            node_id: config.api.node_id.clone(),
+                            node_id: NodeId::new("node"),
                             repository: CloneRepositoryUrl::parse("https://example.com/repo.git")
                                 .unwrap(),
                             branch: BranchName::new("main"),
@@ -275,7 +284,7 @@ fn http_acceptance_is_idempotent_and_survives_service_restart() {
                 stop.send(()).unwrap();
                 task.await.unwrap().unwrap();
                 // The same surface is reachable over a private Unix socket inside the Controller home.
-                let service = Service::start(
+                let service = Service::<SqliteStore>::start(
                     config.clone(),
                     Transport::Unix(config.controller.home_directory.join("api.sock")),
                     NodeHosting::External,

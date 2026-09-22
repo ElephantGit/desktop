@@ -138,9 +138,9 @@ fn exercise(entry: Entry) {
                 .contains("Node IPC listening")
         });
         let config = DeploymentConfig {
-            api: ApiConfig {
+            api: Some(ApiConfig {
                 node_id: NodeId::new("test-node"),
-            },
+            }),
             single_node: None,
             controller: RuntimeConfig {
                 home_directory: fixture.path().join("controller"),

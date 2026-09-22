@@ -90,9 +90,9 @@ fn single_node_composition_hosts_and_retires_its_node() {
         let node_config = ipc::write_config(&fixture, &clone, /*frame_timeout_ms*/ 40_000);
         let endpoint = fixture.config().home_directory.join("control.sock");
         let config = DeploymentConfig {
-            api: ApiConfig {
+            api: Some(ApiConfig {
                 node_id: NodeId::new("test-node"),
-            },
+            }),
             single_node: Some(SingleNodeConfig {
                 node_executable: env!("CARGO_BIN_EXE_ora-node").into(),
                 node_config: node_config.clone(),

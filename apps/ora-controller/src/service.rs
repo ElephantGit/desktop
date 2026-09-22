@@ -27,16 +27,17 @@ impl Service<SqliteStore> {
     ) -> Result<Self, Error> {
         let single = config.validate(hosting)?.cloned();
         transport.validate(&config.controller.home_directory)?;
-        // Every composition check precedes the database lease so a refusal leaves no state behind.
-        let launch = match &single {
-            Some(single) => Some(ManagedNode::prepare(single, &config.controller).await?),
-            None => None,
-        };
-        let runtime = ControllerRuntime::<SqliteStore>::open(config.controller.clone())?;
-        let managed = match launch {
-            Some(launch) => Some(launch.start().await?),
-            None => None,
-        };
+        let api = config.api.clone().ok_or_else(|| {
+            Error::Configuration(
+                "sqlite persistence serves the JSON surface; add an api section".into(),
+            )
+        })?;
+        let (runtime, managed) = compose(
+            &config,
+            single.as_ref(),
+            ControllerRuntime::<SqliteStore>::open,
+        )
+        .await?;
         let listener = match transport.bind(&config.controller.home_directory).await {
             Ok(listener) => listener,
             Err(error) => {
@@ -47,13 +48,51 @@ impl Service<SqliteStore> {
                 return Err(error.into());
             }
         };
-        let router = api::router(runtime.handle(), config.api.node_id);
+        let router = api::router(runtime.handle(), api.node_id);
         Ok(Self {
             surface: Some(Surface { listener, router }),
             runtime,
             managed,
         })
     }
+}
+
+impl Service<CloudStore> {
+    /// Composes a cloud deployment: the Controller bound to Cloud and optionally its Node. There is
+    /// no JSON surface, because acceptance and queries belong to Cloud's public API.
+    pub async fn start(config: DeploymentConfig, hosting: NodeHosting) -> Result<Self, Error> {
+        let single = config.validate(hosting)?.cloned();
+        let (runtime, managed) = compose(
+            &config,
+            single.as_ref(),
+            ControllerRuntime::<CloudStore>::open,
+        )
+        .await?;
+        Ok(Self {
+            surface: None,
+            runtime,
+            managed,
+        })
+    }
+}
+
+/// The order every composition shares: all checks, then the owner, then the hosted Node, so a
+/// refusal leaves no state behind and a Node never runs without its Controller.
+async fn compose<S: CoordinationStore>(
+    config: &DeploymentConfig,
+    single: Option<&SingleNodeConfig>,
+    open: impl FnOnce(RuntimeConfig) -> Result<ControllerRuntime<S>, Error>,
+) -> Result<(ControllerRuntime<S>, Option<ManagedNode>), Error> {
+    let launch = match single {
+        Some(single) => Some(ManagedNode::prepare(single, &config.controller).await?),
+        None => None,
+    };
+    let runtime = open(config.controller.clone())?;
+    let managed = match launch {
+        Some(launch) => Some(launch.start().await?),
+        None => None,
+    };
+    Ok((runtime, managed))
 }
 
 impl<S: CoordinationStore> Service<S> {

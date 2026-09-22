@@ -460,3 +460,53 @@ fn node_exit_stops_admission_and_keeps_records() {
     );
     assert!(operations[0].result.is_none());
 }
+
+/// A cloud deployment binds no JSON surface, refuses listener flags and creates no local state;
+/// with Cloud unreachable it stays up, ineligible, until asked to stop.
+#[test]
+fn cloud_persistence_serves_no_surface_and_creates_no_local_state() {
+    let root = tempfile::Builder::new()
+        .permissions(fs::Permissions::from_mode(/*mode*/ 0o700))
+        .tempdir_in(std::env::var_os("HOME").unwrap())
+        .unwrap();
+    let path = root.path();
+    let home = path.join("controller");
+    let config = path.join("controller.json");
+    fs::write(
+        &config,
+        serde_json::to_vec(&serde_json::json!({
+            "controller": {
+                "home_directory": home,
+                "persistence": {
+                    "kind": "cloud",
+                    "endpoint": "http://127.0.0.1:1",
+                    "claim_interval_ms": 100,
+                },
+                "protected_state_directories": [path.join("node")],
+                "controller_id": "owner",
+                "nodes": [{ "node_id": "node", "endpoint": path.join("node").join("control.sock") }],
+                "session": { "io_timeout_ms": 500, "query_interval_ms": 100 },
+                "reconnect_ms": 200,
+                "timezone": "Asia/Shanghai",
+            },
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let config = config.to_str().unwrap();
+    let mut refused = Executable::start(path, &["--config", config, "--port", "0"]);
+    assert!(!refused.wait().success());
+    assert!(refused.errors().contains("serves no JSON surface"));
+    assert!(!home.exists());
+    let mut executable = Executable::start(path, &["--config", config]);
+    until(|| {
+        executable
+            .log()
+            .contains("coordinating through cloud at http://127.0.0.1:1")
+    });
+    until(|| executable.log().contains("Cloud lease not acquired"));
+    assert!(!executable.log().contains("listening on"));
+    assert!(!home.exists());
+    assert!(executable.terminate().success());
+    assert!(!home.exists());
+}
