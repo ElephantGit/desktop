@@ -66,12 +66,12 @@ fn event(command: &CloneRepositoryMessage) -> CloneResultMessage {
 #[test]
 fn acceptance_is_durable_idempotent_and_exclusive() {
     let directory = directory();
-    let mut owner = Controller::open(directory.path(), ControllerId::new("owner")).unwrap();
+    let mut owner = SqliteStore::open(directory.path(), ControllerId::new("owner")).unwrap();
     let accepted = owner
         .accept_clone(RequestId::new("request"), spec())
         .unwrap();
     assert!(matches!(
-        Controller::open(directory.path(), ControllerId::new("owner")),
+        SqliteStore::open(directory.path(), ControllerId::new("owner")),
         Err(Error::AlreadyRunning)
     ));
     assert_eq!(
@@ -87,14 +87,14 @@ fn acceptance_is_durable_idempotent_and_exclusive() {
         Err(Error::Conflict)
     ));
     drop(owner);
-    let owner = Controller::open(directory.path(), ControllerId::new("owner")).unwrap();
+    let owner = SqliteStore::open(directory.path(), ControllerId::new("owner")).unwrap();
     assert_eq!(
         owner.commands(&NodeId::new("node")).unwrap(),
         vec![accepted]
     );
     drop(owner);
     assert!(matches!(
-        Controller::open(directory.path(), ControllerId::new("other")),
+        SqliteStore::open(directory.path(), ControllerId::new("other")),
         Err(Error::InvalidStorage)
     ));
 }
@@ -105,7 +105,7 @@ fn takeover_is_atomic_in_both_delivery_orders_and_conflicts_never_ack() {
     for query_first in [true, false] {
         let directory = directory();
         let fault = Rc::new(Cell::new(None));
-        let mut owner = Controller::open_with_guard(
+        let mut owner = SqliteStore::open_with_guard(
             directory.path(),
             ControllerId::new("owner"),
             Fault(fault.clone()),
@@ -161,7 +161,7 @@ fn takeover_is_atomic_in_both_delivery_orders_and_conflicts_never_ack() {
         );
         assert_eq!(owner.take_over(&session, &query).unwrap(), None);
         drop(owner);
-        let mut owner = Controller::open(directory.path(), ControllerId::new("owner")).unwrap();
+        let mut owner = SqliteStore::open(directory.path(), ControllerId::new("owner")).unwrap();
         assert_eq!(
             owner
                 .take_over(
@@ -205,7 +205,7 @@ fn takeover_is_atomic_in_both_delivery_orders_and_conflicts_never_ack() {
 #[test]
 fn failed_acceptance_and_unknown_files_remain_untouched() {
     let directory = directory();
-    let mut owner = Controller::open_with_guard(
+    let mut owner = SqliteStore::open_with_guard(
         directory.path(),
         ControllerId::new("owner"),
         Fault(Rc::new(Cell::new(Some(WritePoint::Accept)))),
@@ -227,6 +227,6 @@ fn failed_acceptance_and_unknown_files_remain_untouched() {
     }
     let path = foreign.join("ora-controller.sqlite3");
     std::fs::write(&path, "user content").unwrap();
-    assert!(Controller::open(&foreign, ControllerId::new("owner")).is_err());
+    assert!(SqliteStore::open(&foreign, ControllerId::new("owner")).is_err());
     assert_eq!(std::fs::read_to_string(path).unwrap(), "user content");
 }

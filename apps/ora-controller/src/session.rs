@@ -28,7 +28,7 @@ pub struct SessionConfig {
 
 /// Coordinates one connection; the caller reconnects using the same durable Controller, never new IDs.
 pub async fn run_session<W: WriteGuard>(
-    controller: &Arc<Mutex<Controller<W>>>,
+    controller: &Arc<Mutex<SqliteStore<W>>>,
     target: &NodeEndpoint,
     config: &SessionConfig,
 ) -> io::Result<()> {

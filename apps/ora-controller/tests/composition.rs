@@ -3,7 +3,7 @@
 //! Executable-level composition tests. A child-only stand-in replaces `ora-node` at the process
 //! boundary so readiness, stop and crash behavior can be shaped without Git, host or guardian.
 use ora_contracts::controller_api::*;
-use ora_controller::Controller;
+use ora_controller::SqliteStore;
 use ora_node_protocol::{ControllerId, RequestId};
 use ora_utils::process::{LinuxPidFd, ProcessSignal, linux_process};
 use pretty_assertions::assert_eq;
@@ -330,7 +330,7 @@ fn readiness_timeout_stops_node_and_never_opens_api() {
     assert!(!executable.log().contains("listening on"));
     until(|| node.has_exited().unwrap());
     // The lease is free again: the same identity reopens the state the refused run created.
-    drop(Controller::open(&deployment.home, ControllerId::new("owner")).unwrap());
+    drop(SqliteStore::open(&deployment.home, ControllerId::new("owner")).unwrap());
 }
 
 /// Normal stop follows the fixed order and retires the hosted Node before the process exits.
@@ -437,7 +437,7 @@ fn node_exit_stops_admission_and_keeps_records() {
             .contains("managed Node exited unexpectedly")
     );
     assert!(std::net::TcpStream::connect(&address).is_err());
-    let owner = Controller::open(&deployment.home, ControllerId::new("owner")).unwrap();
+    let owner = SqliteStore::open(&deployment.home, ControllerId::new("owner")).unwrap();
     let operations = owner.operations().unwrap();
     assert_eq!(operations.len(), 1);
     assert_eq!(

@@ -1,14 +1,7 @@
-use super::*;
+use crate::*;
 use rusqlite::OptionalExtension;
 
-/// An accepted operation and its durable terminal fact; no result means awaiting reconciliation, not failure.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CloneOperation {
-    pub command: CloneRepositoryMessage,
-    pub result: Option<CloneExecutionResult>,
-}
-
-impl<W: WriteGuard> Controller<W> {
+impl<W: WriteGuard> SqliteStore<W> {
     /// Lists durable operations for presentation without exposing storage or manufacturing live progress.
     pub fn operations(&self) -> Result<Vec<CloneOperation>, Error> {
         let mut statement = self

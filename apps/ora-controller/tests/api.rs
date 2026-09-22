@@ -128,7 +128,7 @@ fn http_acceptance_is_idempotent_and_survives_service_restart() {
                 // Retain the rejected fixture file; the legitimate owner starts in a fresh root.
                 let mut config = config;
                 config.controller.home_directory = root.path().join("valid-controller");
-                let mut standalone = ora_controller::Controller::open(
+                let mut standalone = ora_controller::SqliteStore::open(
                     &config.controller.home_directory,
                     config.controller.controller_id.clone(),
                 )

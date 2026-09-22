@@ -27,7 +27,7 @@ fn mismatched_node_or_missing_clone_capability_rejects_before_dispatch() {
                 .tempdir_in(std::env::var_os("HOME").unwrap())
                 .unwrap();
             let mut controller =
-                Controller::open(&root.path().join("controller"), ControllerId::new("owner"))
+                SqliteStore::open(&root.path().join("controller"), ControllerId::new("owner"))
                     .unwrap();
             let command = controller
                 .accept_clone(
@@ -111,7 +111,7 @@ fn uncertain_execution_retransmits_at_most_once_per_connection() {
             .tempdir_in(std::env::var_os("HOME").unwrap())
             .unwrap();
         let mut controller =
-            Controller::open(&root.path().join("controller"), ControllerId::new("owner")).unwrap();
+            SqliteStore::open(&root.path().join("controller"), ControllerId::new("owner")).unwrap();
         let command = controller
             .accept_clone(
                 RequestId::new("request"),

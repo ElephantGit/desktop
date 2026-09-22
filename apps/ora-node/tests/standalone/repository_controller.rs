@@ -1,6 +1,6 @@
 use super::*;
 use crate::support::{ChildGuard, until};
-use ora_controller::Controller;
+use ora_controller::SqliteStore;
 use pretty_assertions::assert_eq;
 use std::{
     process::{Command, Stdio},
@@ -142,7 +142,7 @@ fn independent_controller_replays_durable_takeover_after_lost_ack_and_kill() {
         let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
         let clone = configuration(&fixture, &server);
         let home = fixture.path().join("controller");
-        let mut owner = Controller::open(&home, ControllerId::new("owner")).unwrap();
+        let mut owner = SqliteStore::open(&home, ControllerId::new("owner")).unwrap();
         let command = owner
             .accept_clone(
                 RequestId::new("client-request"),
@@ -163,7 +163,7 @@ fn independent_controller_replays_durable_takeover_after_lost_ack_and_kill() {
             .recv_timeout(Duration::from_secs(/*secs*/ 45))
             .unwrap();
         controller.kill();
-        let owner = Controller::open(&home, ControllerId::new("owner")).unwrap();
+        let owner = SqliteStore::open(&home, ControllerId::new("owner")).unwrap();
         let result = owner
             .result(&command.execution_id)
             .unwrap()
@@ -198,7 +198,7 @@ fn independent_controller_replays_durable_takeover_after_lost_ack_and_kill() {
         });
         replacement.terminate();
         node.terminate();
-        let owner = Controller::open(&home, ControllerId::new("owner")).unwrap();
+        let owner = SqliteStore::open(&home, ControllerId::new("owner")).unwrap();
         assert_eq!(owner.result(&command.execution_id).unwrap(), Some(result));
         let database =
             ora_node_db::NodeDatabase::open(&node_path, fixture.config().identity).unwrap();

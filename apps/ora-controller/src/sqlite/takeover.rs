@@ -1,7 +1,7 @@
-use super::*;
+use crate::*;
 use rusqlite::{OptionalExtension, params};
 
-impl<W: WriteGuard> Controller<W> {
+impl<W: WriteGuard> SqliteStore<W> {
     /// Commits query/event facts through one boundary; only an actually received event can produce an Ack.
     pub fn take_over(
         &mut self,

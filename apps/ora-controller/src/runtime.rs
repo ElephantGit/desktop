@@ -29,7 +29,7 @@ pub struct ControllerRuntime {
 /// Narrow application access to the single Controller owner; SQLite runs on a blocking executor.
 #[derive(Clone)]
 pub struct ControllerHandle {
-    owner: Arc<Mutex<Controller>>,
+    owner: Arc<Mutex<SqliteStore>>,
     nodes: Arc<Vec<NodeId>>,
 }
 
@@ -73,7 +73,7 @@ impl ControllerRuntime {
                 return Err(Error::InvalidStorage);
             }
         }
-        let owner = Controller::open(&config.home_directory, config.controller_id.clone())?;
+        let owner = SqliteStore::open(&config.home_directory, config.controller_id.clone())?;
         let nodes = Arc::new(
             config
                 .nodes
@@ -124,7 +124,7 @@ impl ControllerHandle {
     /// Executes a short durable operation on a blocking executor while sharing the sole owner.
     async fn access<T: Send + 'static>(
         &self,
-        action: impl FnOnce(&mut Controller) -> Result<T, Error> + Send + 'static,
+        action: impl FnOnce(&mut SqliteStore) -> Result<T, Error> + Send + 'static,
     ) -> Result<T, Error> {
         let owner = self.owner.clone();
         tokio::task::spawn_blocking(move || {

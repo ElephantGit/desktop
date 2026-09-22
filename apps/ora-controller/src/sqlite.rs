@@ -1,11 +1,48 @@
-use super::*;
-use rusqlite::{OptionalExtension, params};
-use std::fs::{self, OpenOptions};
+//! SQLite adapter: the local durable store behind clone coordination. It owns the database file,
+//! the OS lease beside it and every transaction; nothing else in the crate issues SQL.
+mod operations;
+mod takeover;
+
+use crate::*;
+use ora_utils::fs::{ExclusiveFileLock, ExclusiveLockError};
+use rusqlite::{Connection, OptionalExtension, params};
+use std::{
+    fs::{self, OpenOptions},
+    path::Path,
+};
 
 const APPLICATION_ID: i64 = 0x4f524143;
 const SCHEMA: &str = include_str!("schema.sql");
 
-impl<W: WriteGuard> Controller<W> {
+/// The database lease and transaction owner retain original dispatches, results and event receipts.
+pub struct SqliteStore<W = DurableWrites> {
+    connection: Connection,
+    id: ControllerId,
+    home: PathBuf,
+    writes: W,
+    // Held beside the database rather than on it so SQLite's own locks never collide with ours.
+    _lease: ExclusiveFileLock,
+}
+
+impl SqliteStore {
+    /// Opens explicitly injected local state, preserving unknown files instead of reinitializing them.
+    pub fn open(home: &Path, id: ControllerId) -> Result<Self, Error> {
+        Self::open_with_guard(home, id, DurableWrites)
+    }
+}
+
+impl<W: WriteGuard> SqliteStore<W> {
+    /// Returns the persistent coordinator identity, never a process or connection identity.
+    pub fn id(&self) -> &ControllerId {
+        &self.id
+    }
+    /// Exposes the injected root for deployment overlap checks, not Node-scoped checkout resolution.
+    pub fn home_directory(&self) -> &Path {
+        &self.home
+    }
+}
+
+impl<W: WriteGuard> SqliteStore<W> {
     /// Injects persistence failure boundaries without substituting the durable store or OS lease.
     pub fn open_with_guard(home: &Path, id: ControllerId, writes: W) -> Result<Self, Error> {
         if !home.is_absolute() || id.as_str().trim().is_empty() {

@@ -1,6 +1,6 @@
 use super::*;
 use crate::support::{ChildGuard, until};
-use ora_controller::{Controller, NodeEndpoint, SessionConfig, WriteGuard, WritePoint};
+use ora_controller::{NodeEndpoint, SessionConfig, SqliteStore, WriteGuard, WritePoint};
 use pretty_assertions::assert_eq;
 use std::{
     process::{Command, Stdio},
@@ -31,7 +31,7 @@ fn controller_transaction_child() {
         let endpoint: NodeEndpoint =
             serde_json::from_slice(&fs::read(root.join("target.json")).unwrap()).unwrap();
         let owner = Arc::new(Mutex::new(
-            Controller::open_with_guard(
+            SqliteStore::open_with_guard(
                 &root.join("controller"),
                 ControllerId::new("owner"),
                 PauseBeforeCommit(root.join("before-commit")),
@@ -68,7 +68,7 @@ fn killed_controller_before_commit_replays_without_losing_node_responsibility() 
         let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
         let clone = configuration(&fixture, &server);
         let home = fixture.path().join("controller");
-        let mut owner = Controller::open(&home, ControllerId::new("owner")).unwrap();
+        let mut owner = SqliteStore::open(&home, ControllerId::new("owner")).unwrap();
         let command = owner
             .accept_clone(
                 RequestId::new("crash-request"),
@@ -124,7 +124,7 @@ fn killed_controller_before_commit_replays_without_losing_node_responsibility() 
             Err(std::sync::mpsc::TryRecvError::Empty)
         ));
         child.kill();
-        let owner = Controller::open(&home, ControllerId::new("owner")).unwrap();
+        let owner = SqliteStore::open(&home, ControllerId::new("owner")).unwrap();
         assert_eq!(owner.result(&command.execution_id).unwrap(), None);
         assert_eq!(
             owner.commands(&NodeId::new("test-node")).unwrap(),
@@ -140,7 +140,7 @@ fn killed_controller_before_commit_replays_without_losing_node_responsibility() 
             .unwrap();
         assert_eq!(ack.execution_id, command.execution_id);
         replacement.terminate();
-        let owner = Controller::open(&home, ControllerId::new("owner")).unwrap();
+        let owner = SqliteStore::open(&home, ControllerId::new("owner")).unwrap();
         assert!(matches!(
             owner.result(&command.execution_id).unwrap(),
             Some(CloneExecutionResult::CloneReady(_))
