@@ -152,7 +152,9 @@ budget is sized for bundled CLIs — and reports a manifest that is missing, is 
 is not valid UTF-8, or exceeds the budget as an invalid package at `orax.toml`. Identity is
 checked separately and before host-side validation: `identifier`, `version`, and `kind` must equal
 the listing's, and a disagreement is reported at that field rather than resolved by preferring one
-side.
+side. Descriptive metadata (`title`, `description`, `homepage`, `license`, icon) is not compared:
+the package ships the text users read, so it installs even when the listing says otherwise, and
+discovery reports the package's own values.
 
 ## Layout rules
 

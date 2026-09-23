@@ -83,7 +83,7 @@ pub(super) fn sweep_leftovers(data_dir: &Path) -> Result<(), InstallError> {
         })?;
         let path = entry.path();
         if is_release_archive(&entry) {
-            discard_archive(&path);
+            remove_archive_file(&path);
             continue;
         }
         if entry.file_type().is_ok_and(|file_type| file_type.is_dir()) {
@@ -101,10 +101,10 @@ fn sweep_namespace_directory(namespace_dir: &Path) {
     };
     for entry in entries.flatten() {
         if is_release_archive(&entry) {
-            discard_archive(&entry.path());
+            remove_archive_file(&entry.path());
         }
     }
-    remove_empty_namespace_dir(namespace_dir);
+    remove_empty_directory(namespace_dir);
 }
 
 /// Deletes one downloaded archive together with the cache namespace directory it leaves empty.
@@ -113,20 +113,22 @@ fn sweep_namespace_directory(namespace_dir: &Path) {
 /// once an install ends — and keeping them in one call site means no exit path can do one without
 /// the other.
 pub(super) fn discard_downloaded_archive(archive_path: &Path) {
-    discard_archive(archive_path);
+    remove_archive_file(archive_path);
     if let Some(namespace_dir) = archive_path.parent() {
-        remove_empty_namespace_dir(namespace_dir);
+        remove_empty_directory(namespace_dir);
     }
 }
 
-/// Removes one cache namespace directory once no archive is left in it.
+/// Removes one plugin directory an install emptied, leaving it in place when anything remains.
 ///
-/// Only ever called with a directory produced by [`release_archive_path`], so the directory
-/// removed is never the cache root that holds the durable marketplace index. A directory that
-/// still holds anything is not ours to remove; `remove_dir` refuses it and that refusal is the
-/// expected outcome, so only an unexpected failure is worth reporting.
-fn remove_empty_namespace_dir(namespace_dir: &Path) {
-    match std::fs::remove_dir(namespace_dir) {
+/// Callers pass either a cache namespace directory produced by [`release_archive_path`] or the
+/// installed `<namespace>/<name>` parent of a failed install, so the directory removed is never
+/// the cache root that holds the durable marketplace index. A directory that still holds anything
+/// is the normal case — another archive, installed versions, or a concurrent install
+/// materializing one — so `remove_dir`'s refusal is the expected outcome and only an unexpected
+/// failure is worth reporting.
+pub(super) fn remove_empty_directory(directory: &Path) {
+    match std::fs::remove_dir(directory) {
         Ok(()) => {}
         Err(error)
             if matches!(
@@ -134,19 +136,20 @@ fn remove_empty_namespace_dir(namespace_dir: &Path) {
                 std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
             ) => {}
         Err(error) => ora_warn!(
-            path = %namespace_dir.display(),
+            path = %directory.display(),
             %error,
-            "failed to remove an empty plugin cache namespace directory"
+            "failed to remove an empty plugin directory"
         ),
     }
 }
 
-/// Removes one downloaded archive, reporting a failure without failing the install.
+/// Removes one downloaded archive file, reporting a failure without failing the install.
 ///
-/// The bytes have already served their purpose whether the install committed or failed, so an
-/// unremovable file is a hygiene problem to surface in logs rather than a reason to tell a user
-/// whose package is installed and working that the install failed.
-fn discard_archive(archive_path: &Path) {
+/// Unlike [`discard_downloaded_archive`], this leaves the containing directory alone. The bytes
+/// have already served their purpose whether the install committed or failed, so an unremovable
+/// file is a hygiene problem to surface in logs rather than a reason to tell a user whose package
+/// is installed and working that the install failed.
+fn remove_archive_file(archive_path: &Path) {
     match std::fs::remove_file(archive_path) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -154,26 +157,6 @@ fn discard_archive(archive_path: &Path) {
             path = %archive_path.display(),
             %error,
             "failed to remove a downloaded plugin release archive"
-        ),
-    }
-}
-
-/// Removes `<namespace>/<name>` after a failed install when nothing else lives below it.
-///
-/// A non-empty directory is the normal case — the plugin already has installed versions, or a
-/// concurrent install is materializing one — and is left untouched.
-pub(super) fn remove_empty_package_parent(package_parent: &Path) {
-    match std::fs::remove_dir(package_parent) {
-        Ok(()) => {}
-        Err(error)
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
-            ) => {}
-        Err(error) => ora_warn!(
-            path = %package_parent.display(),
-            %error,
-            "failed to remove an empty plugin package directory after a failed install"
         ),
     }
 }

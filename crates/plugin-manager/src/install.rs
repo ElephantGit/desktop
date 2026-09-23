@@ -378,7 +378,7 @@ where
         match outcome {
             Ok(()) => Ok(package_dir),
             Err(error) => {
-                cache::remove_empty_package_parent(&package_parent);
+                cache::remove_empty_directory(&package_parent);
                 Err(error)
             }
         }
@@ -813,13 +813,41 @@ mod tests {
         )
     }
 
+    /// Packs `files` as the marketplace release `official/weather` 1.0.0, listed with
+    /// `listing_kind` and the listing's own description, and installs it into `data_dir`.
+    ///
+    /// The listing is built from the archive's real digest so every failure the caller observes
+    /// comes from the package content rather than from transfer verification.
+    fn install_weather_release(
+        data_dir: &Path,
+        listing_kind: &str,
+        files: &[(&str, &[u8])],
+    ) -> Result<PathBuf, InstallError> {
+        let release_path = data_dir.join("pkg.orax");
+        write_orax_zip(&release_path, files);
+        let digest = sha256_file(&release_path);
+        let manifest = PluginManifest::parse(&manifest_with_kind_digest(
+            "weather",
+            "1.0.0",
+            listing_kind,
+            digest,
+        ))
+        .unwrap();
+        block_on(Installer::new(LocalFileDownloader).install(
+            &manifest,
+            &PluginNamespace::official(),
+            ResolvedReleaseSource::universal(DownloadSource::Local(release_path), digest),
+            data_dir,
+        ))
+    }
+
     /// Verifies a full local install: cache download, checksum, extraction, and cache cleanup.
     #[test]
     fn installs_local_release_end_to_end() {
         let temp_dir = TempDir::new().unwrap();
-        let release_path = temp_dir.path().join("pkg.orax");
-        write_orax_zip(
-            &release_path,
+        let package_dir = install_weather_release(
+            temp_dir.path(),
+            "agent",
             &[
                 (
                     "orax.toml",
@@ -828,22 +856,7 @@ mod tests {
                 ("main.js", b"export {};\n".as_slice()),
                 ("logo.svg", b"<svg/>".as_slice()),
             ],
-        );
-        let manifest = PluginManifest::parse(&manifest_with_digest(
-            "weather",
-            "1.0.0",
-            sha256_file(&release_path),
-        ))
-        .unwrap();
-
-        let installer = Installer::new(LocalFileDownloader);
-        let digest = sha256_file(&release_path);
-        let package_dir = block_on(installer.install(
-            &manifest,
-            &PluginNamespace::official(),
-            ResolvedReleaseSource::universal(DownloadSource::Local(release_path), digest),
-            temp_dir.path(),
-        ))
+        )
         .unwrap();
 
         let expected_package = temp_dir
@@ -878,18 +891,11 @@ mod tests {
     #[test]
     fn rejects_a_release_without_an_in_package_manifest() {
         let temp_dir = TempDir::new().unwrap();
-        let release_path = temp_dir.path().join("pkg.orax");
-        write_orax_zip(&release_path, &[("main.js", b"export {};\n".as_slice())]);
-        let digest = sha256_file(&release_path);
-        let manifest =
-            PluginManifest::parse(&manifest_with_digest("weather", "1.0.0", digest)).unwrap();
-
-        let error = block_on(Installer::new(LocalFileDownloader).install(
-            &manifest,
-            &PluginNamespace::official(),
-            ResolvedReleaseSource::universal(DownloadSource::Local(release_path), digest),
+        let error = install_weather_release(
             temp_dir.path(),
-        ))
+            "agent",
+            &[("main.js", b"export {};\n".as_slice())],
+        )
         .unwrap_err();
 
         assert!(matches!(error, InstallError::MissingManifest));
@@ -939,9 +945,9 @@ mod tests {
     #[test]
     fn rejects_a_package_manifest_missing_a_required_field() {
         let temp_dir = TempDir::new().unwrap();
-        let release_path = temp_dir.path().join("pkg.orax");
-        write_orax_zip(
-            &release_path,
+        let error = install_weather_release(
+            temp_dir.path(),
+            "agent",
             &[
                 (
                     "orax.toml",
@@ -950,27 +956,91 @@ mod tests {
                 ),
                 ("main.js", b"export {};\n".as_slice()),
             ],
-        );
-        let digest = sha256_file(&release_path);
-        let manifest =
-            PluginManifest::parse(&manifest_with_digest("weather", "1.0.0", digest)).unwrap();
-
-        let error = block_on(Installer::new(LocalFileDownloader).install(
-            &manifest,
-            &PluginNamespace::official(),
-            ResolvedReleaseSource::universal(DownloadSource::Local(release_path), digest),
-            temp_dir.path(),
-        ))
+        )
         .unwrap_err();
 
         match error {
-            InstallError::InvalidManifest(ora_plugin_manifest::ManifestError::InvalidToml {
-                source,
-                ..
-            }) => assert_eq!(source.message(), "missing field `description`"),
+            InstallError::InvalidManifest(source) => assert_eq!(
+                source.field_path(),
+                Some("description".to_owned()),
+                "{source}"
+            ),
             other => panic!("expected a structural manifest error, got {other:?}"),
         }
         assert_no_install_residue(temp_dir.path(), "official", "weather", "1.0.0");
+    }
+
+    /// A package whose manifest is not valid TOML is refused while staged, and the failure names
+    /// no field because a syntax error belongs to the document as a whole.
+    #[test]
+    fn rejects_a_package_manifest_that_is_not_valid_toml() {
+        let temp_dir = TempDir::new().unwrap();
+        let error = install_weather_release(
+            temp_dir.path(),
+            "agent",
+            &[
+                (
+                    "orax.toml",
+                    b"resolver = 1\nidentifier = \"weather\"\nkind = \"agent\"\nversion = \ndescription = \"A test plugin\"\n"
+                        .as_slice(),
+                ),
+                ("main.js", b"export {};\n".as_slice()),
+            ],
+        )
+        .unwrap_err();
+
+        match error {
+            InstallError::InvalidManifest(source) => {
+                assert_eq!(source.field_path(), None, "{source}");
+            }
+            other => panic!("expected a TOML syntax error, got {other:?}"),
+        }
+        assert_no_install_residue(temp_dir.path(), "official", "weather", "1.0.0");
+    }
+
+    /// Descriptive metadata is deliberately outside the identity comparison: a package whose
+    /// title, description, homepage, and license differ from its listing still installs, and
+    /// discovery reports the package's own text because that is what the installed tree holds.
+    #[test]
+    fn installs_a_package_whose_descriptive_metadata_differs_from_the_listing() {
+        let temp_dir = TempDir::new().unwrap();
+        let package_dir = install_weather_release(
+            temp_dir.path(),
+            "agent",
+            &[
+                (
+                    "orax.toml",
+                    b"resolver = 1\nidentifier = \"weather\"\ntitle = \"Weather Pro\"\nkind = \"agent\"\nversion = \"1.0.0\"\ndescription = \"Forecasts shipped by the package\"\nhomepage = \"https://example.com/weather\"\nlicense = \"MIT\"\n"
+                        .as_slice(),
+                ),
+                ("main.js", b"export {};\n".as_slice()),
+            ],
+        )
+        .unwrap();
+
+        let discovered = crate::PluginManager::discover(temp_dir.path());
+        let [plugin] = discovered.installed_plugins() else {
+            panic!(
+                "expected exactly the installed package, got {:?}",
+                discovered.installed_plugins()
+            );
+        };
+        assert_eq!(
+            (
+                plugin.package_root.clone(),
+                plugin.display_name.as_str(),
+                plugin.description.as_str(),
+                plugin.homepage.as_deref(),
+                plugin.license.as_deref(),
+            ),
+            (
+                package_dir,
+                "Weather Pro",
+                "Forecasts shipped by the package",
+                Some("https://example.com/weather"),
+                Some("MIT"),
+            )
+        );
     }
 
     /// A package whose kind-specific contribution is malformed is refused at install time with
@@ -978,9 +1048,9 @@ mod tests {
     #[test]
     fn rejects_a_package_whose_kind_contribution_is_malformed() {
         let temp_dir = TempDir::new().unwrap();
-        let release_path = temp_dir.path().join("pkg.orax");
-        write_orax_zip(
-            &release_path,
+        let error = install_weather_release(
+            temp_dir.path(),
+            "mcp",
             &[
                 (
                     "orax.toml",
@@ -992,19 +1062,7 @@ mod tests {
                     br#"{"schemaVersion":1,"transport":{"type":"http"}}"#.as_slice(),
                 ),
             ],
-        );
-        let digest = sha256_file(&release_path);
-        let manifest = PluginManifest::parse(&manifest_with_kind_digest(
-            "weather", "1.0.0", "mcp", digest,
-        ))
-        .unwrap();
-
-        let error = block_on(Installer::new(LocalFileDownloader).install(
-            &manifest,
-            &PluginNamespace::official(),
-            ResolvedReleaseSource::universal(DownloadSource::Local(release_path), digest),
-            temp_dir.path(),
-        ))
+        )
         .unwrap_err();
 
         match error {
@@ -1040,24 +1098,14 @@ mod tests {
 
         for (field, in_package_manifest, expected_message) in cases {
             let temp_dir = TempDir::new().unwrap();
-            let release_path = temp_dir.path().join("pkg.orax");
-            write_orax_zip(
-                &release_path,
+            let error = install_weather_release(
+                temp_dir.path(),
+                "agent",
                 &[
                     ("orax.toml", in_package_manifest.as_bytes()),
                     ("main.js", b"export {};\n".as_slice()),
                 ],
-            );
-            let digest = sha256_file(&release_path);
-            let manifest =
-                PluginManifest::parse(&manifest_with_digest("weather", "1.0.0", digest)).unwrap();
-
-            let error = block_on(Installer::new(LocalFileDownloader).install(
-                &manifest,
-                &PluginNamespace::official(),
-                ResolvedReleaseSource::universal(DownloadSource::Local(release_path), digest),
-                temp_dir.path(),
-            ))
+            )
             .unwrap_err();
 
             match error {
@@ -1097,9 +1145,9 @@ mod tests {
         .unwrap();
         std::fs::write(cache_root.join("weather-1.0.0.orax.tmp"), b"partial").unwrap();
 
-        let release_path = temp_dir.path().join("pkg.orax");
-        write_orax_zip(
-            &release_path,
+        install_weather_release(
+            temp_dir.path(),
+            "agent",
             &[
                 (
                     "orax.toml",
@@ -1107,17 +1155,7 @@ mod tests {
                 ),
                 ("main.js", b"export {};\n".as_slice()),
             ],
-        );
-        let digest = sha256_file(&release_path);
-        let manifest =
-            PluginManifest::parse(&manifest_with_digest("weather", "1.0.0", digest)).unwrap();
-
-        block_on(Installer::new(LocalFileDownloader).install(
-            &manifest,
-            &PluginNamespace::official(),
-            ResolvedReleaseSource::universal(DownloadSource::Local(release_path), digest),
-            temp_dir.path(),
-        ))
+        )
         .unwrap();
 
         assert!(

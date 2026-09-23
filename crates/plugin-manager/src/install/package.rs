@@ -143,35 +143,34 @@ fn ensure_same_identity(
     release_manifest: &PluginManifest,
     installed_manifest: &PluginManifest,
 ) -> Result<(), InstallError> {
-    if release_manifest.name() != installed_manifest.name() {
-        return Err(InstallError::invalid_field(
+    // Compared in this order so the reported field is the one that decides the most: a wrong
+    // identifier makes the version and kind comparisons meaningless.
+    let identity = [
+        (
             "identifier",
-            format!(
-                "package identifier `{}` does not match the marketplace listing identifier `{}`",
-                installed_manifest.name(),
-                release_manifest.name(),
-            ),
-        ));
-    }
-    if release_manifest.version() != installed_manifest.version() {
-        return Err(InstallError::invalid_field(
+            release_manifest.name().to_string(),
+            installed_manifest.name().to_string(),
+        ),
+        (
             "version",
-            format!(
-                "package version `{}` does not match the marketplace listing version `{}`",
-                installed_manifest.version(),
-                release_manifest.version(),
-            ),
-        ));
-    }
-    if release_manifest.kind() != installed_manifest.kind() {
-        return Err(InstallError::invalid_field(
+            release_manifest.version().to_string(),
+            installed_manifest.version().to_string(),
+        ),
+        (
             "kind",
-            format!(
-                "package kind `{}` does not match the marketplace listing kind `{}`",
-                installed_manifest.kind(),
-                release_manifest.kind(),
-            ),
-        ));
+            release_manifest.kind().to_string(),
+            installed_manifest.kind().to_string(),
+        ),
+    ];
+    for (field, listed, packaged) in identity {
+        if listed != packaged {
+            return Err(InstallError::invalid_field(
+                field,
+                format!(
+                    "package {field} `{packaged}` does not match the marketplace listing {field} `{listed}`"
+                ),
+            ));
+        }
     }
     Ok(())
 }
