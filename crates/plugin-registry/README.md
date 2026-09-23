@@ -38,6 +38,11 @@
   is neither carried over nor recorded, so "removed" and "unreachable" never produce the same
   index. The failures are stored in the index itself, because the consumers that explain stale
   listings read the cached file long after the sync call returned.
+- `RegistrySourceFailure::from_sync_error` turns a failed `RegistrySync::sync` into the message
+  that is shown to the user and persisted with the index. A failed Git command renders its whole
+  argument list, local checkout path included, so only Git's own `fatal:` / `error:` lines are
+  kept (falling back to Git's last line, then its exit code); the complete error stays with the
+  caller's log.
 - `RegistryIndex::resolve_manifest_all` resolves an id against the source that owns its namespace
   rather than the first source in order, so an install or update always follows the entry's own
   repository and proxy policy.
@@ -74,8 +79,9 @@
 `RegistryIndex::build_all(sources, updated_at)` returns a `RegistryBuild` carrying the ordered index
 and any skipped manifests; `RegistryIndex::build_with_failures(sources, failures, previous,
 updated_at)` returns the same shape while carrying over the failed sources' previous entries and
-recording the failures. `RegistryIndex::source_failures()` reads those records back, including from
-an index written by an older version that had none. `RegistryIndex::load(path)` /
+recording the failures, each built with `RegistrySourceFailure::new(url, message)` or
+`RegistrySourceFailure::from_sync_error(url, &error)`. `RegistryIndex::source_failures()` reads
+those records back, including from an index written by an older version that had none. `RegistryIndex::load(path)` /
 `RegistryIndex::write(path)` read and atomically persist an index, and
 `RegistryIndex::resolve_manifest_all(dirs, id)` finds a release manifest across sources in source
 order. `RegistrySync::sync(&git, &source)` returns the checkout directory so callers can then build

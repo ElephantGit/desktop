@@ -866,7 +866,8 @@ it("names the marketplace sources that could not be refreshed", async () => {
   state.marketplaceSourceFailures = [
     {
       url: "https://github.com/acme/plugins",
-      message: "git fetch failed",
+      message:
+        "fatal: unable to access 'https://github.com/acme/plugins/': Could not resolve host: github.com",
     },
   ];
   renderSettings(client);
@@ -876,7 +877,12 @@ it("names the marketplace sources that could not be refreshed", async () => {
   );
   expect(notice).toBeVisible();
   expect(
-    screen.getByText(/https:\/\/github\.com\/acme\/plugins/),
+    screen.getByText(/以下源未能刷新|These sources could not be refreshed/),
+  ).toBeVisible();
+  expect(
+    screen.getByText(
+      /^https:\/\/github\.com\/acme\/plugins\s*[（(]fatal: unable to access .*Could not resolve host: github\.com[）)]$/,
+    ),
   ).toBeVisible();
 });
 

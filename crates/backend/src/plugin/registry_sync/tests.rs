@@ -177,3 +177,27 @@ fn a_first_rebuild_without_any_refreshed_source_reports_never_synced()
     );
     Ok(())
 }
+
+/// Verifies a rebuild with no enabled source advances the sync time: nothing failed, and the empty
+/// catalog it writes is accurate as of that moment.
+#[test]
+fn a_rebuild_without_any_enabled_source_is_synced_now() -> Result<(), Box<dyn std::error::Error>> {
+    let official_root = TempDir::new()?;
+    let third_party_root = TempDir::new()?;
+    write_listing(official_root.path(), "weather", "Weather plugin")?;
+    let official = source_at(official_root.path(), OFFICIAL_URL);
+    let third_party = source_at(third_party_root.path(), THIRD_PARTY_URL);
+    let previous = cached_index(&official, &third_party);
+
+    let build = compose_rebuild(&[], &[], Some(&previous), REFRESHED_AT + 60);
+
+    assert_eq!(
+        (
+            listed(build.index()),
+            build.index().updated_at(),
+            build.index().source_failures().to_vec(),
+        ),
+        (Vec::new(), REFRESHED_AT + 60, Vec::new()),
+    );
+    Ok(())
+}

@@ -158,7 +158,7 @@ export const pluginTranslations = {
     "settings.plugins.syncFailures.title_one": "{{count}} 个市场源同步失败",
     "settings.plugins.syncFailures.title_other": "{{count}} 个市场源同步失败",
     "settings.plugins.syncFailures.description":
-      "以下源未刷新，列表中显示的是它们上次同步成功的数据：",
+      "以下源未能刷新，列表中来自这些源的插件（如有）仍是上次同步成功时的数据：",
     "settings.plugins.syncFailures.entry": "{{url}}（{{message}}）",
     "settings.plugins.syncing": "同步中…",
     "settings.plugins.viewAll": "查看全部",
@@ -538,7 +538,7 @@ export const pluginTranslations = {
     "settings.plugins.syncFailures.title_other":
       "{{count}} marketplace sources failed to sync",
     "settings.plugins.syncFailures.description":
-      "These sources were not refreshed, so their listings come from their last successful sync:",
+      "These sources could not be refreshed. Any listings from them are kept from their last successful sync:",
     "settings.plugins.syncFailures.entry": "{{url}} ({{message}})",
     "settings.plugins.syncing": "Syncing?",
     "settings.plugins.viewAll": "View all",

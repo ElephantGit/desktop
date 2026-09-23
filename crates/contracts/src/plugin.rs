@@ -270,7 +270,9 @@ pub struct SyncAvailablePluginsResponse {
 pub struct MarketplaceSourceSyncFailure {
     /// The canonical URL of the source that could not be refreshed.
     pub url: String,
-    /// Why the refresh failed, as reported by the transport that failed.
+    /// Why the refresh failed: Git's own diagnosis, or the source configuration that prevented it
+    /// such as a required proxy that is not configured. It never carries the Git command line or
+    /// local checkout paths; the complete error is only written to the log.
     pub message: String,
 }
 
