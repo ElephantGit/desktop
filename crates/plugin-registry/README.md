@@ -47,7 +47,9 @@
   rather than the first source in order, so an install or update always follows the entry's own
   repository and proxy policy.
 - `RegistryIndex::load` reads a previously written index file; `RegistryIndex::write` replaces the
-  target file atomically through `ora-utils` so readers never observe a partial index.
+  target file atomically through `ora-utils` so readers never observe a partial index. The index is
+  the only durable resident of `plugins/cache/`: downloaded release archives are transfer state
+  owned by `ora-plugin-manager`, which sweeps them by extension and never touches this file.
 - Each entry records the canonical URL of the source that published it, because every other
   display field comes from a manifest either repository can copy verbatim and the namespace is an
   opaque digest to a reader; attribution is what lets the UI tell two same-named listings apart.

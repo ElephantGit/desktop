@@ -3,6 +3,8 @@ export const pluginTranslations = {
   "zh-CN": {
     "errors.plugin_not_found": "未找到该插件。",
     "errors.plugin_host_incompatible": "当前主机不支持此插件的发布制品。",
+    "errors.plugin_package_invalid":
+      "插件包内容不合法（{{field}}）：{{message}}",
     "errors.pack_member_duplicate": "集合包重复声明了成员 {{pluginId}}。",
     "errors.pack_self_reference":
       "集合包不能把自身声明为成员（{{pluginId}}）。",
@@ -358,6 +360,8 @@ export const pluginTranslations = {
     "errors.plugin_not_found": "The plugin was not found.",
     "errors.plugin_host_incompatible":
       "This plugin's release artifact is not supported on the current host.",
+    "errors.plugin_package_invalid":
+      "The plugin package is invalid at {{field}}: {{message}}",
     "errors.pack_member_duplicate":
       "The pack declares member {{pluginId}} more than once.",
     "errors.pack_self_reference":
