@@ -105,11 +105,16 @@ pub(super) fn launch(
     );
     let mut address = None;
     until(|| {
+        // The bound endpoint is a structured log event, ordered with the rest of the log.
         address = fs::read_to_string(&log)
             .unwrap_or_default()
             .lines()
-            .find_map(|line| {
-                line.strip_prefix("ora-controller listening on tcp://")
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .find(|event| event["message"] == "ora-controller listening")
+            .and_then(|event| {
+                event["context"]["endpoint"]
+                    .as_str()
+                    .and_then(|endpoint| endpoint.strip_prefix("tcp://"))
                     .map(str::to_owned)
             });
         address.is_some()

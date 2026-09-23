@@ -48,7 +48,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let transport = cli.transport()?;
             runtime.block_on(async {
                 let service = Service::<SqliteStore>::start(config, transport, hosting).await?;
-                println!("ora-controller listening on {}", service.endpoint()?);
+                // Through the logger rather than println!, so the line keeps its place among the
+                // events written by the logger's own thread; launchers and tests read it there.
+                ora_logging::ora_info!(endpoint = %service.endpoint()?, "ora-controller listening");
                 serve(service).await
             })
         }
@@ -62,7 +64,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let endpoint = endpoint.clone();
             runtime.block_on(async {
                 let service = Service::<CloudStore>::start(config, hosting).await?;
-                println!("ora-controller coordinating through cloud at {endpoint}");
+                ora_logging::ora_info!(endpoint = %endpoint, "ora-controller coordinating through cloud");
                 serve(service).await
             })
         }

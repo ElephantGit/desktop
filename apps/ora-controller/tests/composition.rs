@@ -168,14 +168,11 @@ impl Executable {
     fn errors(&self) -> String {
         fs::read_to_string(&self.errors).unwrap_or_default()
     }
-    /// Waits for the actual bound address; the executable prints it only after its Node is ready.
+    /// Waits for the actual bound address; the executable logs it only after its Node is ready.
     fn address(&self) -> String {
         let mut address = None;
         until(|| {
-            address = self.log().lines().find_map(|line| {
-                line.strip_prefix("ora-controller listening on tcp://")
-                    .map(str::to_owned)
-            });
+            address = listening(&self.log());
             address.is_some()
         });
         address.unwrap()
@@ -221,6 +218,19 @@ fn until(mut ready: impl FnMut() -> bool) {
         assert!(Instant::now() < deadline, "observation timed out");
         std::thread::sleep(Duration::from_millis(/*millis*/ 10));
     }
+}
+
+/// The TCP address the executable reported as bound, read from its structured log line.
+fn listening(log: &str) -> Option<String> {
+    log.lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|event| event["message"] == "ora-controller listening")
+        .and_then(|event| {
+            event["context"]["endpoint"]
+                .as_str()
+                .and_then(|endpoint| endpoint.strip_prefix("tcp://"))
+                .map(str::to_owned)
+        })
 }
 
 /// Byte offset of a log line so ordering assertions read the actual sequence of events.
@@ -328,7 +338,7 @@ fn readiness_timeout_stops_node_and_never_opens_api() {
     let status = executable.wait();
     assert!(!status.success());
     assert!(executable.errors().contains("did not become ready"));
-    assert!(!executable.log().contains("listening on"));
+    assert!(!executable.log().contains("ora-controller listening"));
     until(|| node.has_exited().unwrap());
     // The lease is free again: the same identity reopens the state the refused run created.
     drop(SqliteStore::open(&deployment.home, ControllerId::new("owner")).unwrap());
@@ -352,7 +362,7 @@ fn normal_stop_orders_phases_and_retires_node() {
     let address = executable.address();
     let node = fake_node(&deployment);
     let log = executable.log();
-    assert!(position(&log, "managed Node ready") < position(&log, "listening on tcp://"));
+    assert!(position(&log, "managed Node ready") < position(&log, "ora-controller listening"));
     assert!(std::net::TcpStream::connect(&address).is_ok());
     assert!(executable.terminate().success());
     let log = executable.log();
@@ -500,12 +510,12 @@ fn cloud_persistence_serves_no_surface_and_creates_no_local_state() {
     assert!(!home.exists());
     let mut executable = Executable::start(path, &["--config", config]);
     until(|| {
-        executable
-            .log()
-            .contains("coordinating through cloud at http://127.0.0.1:1")
+        let log = executable.log();
+        log.contains("ora-controller coordinating through cloud")
+            && log.contains("http://127.0.0.1:1")
     });
     until(|| executable.log().contains("Cloud lease not acquired"));
-    assert!(!executable.log().contains("listening on"));
+    assert!(!executable.log().contains("ora-controller listening"));
     assert!(!home.exists());
     assert!(executable.terminate().success());
     assert!(!home.exists());

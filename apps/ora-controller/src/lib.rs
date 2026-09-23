@@ -22,7 +22,6 @@ mod store;
 mod transport;
 #[cfg(target_os = "linux")]
 pub use cloud::CloudStore;
-#[cfg(target_os = "linux")]
 pub use coordination::take_over;
 #[cfg(target_os = "linux")]
 pub use deployment::{ApiConfig, DeploymentConfig, NodeHosting, SingleNodeConfig};
