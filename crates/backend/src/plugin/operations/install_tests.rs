@@ -3580,6 +3580,174 @@ async fn package_identity_mismatch_is_reported_as_a_package_error() {
     );
 }
 
+/// A local import of a package whose manifest omits a required field is refused with the same
+/// public error a marketplace install reports, so both entry points agree on what a user can fix
+/// instead of the import path quoting a request ID for the same defect.
+#[tokio::test]
+async fn importing_an_invalid_package_is_reported_as_a_package_error() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, _host) = pack_test_plugins(data_dir.path(), &pool);
+    const IDENTIFIER: &str = "ora-space.incomplete-local";
+
+    // A real skill package whose in-archive manifest omits `description`.
+    let artifact = data_dir.path().join("incomplete-local.orax");
+    write_orax_zip(
+        &artifact,
+        &[
+            (
+                "orax.toml",
+                format!(
+                    "resolver = 1\nidentifier = \"{IDENTIFIER}\"\nkind = \"skill\"\nversion = \"1.0.0\"\n"
+                )
+                .as_bytes(),
+            ),
+            (
+                "assets/demo/SKILL.md",
+                b"---\nname: demo\ndescription: Demo\n---\n\nBody.\n",
+            ),
+        ],
+    );
+
+    let error = plugins
+        .import(ImportPluginRequest {
+            hook_execution_acknowledged: false,
+            path: artifact.to_string_lossy().into_owned(),
+        })
+        .await
+        .expect_err("an imported package missing a required manifest field is refused");
+
+    assert_eq!(error.classification(), ErrorClassification::Unprocessable);
+    assert_eq!(
+        error.public_error(),
+        &PublicError::PluginPackageInvalid(PluginPackageInvalidParams {
+            field: "description".to_owned(),
+            message: "missing field `description`".to_owned(),
+        })
+    );
+    assert!(
+        !data_dir
+            .path()
+            .join("plugins")
+            .join("installed")
+            .join("local")
+            .join(IDENTIFIER)
+            .exists(),
+        "nothing is committed under the local namespace for a rejected import"
+    );
+}
+
+/// An update whose newly published package is invalid is refused with the field it is missing
+/// while the installed version stays untouched, and the failed transfer leaves no cached
+/// archive: the update path shares the install-time validation and cleanup.
+#[tokio::test]
+async fn updating_to_an_invalid_package_keeps_the_installed_version() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    const MEMBER: &str = "ora-space.broken-update";
+    const MEMBER_ID: &str = "official/ora-space.broken-update";
+
+    // Install a working 1.0.0 through the production entry.
+    let (artifact_v1, sha_v1) = build_skill_artifact_v(data_dir.path(), MEMBER, "1.0.0");
+    stage_marketplace_checkout(
+        data_dir.path(),
+        &[(
+            MEMBER,
+            format!(
+                "resolver = 1\nidentifier = \"{MEMBER}\"\ntitle = \"Broken Update\"\nkind = \"skill\"\nversion = \"1.0.0\"\ndescription = \"Skill\"\nurl = \"https://example.com/{MEMBER}-v1.0.0.orax\"\nsha256 = \"{sha_v1}\"\n"
+            ),
+        )],
+    );
+    host.use_local_marketplace_release(MEMBER_ID, artifact_v1);
+    plugins
+        .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: MEMBER_ID.to_owned(),
+        })
+        .await
+        .expect("install member at 1.0.0");
+
+    // The marketplace publishes 1.1.0 whose archive omits `description` in its own manifest.
+    let artifact_v2 = data_dir
+        .path()
+        .join("artifacts")
+        .join(format!("{MEMBER}-v1.1.0.orax"));
+    write_orax_zip(
+        &artifact_v2,
+        &[
+            (
+                "orax.toml",
+                format!(
+                    "resolver = 1\nidentifier = \"{MEMBER}\"\nkind = \"skill\"\nversion = \"1.1.0\"\n"
+                )
+                .as_bytes(),
+            ),
+            (
+                "assets/python-core/SKILL.md",
+                b"---\nname: python-core\ndescription: Skill\n---\n\nBody.\n",
+            ),
+        ],
+    );
+    let sha_v2 = ora_utils::hash::sha256_file(&artifact_v2).expect("hash artifact");
+    let origin = data_dir.path().join("marketplace-origin");
+    let git_config = data_dir.path().join("gitconfig");
+    stage_listing(
+        &origin,
+        MEMBER,
+        &format!(
+            "resolver = 1\nidentifier = \"{MEMBER}\"\ntitle = \"Broken Update\"\nkind = \"skill\"\nversion = \"1.1.0\"\ndescription = \"Skill\"\nurl = \"https://example.com/{MEMBER}-v1.1.0.orax\"\nsha256 = \"{sha_v2}\"\n"
+        ),
+    );
+    run_git(&origin, &git_config, &["add", "."]);
+    run_git(
+        &origin,
+        &git_config,
+        &["commit", "-m", "publish a broken 1.1.0"],
+    );
+    plugins
+        .sync_available(ora_contracts::SyncAvailablePluginsRequest {})
+        .expect("sync marketplace");
+    host.use_local_marketplace_release(MEMBER_ID, artifact_v2);
+
+    let error = plugins
+        .update(UpdatePluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: MEMBER_ID.to_owned(),
+        })
+        .await
+        .expect_err("an update to an invalid package is refused");
+
+    assert_eq!(error.classification(), ErrorClassification::Unprocessable);
+    assert_eq!(
+        error.public_error(),
+        &PublicError::PluginPackageInvalid(PluginPackageInvalidParams {
+            field: "description".to_owned(),
+            message: "missing field `description`".to_owned(),
+        })
+    );
+    assert!(
+        member_installed(data_dir.path(), MEMBER, "1.0.0"),
+        "the working installation survives a refused update"
+    );
+    assert!(
+        !member_installed(data_dir.path(), MEMBER, "1.1.0"),
+        "the broken release is never committed"
+    );
+    assert!(
+        !data_dir
+            .path()
+            .join("plugins")
+            .join("cache")
+            .join("official")
+            .join(format!("{MEMBER}-1.1.0.orax"))
+            .exists(),
+        "the failed update leaves no cached archive"
+    );
+}
+
 // ---- Hook lifecycle execution: authorization, initialization, and removal ----
 
 const HOOK_MEMBER: &str = "rtk-ai.rtk";
