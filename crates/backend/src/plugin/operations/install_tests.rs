@@ -3533,6 +3533,66 @@ async fn incomplete_package_manifest_is_reported_as_a_package_error() {
     );
 }
 
+/// A marketplace package whose in-package manifest is not valid TOML is refused with
+/// `plugin_package_invalid` naming the manifest file itself, because a syntax error belongs to no
+/// single field, and nothing is committed.
+#[tokio::test]
+async fn malformed_package_manifest_is_reported_against_the_manifest_file() {
+    let _trace = trace_guard();
+    let data_dir = TempDir::new().expect("data dir");
+    let pool = test_pool(data_dir.path());
+    let (plugins, host) = pack_test_plugins(data_dir.path(), &pool);
+    const MEMBER: &str = "ora-space.malformed";
+    const MEMBER_ID: &str = "official/ora-space.malformed";
+
+    // The `version` value is missing, so the document does not parse as TOML at all.
+    let artifact = data_dir.path().join("malformed.orax");
+    write_orax_zip(
+        &artifact,
+        &[
+            (
+                "orax.toml",
+                b"resolver = 1\nidentifier = \"ora-space.malformed\"\nkind = \"skill\"\nversion = \ndescription = \"Demo\"\n"
+                    .as_slice(),
+            ),
+            (
+                "assets/demo/SKILL.md",
+                b"---\nname: demo\ndescription: Demo\n---\n\nBody.\n".as_slice(),
+            ),
+        ],
+    );
+    let sha = ora_utils::hash::sha256_file(&artifact).expect("hash artifact");
+    stage_marketplace_checkout(
+        data_dir.path(),
+        &[(
+            MEMBER,
+            skill_listing(MEMBER, &sha, /*marketplace_visible*/ true),
+        )],
+    );
+    host.use_local_marketplace_release(MEMBER_ID, artifact);
+
+    let error = plugins
+        .install(InstallPluginRequest {
+            hook_execution_acknowledged: false,
+            plugin_id: MEMBER_ID.to_owned(),
+        })
+        .await
+        .expect_err("a package whose manifest is not valid TOML is refused");
+
+    assert_eq!(error.classification(), ErrorClassification::Unprocessable);
+    assert_eq!(
+        error.public_error(),
+        &PublicError::PluginPackageInvalid(PluginPackageInvalidParams {
+            field: "orax.toml".to_owned(),
+            message: "string values must be quoted, expected literal string".to_owned(),
+        })
+    );
+    assert!(
+        !member_installed(data_dir.path(), MEMBER, "1.0.0"),
+        "nothing is committed for a rejected package"
+    );
+}
+
 /// A package whose own manifest contradicts the listing's identity is refused, so the installed
 /// directory can never disagree with the manifest discovery reads back from it.
 #[tokio::test]

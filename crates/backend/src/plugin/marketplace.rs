@@ -403,102 +403,82 @@ impl PluginApi {
 ///
 /// Host incompatibility and invalid package content are the two failure families a user can
 /// respond to — pick another release, or fix and republish the package — so both are classified
-/// explicitly and every other failure (transport, host I/O, installer defect) stays internal.
+/// explicitly. A package failure carries the field the installer refused, which is what turns a
+/// defect from "quote this request ID" into a statement the user can act on. Transport failures,
+/// host I/O problems, and installer defects have no field to name and stay `internal_error`.
+///
+/// The match is exhaustive so a new installer failure must be assigned a family here rather than
+/// silently defaulting to `internal_error`.
 pub(super) fn map_install_error(context: &'static str, error: InstallError) -> BackendError {
-    match error {
+    let public_error = match &error {
         InstallError::NoArtifactForTarget { .. }
         | InstallError::MissingRelease
         | InstallError::UnsupportedHost
         | InstallError::TargetMismatch { .. }
-        | InstallError::MissingArtifactTarget => BackendError::new(
-            ErrorClassification::Unprocessable,
-            PublicError::PluginHostIncompatible(EmptyErrorParams {}),
-            format!("{error}"),
-        ),
-        error => match package_invalid_params(&error) {
-            Some(params) => BackendError::new(
-                ErrorClassification::Unprocessable,
-                PublicError::PluginPackageInvalid(params),
-                format!("{error}"),
-            ),
-            None => BackendError::internal(context, error),
-        },
-    }
-}
-
-/// Describes the package field one install failure blames, or `None` when the failure is not
-/// attributable to package content.
-///
-/// The installer knows exactly which manifest field or file it refused, so carrying that through
-/// `plugin_package_invalid` is what turns a package defect from "quote this request ID" into a
-/// statement the user can act on. Transport failures, host I/O problems, and installer defects
-/// have no field to name and stay `internal_error`.
-pub(super) fn package_invalid_params(error: &InstallError) -> Option<PluginPackageInvalidParams> {
-    let (field, message) = match error {
-        InstallError::MissingManifest => (
+        | InstallError::MissingArtifactTarget => {
+            Some(PublicError::PluginHostIncompatible(EmptyErrorParams {}))
+        }
+        InstallError::MissingManifest => Some(package_invalid(
             MANIFEST_FILE_NAME.to_owned(),
             format!("the package does not contain {MANIFEST_FILE_NAME} at its root"),
-        ),
-        InstallError::InvalidManifest(source) => {
-            (manifest_error_field(source), manifest_error_message(source))
-        }
+        )),
+        // A TOML syntax error concerns the document as a whole, so the manifest file is the field.
+        InstallError::InvalidManifest(source) => Some(package_invalid(
+            source
+                .field_path()
+                .unwrap_or_else(|| MANIFEST_FILE_NAME.to_owned()),
+            match source {
+                // The deserializer message is the reason; the wrapper sentence would only repeat
+                // that the manifest is invalid.
+                ManifestError::InvalidToml { source, .. } => source.message().to_owned(),
+                ManifestError::UnsupportedResolver { .. } | ManifestError::InvalidField { .. } => {
+                    source.to_string()
+                }
+            },
+        )),
         InstallError::InvalidPackage {
             field_path,
             message,
-        } => (field_path.clone(), message.clone()),
+        } => Some(package_invalid(field_path.clone(), message.clone())),
         // A declared digest the bytes do not match is a package-integrity failure: retrying may
         // recover a truncated transfer, but no local fix makes the archive match its declaration.
-        InstallError::ChecksumMismatch { .. } => ("sha256".to_owned(), error.to_string()),
-        // The downloader verifies the digest while writing and removes its temporary file, so a
-        // mismatch here means the published bytes are not the bytes the listing describes.
-        InstallError::Download(source)
-            if matches!(source.as_ref(), DownloadError::ChecksumMismatch { .. }) =>
-        {
-            (
+        InstallError::ChecksumMismatch { .. } => {
+            Some(package_invalid("sha256".to_owned(), error.to_string()))
+        }
+        InstallError::Download(source) => match source.as_ref() {
+            // The downloader verifies the digest while writing and removes its temporary file, so
+            // a mismatch means the published bytes are not the bytes the listing describes.
+            DownloadError::ChecksumMismatch { .. } => Some(package_invalid(
                 "sha256".to_owned(),
                 "the downloaded package does not match the sha256 its listing declares".to_owned(),
-            )
-        }
-        _ => return None,
+            )),
+            DownloadError::Network { .. }
+            | DownloadError::HttpStatus { .. }
+            | DownloadError::Io { .. }
+            | DownloadError::TooLarge { .. }
+            | DownloadError::Timeout { .. }
+            | DownloadError::Cancelled
+            | DownloadError::InvalidSource(_) => None,
+        },
+        // A corrupt archive has no single field to blame, and the archive error family already
+        // names what broke; the remaining failures are host-side, not package content.
+        InstallError::Extract { .. }
+        | InstallError::AlreadyInstalled { .. }
+        | InstallError::Io { .. } => None,
     };
-    Some(PluginPackageInvalidParams { field, message })
-}
-
-/// Returns the manifest field one parse failure is attributed to.
-fn manifest_error_field(error: &ManifestError) -> String {
-    match error {
-        ManifestError::UnsupportedResolver { .. } => "resolver".to_owned(),
-        ManifestError::InvalidField { field, .. } => field.to_string(),
-        // A nested structural failure carries its dotted TOML path. A root-level one — TOML
-        // syntax, or a missing top-level field — names no path, so the missing field is recovered
-        // from the deserializer's message and the manifest file is the fallback field.
-        ManifestError::InvalidToml { path, source, .. } => path
-            .clone()
-            .or_else(|| missing_field_name(source.message()).map(str::to_owned))
-            .unwrap_or_else(|| MANIFEST_FILE_NAME.to_owned()),
+    match public_error {
+        Some(public_error) => BackendError::new(
+            ErrorClassification::Unprocessable,
+            public_error,
+            format!("{error}"),
+        ),
+        None => BackendError::internal(context, error),
     }
 }
 
-/// Returns the message one parse failure should show, without the installer's wrapper sentence.
-fn manifest_error_message(error: &ManifestError) -> String {
-    match error {
-        ManifestError::InvalidToml { source, .. } => source.message().to_owned(),
-        ManifestError::UnsupportedResolver { .. } | ManifestError::InvalidField { .. } => {
-            error.to_string()
-        }
-    }
-}
-
-/// Recovers the field name from serde's `missing field \`x\`` deserialization message.
-///
-/// The manifest schema declares its required fields in `serde`, so a missing one is reported by
-/// the deserializer rather than by a `ManifestError` variant, and its message is the only place
-/// the name appears. The install test
-/// `plugin::operations::install_tests::incomplete_package_manifest_is_reported_as_a_package_error`
-/// pins the extraction against a real parse, so a wording change fails there rather than silently
-/// degrading the reported field to the manifest file.
-fn missing_field_name(message: &str) -> Option<&str> {
-    message.strip_prefix("missing field `")?.strip_suffix('`')
+/// Builds the `plugin_package_invalid` contract error for one refused package field.
+fn package_invalid(field: String, message: String) -> PublicError {
+    PublicError::PluginPackageInvalid(PluginPackageInvalidParams { field, message })
 }
 
 /// Replaces only the selected transfer locator while preserving digest and target verification.
