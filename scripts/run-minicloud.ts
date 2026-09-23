@@ -36,8 +36,15 @@ async function defaultFile(name: string, value: string): Promise<void> {
   }
 }
 
+/**
+ * Which persistence authority the launched Controller uses. Each mode keeps its own state root: a
+ * Node's journal records executions of exactly one authority, so SQLite-era work must never be
+ * reported to a Cloud-backed Controller, nor clone destinations shared between them.
+ */
+export type Mode = "local" | "cloud";
+
 /** Initializes explicit deployment inputs without creating the host's exclusively-owned state directory. */
-export async function initialize(root: string): Promise<void> {
+export async function initialize(root: string, mode: Mode): Promise<void> {
   await directory(root);
   for (const name of [
     "config",
@@ -46,7 +53,8 @@ export async function initialize(root: string): Promise<void> {
     "controller",
     "repositories",
     "home",
-    "vite",
+    // Only the local mode serves the minicloud frontend.
+    ...(mode === "local" ? ["vite"] : []),
   ]) {
     await directory(path.join(root, name));
   }
@@ -108,12 +116,22 @@ export async function initialize(root: string): Promise<void> {
       recovery_interval_ms: 1000,
     }),
   );
+  // Cloud mode points at a separately started Cloud server on its default loopback gRPC port; the
+  // Controller names itself with controller_id and is not authenticated. Edit the file for other hosts.
+  const persistence =
+    mode === "local"
+      ? { kind: "sqlite" }
+      : {
+          kind: "cloud",
+          endpoint: "http://127.0.0.1:8082",
+          claim_interval_ms: 500,
+        };
   await defaultFile(
     path.join(config, "controller.json"),
     json({
       controller: {
         home_directory: controller,
-        persistence: { kind: "sqlite" },
+        persistence,
         protected_state_directories: [node, host],
         controller_id: "minicloud-controller",
         nodes: [
@@ -126,7 +144,8 @@ export async function initialize(root: string): Promise<void> {
         reconnect_ms: 1000,
         timezone,
       },
-      api: { node_id: "minicloud-node" },
+      // Cloud persistence refuses a JSON surface: acceptance belongs to Cloud's public API.
+      ...(mode === "local" ? { api: { node_id: "minicloud-node" } } : {}),
       single_node: {
         node_executable: path.join(workspace, "target", "debug", "ora-node"),
         node_config: path.join(config, "node.json"),
@@ -135,29 +154,42 @@ export async function initialize(root: string): Promise<void> {
       },
     }),
   );
-  // Listener choices are per-process flags, so the launcher keeps them beside the frontend port.
-  await defaultFile(
-    path.join(config, "client.json"),
-    json({ port: 5174, controllerPort: 4820 }),
-  );
+  if (mode === "local") {
+    // Listener choices are per-process flags, so the launcher keeps them beside the frontend port.
+    await defaultFile(
+      path.join(config, "client.json"),
+      json({ port: 5174, controllerPort: 4820 }),
+    );
+  }
 }
 
-/** Builds the hosted Controller command line; the API stays on loopback by explicit argument. */
+/** How the launched Controller is reached: SQLite serves the JSON API on a port, Cloud serves none. */
+export type ControllerListener =
+  { kind: "sqlite"; port: number } | { kind: "cloud" };
+
+/**
+ * Builds the hosted Controller command line. The SQLite API stays on loopback by explicit argument;
+ * the cloud form passes no listener flag at all, because the executable refuses them there.
+ */
 export function controllerArguments(
   configFile: string,
-  port: number,
+  listener: ControllerListener,
 ): string[] {
-  return [
-    "--config",
-    configFile,
-    "--single-node",
-    "--transport",
-    "tcp",
-    "--host",
-    "127.0.0.1",
-    "--port",
-    String(port),
-  ];
+  const hosted = ["--config", configFile, "--single-node"];
+  switch (listener.kind) {
+    case "sqlite":
+      return [
+        ...hosted,
+        "--transport",
+        "tcp",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        String(listener.port),
+      ];
+    case "cloud":
+      return hosted;
+  }
 }
 
 type Child = {
@@ -172,16 +204,27 @@ async function run(): Promise<void> {
   if (Deno.build.os !== "linux") {
     throw new Error("minicloud currently requires Linux.");
   }
-  if (Deno.args.some((arg) => !["--init-only", "--no-build"].includes(arg))) {
-    throw new Error("Usage: run-minicloud.ts [--init-only] [--no-build]");
+  if (
+    Deno.args.some(
+      (arg) => !["--init-only", "--no-build", "--cloud"].includes(arg),
+    )
+  ) {
+    throw new Error(
+      "Usage: run-minicloud.ts [--init-only] [--no-build] [--cloud]",
+    );
   }
+  const mode: Mode = Deno.args.includes("--cloud") ? "cloud" : "local";
   // State lives under the home directory, not the checkout: Unix socket paths are limited to
   // 108 bytes, and checkout locations (especially generated worktree names) are not under the
   // launcher's control. The real home path is what the kernel sees, so resolve it before measuring.
   const home = Deno.env.get("HOME");
   if (!home) throw new Error("HOME must be set to locate minicloud state.");
   const realHome = await Deno.realPath(home);
-  const base = path.join(realHome, ".ora", "minicloud");
+  const base = path.join(
+    realHome,
+    ".ora",
+    mode === "local" ? "minicloud" : "cloud",
+  );
   for (let ancestor = realHome; ; ancestor = path.dirname(ancestor)) {
     const info = await Deno.lstat(ancestor);
     if (info.isSymlink || (info.uid !== 0 && info.uid !== Deno.uid())) {
@@ -418,7 +461,7 @@ async function run(): Promise<void> {
 
   let ownsHost = false;
   try {
-    await initialize(root);
+    await initialize(root, mode);
     if (Deno.args.includes("--init-only")) {
       console.log(`Initialized ${root}`);
       return;
@@ -459,9 +502,6 @@ async function run(): Promise<void> {
     const controllerConfig = JSON.parse(
       await Deno.readTextFile(path.join(config, "controller.json")),
     );
-    const clientConfig = JSON.parse(
-      await Deno.readTextFile(path.join(config, "client.json")),
-    );
     const binary = (name: string) =>
       path.join(workspace, "target", "debug", name);
     if (
@@ -478,15 +518,42 @@ async function run(): Promise<void> {
         "Launcher-owned state paths must remain under the launcher's state directory; use the standalone binaries for other deployments.",
       );
     }
-    const controllerPort: number = clientConfig.controllerPort ?? 4820;
-    for (const port of [controllerPort, clientConfig.port]) {
-      if (!Number.isInteger(port) || port < 1 || port > 65535) {
-        throw new Error("Use valid local ports.");
+    // A mismatch would either wait forever for an API the cloud form never serves or run a local
+    // Controller over state reserved for Cloud work, so it is refused before anything starts.
+    const persistence = controllerConfig.controller.persistence;
+    const expected = mode === "local" ? "sqlite" : "cloud";
+    if (persistence?.kind !== expected) {
+      throw new Error(
+        `controller.json in ${config} must select ${expected} persistence in ${mode} mode.`,
+      );
+    }
+    // Only the local mode has ports: the Controller API and the minicloud frontend.
+    const clientConfig =
+      mode === "local"
+        ? JSON.parse(await Deno.readTextFile(path.join(config, "client.json")))
+        : undefined;
+    const controllerPort: number = clientConfig?.controllerPort ?? 4820;
+    if (clientConfig) {
+      for (const port of [controllerPort, clientConfig.port]) {
+        if (!Number.isInteger(port) || port < 1 || port > 65535) {
+          throw new Error("Use valid local ports.");
+        }
+        const listener = Deno.listen({ hostname: "127.0.0.1", port });
+        listener.close();
       }
-      const listener = Deno.listen({ hostname: "127.0.0.1", port });
-      listener.close();
     }
     const url = new URL(`http://127.0.0.1:${controllerPort}`);
+    const http = async (address: string) => {
+      try {
+        const response = await fetch(address, {
+          signal: AbortSignal.timeout(1000),
+        });
+        await response.body?.cancel();
+        return response.ok;
+      } catch {
+        return false;
+      }
+    };
     const bytes = await Deno.readFile(binary("ora-process-guardian"));
     const hash = Array.from(
       new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
@@ -516,62 +583,90 @@ async function run(): Promise<void> {
         "A host or Node is already running for this directory; stop that owner before using the launcher.",
       );
     }
-    let mode = "create";
+    let hostMode = "create";
     try {
       await Deno.lstat(host);
-      mode = "recover";
+      hostMode = "recover";
     } catch (error) {
       if (!(error instanceof Deno.errors.NotFound)) throw error;
     }
     const hostChild = start("host", [
       binary("ora-process-host"),
-      mode,
+      hostMode,
       host,
       guardian,
     ]);
     await ready(hostChild, () => socket(path.join(host, "host.sock")));
     ownsHost = true;
+    // Cloud is started separately and the Controller retries it forever, so an unreachable Cloud
+    // is reported once instead of failing a startup that would recover. A late connection is closed.
+    if (mode === "cloud") {
+      const cloud = new URL(persistence.endpoint);
+      const attempt = Deno.connect({
+        hostname: cloud.hostname,
+        port: Number(cloud.port || 80),
+      }).then(
+        (connection) => {
+          connection.close();
+          return true;
+        },
+        () => false,
+      );
+      if (!(await Promise.race([attempt, delay(1000).then(() => false)]))) {
+        console.warn(
+          `Cloud ${cloud.origin} is not reachable yet; start it, the Controller keeps retrying.`,
+        );
+      }
+    }
     // The Controller starts Node inside its own process group; a group stop below reaches both.
     const controller = start("controller", [
       binary("ora-controller"),
       ...controllerArguments(
         path.join(config, "controller.json"),
-        controllerPort,
+        mode === "local"
+          ? { kind: "sqlite", port: controllerPort }
+          : { kind: "cloud" },
       ),
     ]);
-    const http = async (address: string) => {
-      try {
-        const response = await fetch(address, {
-          signal: AbortSignal.timeout(1000),
-        });
-        await response.body?.cancel();
-        return response.ok;
-      } catch {
-        return false;
+    const services = [hostChild, controller];
+    if (mode === "local") {
+      await ready(controller, () => http(`${url.origin}/api/clones`));
+      const vite = start(
+        "vite",
+        [
+          path.join(workspace, "node_modules", ".bin", "vite"),
+          "--port",
+          String(clientConfig.port),
+        ],
+        path.join(workspace, "apps", "minicloud", "client"),
+        {
+          MINICLOUD_SERVER_URL: url.origin,
+          MINICLOUD_CACHE_DIR: path.join(root, "vite"),
+        },
+      );
+      services.push(vite);
+      const frontend = `http://127.0.0.1:${clientConfig.port}`;
+      await ready(vite, () => http(frontend));
+      console.log(
+        `minicloud ready: ${frontend}\nData: ${root}\nCtrl+C stops all development components; data is preserved.`,
+      );
+    } else {
+      // The cloud form opens no port to probe, and waiting for Cloud would make readiness depend on
+      // another deployment. A short grace period only surfaces configuration errors before the
+      // ready line; later exits are caught by the supervision below.
+      await Promise.race([controller.status, stopped, delay(2000)]);
+      if (stopping || controller.exited) {
+        throw new Error("controller did not start.");
       }
-    };
-    await ready(controller, () => http(`${url.origin}/api/clones`));
-    const vite = start(
-      "vite",
-      [
-        path.join(workspace, "node_modules", ".bin", "vite"),
-        "--port",
-        String(clientConfig.port),
-      ],
-      path.join(workspace, "apps", "minicloud", "client"),
-      {
-        MINICLOUD_SERVER_URL: url.origin,
-        MINICLOUD_CACHE_DIR: path.join(root, "vite"),
-      },
-    );
-    const frontend = `http://127.0.0.1:${clientConfig.port}`;
-    await ready(vite, () => http(frontend));
-    console.log(
-      `minicloud ready: ${frontend}\nData: ${root}\nCtrl+C stops all development components; data is preserved.`,
-    );
+      // Cloud's devgateway on its default port is the sign-in-free entry to the tenant clone API.
+      const submit = `\nSubmit clones through Cloud's devgateway, for example:\n  curl -X POST http://127.0.0.1:8090/api/clones -H 'content-type: application/json' -d '{"requestId":"r1","repository":"https://github.com/octocat/Hello-World","branch":"master"}'`;
+      console.log(
+        `Cloud mode ready: the Controller coordinates through ${persistence.endpoint}\nData: ${root}${submit}\nAfter a killed run, work waits until Cloud's 30 s lease expires.\nCtrl+C stops all development components; data is preserved.`,
+      );
+    }
     await Promise.race([
       stopped,
-      ...[hostChild, controller, vite].map(async (child) => {
+      ...services.map(async (child) => {
         const status = await child.status;
         if (!stopping) {
           throw new Error(
