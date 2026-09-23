@@ -155,6 +155,11 @@ export const pluginTranslations = {
     "settings.plugins.sourceRemoveFailed": "删除市场源失败。",
     "settings.plugins.neverSynced": "尚未同步",
     "settings.plugins.lastSynced": "上次同步：{{time}}",
+    "settings.plugins.syncFailures.title_one": "{{count}} 个市场源同步失败",
+    "settings.plugins.syncFailures.title_other": "{{count}} 个市场源同步失败",
+    "settings.plugins.syncFailures.description":
+      "以下源未刷新，列表中显示的是它们上次同步成功的数据：",
+    "settings.plugins.syncFailures.entry": "{{url}}（{{message}}）",
     "settings.plugins.syncing": "同步中…",
     "settings.plugins.viewAll": "查看全部",
     "settings.plugins.viewAllInstalled_one": "查看全部 {{count}} 个插件",
@@ -528,6 +533,13 @@ export const pluginTranslations = {
       "Failed to remove marketplace source.",
     "settings.plugins.neverSynced": "Never synced",
     "settings.plugins.lastSynced": "Last synced: {{time}}",
+    "settings.plugins.syncFailures.title_one":
+      "{{count}} marketplace source failed to sync",
+    "settings.plugins.syncFailures.title_other":
+      "{{count}} marketplace sources failed to sync",
+    "settings.plugins.syncFailures.description":
+      "These sources were not refreshed, so their listings come from their last successful sync:",
+    "settings.plugins.syncFailures.entry": "{{url}} ({{message}})",
     "settings.plugins.syncing": "Syncing?",
     "settings.plugins.viewAll": "View all",
     "settings.plugins.viewAllInstalled_one": "View all {{count}} plugin",
