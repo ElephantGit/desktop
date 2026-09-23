@@ -10,6 +10,8 @@ Desktop 在 `bindings.rs` 和分领域 `bindings/` 中声明宿主绑定。Unary
 
 一个可克隆 Backend 服务所有命令。共享 wrapper 分配 request ID、创建 span、执行业务并投影错误。Session load、prompt 和 app events 通过 Tauri Channel 传送有序 data/error/end 帧；call ID 控制单流取消，request ID 关联完整请求。注册先于领域启动，直到所有者释放才允许复用 ID；取消不会放弃尚未完成的资源创建，迟到资源立即清理。退出取消启动中和运行中的注册并拒绝新流。
 
+异步 executor（`run_async_backend` 及其带 request ID 的变体）要求每个领域调用都以已装箱的 future（`Box::pin(..)`）传入，直接 await 领域 future 的手写命令同样装箱。Tauri 在主线程的 WebView2 IPC 回调内构造每个异步命令的 future，而该回调约 1 MB 的栈已被 handler 之下的 webview/Tauri 帧占用数百 KB。跨命令 await 持有的深层领域 future——仅市场安装链就单体化成约 650 KB 的状态机——会在异步 runtime 首次轮询之前溢出该栈；0.2.0 release 正是因此（WER `0xc00000fd`）在点击市场安装的瞬间崩溃。在调用点装箱使命令 future 保持指针大小，深层链只在首次轮询包装器的 runtime 线程上构造，而装箱参数类型使该约束由编译器强制。Desktop 测试以显式的 IPC future 尺寸预算锁定市场传输命令。
+
 Agent、Skill、工作流定义、项目、任务、workspace、插件、workflow run、session 和运行时状态命令各使用窄领域句柄，不增加根 Backend 转发。共享 executor 管请求生命周期，领域负责阻塞工作、级联、状态提交和通知。Workspace 克隆共享锁和清理租约；插件所有者负责 reconcile，surface 仅取 gateway；workflow run 持有 run gate 并在终态提交后清理 session。Session 标题先持久化再更新 actor；app events 只暴露订阅能力。Git identity 使用无状态 Backend 导出。
 
 前端将 `createTauriTransport()` 注入 `createContractsClient`，保持请求 DTO 不变。业务错误直接返回 `{ code, params, requestId }`；本地调用失败不伪造 request ID。Workspace 查询返回权威根路径和可选分支，事件流复用统一 framing、取消和完成机制。
