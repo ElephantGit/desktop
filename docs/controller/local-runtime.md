@@ -161,7 +161,7 @@ The Cloud adapter's verdict mapping, same-identity retransmission and message tr
 tested; the runtime and executable tests cover that the cloud form opens no local state, serves no
 JSON surface, refuses a JSON section or listener flags, and stays up while Cloud is unreachable. Its
 behavior against a real Cloud (lease, claim, dispatch, takeover, restart without a second clone) is
-verified end to end with the minicloud cloud form and is not yet an automated test. Framed-session tests cover bounded Unknown retransmission
+verified end to end with the [minicloud cloud form](../minicloud/runtime.md#cloud-persistence-mode) and is not yet an automated test. Framed-session tests cover bounded Unknown retransmission
 and rejection of a wrong Node identity or missing clone capability before dispatch.
 The independent Controller–Node–host/guardian test performs real HTTPS clone, intercepts Ack, kills
 Controller after durable takeover, restarts it offline, then checks original result, exact Ack, cleared

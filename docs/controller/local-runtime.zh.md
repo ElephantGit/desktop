@@ -135,8 +135,8 @@ proto 定义，Controller 作为客户端拨出（见 [Controller–Cloud 契约
 真实 SQLite 测试经 `CoordinationStore` 与 `CloneIntake` 接口覆盖接受、独占、事务失败、查询／事件乱序、
 重复接管、冲突事实，以及已完成执行退出周期查询。Cloud 适配器的裁决映射、同身份重传与消息翻译有单元测试；
 运行时与可执行程序测试覆盖云端形态不建本机状态、不提供 JSON 表面、拒绝 `api` 段或监听器参数、Cloud
-不可达时保持运行。它对真实 Cloud 的行为（租约、领取、派发、接管、重启不重复 clone）经 minicloud 云端
-形态端到端验证，尚未自动化；
+不可达时保持运行。它对真实 Cloud 的行为（租约、领取、派发、接管、重启不重复 clone）经 [minicloud 云端
+形态](../minicloud/runtime.zh.md#云端持久模式)端到端验证，尚未自动化；
 framed 会话测试覆盖 Unknown 重传有界，以及错误 Node 身份或缺少 clone 能力时在派发前拒绝。
 独立 Controller–Node–host／guardian 测试执行真实 HTTPS clone，
 截住 Ack 后在持久接管之后强杀 Controller，再离线重启，检查原结果、精确 Ack、Node outbox 清空和唯一变更 Run。
