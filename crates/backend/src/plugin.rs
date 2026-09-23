@@ -701,16 +701,11 @@ impl PluginApi {
         })
         .await
         .map_err(|error| BackendError::internal("failed to join plugin import task", error))?
-        .map_err(|error| match error {
-            ora_plugin_manager::InstallError::TargetMismatch { .. }
-            | ora_plugin_manager::InstallError::MissingArtifactTarget
-            | ora_plugin_manager::InstallError::UnsupportedHost
-            | ora_plugin_manager::InstallError::NoArtifactForTarget { .. } => BackendError::new(
-                ErrorClassification::Unprocessable,
-                PublicError::PluginHostIncompatible(EmptyErrorParams {}),
-                format!("{error}"),
-            ),
-            error => BackendError::internal("failed to import plugin archive", error),
+        // The same mapping a marketplace install uses: a local archive is refused for the same
+        // reasons, so both entry points report host incompatibility and invalid package content
+        // through the same public errors instead of diverging on which one is user-actionable.
+        .map_err(|error| {
+            marketplace::map_install_error("failed to import plugin archive", error)
         })?;
         let plugin_id = package.id.canonical();
         self.finalize_new_install(&plugin_id).await?;
