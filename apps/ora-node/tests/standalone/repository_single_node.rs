@@ -2,8 +2,8 @@ use super::*;
 use crate::support::until;
 use ora_contracts::controller_api::*;
 use ora_controller::{
-    ApiConfig, DeploymentConfig, NodeEndpoint, NodeHosting, RuntimeConfig, SessionConfig,
-    SingleNodeConfig,
+    ApiConfig, DeploymentConfig, NodeEndpoint, NodeHosting, Persistence, RuntimeConfig,
+    SessionConfig, SingleNodeConfig,
 };
 use ora_utils::process::{LinuxPidFd, ProcessSignal, linux_process_snapshot};
 use pretty_assertions::assert_eq;
@@ -90,9 +90,9 @@ fn single_node_composition_hosts_and_retires_its_node() {
         let node_config = ipc::write_config(&fixture, &clone, /*frame_timeout_ms*/ 40_000);
         let endpoint = fixture.config().home_directory.join("control.sock");
         let config = DeploymentConfig {
-            api: ApiConfig {
+            api: Some(ApiConfig {
                 node_id: NodeId::new("test-node"),
-            },
+            }),
             single_node: Some(SingleNodeConfig {
                 node_executable: env!("CARGO_BIN_EXE_ora-node").into(),
                 node_config: node_config.clone(),
@@ -101,6 +101,7 @@ fn single_node_composition_hosts_and_retires_its_node() {
             }),
             controller: RuntimeConfig {
                 home_directory: fixture.path().join("controller"),
+                persistence: Persistence::Sqlite,
                 protected_state_directories: vec![
                     fixture.config().home_directory,
                     fixture.process().host_directory,

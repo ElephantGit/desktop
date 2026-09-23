@@ -301,9 +301,9 @@ tasks:
   ###################################################
 
   run:minicloud:
-    desc: Initialize and run the local minicloud stack; Ctrl+C stops all components
+    desc: Initialize and run the local minicloud stack (`-- --cloud` coordinates through Cloud instead); Ctrl+C stops all components
     cmds:
-      - deno run -A scripts/run-minicloud.ts
+      - deno run -A scripts/run-minicloud.ts {{.CLI_ARGS}}
 
   run:desktop:
     desc: Run the desktop Tauri app in development mode

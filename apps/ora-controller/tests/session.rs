@@ -3,12 +3,7 @@
 use ora_controller::*;
 use ora_node_protocol::*;
 use pretty_assertions::assert_eq;
-use std::{
-    fs,
-    os::unix::fs::PermissionsExt,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{fs, os::unix::fs::PermissionsExt, time::Duration};
 use tokio::{net::UnixListener, time::timeout};
 
 /// A reachable socket is not sufficient authority to dispatch a previously accepted command.
@@ -26,30 +21,31 @@ fn mismatched_node_or_missing_clone_capability_rejects_before_dispatch() {
                 .permissions(fs::Permissions::from_mode(/*mode*/ 0o700))
                 .tempdir_in(std::env::var_os("HOME").unwrap())
                 .unwrap();
-            let mut controller =
-                Controller::open(&root.path().join("controller"), ControllerId::new("owner"))
+            let store =
+                SqliteStore::open(&root.path().join("controller"), ControllerId::new("owner"))
                     .unwrap();
-            let command = controller
-                .accept_clone(
-                    RequestId::new("request"),
-                    CloneExecutionSpec {
-                        node_id: NodeId::new("node"),
-                        repository: CloneRepositoryUrl::parse("https://example.com/repo").unwrap(),
-                        branch: BranchName::new("main"),
-                    },
-                )
-                .unwrap();
             fs::create_dir(root.path().join("node")).unwrap();
             let target = NodeEndpoint {
                 node_id: NodeId::new("node"),
                 endpoint: root.path().join("node").join("control.sock"),
             };
-            let owner = Arc::new(Mutex::new(controller));
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .unwrap()
                 .block_on(async {
+                    let command = store
+                        .accept_request(
+                            RequestId::new("request"),
+                            CloneExecutionSpec {
+                                node_id: NodeId::new("node"),
+                                repository: CloneRepositoryUrl::parse("https://example.com/repo")
+                                    .unwrap(),
+                                branch: BranchName::new("main"),
+                            },
+                        )
+                        .await
+                        .unwrap();
                     let listener = UnixListener::bind(&target.endpoint).unwrap();
                     let settings = SessionConfig {
                         io_timeout_ms: 1000,
@@ -89,15 +85,14 @@ fn mismatched_node_or_missing_clone_capability_rejects_before_dispatch() {
                             None
                         );
                     };
-                    let (result, ()) = tokio::join!(run_session(&owner, &target, &settings), peer);
+                    let (result, ()) = tokio::join!(run_session(&store, &target, &settings), peer);
                     assert!(result.is_err());
+                    assert_eq!(
+                        store.pending_dispatches(&target.node_id).await.unwrap(),
+                        vec![command.clone()]
+                    );
+                    assert_eq!(store.result(&command.execution_id).await.unwrap(), None);
                 });
-            let owner = owner.lock().unwrap();
-            assert_eq!(
-                owner.commands(&target.node_id).unwrap(),
-                vec![command.clone()]
-            );
-            assert_eq!(owner.result(&command.execution_id).unwrap(), None);
         }
     });
 }
@@ -110,28 +105,28 @@ fn uncertain_execution_retransmits_at_most_once_per_connection() {
             .permissions(fs::Permissions::from_mode(/*mode*/ 0o700))
             .tempdir_in(std::env::var_os("HOME").unwrap())
             .unwrap();
-        let mut controller =
-            Controller::open(&root.path().join("controller"), ControllerId::new("owner")).unwrap();
-        let command = controller
-            .accept_clone(
-                RequestId::new("request"),
-                CloneExecutionSpec {
-                    node_id: NodeId::new("node"),
-                    repository: CloneRepositoryUrl::parse("https://example.com/repo").unwrap(),
-                    branch: BranchName::new("main"),
-                },
-            )
-            .unwrap();
+        let store =
+            SqliteStore::open(&root.path().join("controller"), ControllerId::new("owner")).unwrap();
         fs::create_dir(root.path().join("node")).unwrap();
         let endpoint = NodeEndpoint {
             node_id: NodeId::new("node"),
             endpoint: root.path().join("node").join("control.sock"),
         };
-        let owner = Arc::new(Mutex::new(controller));
         tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+            let command = store
+                .accept_request(
+                    RequestId::new("request"),
+                    CloneExecutionSpec {
+                        node_id: NodeId::new("node"),
+                        repository: CloneRepositoryUrl::parse("https://example.com/repo").unwrap(),
+                        branch: BranchName::new("main"),
+                    },
+                )
+                .await
+                .unwrap();
             let listener = UnixListener::bind(&endpoint.endpoint).unwrap();
             let settings = SessionConfig { io_timeout_ms: 1000, query_interval_ms: 20 };
-            let session = run_session(&owner, &endpoint, &settings);
+            let session = run_session(&store, &endpoint, &settings);
             let peer = async {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 assert!(matches!(read_controller_message(&mut stream).await.unwrap(), Some(ControllerToNodeMessage::Hello(_))));
@@ -151,10 +146,7 @@ fn uncertain_execution_retransmits_at_most_once_per_connection() {
                 assert_eq!(retries, 1);
             };
             tokio::select! { _ = session => panic!("session ended before peer checks"), _ = peer => {} }
+            assert_eq!(store.result(&command.execution_id).await.unwrap(), None);
         });
-        assert_eq!(
-            owner.lock().unwrap().result(&command.execution_id).unwrap(),
-            None
-        );
     });
 }

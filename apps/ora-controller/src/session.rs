@@ -1,10 +1,6 @@
 use super::*;
 use serde::{Deserialize, Serialize};
-use std::{
-    io,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{io, time::Duration};
 use tokio::{
     net::UnixStream,
     time::{interval, timeout},
@@ -27,8 +23,9 @@ pub struct SessionConfig {
 }
 
 /// Coordinates one connection; the caller reconnects using the same durable Controller, never new IDs.
-pub async fn run_session<W: WriteGuard>(
-    controller: &Arc<Mutex<Controller<W>>>,
+/// Deployment overlap between store and Node state roots is validated when the runtime opens.
+pub async fn run_session<S: CoordinationStore>(
+    store: &S,
     target: &NodeEndpoint,
     config: &SessionConfig,
 ) -> io::Result<()> {
@@ -36,22 +33,7 @@ pub async fn run_session<W: WriteGuard>(
     {
         return Err(io::Error::other("invalid local session configuration"));
     }
-    let id = {
-        let controller = controller
-            .lock()
-            .map_err(|_| io::Error::other("Controller lock poisoned"))?;
-        let node_home = target
-            .endpoint
-            .parent()
-            .ok_or_else(|| io::Error::other("endpoint has no parent"))?;
-        let home =
-            ora_utils::path::canonicalize_longest_existing_prefix(controller.home_directory());
-        let node_home = ora_utils::path::canonicalize_longest_existing_prefix(node_home);
-        if home.starts_with(&node_home) || node_home.starts_with(home) {
-            return Err(io::Error::other("Controller and Node state roots overlap"));
-        }
-        controller.id().clone()
-    };
+    let id = store.id().clone();
     let deadline = Duration::from_millis(config.io_timeout_ms);
     let mut stream = timeout(deadline, UnixStream::connect(&target.endpoint))
         .await
@@ -98,8 +80,7 @@ pub async fn run_session<W: WriteGuard>(
                 message = &mut read => break message.map_err(io::Error::other)?.map_err(io::Error::other)?.ok_or_else(|| io::Error::other("Node disconnected"))?,
                 _ = tick.tick() => {
                     let command = {
-                        let owner = controller.lock().map_err(|_| io::Error::other("Controller lock poisoned"))?;
-                        let commands = owner.commands(&target.node_id).map_err(io::Error::other)?;
+                        let commands = store.pending_dispatches(&target.node_id).await.map_err(io::Error::other)?;
                         if commands.is_empty() { None } else { let command = commands[cursor % commands.len()].clone(); cursor = cursor.wrapping_add(1); Some(command) }
                     };
                     if let Some(command) = command {
@@ -109,31 +90,28 @@ pub async fn run_session<W: WriteGuard>(
                 }
             }
         };
-        let reply = {
-            let mut owner = controller
-                .lock()
-                .map_err(|_| io::Error::other("Controller lock poisoned"))?;
-            let ack = owner
-                .take_over(&identity, &message)
-                .map_err(io::Error::other)?;
-            if let Some(ack) = ack {
-                Some(ControllerToNodeMessage::EventAck(ack))
-            } else if let NodeToControllerMessage::ExecutionStatus(status) = &message
-                && status.payload.state == ExecutionState::Unknown
-                && owner
-                    .result(&status.execution_id)
-                    .map_err(io::Error::other)?
-                    .is_none()
-                && retransmitted.insert(status.execution_id.clone())
-            {
-                Some(ControllerToNodeMessage::CloneRepository(
-                    owner
-                        .original(&identity, &status.operation_id, &status.execution_id)
-                        .map_err(io::Error::other)?,
-                ))
-            } else {
-                None
-            }
+        let ack = take_over(store, &identity, &message)
+            .await
+            .map_err(io::Error::other)?;
+        let reply = if let Some(ack) = ack {
+            Some(ControllerToNodeMessage::EventAck(ack))
+        } else if let NodeToControllerMessage::ExecutionStatus(status) = &message
+            && status.payload.state == ExecutionState::Unknown
+            && store
+                .result(&status.execution_id)
+                .await
+                .map_err(io::Error::other)?
+                .is_none()
+            && retransmitted.insert(status.execution_id.clone())
+        {
+            Some(ControllerToNodeMessage::CloneRepository(
+                store
+                    .original_dispatch(&identity, &status.operation_id, &status.execution_id)
+                    .await
+                    .map_err(io::Error::other)?,
+            ))
+        } else {
+            None
         };
         if let Some(reply) = reply {
             timeout(deadline, write_controller_message(&mut writer, &reply))

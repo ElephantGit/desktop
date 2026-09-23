@@ -11,8 +11,10 @@ Cloud 已授权的 opaque 身份，没有 tenant、user 或 membership 字段。
 
 语义由 specs 的 `decisions/cloud/controller-integration/0-cloud-owned-internal-grpc-contract.md`
 拥有，本仓库的消费方式由 `decisions/controller/api-boundary/20260922-cloud-owned-contract-and-controller-dial-out.md`
-固定；本页只讲本仓库如何取得契约、如何生成、如何升级。运行时接入（Cloud RPC 适配器、`Watch`
-拨出任务）尚未实现，见 `decisions/controller/persistence/20260922-coordination-store-with-sqlite-and-cloud-adapters.md`。
+固定；本页只讲本仓库如何取得契约、如何生成、如何升级。运行时接入是
+[Controller 运行时](../controller/local-runtime.zh.md) 描述的 `CloudStore` 适配器：租约、`ExecutionService`
+与周期领取循环已接入，`Watch` 流尚未；其持久语义遵循
+`decisions/controller/persistence/20260922-coordination-store-with-sqlite-and-cloud-adapters.md`。
 
 ## 服务与语义要点
 
@@ -54,4 +56,4 @@ clone（`--filter=blob:none`）与 sparse-checkout 只展开 `proto/`。
 3. `task proto:generate`，修改适配器，把 gitlink、生成物与代码一起提交；PR 描述链接 Cloud 侧变更以便展开
    子模块 diff 评审。
 
-生成证明的是结构一致；行为一致由以真实 Cloud gRPC 服务端为对端的适配器测试保证，在运行时接入时登记。
+生成证明的是结构一致；与真实 Cloud gRPC 服务端的行为一致经 minicloud 云端形态端到端验证，尚未自动化。

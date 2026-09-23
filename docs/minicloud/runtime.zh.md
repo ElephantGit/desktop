@@ -34,6 +34,35 @@ debug 构建跳过受信路径的 Unix 权限位检查，允许组可写的项�
 状态目录以家目录而非 checkout 为基准，因为 Unix socket 路径上限为 108 字节；异常长的真实家目录路径会被拒绝，
 不会被截短，也不能用符号链接绕过。
 
+## 云端持久模式
+
+`task run:minicloud -- --cloud` 同样启动 host、`ora-controller --single-node` 和 Node，但 Controller 以
+[云端持久模式](../controller/local-runtime.zh.md#独立可执行入口)运行：所有持久事实由 Cloud 持有，Controller
+只主动调用 Cloud，因此不打开 SQLite 数据库、不开监听，也不启动 minicloud 前端。请求改由 Cloud 的带租户
+clone API 进入。
+
+Cloud 需另行启动。Cloud server（HTTP `:8080`、Controller gRPC `:8082`）及其 `devgateway`（`:8090`）必须来自
+提供 clone API 且不要求 Controller 认证的 Cloud 版本；PostgreSQL、`cloudctl migrate`、开发租户
+（`task bootstrap:dev`）及 devgateway 签名所需的 `auth.keys` 条目按 Cloud 仓库 `cmd/devgateway` 的 README 准备。
+当前阶段 Controller 不出示凭据，只以 `controller_id` 声明自身，Cloud 把它记为租约持有者。
+
+状态位于 `~/.ora/cloud/<digest>/`，与本地模式的目录分开：Node 的持久记录只属于一个持久权威，因此 SQLite
+接受的工作绝不会报给 Cloud，clone 目标目录也不会共用。目录结构与本地模式相同，只是没有 `client.json` 和
+`vite/`；`config/controller.json` 选择 `persistence: cloud`，包含 Cloud 的 gRPC 地址与领取间隔，
+并且没有 `api` 段。Cloud 在别处时修改该文件即可。持久模式与启动模式不一致的 `controller.json`
+会被启动器拒绝。
+
+Cloud 的 gRPC 地址不可达时，启动只提示一次并继续，因为 Controller 会持续重试 Cloud。Controller 没有可探测的端口，
+所以"就绪"只表示它启动两秒后仍在运行，不表示已取得 Cloud 租约；之后任何组件退出都会像本地模式一样停止全部组件。
+经 `devgateway` 提交与查询，它以开发身份转发到 `/api/v1/tenants/{tenant}/clones`：
+
+```bash
+curl -X POST http://127.0.0.1:8090/api/clones -H 'content-type: application/json' -d '{"requestId":"r1","repository":"https://github.com/octocat/Hello-World","branch":"master"}'
+```
+
+`GET http://127.0.0.1:8090/api/clones` 列出操作。Controller 停机期间被接受的工作保持 pending，直到被领取。
+若上次运行的 Controller 是被强杀而非正常停止，旧租约没有释放，工作要等 Cloud 的 30 秒租约过期后才开始。
+
 ## 手动部署
 
 API 由 `ora-controller` 可执行程序本身提供，没有独立的 minicloud server。先启动 host／guardian，

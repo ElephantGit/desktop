@@ -16,8 +16,10 @@ The semantics belong to specs
 `decisions/cloud/controller-integration/0-cloud-owned-internal-grpc-contract.md`; how this
 repository consumes them is fixed by
 `decisions/controller/api-boundary/20260922-cloud-owned-contract-and-controller-dial-out.md`.
-This page only covers how the contract is obtained, generated and upgraded here. Runtime
-integration (the Cloud RPC adapter and the `Watch` dial-out task) is not implemented yet; see
+This page only covers how the contract is obtained, generated and upgraded here. The runtime
+integration is the `CloudStore` adapter described in the
+[Controller runtime](../controller/local-runtime.md): lease, `ExecutionService` and the periodic claim
+loop are consumed; the `Watch` stream is not yet. Its persistence semantics follow
 `decisions/controller/persistence/20260922-coordination-store-with-sqlite-and-cloud-adapters.md`.
 
 ## Services and key semantics
@@ -66,5 +68,5 @@ produced by `buf` with pinned remote plugins (`neoeinstein-prost`, `neoeinstein-
 3. `task proto:generate`, adapt the adapter, and commit the gitlink, the generated code and the
    change together; link the Cloud change from the PR so reviewers can expand the submodule diff.
 
-Generation proves structural agreement; behavioral agreement is proven by adapter tests against a
-real Cloud gRPC server, registered when the runtime integration lands.
+Generation proves structural agreement; behavioral agreement against a real Cloud gRPC server is
+verified end to end through the minicloud cloud form and is not yet an automated test.
