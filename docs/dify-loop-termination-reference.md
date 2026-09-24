@@ -1,0 +1,18 @@
+# Dify loop termination reference
+
+English | [中文](dify-loop-termination-reference.zh.md)
+
+Research date: 2026-09-24. Scope: the termination-condition editor requested for Ora; this is a reference, not a commitment to full Dify loop compatibility.
+
+## Primary-source findings
+
+- Dify documents three termination paths: matching conditions, reaching the maximum count, or executing an Exit Loop node. Conditions may be absent, in which case the count bounds execution. [Official Loop documentation](https://docs.dify.ai/en/cloud/use-dify/nodes/loop)
+- The panel separates loop variables, termination conditions, and maximum count. Conditions use variable/operator/value rows with add/remove controls; multiple rows expose an AND/OR toggle. The default is an empty condition list and AND. [Panel](https://github.com/langgenius/dify/blob/7feebe3405094482e42dcbdf407cbe17c262cdd9/web/app/components/workflow/nodes/loop/panel.tsx), [condition list](https://github.com/langgenius/dify/blob/7feebe3405094482e42dcbdf407cbe17c262cdd9/web/app/components/workflow/nodes/loop/components/condition-list/index.tsx), [defaults](https://github.com/langgenius/dify/blob/7feebe3405094482e42dcbdf407cbe17c262cdd9/web/app/components/workflow/nodes/loop/default.ts)
+- Operators depend on the variable type: strings offer equality, containment, prefix/suffix and emptiness; numbers offer comparisons and emptiness; booleans offer equality and emptiness. Unary operators omit the value input. Numbers support constant or variable operands; booleans use a boolean control. Changing the selected variable resets the operator and value. [Operator definitions](https://github.com/langgenius/dify/blob/7feebe3405094482e42dcbdf407cbe17c262cdd9/web/app/components/workflow/nodes/loop/utils.ts), [condition row](https://github.com/langgenius/dify/blob/7feebe3405094482e42dcbdf407cbe17c262cdd9/web/app/components/workflow/nodes/loop/components/condition-list/condition-item.tsx), [numeric input](https://github.com/langgenius/dify/blob/7feebe3405094482e42dcbdf407cbe17c262cdd9/web/app/components/workflow/nodes/loop/components/condition-number-input.tsx)
+- At this Dify commit, the runtime dependency is `graphon==0.7.0`. Its handler checks conditions before starting a body and after completing it; the initial check suppresses `ValueError`. An empty list does not match. Reaching the count completes successfully, with a reason distinct from condition-based completion. [Dependency pin](https://github.com/langgenius/dify/blob/7feebe3405094482e42dcbdf407cbe17c262cdd9/api/pyproject.toml), [Graphon v0.7.0 handler](https://github.com/langgenius/graphon/blob/11e2dee8cbd6dc2e6bf1c2059d9bbf4d0437ebe5/src/graphon/graph_engine/loop_container_handler.py)
+
+## Recommended Ora scope
+
+Adopt the condition-row interaction: select an available variable, select a supported operator, enter a typed constant or select a variable where supported, add/remove conditions, and combine them with all/any (AND/OR). Hide irrelevant value inputs and keep the maximum count visible with an explanation of its behavior. Reuse Ora's existing condition contract, evaluator and variable-scope rules.
+
+Ora currently requires a nonempty `until`, evaluates it after each round, and fails if its count limit is reached without a match. Those semantics differ from Dify. Adding an editor alone should not silently change persisted workflows or claim full compatibility; optional conditions, successful count exhaustion, pre-body checks and a dedicated Exit Loop node require separate runtime decisions and behavioral coverage. See [Ora workflow behavior](workflow.md).

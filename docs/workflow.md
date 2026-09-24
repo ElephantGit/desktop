@@ -66,7 +66,7 @@ a typed `until` condition, and named exports. Each Loop body is a separate DAG w
 reachable Start. Nested Loops, ownership mismatches, cross-scope edges and selectors, invalid
 types on active nodes are rejected before sessions start. Spare children unreachable from the child Start remain in the snapshot and do not execute. The default editor group feeds
 the child Agent output into the next round's `value`, stops on a non-empty output, and exports it as
-`result`; authors can set the initial value and maximum rounds.
+`result`; authors can set the initial value and maximum rounds. The Loop panel also edits end conditions using child outputs (including structured fields), carried variables, and visible outer variables, comparison operators, and target values. Multiple rules combine with AND/OR; at least one rule is retained. Conditions are checked after each round: a match succeeds, otherwise execution continues, and reaching the limit without a match fails. Emptiness and existence checks support unset variables; other comparisons fail rather than reusing a previous round value. Following the [Dify termination editor reference](dify-loop-termination-reference.md), operators are filtered by variable type, booleans use a picker, and unary conditions hide the comparison value. Ora retains its post-round evaluation and failure-at-limit semantics.
 
 Each iteration has a durable `WorkflowExecutionScope`. Child NodeRuns and Sessions belong to that
 scope, so repeated definition node IDs do not overwrite another round. Completion resolves feedback

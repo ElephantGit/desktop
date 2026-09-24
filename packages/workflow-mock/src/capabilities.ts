@@ -167,10 +167,23 @@ export function createMockWorkflowCapabilities(
       label: locale === "zh-CN" ? "不包含" : "Not contains",
     },
     {
+      value: "starts_with",
+      label: locale === "zh-CN" ? "开头是" : "Starts with",
+    },
+    { value: "ends_with", label: locale === "zh-CN" ? "结尾是" : "Ends with" },
+    {
       value: "greater_than",
       label: locale === "zh-CN" ? "大于" : "Greater than",
     },
     { value: "less_than", label: locale === "zh-CN" ? "小于" : "Less than" },
+    {
+      value: "greater_than_or_equal",
+      label: locale === "zh-CN" ? "大于等于" : "Greater than or equal",
+    },
+    {
+      value: "less_than_or_equal",
+      label: locale === "zh-CN" ? "小于等于" : "Less than or equal",
+    },
     { value: "empty", label: locale === "zh-CN" ? "为空" : "Is empty" },
     {
       value: "not_empty",

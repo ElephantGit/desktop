@@ -1689,6 +1689,60 @@ describe("WorkflowEditor", () => {
     });
   });
 
+  it("persists loop end conditions through draft saving and reopening", async () => {
+    const state = createFixtureState();
+    const user = userEvent.setup();
+    const view = renderEditor(<WorkflowEditor />, state);
+    await screen.findByLabelText("工作流画布");
+    await user.click(screen.getByRole("button", { name: "循环" }));
+    await screen.findByLabelText("循环节点: 循环 1");
+    await waitFor(
+      () => {
+        expect(
+          JSON.parse(state.workflows[0]!.draft.graph).nodes.some(
+            (node: { id: string }) => node.id === "loop-1",
+          ),
+        ).toBe(true);
+      },
+      { timeout: 3_000 },
+    );
+    act(() => screen.getByLabelText("条件 1").focus());
+    await user.keyboard("{ArrowDown}");
+    await user.click(await screen.findByRole("option", { name: "包含" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("listbox")).not.toBeInTheDocument(),
+    );
+    act(() => screen.getByLabelText("值 1").focus());
+    await user.keyboard("APPROVED");
+    expect(screen.getByLabelText("值 1")).toHaveValue("APPROVED");
+    const expected = {
+      logic: "and",
+      conditions: [
+        {
+          variableSelector: ["loop-1-agent", "output"],
+          operator: "contains",
+          value: "APPROVED",
+        },
+      ],
+    };
+    await waitFor(
+      () => {
+        const graph = JSON.parse(state.workflows[0]!.draft.graph);
+        expect(
+          graph.nodes.find((node: { id: string }) => node.id === "loop-1").data
+            .loopConfig.until,
+        ).toEqual(expected);
+      },
+      { timeout: 3_000 },
+    );
+    view.unmount();
+    renderEditor(<WorkflowEditor />, state, undefined, false);
+    const loop = await screen.findByLabelText("循环节点: 循环 1");
+    await user.click(loop.closest(".react-flow__node") ?? loop);
+    expect(await screen.findByLabelText("值 1")).toHaveValue("APPROVED");
+    expect(screen.getByLabelText("条件 1")).toHaveTextContent("包含");
+  });
+
   it("auto-saves draft edits after the debounce window", async () => {
     const state = createFixtureState();
     renderEditor(<WorkflowEditor />, state);
