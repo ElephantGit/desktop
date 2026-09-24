@@ -137,6 +137,25 @@ installed plugin, so development builds register it too rather than leaving it u
 packaged release. A refresh that fails is logged and not retried on its own: the next six-hour
 tick is the retry.
 
+A refresh is per source: every configured source is pulled on its own, and a source that fails
+keeps exactly the listings the previous index carried for it instead of aborting the refresh. Its
+checkout is not re-scanned either — a repository that could not be fetched may also be mid-write —
+so the retained listings keep the version they were last published with until a later refresh
+succeeds. Only a source that was removed or disabled loses its listings, because "removed" and
+"unreachable" must not produce the same catalog. A failure belongs to one source whenever its cause
+does: its Git work, or a proxy it opts into that is absent or unusable. Only failing to read Ora's
+own state — the proxy settings, the configured sources, their namespace bindings — fails the whole
+refresh.
+
+The failures travel with the cached index and are returned by both `list_available_plugins` and
+`sync_available_plugins`, so the shell names the sources whose listings are stale instead of
+presenting a partly stale catalog as freshly synced. Each failure carries only Git's own
+`fatal:` / `error:` diagnosis or the configuration problem, never the Git command line or local
+checkout paths; the complete error is written to the log. The sync time only advances when at least
+one source actually refreshed: a refresh that reached none of them keeps the previous time, and a
+first refresh that reached none reports "never synced". A refresh with no enabled source failed
+nothing, so it advances the sync time over the empty catalog it writes.
+
 The backend admits one index rebuild at a time. Because every rebuild produces the same index for
 every caller, a caller that arrives while one is in flight is turned away rather than queued —
 including a user pressing Sync, whose request is then answered from the cached index instead of
