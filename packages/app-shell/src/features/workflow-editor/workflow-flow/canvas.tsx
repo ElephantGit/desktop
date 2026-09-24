@@ -164,7 +164,7 @@ function WorkflowCanvasInner({
   onNodesChange,
   onEdgesChange,
   onAddNode,
-  onInsertIterationNode,
+  onInsertContainerNode,
   onToggleIterationCollapsed,
   onAddAnnotation,
   onOrganize,
@@ -575,7 +575,7 @@ function WorkflowCanvasInner({
             nodes={nodes}
             edges={edges}
             readOnly={readOnly}
-            onInsert={onInsertIterationNode}
+            onInsert={onInsertContainerNode}
             onToggleCollapsed={onToggleIterationCollapsed}
           >
             <ReactFlow

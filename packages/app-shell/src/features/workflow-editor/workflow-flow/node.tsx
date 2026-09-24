@@ -32,7 +32,7 @@ import { WorkflowNodeParameterSummary } from "./node-parameter-summary";
 import { IterationInsertMenu } from "./iteration-actions";
 import { useWorkflowIterationActions } from "./iteration-actions-context";
 import { IterationNodeFrame } from "./iteration-node";
-import type { IterationInsertion } from "../workflow-iteration-graph";
+import type { WorkflowContainerInsertion } from "../workflow-container-insertion";
 
 const CONDITION_NODE_WIDTH = 320;
 const CONDITION_FIRST_HANDLE_Y = 82;
@@ -177,7 +177,7 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
           data.kind === "condition" ? (
             <>
               {conditionCases.map((conditionCase, index) => (
-                <IterationOutputPort
+                <ContainerOutputPort
                   key={conditionCase.id}
                   nodeId={id}
                   handleId={conditionCase.id}
@@ -193,7 +193,7 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
                   isOutputCandidate={isOutputCandidate}
                 />
               ))}
-              <IterationOutputPort
+              <ContainerOutputPort
                 nodeId={id}
                 handleId="else"
                 top={conditionHandleTop(conditionCases, conditionCases.length)}
@@ -206,7 +206,7 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
               />
             </>
           ) : (
-            <IterationOutputPort
+            <ContainerOutputPort
               nodeId={id}
               top={WORKFLOW_NODE_ANCHOR_Y}
               connectLabel={t("settings.workflow.connectFrom", {
@@ -314,7 +314,7 @@ function ConditionNodeDetails({
 /** One source port paired with its Dify-style append affordance. The plus badge is
  * decorative (pointer-events-none) and centered on the port; clicking the port opens
  * the node picker, while dragging from the port still starts a connection. */
-function IterationOutputPort({
+function ContainerOutputPort({
   nodeId,
   handleId,
   top,
@@ -328,12 +328,14 @@ function IterationOutputPort({
   top: number;
   connectLabel: string;
   plusLabel: string;
-  insertion: IterationInsertion | null;
+  insertion: WorkflowContainerInsertion | null;
   isOutputCandidate: boolean;
 }) {
   const { readOnly } = useWorkflowIterationActions();
   const [open, setOpen] = useState(false);
   const offersInsert = insertion !== null && !readOnly;
+  const [hovered, setHovered] = useState(false);
+  const isLoopPort = insertion?.type === "loop-output";
   return (
     <>
       <Handle
@@ -347,6 +349,8 @@ function IterationOutputPort({
           isOutputCandidate && "workflow-port-candidate",
         )}
         style={{ top }}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
         onClick={offersInsert ? () => setOpen((open) => !open) : undefined}
       />
       {insertion !== null && (
@@ -357,7 +361,12 @@ function IterationOutputPort({
           open={open}
           onOpenChange={setOpen}
           style={{ top }}
-          className="pointer-events-none absolute -right-3 z-10 -translate-y-1/2 opacity-0 transition-opacity duration-150 group-hover/iteration-member:opacity-100 focus-visible:opacity-100 data-popup-open:opacity-100"
+          className={cn(
+            "pointer-events-none absolute -right-3 z-10 -translate-y-1/2 opacity-0 transition-opacity duration-150 focus-visible:opacity-100 data-popup-open:opacity-100",
+            isLoopPort
+              ? hovered && "opacity-100"
+              : "group-hover/iteration-member:opacity-100",
+          )}
         />
       )}
     </>

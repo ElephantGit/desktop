@@ -3,7 +3,10 @@ import type { Edge } from "@xyflow/react";
 import type { WorkflowNodeKind, WorkflowNodeType } from "@ora/workflow-mock";
 import type { IterationInsertion } from "../workflow-iteration-graph";
 
+import type { WorkflowContainerInsertion } from "../workflow-container-insertion";
+
 export interface WorkflowIterationActions {
+  loopNodeTypes: WorkflowNodeType[];
   nodeTypes: WorkflowNodeType[];
   readOnly: boolean;
   insertionForEdge: (
@@ -12,8 +15,11 @@ export interface WorkflowIterationActions {
   outputInsertion: (
     nodeId: string,
     sourceHandle?: string | null,
-  ) => IterationInsertion | null;
-  insert: (kind: WorkflowNodeKind, insertion: IterationInsertion) => void;
+  ) => WorkflowContainerInsertion | null;
+  insert: (
+    kind: WorkflowNodeKind,
+    insertion: WorkflowContainerInsertion,
+  ) => void;
   toggleCollapsed: (iterationId: string) => void;
 }
 

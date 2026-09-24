@@ -168,14 +168,14 @@ describe("createMockWorkflowNode", () => {
           label: "Agent",
           description: "交给模型自主执行",
           configFields: ["agent"],
-          supportedScopes: ["workflow", "iteration"],
+          supportedScopes: ["workflow", "iteration", "loop"],
         },
         {
           kind: "condition",
           label: "条件分支",
           description: "根据规则选择路径",
           configFields: ["condition"],
-          supportedScopes: ["workflow", "iteration"],
+          supportedScopes: ["workflow", "iteration", "loop"],
         },
         {
           kind: "loop",
@@ -196,7 +196,7 @@ describe("createMockWorkflowNode", () => {
           label: "输出",
           description: "返回最终结果",
           configFields: [],
-          supportedScopes: ["workflow"],
+          supportedScopes: ["workflow", "loop"],
         },
       ],
       models: [

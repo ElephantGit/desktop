@@ -61,7 +61,7 @@ export interface WorkflowNodeType {
   supportedScopes: WorkflowNodeScope[];
 }
 
-export type WorkflowNodeScope = "workflow" | "iteration";
+export type WorkflowNodeScope = "workflow" | "iteration" | "loop";
 
 /** Returns whether a capability declaration allows a node in the requested editor scope. */
 export function supportsWorkflowNodeScope(
@@ -270,7 +270,7 @@ export function createMockWorkflowNodeType(
             ? "交给模型自主执行"
             : "Delegate autonomous work to a model",
         configFields: ["agent"],
-        supportedScopes: ["workflow", "iteration"],
+        supportedScopes: ["workflow", "iteration", "loop"],
       };
     case "condition":
       return {
@@ -281,7 +281,7 @@ export function createMockWorkflowNodeType(
             ? "根据规则选择路径"
             : "Route execution based on rules",
         configFields: ["condition"],
-        supportedScopes: ["workflow", "iteration"],
+        supportedScopes: ["workflow", "iteration", "loop"],
       };
     case "tool":
       return {
@@ -354,7 +354,7 @@ export function createMockWorkflowNodeType(
         description:
           locale === "zh-CN" ? "返回最终结果" : "Return the final result",
         configFields: [],
-        supportedScopes: ["workflow"],
+        supportedScopes: ["workflow", "loop"],
       };
   }
 }

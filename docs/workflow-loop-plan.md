@@ -2,6 +2,8 @@
 
 English | [中文](workflow-loop-plan.zh.md)
 
+To add a loop member, hover over an existing member’s right output port, click the plus, and choose Agent, Condition, or Output. The new node belongs to that loop and connects to the selected output port, preserving condition branch handles. The frame grows as needed. Existing edges and feedback/termination bindings are preserved; Output nodes have no append port. Insertion supports undo, redo, and draft persistence; dragging a node into the frame does not establish loop ownership.
+
 Status: complete (P1–P5). Updated: 2026-09-18.
 
 Progress: schema-v2 containers, typed feedback, migration `0013`, durable scope scheduling, backend Session execution, generated contracts, editor authoring, isolated history projection, and Theater round inspection are implemented. Loop and foreach composite scheduling live in separate private modules and pass the repository's module-size gate.

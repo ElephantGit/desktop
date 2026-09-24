@@ -22,7 +22,7 @@ import { WorkflowIterationActionsProvider } from "./iteration-actions";
 import { WorkflowConnectionStateProvider } from "./connection-state";
 import { WorkflowFlowNodeView } from "./node";
 import { applyIterationFrameResize } from "../workflow-iteration-graph";
-import type { IterationInsertion } from "../workflow-iteration-graph";
+import type { WorkflowContainerInsertion } from "../workflow-container-insertion";
 
 vi.mock("./node-parameter-summary", () => ({
   WorkflowNodeParameterSummary: () => null,
@@ -54,7 +54,10 @@ function renderIteration({
   collapsed?: boolean;
   readOnly?: boolean;
   selected?: boolean;
-  onInsert?: (kind: WorkflowNodeKind, insertion: IterationInsertion) => void;
+  onInsert?: (
+    kind: WorkflowNodeKind,
+    insertion: WorkflowContainerInsertion,
+  ) => void;
 } = {}) {
   const node: Node<WorkflowNodeData, "workflow"> = {
     id: "iter",
@@ -107,7 +110,7 @@ function renderIteration({
 function renderIterationWithMember(
   onInsert: (
     kind: WorkflowNodeKind,
-    insertion: IterationInsertion,
+    insertion: WorkflowContainerInsertion,
   ) => void = vi.fn(),
 ) {
   const nodes: Node<WorkflowNodeData, "workflow">[] = [

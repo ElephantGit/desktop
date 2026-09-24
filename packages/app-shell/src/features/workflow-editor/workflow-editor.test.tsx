@@ -1689,6 +1689,99 @@ describe("WorkflowEditor", () => {
     });
   });
 
+  it.each([
+    ["Agent", "agent"],
+    ["条件分支", "condition"],
+    ["输出", "output"],
+  ])(
+    "adds and persists a loop %s through its member output menu",
+    async (label, kind) => {
+      const state = createFixtureState();
+      const user = userEvent.setup();
+      const view = renderEditor(<WorkflowEditor />, state);
+      await screen.findByLabelText("工作流画布");
+      await user.click(screen.getByRole("button", { name: "循环" }));
+      const port = await screen.findByLabelText("从循环 Agent开始连接");
+      await user.hover(port);
+      expect(screen.getByLabelText("在 循环 Agent 后添加节点")).toHaveClass(
+        "opacity-100",
+      );
+      await user.click(port);
+      expect(
+        (await screen.findAllByRole("menuitem")).map(
+          (item) => item.textContent,
+        ),
+      ).toEqual(["Agent", "条件分支", "输出"]);
+      await user.click(screen.getByRole("menuitem", { name: label }));
+      await waitFor(
+        () => {
+          const graph = JSON.parse(state.workflows[0]!.draft.graph) as {
+            nodes: WorkflowDefinitionNode[];
+            edges: WorkflowDefinitionEdge[];
+          };
+          const added = graph.nodes.find((node) => node.id === `${kind}-1`)!;
+          expect(added).toMatchObject({
+            data: { kind, containerId: "loop-1" },
+          });
+          expect(graph.edges).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                source: "loop-1-agent",
+                target: added.id,
+              }),
+            ]),
+          );
+          const loop = graph.nodes.find((node) => node.id === "loop-1")!;
+          expect(loop.initialWidth).toBeGreaterThan(
+            added.position.x +
+              (kind === "condition" ? 320 : WORKFLOW_NODE_WIDTH),
+          );
+        },
+        { timeout: 3_000 },
+      );
+      if (kind === "condition") {
+        await user.click(screen.getByLabelText("从条件分支 1开始连接 · else"));
+        await user.click(
+          await screen.findByRole("menuitem", { name: "Agent" }),
+        );
+        await waitFor(
+          () => {
+            const graph = JSON.parse(state.workflows[0]!.draft.graph);
+            expect(graph.edges).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({
+                  source: "condition-1",
+                  sourceHandle: "else",
+                  target: "agent-1",
+                }),
+              ]),
+            );
+          },
+          { timeout: 3_000 },
+        );
+        await user.click(screen.getByRole("button", { name: "撤销" }));
+        await waitFor(() =>
+          expect(
+            document.querySelector('[data-workflow-node-id="agent-1"]'),
+          ).toBeNull(),
+        );
+        await user.click(screen.getByRole("button", { name: "重做" }));
+        await waitFor(() =>
+          expect(
+            document.querySelector('[data-workflow-node-id="agent-1"]'),
+          ).not.toBeNull(),
+        );
+      }
+      view.unmount();
+      renderEditor(<WorkflowEditor />, state, undefined, false);
+      await waitFor(() =>
+        expect(
+          document.querySelector(`[data-workflow-node-id="${kind}-1"]`),
+        ).not.toBeNull(),
+      );
+    },
+  );
+
   it("persists loop end conditions through draft saving and reopening", async () => {
     const state = createFixtureState();
     const user = userEvent.setup();

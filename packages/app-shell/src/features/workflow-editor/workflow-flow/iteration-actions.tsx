@@ -16,7 +16,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@ora/ui";
-import type { IterationInsertion } from "../workflow-iteration-graph";
+import type { WorkflowContainerInsertion } from "../workflow-container-insertion";
 import { getNodeMetadata } from "../workflow-node-metadata";
 import {
   useWorkflowIterationActions,
@@ -38,7 +38,10 @@ export function WorkflowIterationActionsProvider({
   nodes: Node<WorkflowNodeData, "workflow">[];
   edges: Edge[];
   readOnly: boolean;
-  onInsert: (kind: WorkflowNodeKind, insertion: IterationInsertion) => void;
+  onInsert: (
+    kind: WorkflowNodeKind,
+    insertion: WorkflowContainerInsertion,
+  ) => void;
   onToggleCollapsed: (iterationId: string) => void;
   children: ReactNode;
 }) {
@@ -58,6 +61,9 @@ export function WorkflowIterationActionsProvider({
     return {
       nodeTypes: capabilities.nodeTypes.filter((nodeType) =>
         supportsWorkflowNodeScope(nodeType, "iteration"),
+      ),
+      loopNodeTypes: capabilities.nodeTypes.filter((nodeType) =>
+        supportsWorkflowNodeScope(nodeType, "loop"),
       ),
       readOnly,
       insertionForEdge: (edge) => {
@@ -79,6 +85,20 @@ export function WorkflowIterationActionsProvider({
           : { type: "edge", iterationId, edgeId: edge.id };
       },
       outputInsertion: (nodeId, sourceHandle) => {
+        const source = nodeById.get(nodeId);
+        const loopId = source?.data.containerId;
+        if (
+          loopId &&
+          nodeById.get(loopId)?.data.kind === "loop" &&
+          source?.data.kind !== "output"
+        ) {
+          return {
+            type: "loop-output",
+            loopId,
+            sourceId: nodeId,
+            sourceHandle,
+          };
+        }
         const iterationId = ownerOf(nodeId);
         if (iterationId === null) {
           return null;
@@ -126,7 +146,7 @@ export function IterationInsertMenu({
   open,
   onOpenChange,
 }: {
-  insertion: IterationInsertion;
+  insertion: WorkflowContainerInsertion;
   label: string;
   className?: string;
   side?: "top" | "right" | "bottom" | "left";
@@ -135,7 +155,12 @@ export function IterationInsertMenu({
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
-  const { nodeTypes, readOnly, insert } = useWorkflowIterationActions();
+  const actions = useWorkflowIterationActions();
+  const { readOnly, insert } = actions;
+  const nodeTypes =
+    insertion.type === "loop-output"
+      ? actions.loopNodeTypes
+      : actions.nodeTypes;
   const { t } = useTranslation();
   if (readOnly) {
     return null;
