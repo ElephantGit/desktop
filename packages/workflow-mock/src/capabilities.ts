@@ -138,8 +138,8 @@ export function createMockWorkflowCapabilities(
     createMockWorkflowNodeType("start", locale),
     createMockWorkflowNodeType("agent", locale),
     createMockWorkflowNodeType("condition", locale),
-    createMockWorkflowNodeType("loop", locale),
     createMockWorkflowNodeType("iteration", locale),
+    createMockWorkflowNodeType("loop", locale),
     createMockWorkflowNodeType("output", locale),
   ];
   const models = [
