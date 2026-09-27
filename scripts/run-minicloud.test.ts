@@ -2,6 +2,36 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { controllerArguments, initialize } from "./run-minicloud.ts";
 
+// POSIX permission bits exist only on Unix hosts, so the Windows runs of these tests skip the
+// mode assertions and create directory links through junctions instead of unprivileged symlinks.
+const unix = Deno.build.os !== "windows";
+
+/**
+ * Points `linkPath` at the directory `target`.
+ *
+ * Windows grants unprivileged symlink creation only under Developer Mode, so it falls back to a
+ * junction, which never needs elevation. `lstat` reports both as symlinks, and that is the only
+ * property the rejection test relies on.
+ */
+async function linkDirectory(target: string, linkPath: string) {
+  try {
+    await Deno.symlink(target, linkPath, { type: "dir" });
+    return;
+  } catch (error) {
+    if (Deno.build.os !== "windows") throw error;
+  }
+  const junction = await new Deno.Command("cmd", {
+    args: ["/c", "mklink", "/J", linkPath, target],
+    stdout: "null",
+    stderr: "piped",
+  }).output();
+  if (junction.code !== 0) {
+    throw new Error(
+      `mklink /J failed: ${new TextDecoder().decode(junction.stderr)}`,
+    );
+  }
+}
+
 Deno.test(
   "minicloud initialization preserves edited configuration and existing checkout files",
   async () => {
@@ -13,9 +43,11 @@ Deno.test(
       await Deno.writeTextFile(config, '{"port":5190}\n');
       const marker = path.join(root, "repositories", "user-file");
       await Deno.writeTextFile(marker, "preserve");
-      await Deno.chmod(root, 0o775);
+      if (unix) await Deno.chmod(root, 0o775);
       await initialize(root, "local");
-      assert.equal((await Deno.stat(root)).mode! & 0o777, 0o775);
+      if (unix) {
+        assert.equal((await Deno.stat(root)).mode! & 0o777, 0o775);
+      }
       assert.equal(await Deno.readTextFile(config), '{"port":5190}\n');
       assert.equal(await Deno.readTextFile(marker), "preserve");
       const node = JSON.parse(
@@ -31,7 +63,9 @@ Deno.test(
         Deno.stat(path.join(root, "p")),
         Deno.errors.NotFound,
       );
-      assert.equal((await Deno.stat(config)).mode! & 0o777, 0o600);
+      if (unix) {
+        assert.equal((await Deno.stat(config)).mode! & 0o777, 0o600);
+      }
     } finally {
       await Deno.remove(temporary, { recursive: true });
     }
@@ -46,7 +80,7 @@ Deno.test(
       const target = path.join(temporary, "outside");
       await Deno.mkdir(target, { mode: 0o700 });
       const root = path.join(temporary, "dev");
-      await Deno.symlink(target, root);
+      await linkDirectory(target, root);
       await assert.rejects(initialize(root, "local"), /private directory/);
       const entries = [];
       for await (const entry of Deno.readDir(target)) entries.push(entry.name);
@@ -86,7 +120,7 @@ Deno.test(
       );
       assert.equal(
         controller.single_node.node_executable.endsWith(
-          "/target/debug/ora-node",
+          path.join("target", "debug", "ora-node"),
         ),
         true,
       );
@@ -165,7 +199,7 @@ Deno.test(
       });
       assert.equal(
         controller.single_node.node_executable.endsWith(
-          "/target/debug/ora-node",
+          path.join("target", "debug", "ora-node"),
         ),
         true,
       );
@@ -256,8 +290,10 @@ Deno.test(
       assert.deepEqual(migrated.controller.nodes, [
         { node_id: "minicloud-node", endpoint: { kind: "ipc", path: socket } },
       ]);
-      assert.equal((await Deno.stat(nodeFile)).mode! & 0o777, 0o600);
-      assert.equal((await Deno.stat(controllerFile)).mode! & 0o777, 0o600);
+      if (unix) {
+        assert.equal((await Deno.stat(nodeFile)).mode! & 0o777, 0o600);
+        assert.equal((await Deno.stat(controllerFile)).mode! & 0o777, 0o600);
+      }
 
       // A second run finds nothing legacy and rewrites nothing.
       const before = await Deno.readTextFile(nodeFile);

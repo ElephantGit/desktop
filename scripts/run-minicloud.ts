@@ -103,9 +103,12 @@ export async function initialize(root: string, mode: Mode): Promise<void> {
   ]) {
     await directory(path.join(root, name));
   }
-  // The short host name leaves room for scopes/<uuid>/control.sock in sockaddr_un.
+  // The short host name leaves room for scopes/<uuid>/control.sock in sockaddr_un. The 108-byte
+  // sun_path limit binds only the Linux hosts the launcher runs on; other platforms exercise
+  // initialization through tests alone, where long temporary paths must not fail it.
   const host = path.join(root, "p");
   if (
+    Deno.build.os === "linux" &&
     new TextEncoder().encode(
       path.join(
         host,
