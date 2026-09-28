@@ -6,7 +6,61 @@ import type {
 
 export type LoopRoundSelection = Readonly<Record<string, string>>;
 
-/** Resolves one Loop's explicit round selection, falling back to its latest round. */
+/** Container history stays pinned when a background occurrence completes. */
+export function isLoopHistoryNode(
+  run: GraphWorkflowRun,
+  nodeId: string,
+): boolean {
+  const node = run.definitionSnapshot.nodes.find((node) => node.id === nodeId);
+  return (
+    node?.data.kind === "loop" ||
+    run.definitionSnapshot.nodes.some(
+      (owner) =>
+        owner.data.kind === "loop" &&
+        owner.id === (node?.data.containerId ?? node?.parentId),
+    )
+  );
+}
+
+/** Presents committed round facts without re-evaluating conditions or guessing missing values. */
+export function loopRoundOutcome(
+  run: GraphWorkflowRun,
+  round: GraphWorkflowRound,
+): string {
+  if (round.status === "failed") return "workflowRun.loopView.failed";
+  if (round.status === "cancelled") return "workflowRun.loopView.cancelled";
+  if (
+    Object.values(round.nodeStates).some(
+      (state) => state.status === "awaiting_input",
+    )
+  )
+    return "workflowRun.loopView.waiting";
+  if (round.status === "running" || round.status === "pending") {
+    const exiting = run.definitionSnapshot.nodes.some(
+      (node) =>
+        node.data.kind === "loopExit" &&
+        round.nodeStates[node.id]?.status === "succeeded",
+    );
+    return exiting
+      ? "workflowRun.loopView.finishing"
+      : "workflowRun.loopView.running";
+  }
+  if (
+    (run.rounds ?? []).some(
+      (other) =>
+        other.parentLoopNodeRunId === round.parentLoopNodeRunId &&
+        other.roundIndex > round.roundIndex,
+    )
+  )
+    return "workflowRun.loopView.continue";
+  const parent = run.nodeStates[round.parentLoopNodeId];
+  if (parent?.stopReason === "loop_exit") return "workflowRun.loopView.exit";
+  if (parent?.stopReason === "loop_succeeded")
+    return "workflowRun.loopView.condition";
+  return "workflowRun.loopView.completed";
+}
+
+/** Resolves one Loop's explicit round selection, defaulting to its first persisted round. */
 export function selectedLoopRound(
   rounds: GraphWorkflowRound[],
   loopNodeId: string,
@@ -20,7 +74,7 @@ export function selectedLoopRound(
     loopRounds.find((round) => round.id === selectedRoundId) ??
     loopRounds.reduce<GraphWorkflowRound | undefined>(
       (latest, round) =>
-        latest === undefined || round.roundIndex > latest.roundIndex
+        latest === undefined || round.roundIndex < latest.roundIndex
           ? round
           : latest,
       undefined,
@@ -38,13 +92,19 @@ export function projectLoopRoundNodeStates(
   selection: LoopRoundSelection,
 ): Record<string, GraphWorkflowNodeState> {
   const rounds = run.rounds ?? [];
-  if (rounds.length === 0) {
-    return run.nodeStates;
-  }
-
-  const loopNodeIds = new Set(rounds.map((round) => round.parentLoopNodeId));
+  const loopNodeIds = new Set(
+    run.definitionSnapshot.nodes
+      .filter((node) => node.data.kind === "loop")
+      .map((node) => node.id),
+  );
   const nodeStates = { ...run.nodeStates };
   for (const loopNodeId of loopNodeIds) {
+    // A member absent from this round must never inherit another occurrence's session/output.
+    for (const member of run.definitionSnapshot.nodes) {
+      if ((member.data.containerId ?? member.parentId) === loopNodeId) {
+        nodeStates[member.id] = { status: "inactive" };
+      }
+    }
     const round = selectedLoopRound(rounds, loopNodeId, selection);
     if (round !== undefined) {
       Object.assign(nodeStates, round.nodeStates);

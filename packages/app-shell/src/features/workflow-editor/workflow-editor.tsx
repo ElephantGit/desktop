@@ -1,3 +1,5 @@
+import type { WorkflowContainerInsertion } from "./workflow-container-insertion";
+import { insertLoopMember } from "./workflow-loop-graph";
 import { useWorkflowAnalysis } from "../../state/data/workflow-analysis";
 import { WorkflowMembershipProvider } from "../workflow-node-chrome";
 import {
@@ -100,7 +102,6 @@ import {
   insertIterationMember,
   repairIterationGraphAfterNodeDeletion,
   resolveIterationDeletionCascade,
-  type IterationInsertion,
 } from "./workflow-iteration-graph";
 import { WorkflowGlobalVariablesDialog } from "./workflow-global-variables-dialog";
 import { workflowMcpChoices } from "./mcp-catalog";
@@ -1550,6 +1551,10 @@ function WorkflowEditorContent({
 
   /** Adds a catalog node at a canvas-provided position and selects it for immediate editing. */
   function addNode(kind: WorkflowNodeKind, position: XYPosition): void {
+    const nodeType = capabilities.nodeTypes.find(
+      (candidate) => candidate.kind === kind,
+    );
+    if (!nodeType || !supportsWorkflowNodeScope(nodeType, "workflow")) return;
     const currentWorkflow = workflowRef.current ?? workflow;
     if (
       currentWorkflow === null ||
@@ -1636,10 +1641,10 @@ function WorkflowEditorContent({
     expandInspector();
   }
 
-  /** Adds one capability-approved member through an explicit iteration graph seam. */
-  function insertIterationNode(
+  /** Adds one capability-approved member through an explicit container graph seam. */
+  function insertContainerNode(
     kind: WorkflowNodeKind,
-    insertion: IterationInsertion,
+    insertion: WorkflowContainerInsertion,
   ): void {
     const currentWorkflow = workflowRef.current ?? workflow;
     const nodeType = capabilities.nodeTypes.find(
@@ -1648,7 +1653,10 @@ function WorkflowEditorContent({
     if (
       currentWorkflow === null ||
       nodeType === undefined ||
-      !supportsWorkflowNodeScope(nodeType, "iteration")
+      !supportsWorkflowNodeScope(
+        nodeType,
+        insertion.type === "loop-output" ? "loop" : "iteration",
+      )
     ) {
       return;
     }
@@ -1669,18 +1677,18 @@ function WorkflowEditorContent({
       selected: true,
     };
     updateWorkflow(
-      (current) =>
-        insertIterationMember(
-          {
-            ...current,
-            nodes: current.nodes.map((candidate) => ({
-              ...candidate,
-              selected: false,
-            })),
-          },
-          insertion,
-          node,
-        ),
+      (current) => {
+        const graph = {
+          ...current,
+          nodes: current.nodes.map((candidate) => ({
+            ...candidate,
+            selected: false,
+          })),
+        };
+        return insertion.type === "loop-output"
+          ? insertLoopMember(graph, insertion, node)
+          : insertIterationMember(graph, insertion, node);
+      },
       {
         history: {
           event: "node.add",
@@ -2514,7 +2522,7 @@ function WorkflowEditorContent({
                   onNodesChange={changeNodes}
                   onEdgesChange={changeEdges}
                   onAddNode={addNode}
-                  onInsertIterationNode={insertIterationNode}
+                  onInsertContainerNode={insertContainerNode}
                   onToggleIterationCollapsed={toggleIterationCollapsed}
                   onAddAnnotation={addAnnotation}
                   onUpdateAnnotation={updateAnnotation}

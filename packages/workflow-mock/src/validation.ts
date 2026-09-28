@@ -66,6 +66,21 @@ export function isDemoWorkflow(value: unknown): value is DemoWorkflow {
     return false;
   }
 
+  if (
+    candidate.nodes.some(
+      (node) =>
+        node.data.kind === "loopExit" &&
+        (!candidate.nodes!.some(
+          (owner) =>
+            owner.id === node.data.containerId && owner.data.kind === "loop",
+        ) ||
+          (node.parentId !== undefined &&
+            node.parentId !== node.data.containerId) ||
+          candidate.edges!.some((edge) => edge.source === node.id)),
+    )
+  )
+    return false;
+
   const nodeIds = new Set(candidate.nodes.map((node) => node.id));
   const edgeIds = new Set(candidate.edges.map((edge) => edge.id));
   const annotationIds = new Set(

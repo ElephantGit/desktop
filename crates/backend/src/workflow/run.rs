@@ -1,5 +1,7 @@
 //! Backend composition and runtime adapters for workflow runs.
 
+#[cfg(test)]
+mod aggregator_persistence_tests;
 mod api;
 mod checkpoint;
 mod diagnosis;
@@ -9,6 +11,8 @@ pub(crate) mod interactive;
 #[cfg(test)]
 mod iteration_tests;
 mod last_failure;
+#[cfg(test)]
+mod loop_exit_tests;
 #[cfg(test)]
 mod loop_resume_tests;
 #[cfg(test)]

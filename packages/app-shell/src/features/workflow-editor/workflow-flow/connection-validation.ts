@@ -22,6 +22,11 @@ export function isValidWorkflowConnection({
   ) {
     return false;
   }
+  if (
+    nodes.find((node) => node.id === connection.source)?.data.kind ===
+    "loopExit"
+  )
+    return false;
   const sourceLoop = nodes.find((node) => node.id === connection.source)?.data
     .containerId;
   const targetLoop = nodes.find((node) => node.id === connection.target)?.data

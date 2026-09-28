@@ -95,9 +95,14 @@ pub struct LoopRoundToStart {
     pub start_node_run: NodeRunToStart,
 }
 
-/// The atomic state change chosen after every child node in a Loop round is terminal.
+/// An atomic round transition, including an exit request while siblings are still active.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoopRoundAdvance {
+    /// Freezes exit outputs and cancels remaining child rows before any session cleanup.
+    RequestExit {
+        node_run_id: WorkflowNodeRunId,
+        result: Result<BTreeMap<String, serde_json::Value>, String>,
+    },
     /// Closes the current round and starts the next round from its Start node.
     Continue { next: LoopRoundToStart },
     /// Closes the round and publishes the configured values through the parent Loop node.

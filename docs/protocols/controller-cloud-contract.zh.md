@@ -68,4 +68,4 @@ clone（`--filter=blob:none`）与 sparse-checkout 只展开 `proto/`。
    子模块 diff 评审。
 
 生成证明的是结构一致。Controller 的测试以生成的服务端桩构建内存假 Cloud 验证适配器行为；与真实 Cloud gRPC
-服务端的行为一致经 minicloud 云端形态端到端验证，尚未自动化。
+服务端的行为一致曾手动端到端验证，现在在 cluster 仓库的 Compose 栈中联调，尚未自动化。

@@ -29,6 +29,7 @@ pub use super::node_executor::{
 };
 
 mod composite_scheduler;
+mod loop_exit;
 mod loop_scheduler;
 
 /// Result of one scheduling pass inside a running Loop container.

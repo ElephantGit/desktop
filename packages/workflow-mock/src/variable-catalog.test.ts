@@ -162,3 +162,126 @@ describe("deriveWorkflowVariableCatalog iteration scope rules", () => {
     ).toBe("string");
   });
 });
+
+describe("deriveWorkflowVariableCatalog aggregator typing", () => {
+  const AGENT = (id: string) =>
+    node(id, {
+      kind: "agent",
+      title: id,
+      description: "",
+      agentConfig: {
+        schemaVersion: 3,
+        executor: { agentCli: "c", modelId: "m" },
+        roleId: "",
+        skills: [],
+        mcps: [],
+        prompt: "work",
+      },
+    });
+
+  const aggregatorNode = (variables: string[][]) =>
+    node("agg", {
+      kind: "aggregator",
+      title: "Agg",
+      description: "",
+      aggregatorConfig: { variables },
+    });
+
+  const graph = (agg: ReturnType<typeof aggregatorNode>) => [
+    node("start", {
+      kind: "start",
+      title: "Start",
+      description: "",
+      inputVariables: [{ name: "limit", valueType: "number" }],
+    }),
+    AGENT("a"),
+    AGENT("b"),
+    agg,
+    node("out", { kind: "output", title: "Out", description: "" }),
+  ];
+
+  const joinEdges: Edge[] = [
+    { id: "e1", source: "start", target: "a" },
+    { id: "e2", source: "start", target: "b" },
+    { id: "e3", source: "a", target: "agg" },
+    { id: "e4", source: "b", target: "agg" },
+    { id: "e5", source: "agg", target: "out" },
+  ];
+
+  it("types the aggregator output as the candidates' common declared type", () => {
+    const entries = deriveWorkflowVariableCatalog(
+      graph(
+        aggregatorNode([
+          ["a", "output"],
+          ["b", "output"],
+        ]),
+      ),
+      joinEdges,
+      "out",
+    );
+    const output = entries.find(
+      (entry) => entry.selector.join(".") === "agg.output",
+    );
+    expect(output?.valueType).toBe("string");
+  });
+
+  it("derives mixed candidate types as any and keeps node outputs string", () => {
+    const entries = deriveWorkflowVariableCatalog(
+      graph(
+        aggregatorNode([
+          ["a", "output"],
+          ["start", "limit"],
+        ]),
+      ),
+      joinEdges,
+      "out",
+    );
+    const bySelector = new Map(
+      entries.map((entry) => [entry.selector.join("."), entry]),
+    );
+    expect(bySelector.get("agg.output")?.valueType).toBe("any");
+  });
+
+  it("derives an empty candidate list as any", () => {
+    const entries = deriveWorkflowVariableCatalog(
+      graph(aggregatorNode([])),
+      joinEdges,
+      "out",
+    );
+    expect(
+      entries.find((entry) => entry.selector.join(".") === "agg.output")
+        ?.valueType,
+    ).toBe("any");
+  });
+
+  it("types chained aggregators from their upstream aggregator output", () => {
+    const chained = node("agg2", {
+      kind: "aggregator",
+      title: "Agg2",
+      description: "",
+      aggregatorConfig: { variables: [["agg", "output"]] },
+    });
+    const entries = deriveWorkflowVariableCatalog(
+      [
+        ...graph(
+          aggregatorNode([
+            ["a", "output"],
+            ["b", "output"],
+          ]),
+        ),
+        chained,
+        node("out2", { kind: "output", title: "Out2", description: "" }),
+      ],
+      [
+        ...joinEdges,
+        { id: "e6", source: "agg", target: "agg2" },
+        { id: "e7", source: "agg2", target: "out2" },
+      ],
+      "out2",
+    );
+    expect(
+      entries.find((entry) => entry.selector.join(".") === "agg2.output")
+        ?.valueType,
+    ).toBe("string");
+  });
+});

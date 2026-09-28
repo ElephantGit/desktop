@@ -44,9 +44,10 @@ category.
   a successful leave clears the sidebar error.
 - The inner library rail is gone: the app sidebar is the only workflow list.
   Newest-created workflows are first; create prepends the row and opens its draft.
-- The node catalog advertises only the runtime-backed Start, Agent, Condition, Iteration, Loop,
-  and Output nodes, in that order. Prototype metadata for other node kinds remains available so
-  each kind can be exposed when its runtime support is implemented.
+- The node catalog advertises only the runtime-backed Start, Agent, Condition, Variable
+  Aggregator, Iteration, Loop, and Output nodes, in that order. Prototype metadata for other
+  node kinds remains available so each kind can be exposed when its runtime support is
+  implemented.
 - The iteration node is an embedded composite region on the same canvas. Membership is authored
   only through its internal start, internal-edge insertion, and unconnected-output append menus;
   geometry never changes `parentId`. Agent and Condition declare iteration support through

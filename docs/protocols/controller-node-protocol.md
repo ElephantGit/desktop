@@ -74,9 +74,42 @@ Events and Completed queries apply identical clone checks. Result NodeId must ma
 the status reporter must match the result's persistent NodeId but may have a newer incarnation.
 Queries carry no event sequence and never acknowledge the retained event.
 
-`HelloAccepted` accepts `repository_clone`, `worktree_execution`, or both, without duplicates.
+`HelloAccepted` accepts any combination of `repository_clone`, `worktree_execution`, `plugin_install`,
+`agent_session` and `revision_delivery`, without duplicates.
 The set must be nonempty. This only validates a declaration: session owners must still match the
 selected Node's capability before dispatch. No unsupported capability is advertised by the existing runtime.
+
+## Agent IssueRun executions
+
+Three further execution families carry the second closed loop
+([specs ADR](../../specs/decisions/node/protocol/20260928-streamed-thread-events-and-session-commands.md),
+proposed). The codec defines and validates them; no running Node advertises their capabilities yet,
+and both runtimes refuse their messages as unsupported.
+
+| Capability          | Controller → Node                                        | Node → Controller                                                                                          |
+| ------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `plugin_install`    | `install_plugins`, `remove_plugins`                      | `plugins_result` (`plugins_completed` / `plugins_failed`)                                                  |
+| `agent_session`     | `start_agent_session`, `submit_user_turn`, `end_session` | `thread_event`, `agent_session_ended`, `session_command_accepted`, `session_command_rejected`              |
+| `revision_delivery` | `deliver_revision`, `upload_grant`                       | `revision_result` (`revision_delivered` / `revision_unchanged` / `revision_failed`), `upload_grant_needed` |
+
+- Plugin inputs name each canonical `<namespace>/<identifier>` once, with either one universal HTTP(S)
+  download or distinct per-target downloads, each with a lowercase SHA-256. Item failures are reported
+  per plugin; `plugins_failed` means the execution as a whole could not run.
+- A session names the agent plugin and version, the clone execution whose checkout it uses (never a
+  Node path), a git identity that cannot corrupt a signature line, and the first user turn (text only,
+  at most 64 KiB). `thread_event` carries one settled `ora-history` record as an opaque JSON object of at
+  most 256 KiB (`truncated` marks a shortened one), and shares the execution's gap-free sequence space
+  with the terminal `agent_session_ended`, whose `detail` is a short snake_case code.
+- `submit_user_turn` and `end_session` carry a `command_id`; their replies carry no sequence and need no
+  acknowledgement, and a lost reply is recovered by resending the command.
+- A delivery names the ended session, the clone, the base commit, a ref under `refs/ora/revisions/`, and
+  two distinct normalized object keys. `revision_unchanged` requires the final commit to equal the base;
+  `revision_delivered` requires it to differ.
+- `upload_grant` and `upload_grant_needed` are memory-only: no sequence, no acknowledgement, never
+  persisted or logged. `PresignedUrl` redacts itself in `Debug`.
+
+The new result families use disjoint `kind` tags inside the untagged `ExecutionResult`; the Revision
+family is boxed to keep `ExecutionState` small.
 
 ## Using the codec
 
@@ -142,7 +175,7 @@ Names and enum tags use snake_case on the wire. For example, the JSON inside a H
 Both codec directions enforce envelope version 1. `Hello` advertises a nonempty, duplicate-free
 version list containing the envelope version; it may also advertise other versions.
 `HelloAccepted` selects the envelope version and advertises a duplicate-free capability set
-containing at least one of `worktree_execution` and `repository_clone`. These checks establish
+containing at least one known capability. These checks establish
 message self-consistency. Matching the response to a previous Hello and enforcing handshake order
 require a session implementation. A heartbeat carries the current Node identity, not execution evidence.
 

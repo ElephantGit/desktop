@@ -6207,22 +6207,6 @@
           ]
         }
       },
-      "apps/minicloud/client": {
-        "packageJson": {
-          "dependencies": [
-            "npm:@tailwindcss/vite@4.3.0",
-            "npm:@testing-library/react@16.3.2",
-            "npm:@testing-library/user-event@14.6.3",
-            "npm:@vitejs/plugin-react@6.0.1",
-            "npm:jsdom@29.1.1",
-            "npm:react-dom@19.2.6",
-            "npm:react@19.2.6",
-            "npm:tailwindcss@4.3.0",
-            "npm:vite@8.0.11",
-            "npm:vitest@4.1.10"
-          ]
-        }
-      },
       "packages/app-shell": {
         "packageJson": {
           "dependencies": [

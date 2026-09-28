@@ -18,6 +18,7 @@ mod current_nodes;
 mod failure_detail;
 mod finish;
 mod iteration;
+mod loop_exit;
 mod loop_round;
 mod payload;
 mod payload_json;

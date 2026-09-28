@@ -3,10 +3,12 @@ export type WorkflowNodeKind =
   | "start"
   | "agent"
   | "condition"
+  | "aggregator"
   | "tool"
   | "junction"
   | "human"
   | "loop"
+  | "loopExit"
   | "iteration"
   | "subflow"
   | "output";
@@ -113,6 +115,16 @@ export interface WorkflowConditionCase {
   conditions: WorkflowConditionComparison[];
 }
 
+/**
+ * Ordered variable selectors of an Aggregator node, mirroring the backend
+ * `data.aggregatorConfig` wire shape. Array order is the priority contract: the first
+ * assigned selector's value is passed through as `{agg}.output`.
+ */
+export interface WorkflowAggregatorConfig {
+  /** Dify-style root selectors `["nodeId", "root"]`; nested paths are not selectable. */
+  variables: string[][];
+}
+
 /** One named result an Output node exposes, resolved from the run variable pool at completion. */
 export interface WorkflowOutputBinding {
   name: string;
@@ -217,6 +229,8 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   conditionCases?: WorkflowConditionCase[];
   /** Executable cases for Condition nodes, matching the backend `data.cases` wire format. */
   cases?: WorkflowConditionCase[];
+  /** Aggregator node: ordered candidate selectors (backend `data.aggregatorConfig`). */
+  aggregatorConfig?: WorkflowAggregatorConfig;
   /** Named result bindings of an Output node, resolved from the variable pool at completion. */
   outputs?: WorkflowOutputBinding[];
   /** Owning Loop id for one child node. */
@@ -345,6 +359,8 @@ export interface WorkflowNodeAiDiagnosis {
 }
 
 export interface GraphWorkflowNodeState {
+  /** The branch committed for this exact node execution, not a global latest decision. */
+  selectedBranchId?: string;
   status: GraphWorkflowNodeStatus;
   /**
    * Composite-region round this state belongs to; present only for region rows, where the
@@ -444,6 +460,8 @@ export interface GraphWorkflowRun {
   name: string;
   status: GraphWorkflowRunStatus;
   kickoffInput?: string;
+  /** Committed workflow result, distinct from any intermediate node output. */
+  finalOutput?: string;
   nodeStates: Record<string, GraphWorkflowNodeState>;
   /** Complete Loop-round history; repeated child node ids remain isolated per round. */
   rounds?: GraphWorkflowRound[];

@@ -17,6 +17,7 @@ import {
 } from "./loop-round-state";
 import { RunActInspector } from "./run-act-inspector";
 import { RunResultAct } from "./run-result-act";
+import { RunLoopStage } from "./run-loop-stage";
 import { RunTheaterActCard } from "./run-theater-act-card";
 import { RunTheaterParallelStage } from "./run-theater-parallel-stage";
 import { RunTheaterPathRail } from "./run-theater-path-rail";
@@ -122,12 +123,14 @@ export function RunTheater({
   const pathRailRef = useRef<HTMLDivElement | null>(null);
   const [loopRoundSelection, setLoopRoundSelection] =
     useState<LoopRoundSelection>({});
+  const [loopResultId, setLoopResultId] = useState<string | null>(null);
   const [loopRoundSelectionRunId, setLoopRoundSelectionRunId] = useState(
     run.id,
   );
   if (loopRoundSelectionRunId !== run.id) {
     setLoopRoundSelectionRunId(run.id);
     setLoopRoundSelection({});
+    setLoopResultId(null);
   }
 
   const visibleNodeStates = useMemo(
@@ -153,6 +156,38 @@ export function RunTheater({
   );
   const primaryId = focus.primaryId;
   const primaryNode = primaryId === null ? undefined : nodeById.get(primaryId);
+  const primaryLoopId =
+    primaryNode?.data.kind === "loop"
+      ? primaryNode.id
+      : nodeById.get(
+            primaryNode?.data.containerId ?? primaryNode?.parentId ?? "",
+          )?.data.kind === "loop"
+        ? (primaryNode?.data.containerId ?? primaryNode?.parentId ?? null)
+        : null;
+  const primaryLoopRound =
+    primaryLoopId === null
+      ? undefined
+      : selectedLoopRound(run.rounds ?? [], primaryLoopId, loopRoundSelection);
+  /** Entering a container always returns to round one; member focus preserves its scope. */
+  function focusPathNode(nodeId: string) {
+    if (nodeById.get(nodeId)?.data.kind === "loop") {
+      setLoopRoundSelection((current) => {
+        const next = { ...current };
+        delete next[nodeId];
+        return next;
+      });
+    }
+    setLoopResultId(null);
+    onFocusNode(nodeId);
+  }
+  function selectLoopRound(roundId: string) {
+    if (primaryLoopId === null) return;
+    setLoopRoundSelection((current) => ({
+      ...current,
+      [primaryLoopId]: roundId,
+    }));
+    setLoopResultId(null);
+  }
   const primaryRegionId =
     (primaryNode?.parentId !== undefined &&
     nodeById.get(primaryNode.parentId)?.data.kind === "iteration"
@@ -287,14 +322,18 @@ export function RunTheater({
   }
   const primaryArtifacts = useMemo(
     () =>
-      primaryId === null
+      primaryId === null ||
+      (primaryLoopId !== null && primaryId !== primaryLoopId)
         ? []
         : filterArtifacts(artifacts, { type: "node", nodeId: primaryId }),
-    [artifacts, primaryId],
+    [artifacts, primaryId, primaryLoopId],
   );
   const primaryRealConversation = primaryDisplayState?.conversation;
   const primaryConversation = useMemo(() => {
-    if (primaryNode?.parentId !== undefined && effectiveRegionRound !== null) {
+    if (
+      primaryLoopId !== null ||
+      (primaryNode?.parentId !== undefined && effectiveRegionRound !== null)
+    ) {
       // Region history is round-scoped. Falling back to the node-level projection here would
       // silently show another round's session when this member did not execute in the selection.
       return primaryRealConversation ?? [];
@@ -308,6 +347,7 @@ export function RunTheater({
       : mockItems;
   }, [
     primaryId,
+    primaryLoopId,
     primaryNode?.parentId,
     effectiveRegionRound,
     conversationByNodeId,
@@ -556,7 +596,24 @@ export function RunTheater({
         selectedRound={effectiveRegionRound}
         onRoundChange={setSelectedRound}
         pathRailRef={pathRailRef}
-        onFocusNode={onFocusNode}
+        onFocusNode={focusPathNode}
+        loopRound={primaryLoopRound}
+        onLoopRoundChange={selectLoopRound}
+        loopResultSelected={
+          primaryLoopId !== null && loopResultId === primaryLoopId
+        }
+        onLoopOverview={() => {
+          if (primaryLoopId !== null) {
+            setLoopResultId(null);
+            onFocusNode(primaryLoopId);
+          }
+        }}
+        onLoopResult={() => {
+          if (primaryLoopId !== null) {
+            setLoopResultId(primaryLoopId);
+            onFocusNode(primaryLoopId);
+          }
+        }}
         onExpandHitl={expandHitlForRequest}
         onShowResultAct={
           isTerminalRunStatus(run.status) ? onClearFocus : undefined
@@ -602,6 +659,14 @@ export function RunTheater({
                       : undefined
                   }
                 />
+              ) : primaryNode?.data.kind === "loop" ? (
+                <RunLoopStage
+                  run={run}
+                  loopId={primaryNode.id}
+                  round={primaryLoopRound}
+                  showResult={loopResultId === primaryNode.id}
+                  onFocusNode={focusPathNode}
+                />
               ) : showParallelCarousel && !primaryConversationOpen ? (
                 <div className="space-y-3">
                   <RunTheaterParallelStage
@@ -636,6 +701,15 @@ export function RunTheater({
                       "flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden",
                   )}
                 >
+                  {primaryLoopId !== null && primaryLoopRound !== undefined && (
+                    <p className="mb-2 text-xs text-muted-foreground">
+                      {nodeById.get(primaryLoopId)?.data.title} /{" "}
+                      {t("workflowRun.loopRounds.round", {
+                        round: primaryLoopRound.roundIndex,
+                      })}{" "}
+                      / {primaryNode.data.title}
+                    </p>
+                  )}
                   {primaryRegion !== null &&
                     primaryRegionNode !== undefined &&
                     primaryRegionPhase !== undefined &&
@@ -652,6 +726,10 @@ export function RunTheater({
                       />
                     )}
                   <RunTheaterActCard
+                    key={
+                      primaryDisplayState.sessionId ??
+                      `${run.id}:${primaryLoopRound?.id ?? effectiveRegionRound}:${primaryNode.id}`
+                    }
                     data={primaryNode.data}
                     state={primaryDisplayState}
                     runId={run.id}
@@ -668,8 +746,11 @@ export function RunTheater({
                         open ? primaryNode.id : null,
                       );
                     }}
-                    onNodeCompleted={onNodeCompleted}
+                    onNodeCompleted={
+                      primaryLoopId === null ? onNodeCompleted : undefined
+                    }
                     variant="stage"
+                    showCompletedOutput={primaryLoopId !== null}
                     inspectorOpen={!inspectorCollapsed}
                     onToggleInspector={toggleInspector}
                     interaction={
@@ -820,11 +901,7 @@ export function RunTheater({
                 }
                 onSelectedLoopRoundChange={
                   primaryNode?.data.kind === "loop"
-                    ? (roundId) =>
-                        setLoopRoundSelection((current) => ({
-                          ...current,
-                          [primaryNode.id]: roundId,
-                        }))
+                    ? selectLoopRound
                     : undefined
                 }
                 editable={isEditableStart}

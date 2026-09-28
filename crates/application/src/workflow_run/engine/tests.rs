@@ -316,6 +316,7 @@ fn parses_agent_config_into_the_model() {
             output_contract: None,
         }),
         condition_config: None,
+        aggregator_config: None,
         output_config: None,
         iteration_config: None,
     };

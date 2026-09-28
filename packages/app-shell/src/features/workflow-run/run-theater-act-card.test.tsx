@@ -47,6 +47,95 @@ const NODE_DATA: WorkflowNodeData = {
   model: "mock-model",
 };
 
+it("renders condition semantics without Agent instruction, output or conversation placeholders", () => {
+  render(
+    <RunTheaterActCard
+      data={{
+        kind: "condition",
+        title: "Review decision",
+        description: "",
+        conditionCases: [
+          {
+            id: "pass",
+            conditions: [
+              {
+                variableSelector: ["reviewer", "output"],
+                operator: "eq",
+                value: "PASS",
+              },
+            ],
+          },
+        ],
+      }}
+      state={{ status: "succeeded" }}
+      live={false}
+      showCompletedOutput
+    />,
+    { wrapper: createSessionWrapper() },
+  );
+  expect(screen.getByText("分支条件")).toBeInTheDocument();
+  expect(screen.getByText(/reviewer.output/)).toBeInTheDocument();
+  expect(screen.getByText("判断结果")).toBeInTheDocument();
+  expect(screen.getByText(/当前运行记录未提供命中的分支/)).toBeInTheDocument();
+  expect(screen.queryByText("指令")).not.toBeInTheDocument();
+  expect(screen.queryByText("输出")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /查看.*对话/ }),
+  ).not.toBeInTheDocument();
+});
+
+it("highlights the selected branch and renders only that case's rules across round changes", () => {
+  const data: WorkflowNodeData = {
+    kind: "condition",
+    title: "Decision",
+    description: "",
+    cases: [
+      {
+        id: "pass",
+        conditions: [
+          {
+            variableSelector: ["reviewer", "output"],
+            operator: "eq",
+            value: "PASS",
+          },
+        ],
+      },
+      {
+        id: "stop",
+        conditions: [
+          {
+            variableSelector: ["reviewer", "output"],
+            operator: "eq",
+            value: "STOP",
+          },
+        ],
+      },
+    ],
+  };
+  const view = render(
+    <RunTheaterActCard
+      data={data}
+      state={{ status: "succeeded", selectedBranchId: "else" }}
+      live={false}
+    />,
+    { wrapper: createSessionWrapper() },
+  );
+  expect(screen.getByText("本轮选择：ELSE")).toBeInTheDocument();
+  expect(screen.getAllByText(/reviewer.output.*PASS/)).toHaveLength(1);
+  expect(screen.getAllByText(/reviewer.output.*STOP/)).toHaveLength(1);
+  expect(screen.queryByText(/PASS.*STOP/)).not.toBeInTheDocument();
+  view.rerender(
+    <RunTheaterActCard
+      data={data}
+      state={{ status: "succeeded", selectedBranchId: "pass" }}
+      live={false}
+    />,
+  );
+  expect(screen.getByText("本轮选择：pass")).toBeInTheDocument();
+  expect(screen.queryByText("本轮选择：ELSE")).not.toBeInTheDocument();
+  expect(screen.getAllByText("本轮命中")).toHaveLength(1);
+});
+
 const CONVERSATION: WorkflowNodeConversationItem[] = [
   {
     kind: "message",

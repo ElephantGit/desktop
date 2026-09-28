@@ -24,6 +24,7 @@ pub enum NodeFailureKind {
     InterruptedByRestart,
     MultipleOutputs,
     ConditionEvaluation,
+    AggregatorNoMatch,
 }
 
 impl NodeFailureKind {
@@ -48,7 +49,8 @@ impl NodeFailureKind {
             | Self::InvalidRunPayload
             | Self::UnknownStopReason
             | Self::MultipleOutputs
-            | Self::ConditionEvaluation => false,
+            | Self::ConditionEvaluation
+            | Self::AggregatorNoMatch => false,
         }
     }
 
@@ -73,7 +75,8 @@ impl NodeFailureKind {
             | Self::Repository
             | Self::Session
             | Self::InterruptedByRestart
-            | Self::ConditionEvaluation => false,
+            | Self::ConditionEvaluation
+            | Self::AggregatorNoMatch => false,
         }
     }
 
@@ -97,6 +100,7 @@ impl NodeFailureKind {
             Self::InterruptedByRestart => "interrupted_by_restart",
             Self::MultipleOutputs => "multiple_outputs",
             Self::ConditionEvaluation => "condition_evaluation",
+            Self::AggregatorNoMatch => "aggregator_no_match",
         }
     }
 }
@@ -139,6 +143,7 @@ impl NodeFailure {
     pub(super) fn from_runtime(node_type: NodeType, message: String) -> Self {
         let kind = match node_type {
             NodeType::Condition => NodeFailureKind::ConditionEvaluation,
+            NodeType::Aggregator => NodeFailureKind::AggregatorNoMatch,
             NodeType::Output if message.starts_with("multiple active output nodes:") => {
                 NodeFailureKind::MultipleOutputs
             }
@@ -148,7 +153,8 @@ impl NodeFailure {
             | NodeType::Prompt
             | NodeType::Tool
             | NodeType::Iteration
-            | NodeType::Loop => NodeFailureKind::InvalidRunPayload,
+            | NodeType::Loop
+            | NodeType::LoopExit => NodeFailureKind::InvalidRunPayload,
         };
         Self::new(kind, message)
     }
@@ -216,6 +222,7 @@ mod tests {
         assert_eq!(NodeFailureKind::InterruptedByRestart.resumable(), true);
         assert_eq!(NodeFailureKind::MultipleOutputs.resumable(), false);
         assert_eq!(NodeFailureKind::ConditionEvaluation.resumable(), false);
+        assert_eq!(NodeFailureKind::AggregatorNoMatch.resumable(), false);
     }
 
     #[test]
@@ -264,6 +271,10 @@ mod tests {
             NodeFailureKind::ConditionEvaluation.inject_into_prompt(),
             false
         );
+        assert_eq!(
+            NodeFailureKind::AggregatorNoMatch.inject_into_prompt(),
+            false
+        );
     }
 
     #[test]
@@ -290,6 +301,7 @@ mod tests {
             NodeFailureKind::InterruptedByRestart,
             NodeFailureKind::MultipleOutputs,
             NodeFailureKind::ConditionEvaluation,
+            NodeFailureKind::AggregatorNoMatch,
         ] {
             let name = kind.as_str();
             assert_eq!(serde_json::to_string(&kind).unwrap(), format!("\"{name}\""));

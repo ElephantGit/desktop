@@ -66,7 +66,7 @@ a typed `until` condition, and named exports. Each Loop body is a separate DAG w
 reachable Start. Nested Loops, ownership mismatches, cross-scope edges and selectors, invalid
 types on active nodes are rejected before sessions start. Spare children unreachable from the child Start remain in the snapshot and do not execute. The default editor group feeds
 the child Agent output into the next round's `value`, stops on a non-empty output, and exports it as
-`result`; authors can set the initial value and maximum rounds.
+`result`; authors can set the initial value and maximum rounds. The Loop panel also edits end conditions using child outputs (including structured fields), carried variables, and visible outer variables, comparison operators, and target values. Multiple rules combine with AND/OR; at least one rule is retained. Conditions are checked after each round: a match succeeds, otherwise execution continues, and reaching the limit without a match fails. Emptiness and existence checks support unset variables; other comparisons fail rather than reusing a previous round value. Following the [Dify termination editor reference](dify-loop-termination-reference.md), operators are filtered by variable type, booleans use a picker, and unary conditions hide the comparison value. Ora retains its post-round evaluation and failure-at-limit semantics.
 
 Each iteration has a durable `WorkflowExecutionScope`. Child NodeRuns and Sessions belong to that
 scope, so repeated definition node IDs do not overwrite another round. Completion resolves feedback
@@ -96,6 +96,25 @@ with an explicit error; it is never silently skipped. Unselected plugins cannot 
 Ordinary chats keep automatic discovery. Package and configuration updates for selected plugins
 still use the existing safe refresh boundary; no credentials are persisted in the graph. See
 [Session MCP](session-mcp.md) for runtime delivery and refresh behavior.
+
+## Variable Aggregator
+
+The aggregator is a swift control node that collapses mutually exclusive branch outputs into one
+variable. Its `data.aggregatorConfig.variables` holds an ordered list of Dify-style root selectors
+`["nodeId", "root"]`; the array order is the priority contract, so the first **assigned** candidate
+in declaration order passes its pool value through unchanged as `{agg}.output`. Assigned means the
+selector's key exists in the pool — never a truthiness check, so `null`, `false`, `0`, `""`, `[]`,
+and `{}` all hit. When every candidate is unassigned the node fails the run with the stable
+`aggregator_no_match` failure kind.
+
+Parse-time validation keeps the output type static: every candidate must be declared, must be
+produced by the aggregator's static transitive predecessor or a global variable (producers on
+mutually exclusive sibling branches qualify, because their edges feed the aggregator), and all
+candidates must share one declared type — `{agg}.output` is declared with that common type. The
+node never reads Condition decisions and the scheduling core stays type-agnostic: branch selection
+is expressed entirely by the existing branch projection (inactive Condition edges never gate
+readiness) plus pool facts. Groups, nested-path selectors, and type coercion are out of scope for
+V1.
 
 ## Handlers
 

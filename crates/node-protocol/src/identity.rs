@@ -56,6 +56,14 @@ string_identity!(
     ExecutionId,
     "Identity of one Node execution attempt for an operation."
 );
+string_identity!(
+    TurnId,
+    "Cloud-generated identity of one user turn, carried into the Node's user message record."
+);
+string_identity!(
+    CommandId,
+    "Cloud-generated identity of one session command; a Node executes it at most once."
+);
 string_identity!(WorkspaceId, "Identity of an Ora Workspace on the wire.");
 string_identity!(
     WorktreeId,

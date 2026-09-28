@@ -560,6 +560,9 @@ fn failure_kind_label(kind: NodeFailureKind, locale: WorkflowRunLocale) -> &'sta
         (WorkflowRunLocale::ZhCn, NodeFailureKind::InterruptedByRestart) => "被应用重启打断",
         (WorkflowRunLocale::ZhCn, NodeFailureKind::MultipleOutputs) => "多个输出节点同时完成",
         (WorkflowRunLocale::ZhCn, NodeFailureKind::ConditionEvaluation) => "条件无法判断",
+        (WorkflowRunLocale::ZhCn, NodeFailureKind::AggregatorNoMatch) => {
+            "变量聚合器没有已产出的候选变量"
+        }
         (WorkflowRunLocale::EnUs, NodeFailureKind::MissingAgentRef) => "Node names no agent",
         (WorkflowRunLocale::EnUs, NodeFailureKind::WorkflowModelNotFound) => "Model not available",
         (WorkflowRunLocale::EnUs, NodeFailureKind::MissingAgentConfig) => {
@@ -594,6 +597,9 @@ fn failure_kind_label(kind: NodeFailureKind, locale: WorkflowRunLocale) -> &'sta
         }
         (WorkflowRunLocale::EnUs, NodeFailureKind::ConditionEvaluation) => {
             "Condition could not be evaluated"
+        }
+        (WorkflowRunLocale::EnUs, NodeFailureKind::AggregatorNoMatch) => {
+            "Variable aggregator found no produced candidate"
         }
     }
 }
@@ -680,6 +686,7 @@ mod tests {
                 output_contract: None,
             }),
             condition_config: None,
+            aggregator_config: None,
             output_config: None,
             iteration_config: None,
         };
@@ -787,6 +794,7 @@ mod tests {
                 }),
             }),
             condition_config: None,
+            aggregator_config: None,
             output_config: None,
             iteration_config: None,
         };
@@ -845,6 +853,7 @@ mod tests {
                 }),
             }),
             condition_config: None,
+            aggregator_config: None,
             output_config: None,
             iteration_config: None,
         };
@@ -915,6 +924,7 @@ mod tests {
                 output_contract: None,
             }),
             condition_config: None,
+            aggregator_config: None,
             output_config: None,
             iteration_config: None,
         };
