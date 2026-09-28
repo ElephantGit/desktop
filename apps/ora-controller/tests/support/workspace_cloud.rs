@@ -365,6 +365,9 @@ impl WorkspaceCloud {
                 .filter(|record| &record.operation_id == id)
                 .cloned()
                 .collect(),
+            // The plugin step is not driven through Node executions by this Controller yet.
+            plugin_executions: Vec::new(),
+            plugin_input: None,
         }
     }
 
@@ -759,6 +762,8 @@ impl WorkspaceOperationService for WorkspaceCloud {
                 proto::DeferReason::ExternalFailure => "external_failure",
                 proto::DeferReason::CloneFailed => "clone_failed",
                 proto::DeferReason::CloneResultUnknown => "clone_result_unknown",
+                proto::DeferReason::PluginExecutionFailed => "plugin_execution_failed",
+                proto::DeferReason::PluginResultUnknown => "plugin_result_unknown",
                 proto::DeferReason::Unspecified => "unspecified",
             },
         });
