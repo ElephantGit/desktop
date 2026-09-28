@@ -84,13 +84,15 @@ selected Node's capability before dispatch. No unsupported capability is adverti
 Three further execution families carry the second closed loop
 ([specs ADR](../../specs/decisions/node/protocol/20260928-streamed-thread-events-and-session-commands.md),
 proposed). The codec defines and validates them; no running Node advertises their capabilities yet,
-and both runtimes refuse their messages as unsupported.
+and both runtimes refuse their messages as unsupported. The Node's
+[session execution](../node/agent-session.md) exists behind its ledger interfaces but is not yet
+wired to these messages.
 
-| Capability | Controller → Node | Node → Controller |
-|---|---|---|
-| `plugin_install` | `install_plugins`, `remove_plugins` | `plugins_result` (`plugins_completed` / `plugins_failed`) |
-| `agent_session` | `start_agent_session`, `submit_user_turn`, `end_session` | `thread_event`, `agent_session_ended`, `session_command_accepted`, `session_command_rejected` |
-| `revision_delivery` | `deliver_revision`, `upload_grant` | `revision_result` (`revision_delivered` / `revision_unchanged` / `revision_failed`), `upload_grant_needed` |
+| Capability          | Controller → Node                                        | Node → Controller                                                                                          |
+| ------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `plugin_install`    | `install_plugins`, `remove_plugins`                      | `plugins_result` (`plugins_completed` / `plugins_failed`)                                                  |
+| `agent_session`     | `start_agent_session`, `submit_user_turn`, `end_session` | `thread_event`, `agent_session_ended`, `session_command_accepted`, `session_command_rejected`              |
+| `revision_delivery` | `deliver_revision`, `upload_grant`                       | `revision_result` (`revision_delivered` / `revision_unchanged` / `revision_failed`), `upload_grant_needed` |
 
 - Plugin inputs name each canonical `<namespace>/<identifier>` once, with either one universal HTTP(S)
   download or distinct per-target downloads, each with a lowercase SHA-256. Item failures are reported

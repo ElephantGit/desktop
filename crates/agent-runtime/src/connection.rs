@@ -1,36 +1,28 @@
-use super::plugin_agent::{self, LaunchedPluginAgent, PluginAcpTransport, PluginAgentError};
+mod startup;
+
+use super::plugin_agent::PluginAcpTransport;
 use super::restart_circuit::{RestartCircuit, RestartDecision};
 use super::routing::{RouteRegistry, SessionChannel, SessionEvent};
-use super::suspend::{AgentProcess, SuspendedAgents, is_agent_suspended, stop_plugin_runtime};
-use super::{
-    CONTRACT_QUEUE_CAPACITY, INITIALIZE_TIMEOUT, agent_not_installed, agent_start_failed,
-    agent_timed_out, map_acp_error, runtime_unavailable_because,
-};
+use super::suspend::{SuspendedAgents, is_agent_suspended};
+use super::{CONTRACT_QUEUE_CAPACITY, runtime_unavailable_because};
 use crate::RuntimeError;
 use crate::clock::SystemClock;
 use crate::host::SessionStore;
 use crate::host::{AgentAttach, AgentRuntimeHost};
-use agent_client_protocol_schema::ProtocolVersion;
-use agent_client_protocol_schema::v1::AGENT_METHOD_NAMES;
-use agent_client_protocol_schema::v1::{
-    ClientCapabilities, ClientSessionCapabilities, Implementation, InitializeRequest,
-    InitializeResponse, SessionConfigOptionsCapabilities,
-};
 use agent_client_protocol_schema::v1::{RequestPermissionOutcome, RequestPermissionResponse};
-use ora_acp::{AcpClient, AcpInboundEvent, AcpMessages, AcpPeer};
+use ora_acp::{AcpClient, AcpInboundEvent};
 use ora_contracts::PublicError;
 use ora_domain::{AgentRef, PluginId, SessionStatus};
 use ora_logging::{ora_error, ora_info, ora_warn};
-use ora_plugin_lifecycle::ConnectionError;
 use ora_plugin_runtime::{PluginProcessExit, PluginRuntime};
+use startup::{SharedProcess, StartFailure, spawn_initialized_process};
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, watch};
-use tokio::time::timeout;
 
 const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
@@ -351,6 +343,32 @@ impl ConnectionSupervisor {
         }
     }
 
+    /// Waits until the connection is ready, or reports that the supervisor gave up on it.
+    ///
+    /// Startup and retries continue underneath, so `Starting` and `Unavailable` are waited
+    /// through; only `Failing`, or a supervisor that exited, is final.
+    pub async fn ready(&self) -> Result<(), RuntimeError> {
+        let mut state = self.state.clone();
+        loop {
+            match &*state.borrow_and_update() {
+                ConnectionState::Ready(_) => return Ok(()),
+                ConnectionState::Failing => {
+                    return Err(runtime_unavailable_because(format!(
+                        "{label} runtime stopped retrying",
+                        label = self.label
+                    )));
+                }
+                ConnectionState::Starting | ConnectionState::Unavailable => {}
+            }
+            if state.changed().await.is_err() {
+                return Err(runtime_unavailable_because(format!(
+                    "{label} runtime supervisor exited",
+                    label = self.label
+                )));
+            }
+        }
+    }
+
     /// Returns the initialized shared connection or a stable degraded-runtime error.
     pub fn current(&self) -> Result<RuntimeConnection, RuntimeError> {
         match self.state.borrow().clone() {
@@ -440,41 +458,6 @@ impl Drop for ConnectionSupervisor {
             let _ = self.shutdown.send(());
         }
     }
-}
-
-/// Separates a startup failure worth retrying from one that can never succeed.
-///
-/// Almost every failure is retryable: an agent can be installed later, a crashed provider can come
-/// back. A provider that does not implement the contract this host requires is different — it will
-/// fail identically forever, so retrying only produces a warning every backoff interval and never
-/// a working agent.
-enum StartFailure {
-    Retryable(RuntimeError),
-    Terminal(RuntimeError),
-}
-
-impl From<RuntimeError> for StartFailure {
-    fn from(error: RuntimeError) -> Self {
-        Self::Retryable(error)
-    }
-}
-
-/// Holds everything one agent source produces before the ACP handshake runs.
-struct StartedAgent<A: AgentAttach> {
-    process: AgentProcess<A>,
-    transport: PluginAcpTransport,
-    messages: AcpMessages,
-}
-
-struct SharedProcess<A: AgentAttach> {
-    process: AgentProcess<A>,
-    client: AgentAcpClient,
-    inbound: mpsc::UnboundedReceiver<AcpInboundEvent>,
-    load_session_supported: bool,
-    http_mcp_supported: bool,
-    list_session_supported: bool,
-    close_session_supported: bool,
-    delete_session_supported: bool,
 }
 
 /// Supervises one process generation at a time and retries only after it is fully reaped.
@@ -651,161 +634,6 @@ async fn run_process_generation<A: AgentAttach>(
     }
 }
 
-/// Starts one agent in the neutral home directory and completes the ACP handshake.
-///
-/// The connection is only reported ready once ACP `initialize` has returned its capabilities, so
-/// no caller can send a session request to a transport that is not yet carrying a live agent.
-async fn spawn_initialized_process<A: AgentAttach>(
-    plugin_id: &PluginId,
-    plugin_host: &Arc<A>,
-    home_directory: &Path,
-) -> Result<SharedProcess<A>, StartFailure> {
-    let StartedAgent {
-        process,
-        transport,
-        messages,
-    } = spawn_plugin_connection(plugin_id, plugin_host, home_directory).await?;
-    let peer = AcpPeer::spawn(messages, transport);
-    // Config options are only sent by agents that see the client advertise them,
-    // so the model selector depends on this declaration. Boolean options stay
-    // undeclared because Ora renders only select-style options today; claiming
-    // support would invite payloads the client silently drops.
-    let initialize = InitializeRequest::new(ProtocolVersion::V1)
-        .client_capabilities(
-            ClientCapabilities::new().session(
-                ClientSessionCapabilities::new()
-                    .config_options(SessionConfigOptionsCapabilities::new()),
-            ),
-        )
-        .client_info(Implementation::new("ora", env!("CARGO_PKG_VERSION")));
-    let response = match timeout(
-        INITIALIZE_TIMEOUT,
-        peer.client
-            .request::<_, InitializeResponse>(AGENT_METHOD_NAMES.initialize, &initialize),
-    )
-    .await
-    {
-        Ok(Ok(response)) => response,
-        Ok(Err(error)) => {
-            process.terminate_and_reap().await;
-            return Err(StartFailure::Retryable(map_acp_error(error)));
-        }
-        Err(_) => {
-            process.terminate_and_reap().await;
-            return Err(StartFailure::Retryable(agent_timed_out(
-                "agent initialization timed out",
-            )));
-        }
-    };
-    let (client, inbound) = peer.into_parts();
-    Ok(SharedProcess {
-        process,
-        client,
-        inbound,
-        load_session_supported: response.agent_capabilities.load_session,
-        http_mcp_supported: response.agent_capabilities.mcp_capabilities.http,
-        list_session_supported: response
-            .agent_capabilities
-            .session_capabilities
-            .list
-            .is_some(),
-        close_session_supported: response
-            .agent_capabilities
-            .session_capabilities
-            .close
-            .is_some(),
-        delete_session_supported: response
-            .agent_capabilities
-            .session_capabilities
-            .delete
-            .is_some(),
-    })
-}
-
-/// Attaches to one lifecycle-owned agent plugin and wires ACP over its notification channel.
-async fn spawn_plugin_connection<A: AgentAttach>(
-    plugin_id: &PluginId,
-    plugin_host: &Arc<A>,
-    home_directory: &Path,
-) -> Result<StartedAgent<A>, StartFailure> {
-    let attachment = plugin_host
-        .attach_agent(plugin_id)
-        .await
-        .map_err(plugin_attach_error)?;
-    let LaunchedPluginAgent {
-        runtime,
-        messages,
-        effect_declaration,
-    } = match plugin_agent::attach(
-        attachment,
-        &plugin_id.canonical(),
-        home_directory,
-        env!("CARGO_PKG_VERSION"),
-    )
-    .await
-    {
-        Ok(launched) => launched,
-        Err(error) => {
-            stop_plugin_runtime(plugin_host.as_ref(), plugin_id).await;
-            return Err(plugin_start_error(error));
-        }
-    };
-    plugin_host
-        .replace_agent_effect_declaration(plugin_id.clone(), effect_declaration)
-        .map_err(|error| StartFailure::Terminal(agent_start_failed(error.to_string())))?;
-    let transport = PluginAcpTransport::new(runtime.clone());
-    Ok(StartedAgent {
-        process: AgentProcess {
-            plugin_id: plugin_id.clone(),
-            runtime,
-            host: plugin_host.clone(),
-        },
-        transport,
-        messages,
-    })
-}
-
-/// Maps a lifecycle refusal to start a plugin onto the supervisor's retry classification.
-///
-/// An uninstalled plugin is reported like a missing CLI so the supervisor retries without noisy
-/// logging while package discovery catches up.
-fn plugin_attach_error(error: ConnectionError) -> StartFailure {
-    match error {
-        ConnectionError::NotFound | ConnectionError::NoProcess => StartFailure::Retryable(
-            agent_not_installed("the plugin behind this agent is not available"),
-        ),
-        ConnectionError::Timeout => {
-            StartFailure::Retryable(agent_timed_out("agent plugin start timed out"))
-        }
-        ConnectionError::Failed(_) | ConnectionError::NotReady | ConnectionError::NotRunning => {
-            StartFailure::Retryable(agent_start_failed(error.to_string()))
-        }
-    }
-}
-
-/// Maps a plugin startup failure onto the supervisor's retry classification.
-///
-/// A plugin whose own agent process is not installed on this machine is an expected local
-/// configuration, so it is reported exactly like an uninstalled plugin and retried without
-/// logging: the user can install the CLI while Ora keeps running, and the next attempt picks it
-/// up. A plugin that reports its own bundled agent as unusable is the opposite case — the same
-/// package produces the same failure on every attempt — so it is abandoned like an unservable
-/// contract rather than retried behind a quiet `agent_not_installed`.
-fn plugin_start_error(error: PluginAgentError) -> StartFailure {
-    match error {
-        PluginAgentError::AgentNotInstalled => StartFailure::Retryable(agent_not_installed(
-            "the agent behind this plugin is not installed",
-        )),
-        PluginAgentError::AgentUnusable(detail) => {
-            StartFailure::Terminal(agent_start_failed(detail))
-        }
-        PluginAgentError::ContractIncomplete(detail) => {
-            StartFailure::Terminal(agent_start_failed(detail))
-        }
-        PluginAgentError::Failed(detail) => StartFailure::Retryable(agent_start_failed(detail)),
-    }
-}
-
 /// Persists one agent's connection loss without stopping sessions owned by healthy agents.
 fn mark_running_sessions_stopped(
     repository: &impl SessionStore,
@@ -828,14 +656,15 @@ fn mark_running_sessions_stopped(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ConnectionError, ConnectionSupervisors, PluginAgentError, StartFailure,
-        plugin_attach_error, plugin_start_error, spawn_runtime_thread,
-    };
+    use super::startup::{StartFailure, plugin_attach_error, plugin_start_error};
+    use super::{ConnectionSupervisors, spawn_runtime_thread};
+    use crate::MemorySessionStore;
     use crate::clock::SystemClock;
-    use crate::test_host::{InstalledAgents, MemorySessionStore, TestHost};
+    use crate::plugin_agent::PluginAgentError;
+    use crate::test_host::{InstalledAgents, TestHost};
     use ora_contracts::{EmptyErrorParams, PublicError};
     use ora_domain::{AgentRef, PluginId};
+    use ora_plugin_lifecycle::ConnectionError;
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
     use std::time::Duration;

@@ -683,9 +683,9 @@ impl ora_process::ProcessSpawner for CapturingSpawner {
     }
 }
 
-/// Permissions and working directory both reach the spawned process spec.
+/// Permissions, working directory, and host-set environment all reach the spawned process spec.
 #[tokio::test]
-async fn launch_applies_permissions_and_cwd_to_the_process_spec() {
+async fn launch_applies_permissions_cwd_and_environment_to_the_process_spec() {
     let package_root = tempfile::tempdir().expect("create package root");
     let entrypoint = package_root.path().join("index.js");
     std::fs::write(&entrypoint, "export {};\n").expect("write entrypoint");
@@ -702,6 +702,10 @@ async fn launch_applies_permissions_and_cwd_to_the_process_spec() {
             entrypoint: entrypoint.clone(),
             permissions: vec!["--allow-read=/tmp/data".to_string()],
             cwd: Some(package_root.path().to_path_buf()),
+            environment: std::collections::BTreeMap::from([(
+                "GIT_AUTHOR_NAME".to_string(),
+                "Ada".to_string(),
+            )]),
             ready_timeout: Duration::from_secs(1),
             call_timeout: Duration::from_secs(1),
             shutdown_timeout: Duration::from_secs(1),
@@ -733,6 +737,7 @@ async fn launch_applies_permissions_and_cwd_to_the_process_spec() {
         .arg("--no-prompt")
         .arg("--allow-read=/tmp/data")
         .arg(entrypoint.as_os_str())
-        .cwd(package_root.path());
+        .cwd(package_root.path())
+        .env("GIT_AUTHOR_NAME", "Ada");
     assert_eq!(*specs, vec![expected]);
 }

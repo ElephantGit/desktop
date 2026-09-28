@@ -6,16 +6,14 @@
 //! rather than the fake's.
 
 use crate::host::{
-    AgentAttach, AgentPluginAttachment, AgentRuntimeHost, RuntimeEvents, SessionSetup,
-    SessionStore, WorkspaceDirectory,
+    AgentAttach, AgentPluginAttachment, AgentRuntimeHost, RuntimeEvents, WorkspaceDirectory,
 };
-use crate::session_setup::{AgentSessionMcpCapabilities, SessionMcpRevision, SessionMcpSnapshot};
-use crate::{AgentRuntimeManager, AgentRuntimeSetup, RuntimeError};
-use ora_domain::{
-    AgentRef, HistoryState, PluginId, Session, SessionId, SessionMcpSelection, SessionStatus,
-    SessionTitle, WorkspaceId,
+use crate::{
+    AgentRuntimeManager, AgentRuntimeSetup, MemorySessionStore, NoSessionMcp, RuntimeError,
 };
+use ora_domain::{AgentRef, PluginId, SessionId, WorkspaceId};
 use ora_effect::ConsumerDeclaration;
+use ora_history::HistoryLine;
 use ora_plugin_lifecycle::ConnectionError;
 use ora_scheduler::Scheduler;
 use std::path::{Path, PathBuf};
@@ -28,129 +26,9 @@ pub(crate) struct TestHost;
 impl AgentRuntimeHost for TestHost {
     type Store = MemorySessionStore;
     type Attach = InstalledAgents;
-    type Setup = EmptySessionSetup;
+    type Setup = NoSessionMcp;
     type Events = RecordedEvents;
     type Directory = FixedDirectory;
-}
-
-/// The only failure the in-memory store reports: the addressed row is not visible.
-#[derive(Debug, Error)]
-#[error("session {0} is not stored")]
-pub(crate) struct MissingSession(String);
-
-/// Session rows in insertion order, with soft deletion kept as a flag like the durable store.
-#[derive(Clone, Default)]
-pub(crate) struct MemorySessionStore {
-    rows: Arc<Mutex<Vec<Session>>>,
-}
-
-impl MemorySessionStore {
-    /// Replaces one visible row through `update`, returning the stored result.
-    fn update(
-        &self,
-        session_id: &SessionId,
-        update: impl FnOnce(Session) -> Session,
-    ) -> Result<Session, MissingSession> {
-        let mut rows = self.rows.lock().unwrap_or_else(PoisonError::into_inner);
-        let row = rows
-            .iter_mut()
-            .find(|row| row.id == *session_id && !row.audit_fields.is_deleted)
-            .ok_or_else(|| MissingSession(session_id.to_string()))?;
-        *row = update(row.clone());
-        Ok(row.clone())
-    }
-}
-
-impl SessionStore for MemorySessionStore {
-    type Error = MissingSession;
-
-    fn create_session(&self, session: Session) -> Result<Session, MissingSession> {
-        self.rows
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(session.clone());
-        Ok(session)
-    }
-
-    fn find_session(&self, session_id: &SessionId) -> Result<Option<Session>, MissingSession> {
-        Ok(self
-            .rows
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .iter()
-            .find(|row| row.id == *session_id && !row.audit_fields.is_deleted)
-            .cloned())
-    }
-
-    fn list_sessions(&self) -> Result<Vec<Session>, MissingSession> {
-        Ok(self
-            .rows
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .iter()
-            .filter(|row| !row.audit_fields.is_deleted)
-            .cloned()
-            .collect())
-    }
-
-    fn update_session_title(
-        &self,
-        session_id: &SessionId,
-        title: &SessionTitle,
-        now: i64,
-    ) -> Result<Session, MissingSession> {
-        self.update(session_id, |row| {
-            let mut row = row.with_title(Some(title.clone()));
-            row.audit_fields.updated_at = now;
-            row
-        })
-    }
-
-    fn update_session_status(
-        &self,
-        session_id: &SessionId,
-        status: SessionStatus,
-        now: i64,
-    ) -> Result<Session, MissingSession> {
-        self.update(session_id, |row| row.with_status(status, now))
-    }
-
-    fn update_session_binding(
-        &self,
-        session_id: &SessionId,
-        agent_ref: AgentRef,
-        agent_session_id: &str,
-        now: i64,
-    ) -> Result<Session, MissingSession> {
-        self.update(session_id, |row| {
-            row.with_binding(agent_ref, agent_session_id, now)
-        })
-    }
-
-    fn update_session_history_state(
-        &self,
-        session_id: &SessionId,
-        history_state: &HistoryState,
-        now: i64,
-    ) -> Result<Session, MissingSession> {
-        self.update(session_id, |row| {
-            row.with_history_state(history_state.clone(), now)
-        })
-    }
-
-    fn soft_delete_session(
-        &self,
-        session_id: &SessionId,
-        deleted_at: i64,
-    ) -> Result<bool, MissingSession> {
-        Ok(self
-            .update(session_id, |mut row| {
-                row.audit_fields.is_deleted = true;
-                row.audit_fields.updated_at = deleted_at;
-                row
-            })
-            .is_ok())
-    }
 }
 
 /// Reports a fixed set of installed agent plugins, none of which ever starts.
@@ -222,51 +100,6 @@ impl AgentAttach for InstalledAgents {
     }
 }
 
-/// Resolves every session to an empty MCP set.
-#[derive(Clone)]
-pub(crate) struct EmptySessionSetup {
-    selection: SessionMcpSelection,
-}
-
-impl Default for EmptySessionSetup {
-    fn default() -> Self {
-        Self {
-            selection: SessionMcpSelection::Automatic,
-        }
-    }
-}
-
-impl SessionSetup for EmptySessionSetup {
-    fn with_selection(&self, selection: SessionMcpSelection) -> Self {
-        Self { selection }
-    }
-
-    fn selection(&self) -> &SessionMcpSelection {
-        &self.selection
-    }
-
-    fn desired_mcp_revision(&self) -> Result<SessionMcpRevision, RuntimeError> {
-        Ok(SessionMcpRevision::default())
-    }
-
-    fn resolve_mcp(
-        &self,
-        _cwd: &Path,
-        _capabilities: AgentSessionMcpCapabilities,
-    ) -> Result<SessionMcpSnapshot, RuntimeError> {
-        Ok(SessionMcpSnapshot::new(
-            Vec::new(),
-            SessionMcpRevision::default(),
-        ))
-    }
-
-    fn observe_mcp_health(&self, _session_id: &SessionId, _cwd: &Path) {}
-
-    fn plugin_id_for_agent(&self, agent_ref: &AgentRef) -> Option<PluginId> {
-        PluginId::parse(agent_ref.as_str()).ok()
-    }
-}
-
 /// One lifecycle notification the runtime published.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RecordedEvent {
@@ -275,15 +108,27 @@ pub(crate) enum RecordedEvent {
 }
 
 /// Keeps every published notification in order for assertions.
+///
+/// Settled history lines are kept apart from lifecycle notifications, so a test about one never
+/// has to account for the other.
 #[derive(Clone, Default)]
 pub(crate) struct RecordedEvents {
     events: Arc<Mutex<Vec<RecordedEvent>>>,
+    settled: Arc<Mutex<Vec<(SessionId, HistoryLine)>>>,
 }
 
 impl RecordedEvents {
     /// Returns everything published so far.
     pub(crate) fn published(&self) -> Vec<RecordedEvent> {
         self.events
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Returns every settled history line in the order the runtime reported it.
+    pub(crate) fn settled(&self) -> Vec<(SessionId, HistoryLine)> {
+        self.settled
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
@@ -303,6 +148,13 @@ impl RuntimeEvents for RecordedEvents {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(RecordedEvent::AgentModelsInvalidated(agent_ref.clone()));
+    }
+
+    fn record_settled(&self, session_id: &SessionId, line: &HistoryLine) {
+        self.settled
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((session_id.clone(), line.clone()));
     }
 }
 
@@ -337,7 +189,7 @@ pub(crate) fn test_runtime(
         directory: FixedDirectory {
             root: root.to_path_buf(),
         },
-        session_setup: EmptySessionSetup::default(),
+        session_setup: NoSessionMcp::default(),
         events: events.clone(),
         home_directory: root.to_path_buf(),
         sessions_root: root.join("sessions"),

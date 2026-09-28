@@ -7,8 +7,9 @@
 
 use super::history::SessionRecorder;
 use super::{AgentRuntimeManager, RuntimeActorHandle, RuntimeCommand};
+use crate::MemorySessionStore;
 use crate::host::SessionStore;
-use crate::test_host::{MemorySessionStore, TestHost, test_runtime};
+use crate::test_host::{RecordedEvents, TestHost, test_runtime};
 use agent_client_protocol_schema::v1::{
     ContentBlock, ContentChunk, SessionUpdate, StopReason, TextContent,
 };
@@ -76,6 +77,7 @@ fn record_conversation(sessions_root: &Path, session: &Session) {
         SESSION_ID,
         0,
         &HistoryState::Writable,
+        RecordedEvents::default(),
         FixedHistoryClock::new(HISTORY_CLOCK),
     )
     .expect("open recorder");

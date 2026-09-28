@@ -36,6 +36,7 @@ use ora_domain::{
     SessionTitle, WorkspaceId,
 };
 use ora_effect::ConsumerDeclaration;
+use ora_history::HistoryLine;
 use ora_plugin_lifecycle::{ConnectionError, PluginLifecycleError};
 use ora_scheduler::Scheduler;
 use std::future::Future;
@@ -317,6 +318,9 @@ impl RuntimeEvents for AppEventPublisher {
             agent_ref: agent_ref.to_string(),
         });
     }
+
+    /// Desktop clients read the history file itself, so there is no mirror to update.
+    fn record_settled(&self, _session_id: &SessionId, _line: &HistoryLine) {}
 }
 
 /// Resolves a Workspace's local directory against the bootstrap path base.

@@ -6,7 +6,8 @@
 //! and the conversation fails for good.
 
 use super::{AgentRuntimeManager, ReplacedAgentSessions, RuntimeActorHandle, RuntimeCommand};
-use crate::test_host::{MemorySessionStore, RecordedEvent, TestHost, TestRuntime, test_runtime};
+use crate::MemorySessionStore;
+use crate::test_host::{RecordedEvent, TestHost, TestRuntime, test_runtime};
 use ora_domain::{AgentRef, PluginId, SessionId};
 use ora_scheduler::Scheduler;
 use pretty_assertions::assert_eq;

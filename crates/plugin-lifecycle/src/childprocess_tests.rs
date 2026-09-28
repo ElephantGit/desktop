@@ -823,6 +823,7 @@ async fn pushes_stdout_before_exit_even_when_the_process_exits_immediately_after
             entrypoint: entrypoint.path().to_path_buf(),
             permissions: Vec::new(),
             cwd: None,
+            environment: BTreeMap::new(),
             ready_timeout: Duration::from_secs(5),
             call_timeout: Duration::from_secs(5),
             shutdown_timeout: Duration::from_secs(5),

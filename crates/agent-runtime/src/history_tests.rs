@@ -8,9 +8,10 @@
 //! the flag itself can reach.
 
 use super::history::{RecordOutcome, SessionRecorder};
+use crate::test_host::RecordedEvents;
 use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
 use agent_client_protocol_schema::v1::{ContentChunk, SessionUpdate};
-use ora_domain::{AgentRef, HistoryState};
+use ora_domain::{AgentRef, HistoryState, SessionId};
 use ora_history::{
     AgentSwitch, FixedHistoryClock, HistoryLine, HistoryRecord, binding_needs_handoff,
     read_session_history,
@@ -34,12 +35,23 @@ fn recorder(
     root: &Path,
     next_seq: u32,
     history_state: &HistoryState,
-) -> SessionRecorder<FixedHistoryClock> {
+) -> SessionRecorder<RecordedEvents, FixedHistoryClock> {
+    recorder_reporting_to(root, next_seq, history_state, RecordedEvents::default())
+}
+
+/// Opens a recorder whose settled lines are reported to `events`.
+fn recorder_reporting_to(
+    root: &Path,
+    next_seq: u32,
+    history_state: &HistoryState,
+    events: RecordedEvents,
+) -> SessionRecorder<RecordedEvents, FixedHistoryClock> {
     SessionRecorder::open(
         root,
         SESSION_ID,
         next_seq,
         history_state,
+        events,
         FixedHistoryClock::new(datetime!(2026-08-03 14:22:31.418 +08:00)),
     )
     .expect("open recorder")
@@ -169,4 +181,74 @@ fn a_recorder_that_stopped_writing_records_no_delivery_it_cannot_prove() {
     let history = read_session_history(root.path(), SESSION_ID).expect("read history");
 
     assert_eq!(binding_needs_handoff(&history), true);
+}
+
+/// A host mirroring the conversation must receive exactly the lines the file holds, in file order,
+/// and nothing a stopped recorder did not write.
+#[test]
+fn settled_lines_reach_the_host_exactly_as_the_file_holds_them() {
+    let root = TempDir::new().expect("create history root");
+    let events = RecordedEvents::default();
+    let mut writable =
+        recorder_reporting_to(root.path(), 0, &HistoryState::Writable, events.clone());
+    writable.record_prompt(&prompt("hello"));
+    writable.record_update(&SessionUpdate::AgentMessageChunk(ContentChunk::new(
+        ContentBlock::Text(TextContent::new("hi")),
+    )));
+    writable.record_turn_end(agent_client_protocol_schema::v1::StopReason::EndTurn);
+    let mut stopped = recorder_reporting_to(
+        root.path(),
+        3,
+        &HistoryState::Degraded {
+            reason: "no space left on device".to_string(),
+        },
+        events.clone(),
+    );
+    stopped.record_prompt(&prompt("lost"));
+
+    let history = read_session_history(root.path(), SESSION_ID).expect("read history");
+
+    assert_eq!(
+        events.settled(),
+        history
+            .lines
+            .into_iter()
+            .map(|line| (SessionId::new(SESSION_ID), line))
+            .collect::<Vec<_>>(),
+    );
+}
+
+/// A host's turn identity lands on every recorded block of that user message, through ACP's own
+/// `messageId`, while the rest of the record is exactly what an unidentified prompt writes.
+#[test]
+fn an_identified_prompt_stamps_its_message_id_on_every_user_block() {
+    let root = TempDir::new().expect("create history root");
+    let mut recorder = recorder(root.path(), 0, &HistoryState::Writable);
+    recorder.record_identified_prompt(
+        &[
+            ContentBlock::Text(TextContent::new("first")),
+            ContentBlock::Text(TextContent::new("second")),
+        ],
+        agent_client_protocol_schema::v1::MessageId::new("turn-7"),
+    );
+
+    let history = read_session_history(root.path(), SESSION_ID).expect("read history");
+
+    let user_block = |seq: u32, text: &str| {
+        HistoryLine::new(
+            RECORDED_AT,
+            seq,
+            HistoryRecord::Update {
+                update: Box::new(SessionUpdate::UserMessageChunk(
+                    ContentChunk::new(ContentBlock::Text(TextContent::new(text)))
+                        .message_id(agent_client_protocol_schema::v1::MessageId::new("turn-7")),
+                )),
+                tool_timing: None,
+            },
+        )
+    };
+    assert_eq!(
+        history.lines,
+        vec![user_block(0, "first"), user_block(1, "second")]
+    );
 }

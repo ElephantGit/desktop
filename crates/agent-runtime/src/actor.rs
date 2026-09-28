@@ -226,7 +226,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         &mut self,
         operation_id: u64,
         prompt: Vec<ContentBlock>,
-        record_prompt: Option<Vec<ContentBlock>>,
+        record_prompt: RecordedTurn,
         events: mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
     ) {
         // An exit without a terminal provider response cannot prove remote work stopped.
@@ -273,9 +273,11 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             blocks,
             settles_handoff,
         } = prompt_for_agent(self, &prompt);
-        let outcome = self
-            .recorder
-            .record_prompt(record_prompt.as_deref().unwrap_or(&prompt));
+        let recorded = record_prompt.blocks.as_deref().unwrap_or(&prompt);
+        let outcome = match record_prompt.message_id {
+            Some(message_id) => self.recorder.record_identified_prompt(recorded, message_id),
+            None => self.recorder.record_prompt(recorded),
+        };
         let stopped_recording = matches!(outcome, RecordOutcome::JustFailed { .. });
         self.settle_record(outcome);
         if stopped_recording {
@@ -800,10 +802,9 @@ mod tests {
     use crate::clock::SystemClock;
     use crate::connection::ConnectionSupervisor;
     use crate::session_setup::AgentSessionBarriers;
-    use crate::test_host::{
-        EmptySessionSetup, InstalledAgents, MemorySessionStore, RecordedEvents, TestHost,
-    };
+    use crate::test_host::{InstalledAgents, RecordedEvents, TestHost};
     use crate::title_acquisition::TitleAcquisition;
+    use crate::{MemorySessionStore, NoSessionMcp};
     use ora_domain::{
         AgentRef, AuditFields, PluginId, SessionId, SessionStatus, SessionTitle, WorkspaceId,
     };
@@ -859,6 +860,7 @@ mod tests {
             "session-1",
             0,
             &ora_domain::HistoryState::Writable,
+            crate::test_host::RecordedEvents::default(),
             crate::history::LocalHistoryClock,
         )
         .expect("open actor recorder");
@@ -893,7 +895,7 @@ mod tests {
             events: RecordedEvents::default(),
             title_acquisition: TitleAcquisition::disabled(),
             command_sender,
-            session_mcp: EmptySessionSetup::default(),
+            session_mcp: NoSessionMcp::default(),
             barriers: Arc::new(AgentSessionBarriers::new()),
             live_mcp: LiveMcpState::Inactive,
             exit_probe: Some(exit_sender),
@@ -937,6 +939,7 @@ mod tests {
             "session-1",
             0,
             &ora_domain::HistoryState::Writable,
+            crate::test_host::RecordedEvents::default(),
             crate::history::LocalHistoryClock,
         )
         .expect("open actor recorder");
@@ -970,7 +973,7 @@ mod tests {
             events: RecordedEvents::default(),
             title_acquisition: TitleAcquisition::awaiting_first_prompt(true),
             command_sender,
-            session_mcp: EmptySessionSetup::default(),
+            session_mcp: NoSessionMcp::default(),
             barriers: Arc::new(AgentSessionBarriers::new()),
             live_mcp: LiveMcpState::Inactive,
             exit_probe: None,

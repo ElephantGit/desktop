@@ -83,6 +83,16 @@ pub trait ChildProcessEnvironmentProvider: Clone + Send + Sync + 'static {
         plugin_id: &str,
         workspace_root: &Path,
     ) -> Result<BTreeMap<String, String>, String>;
+
+    /// Returns the variables set on the Agent plugin process itself when it launches.
+    ///
+    /// An agent plugin may spawn its CLI directly rather than through `ora/childprocess/*`, so a
+    /// value that must reach the whole process tree belongs here as well as in `environment`: a
+    /// directly spawned process inherits the plugin's environment, while a host-spawned one
+    /// inherits the host's and receives `environment` instead. Most hosts set nothing here.
+    fn plugin_environment(&self, _plugin_id: &str) -> BTreeMap<String, String> {
+        BTreeMap::new()
+    }
 }
 
 /// Leaves child-process environments unchanged when no host policy is configured.

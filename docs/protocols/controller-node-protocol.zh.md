@@ -72,12 +72,13 @@ NodeId 必须匹配结果，但可以使用新的运行实例。查询没有事�
 
 第二个最小闭环新增三类执行（[specs ADR](../../specs/decisions/node/protocol/20260928-streamed-thread-events-and-session-commands.md)，
 proposed）。codec 定义并校验它们；目前没有运行中的 Node 声明这些能力，两端运行时都以“不支持”拒绝这些消息。
+Node 的[会话执行](../node/agent-session.zh.md)已在账本接口之后实现，但尚未接入这些消息。
 
-| 能力 | Controller → Node | Node → Controller |
-|---|---|---|
-| `plugin_install` | `install_plugins`、`remove_plugins` | `plugins_result`（`plugins_completed` / `plugins_failed`） |
-| `agent_session` | `start_agent_session`、`submit_user_turn`、`end_session` | `thread_event`、`agent_session_ended`、`session_command_accepted`、`session_command_rejected` |
-| `revision_delivery` | `deliver_revision`、`upload_grant` | `revision_result`（`revision_delivered` / `revision_unchanged` / `revision_failed`）、`upload_grant_needed` |
+| 能力                | Controller → Node                                        | Node → Controller                                                                                           |
+| ------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `plugin_install`    | `install_plugins`、`remove_plugins`                      | `plugins_result`（`plugins_completed` / `plugins_failed`）                                                  |
+| `agent_session`     | `start_agent_session`、`submit_user_turn`、`end_session` | `thread_event`、`agent_session_ended`、`session_command_accepted`、`session_command_rejected`               |
+| `revision_delivery` | `deliver_revision`、`upload_grant`                       | `revision_result`（`revision_delivered` / `revision_unchanged` / `revision_failed`）、`upload_grant_needed` |
 
 - 插件输入中每个 canonical `<namespace>/<identifier>` 只出现一次，要么一个 universal HTTP(S) 下载，
   要么按 target 互不重复的下载，均带小写 SHA-256。单个插件的失败逐项报告；`plugins_failed` 表示整个执行无法运行。

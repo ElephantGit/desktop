@@ -1,7 +1,9 @@
+use crate::host::RuntimeEvents;
 use agent_client_protocol_schema::v1::ContentBlock;
+use agent_client_protocol_schema::v1::MessageId;
 use agent_client_protocol_schema::v1::SessionUpdate;
 use agent_client_protocol_schema::v1::StopReason;
-use ora_domain::{AgentRef, HistoryState, Session};
+use ora_domain::{AgentRef, HistoryState, Session, SessionId};
 use ora_history::{
     AgentSwitch, AssembledRecord, HistoryAssembler, HistoryClock, HistoryError, HistoryRecord,
     HistoryWriter, SCHEMA_VERSION, SessionMeta, ToolCallTiming,
@@ -46,10 +48,15 @@ pub(super) enum RecordOutcome {
 /// recorded sequence means without the process-wide local clock the runtime
 /// installs at startup. Production callers pass [`LocalHistoryClock`], which the
 /// type parameter defaults to so the runtime never has to name it.
-pub(super) struct SessionRecorder<C: HistoryClock = LocalHistoryClock> {
+///
+/// Every line is handed to the host's [`RuntimeEvents::record_settled`] right after the file
+/// holds it, so a host mirroring the conversation never holds a line the file lacks.
+pub(super) struct SessionRecorder<E, C: HistoryClock = LocalHistoryClock> {
+    session_id: SessionId,
     writer: HistoryWriter<C>,
     assembler: HistoryAssembler,
     state: RecorderState,
+    events: E,
 }
 
 enum RecorderState {
@@ -57,7 +64,7 @@ enum RecorderState {
     Stopped,
 }
 
-impl<C: HistoryClock> SessionRecorder<C> {
+impl<E: RuntimeEvents, C: HistoryClock> SessionRecorder<E, C> {
     /// Opens the recorder for one session, resuming its position counter.
     ///
     /// A session whose history already failed opens stopped, so a restart does not
@@ -67,15 +74,18 @@ impl<C: HistoryClock> SessionRecorder<C> {
         session_id: &str,
         next_seq: u32,
         history_state: &HistoryState,
+        events: E,
         clock: C,
     ) -> Result<Self, HistoryError> {
         Ok(Self {
+            session_id: SessionId::new(session_id.to_string()),
             writer: HistoryWriter::open(root, session_id, clock)?,
             assembler: HistoryAssembler::new(next_seq),
             state: match history_state {
                 HistoryState::Writable => RecorderState::Recording,
                 HistoryState::Degraded { .. } => RecorderState::Stopped,
             },
+            events,
         })
     }
 
@@ -109,6 +119,26 @@ impl<C: HistoryClock> SessionRecorder<C> {
     /// Records the user's turn from the blocks Ora chose to keep.
     pub(super) fn record_prompt(&mut self, prompt: &[ContentBlock]) -> RecordOutcome {
         let records = self.assembler.push_user_prompt(prompt);
+        self.append(&records)
+    }
+
+    /// Records the user's turn with the host's identity for the message on every block.
+    ///
+    /// ACP's own `messageId` carries it, so the history schema is unchanged and a reader that
+    /// does not know host turn identities simply ignores it.
+    pub(super) fn record_identified_prompt(
+        &mut self,
+        prompt: &[ContentBlock],
+        message_id: MessageId,
+    ) -> RecordOutcome {
+        let mut records = self.assembler.push_user_prompt(prompt);
+        for record in &mut records {
+            if let HistoryRecord::Update { update, .. } = &mut record.record
+                && let SessionUpdate::UserMessageChunk(chunk) = update.as_mut()
+            {
+                chunk.message_id = Some(message_id.clone());
+            }
+        }
         self.append(&records)
     }
 
@@ -195,12 +225,22 @@ impl<C: HistoryClock> SessionRecorder<C> {
         self.append(&[AssembledRecord { seq, record }])
     }
 
-    /// Appends a batch, stopping this recorder for good if the write fails.
+    /// Appends records one line at a time, stopping this recorder for good if a write fails.
+    ///
+    /// Each line reaches the host before the next is written, so a host mirroring the history
+    /// that crashes between the two writes is behind the file by at most one line rather than by
+    /// a whole turn's worth of settled items.
     fn append(&mut self, records: &[AssembledRecord]) -> RecordOutcome {
-        match self.state {
-            RecorderState::Stopped => RecordOutcome::Continued,
-            RecorderState::Recording => match self.writer.append(records) {
-                Ok(()) => RecordOutcome::Continued,
+        if let RecorderState::Stopped = self.state {
+            return RecordOutcome::Continued;
+        }
+        for record in records {
+            match self.writer.append(std::slice::from_ref(record)) {
+                Ok(lines) => {
+                    for line in &lines {
+                        self.events.record_settled(&self.session_id, line);
+                    }
+                }
                 Err(error) => {
                     self.state = RecorderState::Stopped;
                     let reason = describe(&error);
@@ -209,10 +249,11 @@ impl<C: HistoryClock> SessionRecorder<C> {
                         error = %error,
                         "session history write failed",
                     );
-                    RecordOutcome::JustFailed { reason }
+                    return RecordOutcome::JustFailed { reason };
                 }
-            },
+            }
         }
+        RecordOutcome::Continued
     }
 }
 

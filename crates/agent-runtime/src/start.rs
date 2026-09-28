@@ -8,12 +8,13 @@ use super::support::{contract_session, domain_agent_ref};
 use super::{ActorSetup, HandoffDebt, SessionVisibility, TitleAcquisition};
 use super::{AgentRuntimeManager, SESSION_SETUP_TIMEOUT, session_setup_window};
 use crate::AgentRuntimeHost;
-use crate::RuntimeError;
 use crate::host::SessionSetup;
 use crate::host::SessionStore;
+use crate::host::WorkspaceDirectory;
 use crate::session_setup::{
     AgentSessionMcpCapabilities, LiveMcpState, SessionMcpRevision, SessionMcpSnapshot,
 };
+use crate::{ErrorClassification, RuntimeError};
 use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, AvailableCommand, CloseSessionRequest, CloseSessionResponse,
     DeleteSessionRequest, DeleteSessionResponse, McpServer, NewSessionRequest, NewSessionResponse,
@@ -23,12 +24,12 @@ use agent_client_protocol_schema::v1::{
     SetSessionConfigOptionResponse,
 };
 use ora_acp::{AcpClient, AcpTransport};
-use ora_contracts::{StartSessionRequest, StartSessionResponse};
+use ora_contracts::{EmptyErrorParams, PublicError, StartSessionRequest, StartSessionResponse};
 use ora_domain::SessionMcpSelection;
 use ora_domain::{AgentRef, SessionId};
 use ora_domain::{AuditFields, Session, SessionStatus, WorkspaceId};
 use ora_logging::{ora_debug, ora_info, ora_warn};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::time::timeout;
 
@@ -89,9 +90,55 @@ impl<H: AgentRuntimeHost> Drop for ProviderSessionRelease<H> {
 }
 
 impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
+    /// Resolves a workspace's execution directory without consulting a Task projection.
+    pub fn workspace_cwd(&self, workspace_id: &WorkspaceId) -> Result<PathBuf, RuntimeError> {
+        self.inner.directory.workspace_cwd(workspace_id)
+    }
+
+    /// Waits until an agent's connection can open sessions, or it never will.
+    ///
+    /// A host that opens a session as soon as it is asked to, with no person to retry, waits here
+    /// through the supervisor's own startup and retries and stops at the answer the supervisor
+    /// settles on. The wait is unbounded, so callers bound it themselves.
+    pub async fn wait_for_agent(&self, agent_ref: &AgentRef) -> Result<(), RuntimeError> {
+        self.inner.connections.for_agent(agent_ref)?.ready().await
+    }
+
+    /// Creates a session under an identity the host already owns.
+    ///
+    /// A host whose sessions are named by something durable of its own, such as a Node session
+    /// execution, uses this so the session's history path follows from that identity alone. An
+    /// identity already in use is refused rather than joined to an existing conversation.
+    pub async fn start_session_with_id(
+        &self,
+        session_id: SessionId,
+        request: StartSessionRequest,
+    ) -> Result<StartSessionResponse, RuntimeError> {
+        let existing = self
+            .inner
+            .store
+            .find_session(&session_id)
+            .map_err(|source| RuntimeError::internal("failed to load session", source))?;
+        if existing.is_some() {
+            return Err(RuntimeError::new(
+                ErrorClassification::Conflict,
+                PublicError::InternalError(EmptyErrorParams {}),
+                "session identity is already in use",
+            ));
+        }
+        self.start_session_with_visibility(
+            session_id,
+            request,
+            SessionVisibility::Published,
+            self.inner.session_mcp.clone(),
+        )
+        .await
+    }
+
     /// Runs the only path allowed to create and persist a provider session.
     pub(super) async fn start_session_with_visibility(
         &self,
+        session_id: SessionId,
         request: StartSessionRequest,
         visibility: SessionVisibility,
         session_mcp: H::Setup,
@@ -99,7 +146,6 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         let workspace_id = WorkspaceId::new(request.workspace_id);
         let agent_ref = domain_agent_ref(request.agent_ref)?;
         let cwd = self.workspace_cwd(&workspace_id)?;
-        let session_id = SessionId::new(uuid::Uuid::new_v4().to_string());
         let PendingProviderSession {
             release,
             agent_session_id,

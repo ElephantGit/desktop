@@ -16,8 +16,10 @@ mod history;
 mod host;
 mod limits;
 mod load;
+mod memory_host;
 mod operations;
 mod plugin_agent;
+mod prompt;
 mod prompt_liveness;
 mod prompt_retry;
 mod record;
@@ -38,6 +40,8 @@ mod tool_timing;
 #[cfg(test)]
 mod history_tests;
 #[cfg(test)]
+mod host_start_tests;
+#[cfg(test)]
 mod load_tests;
 #[cfg(test)]
 mod replaced_sessions_tests;
@@ -49,6 +53,7 @@ pub use host::{
     AgentAttach, AgentPluginAttachment, AgentRuntimeHost, RuntimeEvents, SessionSetup,
     SessionStore, WorkspaceDirectory,
 };
+pub use memory_host::{MemorySessionStore, MissingSession, NoSessionMcp};
 pub use operations::AgentRuntime;
 pub use replaced::ReplacedAgentSessions;
 
@@ -69,12 +74,14 @@ use clock::SystemClock;
 use handoff::HandoffDebt;
 use history::{LocalHistoryClock, RecordOutcome, SessionRecorder};
 use limits::*;
+use prompt::RecordedTurn;
 use session_setup::LiveMcpState;
 use support::*;
 use title_acquisition::TitleAcquisition;
 
 use agent_client_protocol_schema::v1::{
-    ContentBlock, SessionConfigId, SessionConfigOption, SessionConfigOptionValue, SessionUpdate,
+    ContentBlock, MessageId, SessionConfigId, SessionConfigOption, SessionConfigOptionValue,
+    SessionUpdate,
 };
 use connection::{ConnectionStatus, ConnectionSupervisor, ConnectionSupervisors};
 use ora_contracts::{
@@ -153,7 +160,7 @@ pub(crate) enum RuntimeCommand {
     Prompt {
         operation_id: u64,
         prompt: Vec<ContentBlock>,
-        record_prompt: Option<Vec<ContentBlock>>,
+        record_prompt: RecordedTurn,
         /// Applied by the attach this prompt performs, and ignored when none is needed.
         model: Option<String>,
         events: mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
@@ -202,7 +209,7 @@ struct RuntimeActor<H: AgentRuntimeHost> {
     connection: ConnectionSupervisor,
     channel: Option<SessionChannel>,
     commands: mpsc::UnboundedReceiver<RuntimeCommand>,
-    recorder: SessionRecorder,
+    recorder: SessionRecorder<H::Events>,
     sessions_root: PathBuf,
     /// Opens provider sessions when a prompt needs one this actor does not hold.
     connections: ConnectionSupervisors<H>,
@@ -298,6 +305,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         request: StartSessionRequest,
     ) -> Result<StartSessionResponse, RuntimeError> {
         self.start_session_with_visibility(
+            SessionId::new(uuid::Uuid::new_v4().to_string()),
             request,
             SessionVisibility::Published,
             self.inner.session_mcp.clone(),
@@ -312,6 +320,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         selection: SessionMcpSelection,
     ) -> Result<StartSessionResponse, RuntimeError> {
         self.start_session_with_visibility(
+            SessionId::new(uuid::Uuid::new_v4().to_string()),
             request,
             SessionVisibility::UnpublishedWorkflow,
             self.inner.session_mcp.with_selection(selection),
@@ -577,7 +586,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
         previous: &AgentRef,
         target: &AgentRef,
         agent_session_id: &str,
-    ) -> Result<(Session, SessionRecorder), RuntimeError> {
+    ) -> Result<(Session, SessionRecorder<H::Events>), RuntimeError> {
         if let Some(handle) = self.lookup_actor(session_id)? {
             self.stop_actor(handle).await?;
         }
@@ -608,74 +617,6 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
             ),
         };
         Ok((self.settle_record(session, outcome), opened.recorder))
-    }
-
-    /// Resolves a workspace's execution directory without consulting a Task projection.
-    pub fn workspace_cwd(&self, workspace_id: &WorkspaceId) -> Result<PathBuf, RuntimeError> {
-        self.inner.directory.workspace_cwd(workspace_id)
-    }
-
-    /// Starts one structured ACP prompt stream after validating the public payload limit.
-    pub async fn prompt_session(
-        &self,
-        request: PromptSessionRequest,
-    ) -> Result<SessionEventStream<PromptSessionEvent>, RuntimeError> {
-        let prompt = request.prompt;
-        let record_prompt = request.record_prompt;
-        let model = request.model;
-        if prompt.is_empty()
-            || prompt.iter().all(|content| {
-                matches!(content, ContentBlock::Text(text) if text.text.trim().is_empty())
-            })
-        {
-            return Err(RuntimeError::new(
-                ErrorClassification::InvalidRequest,
-                PublicError::PromptEmpty(EmptyErrorParams {}),
-                "prompt must contain text or media",
-            ));
-        }
-        let prompt_bytes = serde_json::to_vec(&prompt)
-            .map_err(|error| RuntimeError::internal("failed to encode prompt", error))?
-            .len();
-        if prompt_bytes > MAX_PROMPT_BYTES {
-            return Err(RuntimeError::new(
-                ErrorClassification::InvalidRequest,
-                PublicError::PromptTooLarge(EmptyErrorParams {}),
-                "prompt exceeds 16 MiB",
-            ));
-        }
-        let _lifecycle = self.inner.lifecycle.lock().await;
-        let session = self.find_session(&request.session_id)?;
-        // Lifecycle status is not a precondition: a session that has only been read holds no
-        // provider, and acquiring one is part of sending rather than something the caller has to
-        // arrange first. The actor attaches, and reports its own failure if it cannot.
-        //
-        // A session whose history stopped recording refuses new turns rather than
-        // producing conversation that would never be part of the record.
-        if let HistoryState::Degraded { .. } = session.history_state {
-            return Err(history_degraded());
-        }
-        let handle = self.actor_for(session)?;
-        let operation_id = self.inner.next_operation_id.fetch_add(1, Ordering::Relaxed);
-        let (events_sender, events) = mpsc::channel(CONTRACT_QUEUE_CAPACITY);
-        let (accepted_sender, accepted) = oneshot::channel();
-        handle
-            .commands
-            .send(RuntimeCommand::Prompt {
-                operation_id,
-                prompt,
-                record_prompt,
-                model,
-                events: events_sender,
-                accepted: accepted_sender,
-            })
-            .map_err(runtime_unavailable_with)?;
-        accepted.await.map_err(runtime_unavailable_with)??;
-        Ok(SessionEventStream::new(
-            events,
-            handle.commands,
-            operation_id,
-        ))
     }
 
     /// Routes one opaque permission response to the actor that registered the request.
@@ -909,7 +850,7 @@ struct ActorSetup<H: AgentRuntimeHost> {
     cwd: PathBuf,
     connection: ConnectionSupervisor,
     channel: Option<SessionChannel>,
-    recorder: SessionRecorder,
+    recorder: SessionRecorder<H::Events>,
     handoff: HandoffDebt,
     title_acquisition: TitleAcquisition,
     live_mcp: LiveMcpState,
