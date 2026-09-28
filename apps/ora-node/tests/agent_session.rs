@@ -135,6 +135,8 @@ async fn records_reach_the_thread_as_history_lines_attributed_to_their_turns() {
 
 /// User turns accepted while the initial turn runs wait for it, then run once each in acceptance
 /// order, however many times the session is woken.
+///
+/// Evidence for specs/test-cases/node/agent-runtime/session-execution.md#session-commands-run-once-in-acceptance-order-and-an-end-discards-the-queue
 #[tokio::test(flavor = "multi_thread")]
 async fn queued_turns_run_once_each_in_acceptance_order() {
     let fixture = Fixture::new();
@@ -180,6 +182,8 @@ async fn queued_turns_run_once_each_in_acceptance_order() {
 
 /// An end requested while a turn runs cancels that turn, discards the turns queued ahead of it,
 /// and leaves no plugin process or lease behind.
+///
+/// Evidence for specs/test-cases/node/agent-runtime/session-execution.md#session-commands-run-once-in-acceptance-order-and-an-end-discards-the-queue
 #[tokio::test(flavor = "multi_thread")]
 async fn ending_cancels_the_running_turn_and_discards_queued_turns() {
     let fixture = Fixture::new();
