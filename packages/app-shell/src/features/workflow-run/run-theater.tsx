@@ -7,7 +7,8 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { Badge, cn, toast } from "@ora/ui";
+import { Badge, cn } from "@ora/ui";
+import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 import { useUpdateWorkflowRunInput } from "../../state/data/workflow-runs";
 import { filterArtifacts, latestArtifact } from "./artifact-filter";
 import {
@@ -101,6 +102,7 @@ export function RunTheater({
 }: RunTheaterProps) {
   const { t } = useTranslation();
   const updateInput = useUpdateWorkflowRunInput();
+  const showContractError = useContractErrorToast();
   // Local draft of the Start input while the user edits it. Committed to the run's
   // kickoff input only by the explicit save action, so per-keystroke refetches cannot clobber
   // an in-progress edit or fire one mutation per character.
@@ -465,7 +467,8 @@ export function RunTheater({
           setInstructionDraft(null);
           setVariableDraft(null);
         },
-        onError: () => toast.error(t("workflowRun.updateFailed")),
+        onError: (error) =>
+          showContractError(error, t("workflowRun.updateFailed")),
       },
     );
   }

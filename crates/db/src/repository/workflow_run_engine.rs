@@ -2,8 +2,9 @@ use ora_application::{
     AdvanceWorkflowRunResult, BindWorkflowNodeSessionResult, CancelWorkflowRunResult,
     ExecutionContext, FailurePropagation, FileChange, IterationRoundContinuation, LoopRoundAdvance,
     LoopRoundExecutionState, LoopRoundToStart, NodeFailure, NodeRunToStart, RepositoryError,
-    RestartWorkflowRunResult, ResumeWorkflowRunResult, RoundOutcome, StartWorkflowRunResult,
-    UpdateWorkflowRunInputResult, WorkflowRunEngineRepository, WorkflowRunPayload,
+    RestartWorkflowRunResult, ResumeWorkflowRunResult, RoundOutcome, RunInputRejection,
+    StartWorkflowRunResult, UpdateWorkflowRunInputResult, WorkflowRunEngineRepository,
+    WorkflowRunPayload,
 };
 use ora_domain::{
     SessionId, SessionStatus, WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus,
@@ -34,8 +35,8 @@ use current_nodes::{current_nodes_from_state, current_nodes_to_state, rewrite_cu
 use failure_detail::{INTERRUPTED_BY_RESTART, fail_orphaned_run};
 use iteration::update_run_execution_state;
 use payload::{
-    mirror_run_input_into_pool, reset_run_execution_state, seed_system_variables,
-    update_task_input_in_payload,
+    UpdateTaskInputError, mirror_run_input_into_pool, reset_run_execution_state,
+    seed_system_variables, update_task_input_in_payload,
 };
 
 /// Persists workflow-run engine state transitions in SQLite.
@@ -526,10 +527,19 @@ impl WorkflowRunEngineRepository for SqliteWorkflowRunEngineRepository {
                 if !editable {
                     return Ok(UpdateWorkflowRunInputResult::NotEditable);
                 }
-                let payload = update_task_input_in_payload(
-                    payload.as_deref(),
-                    &variables,
-                )?;
+                let payload = match update_task_input_in_payload(payload.as_deref(), &variables) {
+                    Ok(payload) => payload,
+                    Err(UpdateTaskInputError::Rejected { variable, reason }) => {
+                        // A rejected value is the user's input problem, not a repository failure:
+                        // no row was written, so the transaction stays empty and the caller sees
+                        // which Start variable to fix.
+                        return Ok(UpdateWorkflowRunInputResult::Rejected(RunInputRejection {
+                            variable,
+                            reason,
+                        }));
+                    }
+                    Err(UpdateTaskInputError::Database(error)) => return Err(error),
+                };
                 // Keep the reserved `{start_id}.input` selector in sync with the dedicated run
                 // instruction column so template references render the text the user just set.
                 let payload = mirror_run_input_into_pool(payload.as_deref(), input.as_deref())?;
@@ -668,7 +678,7 @@ fn engine_repository_error_from_database(error: crate::DatabaseError) -> Reposit
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ora_application::WorkflowVariablePool;
+    use ora_application::{RunInputRejectionReason, WorkflowVariablePool};
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
     use std::collections::BTreeMap;
@@ -736,15 +746,47 @@ mod tests {
         assert_eq!(payload.variable_pool.values.get("start.count"), None);
     }
 
-    /// Deployment cannot assign a string to an integer declaration.
+    /// Deployment cannot assign a string to an integer declaration; the rejection carries the
+    /// variable name and the declared type so the run-input screen can point at the field.
     #[test]
     fn rejects_a_start_value_with_the_wrong_type() {
+        let error = update_task_input_in_payload(
+            Some(START_PAYLOAD),
+            &BTreeMap::from([("count".to_string(), json!("three"))]),
+        )
+        .unwrap_err();
+
         assert!(
-            update_task_input_in_payload(
-                Some(START_PAYLOAD),
-                &BTreeMap::from([("count".to_string(), json!("three"))]),
-            )
-            .is_err()
+            matches!(
+                &error,
+                UpdateTaskInputError::Rejected {
+                    variable,
+                    reason: RunInputRejectionReason::TypeMismatch { expected_type }
+                } if variable == "count" && expected_type == "integer"
+            ),
+            "unexpected rejection {error:?}"
+        );
+    }
+
+    /// A name the Start node never declared is rejected with that name instead of an internal
+    /// repository failure.
+    #[test]
+    fn rejects_an_undeclared_start_variable_name() {
+        let error = update_task_input_in_payload(
+            Some(START_PAYLOAD),
+            &BTreeMap::from([("typo".to_string(), json!("value"))]),
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                UpdateTaskInputError::Rejected {
+                    variable,
+                    reason: RunInputRejectionReason::Undeclared
+                } if variable == "typo"
+            ),
+            "unexpected rejection {error:?}"
         );
     }
 

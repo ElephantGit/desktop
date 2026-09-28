@@ -37,6 +37,8 @@ export const workflowRunTranslations = {
     "errors.workflow_run_active": "该工作流运行仍处于活动状态。",
     "errors.workflow_run_graph_parse": "工作流图解析失败。",
     "errors.workflow_run_validation": "工作流运行校验失败。",
+    "errors.workflow_run_input_invalid":
+      "启动变量 {{variable}} 的输入无效：{{reason}}",
     "errors.workflow_skill_not_found": "该工作流需要的技能不可用。",
     "errors.workflow_role_not_found": "未找到该工作流角色。",
     "errors.workflow_run_start_failed": "启动工作流运行失败。",
@@ -401,6 +403,8 @@ export const workflowRunTranslations = {
     "errors.workflow_run_active": "The workflow run is still active.",
     "errors.workflow_run_graph_parse": "Failed to parse the workflow graph.",
     "errors.workflow_run_validation": "Workflow run validation failed.",
+    "errors.workflow_run_input_invalid":
+      "Invalid input for start variable '{{variable}}': {{reason}}",
     "errors.workflow_skill_not_found":
       "A skill required by this workflow is unavailable.",
     "errors.workflow_role_not_found": "Workflow role not found.",

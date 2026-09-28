@@ -194,6 +194,8 @@ pub enum ApplicationError {
     WorkflowRunGraphParse(#[from] GraphError),
     #[error("workflow run is not executable")]
     WorkflowRunValidation(#[from] WorkflowValidationError),
+    #[error("workflow run input for {variable} was rejected: {reason}")]
+    WorkflowRunInputInvalid { variable: String, reason: String },
     #[error("workflow skill not found: {skill_id}")]
     WorkflowSkillNotFound { skill_id: String },
     #[error("workflow role not found: {role_id}")]
@@ -549,6 +551,16 @@ impl PartialEq for ApplicationError {
             | (WorkflowRunNotResumable, WorkflowRunNotResumable)
             | (WorkflowRunNotEditable, WorkflowRunNotEditable)
             | (WorkflowNodeNotDiagnosable, WorkflowNodeNotDiagnosable) => true,
+            (
+                WorkflowRunInputInvalid {
+                    variable: left_variable,
+                    reason: left_reason,
+                },
+                WorkflowRunInputInvalid {
+                    variable: right_variable,
+                    reason: right_reason,
+                },
+            ) => left_variable == right_variable && left_reason == right_reason,
             (
                 WorkflowSnapshotIncompatibleWithResume { reason: left },
                 WorkflowSnapshotIncompatibleWithResume { reason: right },

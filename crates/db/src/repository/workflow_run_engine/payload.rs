@@ -6,9 +6,25 @@
 //! module-size discipline.
 
 use super::iteration::write_pool_variable;
-use ora_application::{WorkflowRunPayload, WorkflowVariablePool};
+use ora_application::{RunInputRejectionReason, WorkflowRunPayload, WorkflowVariablePool};
 use ora_domain::WorkflowRunId;
 use rusqlite::{Transaction, params};
+use thiserror::Error;
+
+/// Failures raised while folding user-supplied Start values into a run payload.
+#[derive(Debug, Error)]
+pub(super) enum UpdateTaskInputError {
+    /// One value was refused by the run's own declaration; surfaced to the user with its
+    /// variable name instead of an internal repository failure.
+    #[error("Start variable {variable} was rejected: {}", .reason.detail())]
+    Rejected {
+        variable: String,
+        reason: RunInputRejectionReason,
+    },
+    /// The stored payload could not be read or written.
+    #[error(transparent)]
+    Database(#[from] crate::DatabaseError),
+}
 
 pub(super) fn seed_system_variables(
     pool: &mut WorkflowVariablePool,
@@ -34,11 +50,14 @@ pub(super) fn seed_system_variables(
 pub(super) fn update_task_input_in_payload(
     serialized_payload: Option<&str>,
     variables: &std::collections::BTreeMap<String, serde_json::Value>,
-) -> Result<Option<String>, crate::DatabaseError> {
+) -> Result<Option<String>, UpdateTaskInputError> {
     let Some(serialized_payload) = serialized_payload else {
         return Ok(None);
     };
-    let mut payload: WorkflowRunPayload = serde_json::from_str(serialized_payload)?;
+    let mut payload: WorkflowRunPayload =
+        serde_json::from_str(serialized_payload).map_err(|error| {
+            UpdateTaskInputError::Database(crate::DatabaseError::CorruptWorkflowRunState(error))
+        })?;
     let start_writer = resolve_start_writer(&payload);
     remove_legacy_instruction_aliases(&mut payload, start_writer.as_deref());
     if let Some(start_writer) = start_writer.as_ref() {
@@ -48,16 +67,15 @@ pub(super) fn update_task_input_in_payload(
                 .variable_pool
                 .catalog
                 .get(&selector)
-                .ok_or_else(|| {
-                    rusqlite::Error::InvalidParameterName(format!(
-                        "undeclared Start variable {name}"
-                    ))
+                .ok_or_else(|| UpdateTaskInputError::Rejected {
+                    variable: name.clone(),
+                    reason: RunInputRejectionReason::Undeclared,
                 })?;
             if &definition.writer != start_writer {
-                return Err(rusqlite::Error::InvalidParameterName(format!(
-                    "Start variable {name} is not editable"
-                ))
-                .into());
+                return Err(UpdateTaskInputError::Rejected {
+                    variable: name.clone(),
+                    reason: RunInputRejectionReason::NotStartOwned,
+                });
             }
             if value.is_null() {
                 payload.variable_pool.values.remove(&selector);
@@ -65,17 +83,41 @@ pub(super) fn update_task_input_in_payload(
                 payload
                     .variable_pool
                     .set(&selector, start_writer, value.clone())
-                    .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+                    .map_err(|error| match error {
+                        ora_application::WorkflowVariablePoolError::TypeMismatch {
+                            value_type,
+                            ..
+                        } => UpdateTaskInputError::Rejected {
+                            variable: name.clone(),
+                            reason: RunInputRejectionReason::TypeMismatch {
+                                expected_type: value_type,
+                            },
+                        },
+                        ora_application::WorkflowVariablePoolError::LengthExceeded {
+                            max_length,
+                            ..
+                        } => UpdateTaskInputError::Rejected {
+                            variable: name.clone(),
+                            reason: RunInputRejectionReason::LengthExceeded { max_length },
+                        },
+                        other => UpdateTaskInputError::Database(
+                            rusqlite::Error::ToSqlConversionFailure(Box::new(other)).into(),
+                        ),
+                    })?;
             }
         }
     } else if !variables.is_empty() {
-        return Err(rusqlite::Error::InvalidParameterName(
-            "run payload has no Start node owner".to_string(),
-        )
-        .into());
+        return Err(UpdateTaskInputError::Database(
+            rusqlite::Error::InvalidParameterName(
+                "run payload has no Start node owner".to_string(),
+            )
+            .into(),
+        ));
     }
     payload.variable_pool.revision = payload.variable_pool.revision.saturating_add(1);
-    Ok(Some(serde_json::to_string(&payload)?))
+    Ok(Some(serde_json::to_string(&payload).map_err(|error| {
+        UpdateTaskInputError::Database(crate::DatabaseError::CorruptWorkflowRunState(error))
+    })?))
 }
 
 pub(super) fn mirror_run_input_into_pool(

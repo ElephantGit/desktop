@@ -165,6 +165,10 @@ export type ContractError =
     | { "code": "workflow_run_active"; "params": EmptyErrorParams }
     | { "code": "workflow_run_graph_parse"; "params": EmptyErrorParams }
     | { "code": "workflow_run_validation"; "params": EmptyErrorParams }
+    | {
+      "code": "workflow_run_input_invalid";
+      "params": WorkflowRunInputInvalidParams;
+    }
     | { "code": "workflow_skill_not_found"; "params": EmptyErrorParams }
     | { "code": "workflow_role_not_found"; "params": EmptyErrorParams }
     | { "code": "workflow_run_start_failed"; "params": EmptyErrorParams }
@@ -377,6 +381,10 @@ export type PublicError =
   | { "code": "workflow_run_active"; "params": EmptyErrorParams }
   | { "code": "workflow_run_graph_parse"; "params": EmptyErrorParams }
   | { "code": "workflow_run_validation"; "params": EmptyErrorParams }
+  | {
+    "code": "workflow_run_input_invalid";
+    "params": WorkflowRunInputInvalidParams;
+  }
   | { "code": "workflow_skill_not_found"; "params": EmptyErrorParams }
   | { "code": "workflow_role_not_found"; "params": EmptyErrorParams }
   | { "code": "workflow_run_start_failed"; "params": EmptyErrorParams }
@@ -418,6 +426,18 @@ export type SkillFolderConflictParams = { name: string };
  * Carries the user-selected base branch name when Git cannot resolve it.
  */
 export type TaskBaseBranchNotFoundParams = { branchName: string };
+
+/**
+ * Names the Start variable whose supplied or missing value a run rejected, with the reason.
+ *
+ * `variable` is the name as the run-input screen shows it; `reason` is a stable English
+ * detail such as "value does not match the declared type number" that the UI may surface
+ * verbatim next to the localized title.
+ */
+export type WorkflowRunInputInvalidParams = {
+  variable: string;
+  reason: string;
+};
 
 /**
  * Explains why a published snapshot cannot take over an existing run on resume.

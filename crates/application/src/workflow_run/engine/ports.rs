@@ -230,13 +230,56 @@ pub enum BindWorkflowNodeSessionResult {
 }
 
 /// Outcome of updating a run's kickoff input.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdateWorkflowRunInputResult {
     Updated,
     /// The run is executing (`Running`, or a `Pending` pause with in-flight nodes), so its
     /// input is frozen. A not-started `Pending` run or any terminal run is editable.
     NotEditable,
     NotFound,
+    /// One supplied value was rejected before entering the pool; the run keeps its previously
+    /// stored input. Carries which Start variable was rejected and why, so the run-input screen
+    /// can point the user at the exact field instead of a generic failure.
+    Rejected(RunInputRejection),
+}
+
+/// One Start variable the run-input boundary refused, with the rejection's cause.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunInputRejection {
+    /// The Start variable's name as the run-input screen displays it.
+    pub variable: String,
+    pub reason: RunInputRejectionReason,
+}
+
+/// Why a supplied Start value cannot enter the run's variable pool.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunInputRejectionReason {
+    /// The run's Start node declares no variable with this name.
+    Undeclared,
+    /// The declared variable is owned by a writer other than the run's Start node, so the
+    /// run-input screen cannot set it.
+    NotStartOwned,
+    /// The value does not satisfy the variable's declared pool type.
+    TypeMismatch { expected_type: String },
+    /// The value is longer than the variable's declared maximum length.
+    LengthExceeded { max_length: usize },
+}
+
+impl RunInputRejectionReason {
+    /// Renders the stable English detail carried to the public error contract. The UI may show
+    /// it verbatim next to a localized title, like plugin package rejection reasons.
+    pub fn detail(&self) -> String {
+        match self {
+            Self::Undeclared => "no declared Start variable has this name".to_string(),
+            Self::NotStartOwned => "variable is not owned by the run's Start node".to_string(),
+            Self::TypeMismatch { expected_type } => {
+                format!("value does not match the declared type {expected_type}")
+            }
+            Self::LengthExceeded { max_length } => {
+                format!("value exceeds the maximum length {max_length}")
+            }
+        }
+    }
 }
 
 /// Persistence operations for the workflow run execution engine.
