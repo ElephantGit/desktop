@@ -340,7 +340,7 @@ export const workflowEditorTranslations = {
     "settings.workflow.loop.until": "结束条件",
     "settings.workflow.loop.untilLogic": "结束条件组合方式",
     "settings.workflow.loop.defaultBehavior":
-      "每轮完成后检查结束条件，满足时成功结束，否则继续下一轮。达到最大轮次仍不满足时，循环失败。空值判断以外的比较需要本轮变量已赋值。",
+      "执行到退出循环节点时提前结束；否则每轮完成后检查结束条件。可删除所有条件，仅使用退出节点。达到最大轮次仍未结束时，循环失败。输出引用的值必须已生成。",
     "settings.workflow.loop.legacyUnsupported":
       "此旧循环节点缺少可执行配置，请删除后重新添加。",
     "settings.workflow.subflow.hint":
@@ -870,7 +870,7 @@ export const workflowEditorTranslations = {
     "settings.workflow.loop.until": "End conditions",
     "settings.workflow.loop.untilLogic": "End condition logic",
     "settings.workflow.loop.defaultBehavior":
-      "Conditions are checked after each round. Matching ends the Loop successfully; otherwise it continues. Reaching the round limit without a match fails the Loop. Comparisons other than emptiness checks require assigned values in the current round.",
+      "Exit loop nodes stop the loop early; otherwise conditions are checked after each round. Remove all conditions to use only exit nodes. Reaching the limit without an exit fails the loop. Output bindings must already have values.",
     "settings.workflow.loop.legacyUnsupported":
       "This legacy Loop lacks executable configuration. Delete it and add a new Loop.",
     "settings.workflow.subflow.hint":

@@ -71,6 +71,7 @@ function createMockNodeExecutionData(
   switch (kind) {
     case "start":
       return { input: "" };
+    case "loopExit":
     case "output":
       return {};
     case "iteration":

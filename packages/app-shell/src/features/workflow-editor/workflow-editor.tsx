@@ -1551,6 +1551,10 @@ function WorkflowEditorContent({
 
   /** Adds a catalog node at a canvas-provided position and selects it for immediate editing. */
   function addNode(kind: WorkflowNodeKind, position: XYPosition): void {
+    const nodeType = capabilities.nodeTypes.find(
+      (candidate) => candidate.kind === kind,
+    );
+    if (!nodeType || !supportsWorkflowNodeScope(nodeType, "workflow")) return;
     const currentWorkflow = workflowRef.current ?? workflow;
     if (
       currentWorkflow === null ||

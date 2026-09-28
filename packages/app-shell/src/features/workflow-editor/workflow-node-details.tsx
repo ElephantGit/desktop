@@ -117,6 +117,17 @@ export function WorkflowNodeDetailsLayout({
           {...{ node, nodeType, onUpdate, onClose, variableCatalog }}
         />
       );
+    case "loopExit":
+      return (
+        <div className="space-y-4 p-4">
+          <WorkflowNodeDetailsHeader
+            {...{ node, nodeType, onUpdate, onClose }}
+          />
+          <p className="text-xs leading-5 text-muted-foreground">
+            {nodeType.description}
+          </p>
+        </div>
+      );
     case "loop":
       return (
         <LoopNodeDetails
@@ -879,7 +890,7 @@ function LoopNodeDetails({
               operators={capabilities.conditionOperators}
               variableCatalog={conditionCatalog}
               logicLabel={t("settings.workflow.loop.untilLogic")}
-              minimumConditions={1}
+              minimumConditions={0}
             />
           </section>
         )}

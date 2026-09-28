@@ -1693,6 +1693,7 @@ describe("WorkflowEditor", () => {
     ["Agent", "agent"],
     ["条件分支", "condition"],
     ["输出", "output"],
+    ["退出循环", "loopExit"],
   ])(
     "adds and persists a loop %s through its member output menu",
     async (label, kind) => {
@@ -1701,6 +1702,7 @@ describe("WorkflowEditor", () => {
       const view = renderEditor(<WorkflowEditor />, state);
       await screen.findByLabelText("工作流画布");
       await user.click(screen.getByRole("button", { name: "循环" }));
+      expect(screen.queryByRole("button", { name: "退出循环" })).toBeNull();
       const port = await screen.findByLabelText("从循环 Agent开始连接");
       await user.hover(port);
       expect(screen.getByLabelText("在 循环 Agent 后添加节点")).toHaveClass(
@@ -1711,7 +1713,7 @@ describe("WorkflowEditor", () => {
         (await screen.findAllByRole("menuitem")).map(
           (item) => item.textContent,
         ),
-      ).toEqual(["Agent", "条件分支", "输出"]);
+      ).toEqual(["Agent", "条件分支", "输出", "退出循环"]);
       await user.click(screen.getByRole("menuitem", { name: label }));
       await waitFor(
         () => {
@@ -1739,6 +1741,9 @@ describe("WorkflowEditor", () => {
         },
         { timeout: 3_000 },
       );
+      if (kind === "loopExit") {
+        expect(screen.queryByLabelText("从退出循环 1开始连接")).toBeNull();
+      }
       if (kind === "condition") {
         await user.click(screen.getByLabelText("从条件分支 1开始连接 · else"));
         await user.click(

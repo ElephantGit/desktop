@@ -86,14 +86,48 @@ where
             return Ok(LoopScheduleOutcome::Progressed);
         }
     };
+    if state.exit.is_some() {
+        return engine.drive_loop_exit_cleanup(context, loop_node_run, &scope);
+    }
     let node_runs = engine.repository.list_node_runs_in_scope(&scope.id)?;
+    if let Some(exit_node) = node_runs.iter().find(|node| {
+        node.status == WorkflowNodeStatus::Running
+            && body.node(&node.node_id).is_some_and(|node| {
+                matches!(engine.runtimes.runtime(node.node_type),
+                        Some(RegisteredNodeRuntime::Swift(runtime)) if runtime.requests_loop_exit())
+            })
+    }) {
+        let result = config
+            .exit_outputs(&state.variable_pool)
+            .map_err(|error| error.to_string());
+        engine.repository.advance_loop_round(
+            &scope.id,
+            &LoopRoundAdvance::RequestExit {
+                node_run_id: exit_node.id.clone(),
+                result,
+            },
+            now,
+        )?;
+        return Ok(LoopScheduleOutcome::Progressed);
+    }
     if engine.complete_loop_controls(&scope, body, context, &state, &node_runs, now)? {
         return Ok(LoopScheduleOutcome::Progressed);
     }
 
     let node_runs = engine.repository.list_node_runs_in_scope(&scope.id)?;
     let projection = BranchProjection::new(body, &node_runs, &state.condition_decisions);
-    let ready = projection.ready_nodes();
+    let mut ready = projection.ready_nodes();
+    // Do not dispatch sibling work in the same wave when a break is already reachable.
+    if let Some(exit_node) = ready
+        .iter()
+        .find(|node| {
+            matches!(engine.runtimes.runtime(node.node_type),
+                Some(RegisteredNodeRuntime::Swift(runtime)) if runtime.requests_loop_exit())
+        })
+        .copied()
+    {
+        ready = vec![exit_node];
+    }
     if !ready.is_empty() {
         let ready_runs: Vec<NodeRunToStart> = ready
             .iter()
@@ -190,6 +224,7 @@ where
         let state = serde_json::to_string(&LoopRoundExecutionState {
             variable_pool,
             condition_decisions: Default::default(),
+            exit: None,
         })
         .map_err(|error| EngineError::LoopState {
             message: error.to_string(),

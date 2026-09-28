@@ -1,0 +1,405 @@
+{
+  "schemaVersion": 2,
+  "id": "loop-branch-exit-parallel-example",
+  "name": "循环综合测试：并行退出取消",
+  "description": "并行取消专项版。默认 immediate；Agent B 与 E 均启用交互模式。先确认 E 已进入等待，再手动完成 B 并以 PASS 作为最终输出，验证退出取消 E。导入后为五个 Agent 选择本机执行器、模型和角色。其他 mode 的继续轮次需手动完成交互节点。",
+  "updatedAt": "2026-09-24T17:06:45.199046+08:00",
+  "viewport": {
+    "x": 30,
+    "y": 70,
+    "zoom": 0.45
+  },
+  "nodes": [
+    {
+      "id": "start",
+      "type": "workflow",
+      "position": {
+        "x": 50,
+        "y": 310
+      },
+      "data": {
+        "kind": "start",
+        "title": "开始：选择测试模式",
+        "description": "",
+        "inputVariables": [
+          {
+            "name": "mode",
+            "displayName": "测试模式",
+            "fieldType": "select",
+            "valueType": "string",
+            "required": true,
+            "options": ["immediate", "pass3", "stop2", "normal2", "never"],
+            "value": "immediate"
+          }
+        ]
+      },
+      "deletable": false
+    },
+    {
+      "id": "review-loop",
+      "type": "workflow",
+      "position": {
+        "x": 450,
+        "y": 100
+      },
+      "data": {
+        "kind": "loop",
+        "title": "评审循环",
+        "description": "",
+        "loopConfig": {
+          "maxIterations": 4,
+          "variables": [
+            {
+              "name": "round",
+              "valueType": "string",
+              "initial": {
+                "kind": "constant",
+                "value": "1"
+              },
+              "feedback": ["next-round", "output"]
+            },
+            {
+              "name": "previousDraft",
+              "valueType": "string",
+              "initial": {
+                "kind": "constant",
+                "value": "EMPTY"
+              },
+              "feedback": ["writer", "output"]
+            }
+          ],
+          "until": {
+            "logic": "and",
+            "conditions": [
+              {
+                "variableSelector": ["reviewer", "output"],
+                "operator": "equals",
+                "value": "DONE"
+              }
+            ]
+          },
+          "outputs": [
+            {
+              "name": "finalDraft",
+              "variableSelector": ["writer", "output"]
+            },
+            {
+              "name": "decision",
+              "variableSelector": ["reviewer", "output"]
+            },
+            {
+              "name": "finishedRound",
+              "variableSelector": ["review-loop", "round"]
+            }
+          ]
+        }
+      },
+      "initialWidth": 1660,
+      "initialHeight": 900
+    },
+    {
+      "id": "round-start",
+      "type": "workflow",
+      "position": {
+        "x": 40,
+        "y": 210
+      },
+      "data": {
+        "kind": "start",
+        "title": "轮次开始",
+        "description": "",
+        "containerId": "review-loop"
+      },
+      "deletable": false,
+      "parentId": "review-loop"
+    },
+    {
+      "id": "writer",
+      "type": "workflow",
+      "position": {
+        "x": 360,
+        "y": 210
+      },
+      "data": {
+        "kind": "agent",
+        "title": "Agent A：生成内容",
+        "description": "",
+        "containerId": "review-loop",
+        "agentConfig": {
+          "schemaVersion": 3,
+          "executor": {
+            "agentCli": "official/ora-space.codeagentcli",
+            "modelId": "gpt-5"
+          },
+          "roleId": "Implementer",
+          "skills": [],
+          "mcps": [],
+          "prompt": "你是工作流测试中的内容生成器。\n当前轮次：{{#review-loop.round#}}\n上一轮内容：{{#review-loop.previousDraft#}}\n只输出一行：DRAFT_<当前轮次>|previous=<上一轮内容>\n将尖括号及其中说明替换为实际输入值。不要解释，不要使用 Markdown，不要调用工具。",
+          "interactive": false
+        }
+      },
+      "parentId": "review-loop"
+    },
+    {
+      "id": "reviewer",
+      "type": "workflow",
+      "position": {
+        "x": 680,
+        "y": 210
+      },
+      "data": {
+        "kind": "agent",
+        "title": "Agent B：评审",
+        "description": "",
+        "containerId": "review-loop",
+        "agentConfig": {
+          "schemaVersion": 3,
+          "executor": {
+            "agentCli": "official/ora-space.codeagentcli",
+            "modelId": "gpt-5"
+          },
+          "roleId": "Implementer",
+          "skills": [],
+          "mcps": [],
+          "prompt": "你是工作流测试中的确定性评审器。\n测试模式：{{#start.mode#}}\n当前轮次：{{#review-loop.round#}}\n本轮内容：{{#writer.output#}}\n严格按规则输出：\n1. mode 为 immediate：输出 PASS。\n2. mode 为 pass3：当前轮次为 3 时输出 PASS，否则输出 CONTINUE。\n3. mode 为 stop2：当前轮次为 2 时输出 STOP，否则输出 CONTINUE。\n4. mode 为 normal2：当前轮次为 2 时输出 DONE，否则输出 CONTINUE。\n5. 其他 mode：输出 CONTINUE。\n只输出一个大写单词，不要解释、引号、标点或 Markdown，不要调用工具。",
+          "interactive": true
+        }
+      },
+      "parentId": "review-loop"
+    },
+    {
+      "id": "decision",
+      "type": "workflow",
+      "position": {
+        "x": 1000,
+        "y": 210
+      },
+      "data": {
+        "kind": "condition",
+        "title": "条件分支：评审结果",
+        "description": "",
+        "containerId": "review-loop",
+        "cases": [
+          {
+            "id": "pass",
+            "logic": "and",
+            "conditions": [
+              {
+                "variableSelector": ["reviewer", "output"],
+                "operator": "equals",
+                "value": "PASS"
+              }
+            ]
+          },
+          {
+            "id": "stop",
+            "logic": "and",
+            "conditions": [
+              {
+                "variableSelector": ["reviewer", "output"],
+                "operator": "equals",
+                "value": "STOP"
+              }
+            ]
+          }
+        ]
+      },
+      "parentId": "review-loop"
+    },
+    {
+      "id": "exit-pass",
+      "type": "workflow",
+      "position": {
+        "x": 1320,
+        "y": 110
+      },
+      "data": {
+        "kind": "loopExit",
+        "title": "退出循环：通过",
+        "description": "",
+        "containerId": "review-loop"
+      },
+      "parentId": "review-loop"
+    },
+    {
+      "id": "exit-stop",
+      "type": "workflow",
+      "position": {
+        "x": 1320,
+        "y": 310
+      },
+      "data": {
+        "kind": "loopExit",
+        "title": "退出循环：主动停止",
+        "description": "",
+        "containerId": "review-loop"
+      },
+      "parentId": "review-loop"
+    },
+    {
+      "id": "next-round",
+      "type": "workflow",
+      "position": {
+        "x": 1320,
+        "y": 510
+      },
+      "data": {
+        "kind": "agent",
+        "title": "Agent C：准备下一轮",
+        "description": "",
+        "containerId": "review-loop",
+        "agentConfig": {
+          "schemaVersion": 3,
+          "executor": {
+            "agentCli": "official/ora-space.codeagentcli",
+            "modelId": "gpt-5"
+          },
+          "roleId": "Implementer",
+          "skills": [],
+          "mcps": [],
+          "prompt": "当前轮次：{{#review-loop.round#}}\n只输出当前轮次加 1 后的数字。例如输入 1 输出 2。\n不要输出其他文字、标点或 Markdown，不要调用工具。",
+          "interactive": false
+        }
+      },
+      "parentId": "review-loop"
+    },
+    {
+      "id": "summary",
+      "type": "workflow",
+      "position": {
+        "x": 2230,
+        "y": 310
+      },
+      "data": {
+        "kind": "agent",
+        "title": "Agent D：整理结果",
+        "description": "",
+        "agentConfig": {
+          "schemaVersion": 3,
+          "executor": {
+            "agentCli": "official/ora-space.codeagentcli",
+            "modelId": "gpt-5"
+          },
+          "roleId": "Implementer",
+          "skills": [],
+          "mcps": [],
+          "prompt": "请原样整理以下结果，不要重新评审，不要调用工具：\n结束轮次：{{#review-loop.finishedRound#}}\n评审决定：{{#review-loop.decision#}}\n最终内容：{{#review-loop.finalDraft#}}\n按以上三行格式输出。",
+          "interactive": false
+        }
+      }
+    },
+    {
+      "id": "output",
+      "type": "workflow",
+      "position": {
+        "x": 2570,
+        "y": 310
+      },
+      "data": {
+        "kind": "output",
+        "title": "输出",
+        "description": "",
+        "outputs": [
+          {
+            "name": "result",
+            "variableSelector": ["summary", "output"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "waiting",
+      "type": "workflow",
+      "position": {
+        "x": 360,
+        "y": 690
+      },
+      "data": {
+        "kind": "agent",
+        "title": "Agent E：等待人工完成",
+        "description": "",
+        "containerId": "review-loop",
+        "agentConfig": {
+          "schemaVersion": 3,
+          "executor": {
+            "agentCli": "official/ora-space.codeagentcli",
+            "modelId": "gpt-5"
+          },
+          "roleId": "Implementer",
+          "skills": [],
+          "mcps": [],
+          "prompt": "这是循环退出的并行取消测试。请只回复“等待人工完成”，随后等待后续人工输入。不要调用工具或修改文件。",
+          "interactive": true
+        }
+      },
+      "parentId": "review-loop"
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-start-review-loop",
+      "type": "workflow",
+      "source": "start",
+      "target": "review-loop"
+    },
+    {
+      "id": "e-review-loop-summary",
+      "type": "workflow",
+      "source": "review-loop",
+      "target": "summary"
+    },
+    {
+      "id": "e-summary-output",
+      "type": "workflow",
+      "source": "summary",
+      "target": "output"
+    },
+    {
+      "id": "e-round-start-writer",
+      "type": "workflow",
+      "source": "round-start",
+      "target": "writer"
+    },
+    {
+      "id": "e-writer-reviewer",
+      "type": "workflow",
+      "source": "writer",
+      "target": "reviewer"
+    },
+    {
+      "id": "e-reviewer-decision",
+      "type": "workflow",
+      "source": "reviewer",
+      "target": "decision"
+    },
+    {
+      "id": "e-decision-exit-pass",
+      "type": "workflow",
+      "source": "decision",
+      "target": "exit-pass",
+      "sourceHandle": "pass"
+    },
+    {
+      "id": "e-decision-exit-stop",
+      "type": "workflow",
+      "source": "decision",
+      "target": "exit-stop",
+      "sourceHandle": "stop"
+    },
+    {
+      "id": "e-decision-next-round",
+      "type": "workflow",
+      "source": "decision",
+      "target": "next-round",
+      "sourceHandle": "else"
+    },
+    {
+      "id": "e-round-start-waiting",
+      "type": "workflow",
+      "source": "round-start",
+      "target": "waiting"
+    }
+  ],
+  "annotations": [],
+  "globalVariables": []
+}

@@ -131,11 +131,14 @@ pub(super) fn advance(
                 params![scope_id.as_ref()],
                 |row| row.get::<_, bool>(0),
             )?;
-            if active_children && !matches!(advance, LoopRoundAdvance::Fail { .. }) {
+            if active_children && !matches!(advance, LoopRoundAdvance::Fail { .. } | LoopRoundAdvance::RequestExit { .. }) {
                 return Ok(AdvanceWorkflowRunResult::NotRunning);
             }
 
             match advance {
+                LoopRoundAdvance::RequestExit { node_run_id, result } => {
+                    super::loop_exit::request(&transaction, scope_id, node_run_id, result, now)?;
+                }
                 LoopRoundAdvance::Continue { next } => {
                     if next.parent_loop_node_run_id.as_ref() != parent_run_id
                         || next.start_node_run.scope_id != next.id
@@ -192,7 +195,7 @@ pub(super) fn advance(
                             // recorded before the rounds ran survives the Loop's completion.
                             merge_complete_payload(
                                 parent_payload,
-                                Some("loop_succeeded".into()),
+                                Some(if super::loop_exit::is_requested(&transaction, scope_id)? { "loop_exit" } else { "loop_succeeded" }.into()),
                                 vec![],
                             )?,
                             now,

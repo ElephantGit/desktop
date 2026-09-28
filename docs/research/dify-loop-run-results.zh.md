@@ -1,0 +1,20 @@
+# Dify Loop 与 Iteration 运行结果
+
+[English](dify-loop-run-results.md) | 中文
+
+研究日期：2026-09-28（Asia/Shanghai）。范围：本次查询时 Dify `main` 对应的固定提交 [`a154a4d674018fd7196f8212066a61c8b928fd5a`](https://github.com/langgenius/dify/commit/a154a4d674018fd7196f8212066a61c8b928fd5a) 官方前端源码。以下行为已由源码确认，未操作运行中的 Dify 实例。
+
+## 已验证行为
+
+- **导航是逐层进入，再独立展开各轮。** 展开容器节点后，可见 Loop/Iteration 日志入口及轮次数、失败轮次数。点击入口后，当前追踪面板切换为专用结果面板；返回按钮回到父层。轮次按展示位置加一显示 `Loop N` 或 `Iteration N`，初始全部折叠，每轮独立展开，并非只能选择一轮的标签栏。来源：[节点入口条件](https://github.com/langgenius/dify/blob/a154a4d674018fd7196f8212066a61c8b928fd5a/web/app/components/workflow/run/node.tsx#L247-L264)、[面板切换](https://github.com/langgenius/dify/blob/a154a4d674018fd7196f8212066a61c8b928fd5a/web/app/components/workflow/run/tracing-panel.tsx#L162-L184)、[Loop 面板](https://github.com/langgenius/dify/blob/a154a4d674018fd7196f8212066a61c8b928fd5a/web/app/components/workflow/run/loop-log/loop-result-panel.tsx#L40-L159)、[Iteration 面板](https://github.com/langgenius/dify/blob/a154a4d674018fd7196f8212066a61c8b928fd5a/web/app/components/workflow/run/iteration-log/iteration-result-panel.tsx#L25-L126)、[Loop 次数及错误摘要](https://github.com/langgenius/dify/blob/a154a4d674018fd7196f8212066a61c8b928fd5a/web/app/components/workflow/run/loop-log/loop-log-trigger.tsx#L60-L94)。
+- **层级为容器 → 轮次 → 普通节点追踪。** 每轮内复用 `TracingPanel`，保留普通节点可展开的输入、过程数据、输出及并行分支结构。格式化器根据 `loop_id` 或 `iteration_id` 将子节点移出外层列表并挂回容器。这只能证明展示模式，不能据此认定任意运行时嵌套组合均受支持。来源：[格式化器](https://github.com/langgenius/dify/blob/a154a4d674018fd7196f8212066a61c8b928fd5a/web/app/components/workflow/run/utils/format-log/index.ts)、[共用追踪渲染器](https://github.com/langgenius/dify/blob/a154a4d674018fd7196f8212066a61c8b928fd5a/web/app/components/workflow/run/tracing-panel.tsx)。
+- **轮次身份来自执行元数据。** Loop 优先按 `parallel_mode_run_id`、其次按 `loop_index` 分组，保留分组首次出现的顺序；Iteration 按 `iteration_index` 分组。两者均有兜底：当前组再次出现相同节点 ID 时推断下一轮；缺失执行元数据的子节点被跳过。原指定路径 `format-log/loop.ts`、`iteration.ts` 已变为 [loop/index.ts](https://github.com/langgenius/dify/blob/a154a4d674018fd7196f8212066a61c8b928fd5a/web/app/components/workflow/run/utils/format-log/loop/index.ts) 和 [iteration/index.ts](https://github.com/langgenius/dify/blob/a154a4d674018fd7196f8212066a61c8b928fd5a/web/app/components/workflow/run/utils/format-log/iteration/index.ts)。[Iteration 入口](https://github.com/langgenius/dify/blob/a154a4d674018fd7196f8212066a61c8b928fd5a/web/app/components/workflow/run/iteration-log/iteration-log-trigger.tsx#L89-L118) 还会根据耗时映射重建分组，并补回映射中缺失的失败轮次。
+- **轮次与节点分别展示状态、耗时。** 轮次标题优先显示任一子节点失败，其次显示任一子节点运行中；其他情况下，若存在非空耗时映射则显示耗时，并显示展开箭头。耗时保留两位小数，最低显示 `0.01s`，缺失条目也使用此值。节点标题则展示状态图标、耗时及可选 token 数，详情按状态展示错误。来源：[Loop 状态与耗时](https://github.com/langgenius/dify/blob/a154a4d674018fd7196f8212066a61c8b928fd5a/web/app/components/workflow/run/loop-log/loop-result-panel.tsx#L50-L87)、[Iteration 状态与耗时](https://github.com/langgenius/dify/blob/a154a4d674018fd7196f8212066a61c8b928fd5a/web/app/components/workflow/run/iteration-log/iteration-result-panel.tsx#L35-L72)、[节点详情](https://github.com/langgenius/dify/blob/a154a4d674018fd7196f8212066a61c8b928fd5a/web/app/components/workflow/run/node.tsx#L94-L340)。
+- **Loop 有专门的变量展示。** 容器输入、输出标题改为初始、最终循环变量；存在 `loop_variable_map` 时，每轮节点追踪上方还显示只读 JSON 变量块。普通节点以只读 JSON 展示输入、过程数据与输出。Iteration 轮次面板没有对应的独立变量块。来源：[Loop 标题](https://github.com/langgenius/dify/blob/a154a4d674018fd7196f8212066a61c8b928fd5a/web/app/components/workflow/run/node.tsx#L117-L129)、[每轮变量](https://github.com/langgenius/dify/blob/a154a4d674018fd7196f8212066a61c8b928fd5a/web/app/components/workflow/run/loop-log/loop-result-panel.tsx#L140-L158)、[JSON 详情](https://github.com/langgenius/dify/blob/a154a4d674018fd7196f8212066a61c8b928fd5a/web/app/components/workflow/run/node.tsx#L301-L350)。
+
+## 对 Ora 的建议（设计提案，非 Dify 事实）
+
+1. Loop 与 Iteration 复用感知轮次的追踪展示，各自保留领域执行与生命周期所有者。通过共用视图适配器整理容器身份、轮次身份、节点尝试、状态、耗时及详情可用性。
+2. 让已有轮次历史可操作：轮次 → 实际执行节点 → 该次输入、输出、错误与会话。保留稳定的 scope、round、attempt 身份，不用重复节点 ID 推断边界，也不把展示序号当身份。
+3. 保留领域差异：Loop 展示初始状态、每轮反馈与退出原因；Iteration 展示当前项与聚合结果。如果持久化 scope 状态尚未公开，应在契约所有者增加类型明确的结果摘要，避免界面重建这些事实。
+4. 对未知耗时、详情不完整使用明确状态，不照搬 Dify 的 `0.01s` 兜底。通过生产接口验证跨轮次、重复节点、失败运行及嵌套 scope 的导航隔离。

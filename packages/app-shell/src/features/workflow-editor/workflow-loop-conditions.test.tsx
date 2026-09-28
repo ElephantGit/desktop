@@ -58,7 +58,7 @@ describe("Loop end conditions", () => {
     expect(
       screen.getByRole("region", { name: "结束条件" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "移除条件" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "移除条件" })).toBeEnabled();
     expect(screen.queryByLabelText("值 1")).not.toBeInTheDocument();
     await user.click(screen.getByLabelText("变量 1"));
     expect(
@@ -112,7 +112,7 @@ describe("Loop end conditions", () => {
       }),
     );
     await user.click(screen.getAllByRole("button", { name: "移除条件" })[1]!);
-    expect(screen.getByRole("button", { name: "移除条件" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "移除条件" })).toBeEnabled();
     expect(latest.data.loopConfig?.until.conditions).toEqual([
       {
         variableSelector: [agent.id, "structured_output", "passed"],
@@ -144,5 +144,8 @@ describe("Loop end conditions", () => {
         value: "true",
       },
     ]);
+    await user.click(screen.getByRole("button", { name: "移除条件" }));
+    expect(latest.data.loopConfig?.until.conditions).toEqual([]);
+    expect(screen.queryByLabelText("变量 1")).not.toBeInTheDocument();
   });
 });

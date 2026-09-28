@@ -23,7 +23,8 @@ export function insertLoopMember<
   if (
     loop?.data.kind !== "loop" ||
     source?.data.containerId !== loop.id ||
-    source.data.kind === "output"
+    source.data.kind === "output" ||
+    source.data.kind === "loopExit"
   ) {
     return graph;
   }

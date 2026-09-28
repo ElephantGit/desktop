@@ -1,6 +1,7 @@
 import type { ComponentType } from "react";
 import {
   IconArrowRight,
+  IconLogout,
   IconBinaryTree,
   IconBolt,
   IconBraces,
@@ -55,6 +56,11 @@ const WORKFLOW_NODE_METADATA: Record<WorkflowNodeKind, WorkflowNodeMetadata> = {
     kind: "loop",
     icon: IconRepeat,
     tone: "bg-indigo-500/12 text-indigo-700 dark:text-indigo-400",
+  },
+  loopExit: {
+    kind: "loopExit",
+    icon: IconLogout,
+    tone: "bg-orange-500/12 text-orange-700 dark:text-orange-400",
   },
   iteration: {
     kind: "iteration",

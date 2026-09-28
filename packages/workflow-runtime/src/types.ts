@@ -7,6 +7,7 @@ export type WorkflowNodeKind =
   | "junction"
   | "human"
   | "loop"
+  | "loopExit"
   | "iteration"
   | "subflow"
   | "output";
@@ -345,6 +346,8 @@ export interface WorkflowNodeAiDiagnosis {
 }
 
 export interface GraphWorkflowNodeState {
+  /** The branch committed for this exact node execution, not a global latest decision. */
+  selectedBranchId?: string;
   status: GraphWorkflowNodeStatus;
   /**
    * Composite-region round this state belongs to; present only for region rows, where the
@@ -444,6 +447,8 @@ export interface GraphWorkflowRun {
   name: string;
   status: GraphWorkflowRunStatus;
   kickoffInput?: string;
+  /** Committed workflow result, distinct from any intermediate node output. */
+  finalOutput?: string;
   nodeStates: Record<string, GraphWorkflowNodeState>;
   /** Complete Loop-round history; repeated child node ids remain isolated per round. */
   rounds?: GraphWorkflowRound[];

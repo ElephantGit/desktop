@@ -174,7 +174,7 @@ export const WorkflowFlowNodeView = memo(function WorkflowFlowNodeView({
           />
         }
         sourceHandle={
-          data.kind === "condition" ? (
+          data.kind === "loopExit" ? null : data.kind === "condition" ? (
             <>
               {conditionCases.map((conditionCase, index) => (
                 <ContainerOutputPort

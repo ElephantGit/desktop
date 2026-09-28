@@ -198,6 +198,13 @@ describe("createMockWorkflowNode", () => {
           configFields: [],
           supportedScopes: ["workflow", "loop"],
         },
+        {
+          kind: "loopExit",
+          label: "退出循环",
+          description: "结束当前循环并继续外部流程",
+          configFields: [],
+          supportedScopes: ["loop"],
+        },
       ],
       models: [
         { value: "GPT-5", label: "GPT-5" },

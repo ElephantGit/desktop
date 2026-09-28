@@ -90,7 +90,8 @@ export function WorkflowIterationActionsProvider({
         if (
           loopId &&
           nodeById.get(loopId)?.data.kind === "loop" &&
-          source?.data.kind !== "output"
+          source?.data.kind !== "output" &&
+          source?.data.kind !== "loopExit"
         ) {
           return {
             type: "loop-output",

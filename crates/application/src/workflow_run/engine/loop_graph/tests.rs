@@ -169,7 +169,6 @@ fn rejects_invalid_loop_configuration() {
         ("/variables/0/valueType", json!("unknown")),
         ("/variables/0/initial/value", json!(false)),
         ("/variables/0/feedback", json!(["writer"])),
-        ("/until/conditions", json!([])),
         ("/until/logic", json!("xor")),
         ("/until/conditions/0/operator", json!("unknown")),
         ("/outputs/0/name", json!(" ")),

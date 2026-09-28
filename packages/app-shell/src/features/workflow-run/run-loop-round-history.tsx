@@ -20,7 +20,8 @@ export function RunLoopRoundHistory({
   const [preferredRoundId, setPreferredRoundId] = useState<string | null>(null);
   const effectiveRoundId = selectedRoundId ?? preferredRoundId;
   const selectedRound =
-    rounds.find((round) => round.id === effectiveRoundId) ?? rounds.at(-1);
+    rounds.find((round) => round.id === effectiveRoundId) ??
+    [...rounds].sort((a, b) => a.roundIndex - b.roundIndex)[0];
 
   if (selectedRound === undefined) {
     return (
@@ -53,7 +54,7 @@ export function RunLoopRoundHistory({
               }}
             >
               {t("workflowRun.loopRounds.round", {
-                round: round.roundIndex + 1,
+                round: round.roundIndex,
               })}
             </button>
           );

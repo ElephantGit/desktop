@@ -23,6 +23,18 @@ pub enum LoopRoundDecision {
 pub struct LoopRoundExecutionState {
     pub variable_pool: WorkflowVariablePool,
     pub condition_decisions: BTreeMap<String, String>,
+    /// A committed break freezes outputs while the session owner drains cancelled workers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit: Option<LoopExitState>,
+}
+
+/// Immutable exit facts survive crashes between cancellation and loop completion.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoopExitState {
+    pub node_run_id: String,
+    pub requested_at: i64,
+    pub result: Result<BTreeMap<String, Value>, String>,
 }
 
 /// Failures which must abort advancement without publishing a partially updated variable set.
@@ -123,6 +135,22 @@ impl LoopConfig {
             .collect()
     }
 
+    /// Resolves only the public result when exiting; no next-round feedback is required.
+    pub fn exit_outputs(
+        &self,
+        pool: &WorkflowVariablePool,
+    ) -> Result<BTreeMap<String, Value>, LoopRoundError> {
+        self.outputs
+            .iter()
+            .map(|output| {
+                Ok((
+                    output.name.clone(),
+                    resolve_required(pool, &output.variable_selector)?,
+                ))
+            })
+            .collect()
+    }
+
     /// Decides advancement from one immutable completed-round snapshot using one-based rounds.
     pub fn complete_round(
         &self,
@@ -152,17 +180,14 @@ impl LoopConfig {
                 Ok((variable.name.clone(), value))
             })
             .collect::<Result<BTreeMap<_, _>, LoopRoundError>>()?;
-        if evaluate_condition(&self.until, completed)? != ELSE_BRANCH_ID {
-            let outputs = self
-                .outputs
-                .iter()
-                .map(|output| {
-                    Ok((
-                        output.name.clone(),
-                        resolve_required(completed, &output.variable_selector)?,
-                    ))
-                })
-                .collect::<Result<_, LoopRoundError>>()?;
+        if self
+            .until
+            .cases
+            .iter()
+            .any(|case| !case.conditions.is_empty())
+            && evaluate_condition(&self.until, completed)? != ELSE_BRANCH_ID
+        {
+            let outputs = self.exit_outputs(completed)?;
             return Ok(LoopRoundDecision::Succeeded { outputs });
         }
         // A successful final permitted round still succeeds; only a false termination hits the cap.

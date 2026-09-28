@@ -141,6 +141,7 @@ export function createMockWorkflowCapabilities(
     createMockWorkflowNodeType("loop", locale),
     createMockWorkflowNodeType("iteration", locale),
     createMockWorkflowNodeType("output", locale),
+    createMockWorkflowNodeType("loopExit", locale),
   ];
   const models = [
     { value: "GPT-5", label: "GPT-5" },
@@ -313,6 +314,17 @@ export function createMockWorkflowNodeType(
             : "Pause for a human decision",
         configFields: ["approvalPrompt"],
         supportedScopes: ["workflow"],
+      };
+    case "loopExit":
+      return {
+        kind,
+        label: locale === "zh-CN" ? "退出循环" : "Exit loop",
+        description:
+          locale === "zh-CN"
+            ? "结束当前循环并继续外部流程"
+            : "Exit this loop and continue the outer workflow",
+        configFields: [],
+        supportedScopes: ["loop"],
       };
     case "loop":
       return {
