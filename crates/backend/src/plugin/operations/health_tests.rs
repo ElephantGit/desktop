@@ -4,7 +4,7 @@
 //! so the evidence covers the paths a user actually takes, not the store in isolation.
 
 use super::Plugins;
-use crate::agent_runtime::{AgentRuntimeManager, AgentRuntimeSetup};
+use crate::agent_runtime::{AgentRuntimeSetup, open_agent_runtime};
 use crate::app_event::AppEventHub;
 use crate::clock::SystemClock;
 use crate::plugin::PluginApi;
@@ -66,13 +66,12 @@ fn test_plugins_with_host(
         .expect("open plugin host"),
     );
     let runtime = Arc::new(
-        AgentRuntimeManager::new(AgentRuntimeSetup {
+        open_agent_runtime(AgentRuntimeSetup {
             plugin_host: host.clone(),
             pool: pool.clone(),
             home_directory: root.to_path_buf(),
             relative_path_base: root.to_path_buf(),
             sessions_root: root.join("sessions"),
-            clock: SystemClock,
             scheduler: Scheduler::new(chrono_tz::Asia::Shanghai),
             app_events: events.publisher(),
         })
@@ -653,7 +652,7 @@ fn probe_failure_does_not_change_session_delivery() {
                 // delivery and never produces a partial list.
                 let session_host =
                     crate::session_setup::SessionMcpHost::from_plugin_api(plugin_host);
-                let setup = crate::session_setup::SessionSetup::resolve(
+                let setup = ora_agent_runtime::SessionSetup::resolve_mcp(
                     &session_host,
                     temporary.path(),
                     crate::session_setup::AgentSessionMcpCapabilities::new(
@@ -661,10 +660,10 @@ fn probe_failure_does_not_change_session_delivery() {
                     ),
                 )
                 .expect("session setup resolves despite the failed probe");
-                assert_eq!(setup.mcp.servers().len(), 1);
-                assert_eq!(setup.mcp.revision().members().len(), 1);
+                assert_eq!(setup.servers().len(), 1);
+                assert_eq!(setup.revision().members().len(), 1);
                 assert_eq!(
-                    setup.mcp.revision().members()[0].plugin_id.canonical(),
+                    setup.revision().members()[0].plugin_id.canonical(),
                     plugin_id
                 );
             });
@@ -1203,7 +1202,7 @@ fn session_health_observation_is_logged_after_the_acp_send_boundary() {
                 .await;
                 let host =
                     crate::session_setup::SessionMcpHost::from_plugin_api(plugin_host.clone());
-                let setup = crate::session_setup::SessionSetup::resolve(
+                let setup = ora_agent_runtime::SessionSetup::resolve_mcp(
                     &host,
                     temporary.path(),
                     crate::session_setup::AgentSessionMcpCapabilities::new(
@@ -1211,13 +1210,13 @@ fn session_health_observation_is_logged_after_the_acp_send_boundary() {
                     ),
                 )
                 .expect("resolve session mcp");
-                crate::agent_runtime::record_session_mcp_boundary(
+                ora_agent_runtime::record_session_mcp_boundary(
                     &host,
                     &ora_domain::SessionId::new("boundary-session"),
                     &ora_domain::AgentRef::parse("official/ora-space.opencode").expect("agent ref"),
                     Some("provider-session"),
                     "session/new",
-                    &setup.mcp,
+                    &setup,
                     temporary.path(),
                 );
                 // The observation runs on its own task; let it report before the runtime drops.

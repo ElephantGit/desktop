@@ -11,7 +11,7 @@ use ora_db::{
 use ora_domain::{
     AgentRef, AuditFields, Project, ProjectId, Session, SessionId, SessionStatus, WorkspaceLocation,
 };
-use ora_history::FixedHistoryClock;
+use ora_history::{FixedHistoryClock, HistoryAssembler, HistoryWriter};
 use ora_logging::with_trace_logging;
 use pretty_assertions::assert_eq;
 use std::path::Path;
@@ -78,22 +78,24 @@ fn seed_session(root: &Path, pool: &RepositoryPool) {
         .create_session(session)
         .expect("create session");
 
-    let mut recorder = super::history::SessionRecorder::open(
+    // Written through `ora-history` directly, the owner of the format, because the runtime's
+    // recorder is private to the runtime and this history only has to exist on disk.
+    let writer = HistoryWriter::open(
         &root.join("sessions"),
         SESSION_ID,
-        0,
-        &ora_domain::HistoryState::Writable,
         FixedHistoryClock::new(HISTORY_CLOCK),
     )
     .expect("open session history");
-    assert_eq!(
-        recorder.record_prompt(&[ContentBlock::Text(TextContent::new("previous question"))]),
-        super::history::RecordOutcome::Continued,
-    );
-    assert_eq!(
-        recorder.record_turn_end(StopReason::EndTurn),
-        super::history::RecordOutcome::Continued,
-    );
+    let mut assembler = HistoryAssembler::new(0);
+    writer
+        .append(
+            &assembler
+                .push_user_prompt(&[ContentBlock::Text(TextContent::new("previous question"))]),
+        )
+        .expect("record prompt");
+    writer
+        .append(&assembler.end_turn(StopReason::EndTurn))
+        .expect("record turn end");
 }
 
 /// A removed agent must not hide history that Ora can replay without that agent.
