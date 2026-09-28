@@ -11,6 +11,12 @@ use std::collections::HashSet;
 pub enum NodeCapability {
     WorktreeExecution,
     RepositoryClone,
+    /// `InstallPlugins` and `RemovePlugins`.
+    PluginInstall,
+    /// `StartAgentSession`, Thread events and session commands.
+    AgentSession,
+    /// `DeliverRevision` and the upload grant exchange.
+    RevisionDelivery,
 }
 
 /// Controller greeting used to negotiate a protocol version for a new session.

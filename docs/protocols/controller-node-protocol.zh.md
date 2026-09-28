@@ -64,8 +64,35 @@ version 1 framing 和 Worktree 编码不变，旧 codec 会拒绝新消息类型
 事件和 Completed 查询使用相同 clone 校验。结果 NodeId 必须匹配输入目标；状态报告者的持久
 NodeId 必须匹配结果，但可以使用新的运行实例。查询没有事件序号，也不会确认原事件。
 
-`HelloAccepted` 接受 `repository_clone`、`worktree_execution` 或两者，无重复且非空。
+`HelloAccepted` 接受 `repository_clone`、`worktree_execution`、`plugin_install`、`agent_session`、
+`revision_delivery` 的任意组合，无重复且非空。
 这只验证声明自洽；会话所有者仍须在派发前匹配所选 Node 的能力。现有运行时不会声明未实现能力。
+
+## Agent IssueRun 执行
+
+第二个最小闭环新增三类执行（[specs ADR](../../specs/decisions/node/protocol/20260928-streamed-thread-events-and-session-commands.md)，
+proposed）。codec 定义并校验它们；目前没有运行中的 Node 声明这些能力，两端运行时都以“不支持”拒绝这些消息。
+
+| 能力 | Controller → Node | Node → Controller |
+|---|---|---|
+| `plugin_install` | `install_plugins`、`remove_plugins` | `plugins_result`（`plugins_completed` / `plugins_failed`） |
+| `agent_session` | `start_agent_session`、`submit_user_turn`、`end_session` | `thread_event`、`agent_session_ended`、`session_command_accepted`、`session_command_rejected` |
+| `revision_delivery` | `deliver_revision`、`upload_grant` | `revision_result`（`revision_delivered` / `revision_unchanged` / `revision_failed`）、`upload_grant_needed` |
+
+- 插件输入中每个 canonical `<namespace>/<identifier>` 只出现一次，要么一个 universal HTTP(S) 下载，
+  要么按 target 互不重复的下载，均带小写 SHA-256。单个插件的失败逐项报告；`plugins_failed` 表示整个执行无法运行。
+- 会话输入给出 agent 插件与版本、所用 checkout 对应的 clone 执行（不传 Node 路径）、不会破坏提交签名行的
+  git 身份，以及首个用户轮次（只含文本，至多 64 KiB）。`thread_event` 携带一条定型的 `ora-history`
+  记录，作为不透明 JSON 对象，至多 256 KiB（`truncated` 表示已截断），与终态 `agent_session_ended`
+  共享执行内连续的序号空间；终态的 `detail` 是简短的 snake_case 代码。
+- `submit_user_turn` 与 `end_session` 带 `command_id`；它们的回复不带序号、不需要确认，回复丢失后重发命令即可。
+- 交付输入给出已结束的会话、clone、基础 commit、`refs/ora/revisions/` 下的 ref，以及两个互不相同的规范化
+  对象键。`revision_unchanged` 要求最终 commit 等于基础 commit，`revision_delivered` 要求二者不同。
+- `upload_grant` 与 `upload_grant_needed` 只存在于内存：没有序号、不需要确认、不持久化、不写日志。
+  `PresignedUrl` 的 `Debug` 输出已脱敏。
+
+新的结果族在 untagged 的 `ExecutionResult` 中使用互不重叠的 `kind` 标签；Revision 结果装箱，
+以免增大 `ExecutionState`。
 
 ## 使用 codec
 
@@ -126,7 +153,7 @@ Wire 字段名和 enum tag 使用 snake_case。例如 Hello frame 内的 JSON �
 
 Codec 的收发路径均要求 envelope version 为 1。`Hello` 的版本列表非空、无重复且包含 envelope
 version，也可以声明其他版本。`HelloAccepted` 选择的版本必须等于 envelope version，能力集
-无重复且至少包含 `worktree_execution` 或 `repository_clone` 之一。这些检查保证单条消息自洽；
+无重复且至少包含一个已知能力。这些检查保证单条消息自洽；
 将回复与先前的 Hello 匹配、约束握手顺序需要会话实现。心跳携带当前 Node 身份，不是执行证据。
 
 解码检查必需字段、已知 enum variant 和消息方向。Payload 匹配表示满足所选消息的结构要求：
