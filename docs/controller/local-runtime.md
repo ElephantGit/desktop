@@ -2,9 +2,8 @@
 
 English | [中文](local-runtime.zh.md)
 
-`ora-controller` owns durable local clone intent and result takeover, and its executable hosts the
-transitional clone API that [minicloud](../minicloud/runtime.md) calls. It does not execute Git, replace
-Backend writers, or act as Cloud authority. Linux sessions use the existing
+`ora-controller` owns durable clone intent and result takeover. It does not execute Git, replace
+Backend writers, or act as Cloud authority, and its executable opens no listener in any form. Linux sessions use the existing
 [Node IPC](../node/local-ipc.md) and length-prefixed JSON messages, without application credentials.
 
 ## Acceptance and persistence
@@ -15,12 +14,13 @@ business operation per method (`take_over_node_event`, `record_queried_result`, 
 asynchronous, exposing no transaction, connection or table. Two adapters implement it and one is chosen
 at deployment time, never as a fallback for the other: `SqliteStore::open(home, controller_id)` for
 local deployments, whose operations run on the blocking pool so SQLite's fsync never occupies the
-async runtime that hosts Node sessions and the API; and `CloudStore::open(&config)` for cloud
+async runtime that hosts Node sessions and the embedding caller; and `CloudStore::open(&config)` for cloud
 deployments, whose operations are calls on the
 [Controller–Cloud contract](../protocols/controller-cloud-contract.md) committed by Cloud in PostgreSQL.
 Accepting caller requests and cataloguing accepted operations (`accept_request`, `operations`,
-`operation`) is the separate `CloneIntake` interface that only the SQLite adapter implements: in a
-cloud deployment acceptance belongs to Cloud's public API, so the JSON surface is not composed at all.
+`operation`) is the separate `CloneIntake` interface that only the SQLite adapter implements; whatever
+embeds a local Controller (Desktop's future local mode) uses it through `ControllerHandle`. In a cloud
+deployment acceptance belongs to Cloud's public API, and there is no local intake at all.
 `result(execution_id)` reports the terminal fact as an `ExecutionOutcome` (Node incarnation plus
 `ready{path, commit}` or `failed{reason, retained_path}`), the shape both authorities persist; the local
 catalogue keeps the full wire result for presentation.
@@ -48,31 +48,27 @@ incarnations are retained, while query reporters and heartbeats must match the c
 
 `ControllerRuntime::open(RuntimeConfig)` supports embedding. `handle()` exposes durable clone
 acceptance, operation listing and lookup; `run(shutdown)` owns reconnect loops without installing signal
-handlers. Missing lookup is distinct from an accepted operation without a terminal result. The library
-depends on no listener; `Service::start(DeploymentConfig, Transport, NodeHosting)` composes the API
-listener, the sole runtime owner and an optionally hosted Node for the executable and for tests.
+handlers. Missing lookup is distinct from an accepted operation without a terminal result.
+`Service::start(DeploymentConfig, NodeHosting)` composes the sole runtime owner and an optionally hosted
+Node for the executable and for tests, and opens no listener. The executable has no intake of its own:
+in the SQLite form it dispatches and takes over the work its owner already accepted and logs
+`ora-controller coordinating locally` once composed; new work is accepted by whatever embeds
+`ControllerHandle`.
 
 Build `cargo build -p ora-controller -p ora-node -p ora-process-host -p ora-process-guardian`.
 Deployment state lives in one configuration file; per-process composition is given on the command line:
 
 ```text
 ora-controller --config /absolute/path/controller.json [--single-node]
-               [--transport tcp|unix] [--host 127.0.0.1] [--port 4820] [--socket /path/api.sock]
 ```
 
-| Flag                        | Rule                                                                                                                                                                                                    |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--transport tcp` (default) | `--host` defaults to `127.0.0.1`, `--port` to `4820`. A non-loopback host is accepted with a warning: the API has no authentication, so loopback is a deployment restriction, not a security guarantee. |
-| `--transport unix`          | Requires `--socket`, an absolute path directly inside `home_directory`, created with the same private-socket rules as the Node endpoint. `--host`/`--port` are rejected.                                |
-| `--single-node`             | Starts the configured Node from the `single_node` section and stops it on normal shutdown; see below.                                                                                                   |
-
-Invalid flag combinations and configuration are rejected before the database lease is taken.
+`--single-node` starts the configured Node from the `single_node` section and stops it on normal
+shutdown; see below. Invalid flags and configuration are rejected before the database lease is taken.
 
 `persistence` selects the persistence adapter at deployment time; a running Controller never switches,
 and neither adapter is a fallback for the other. `{ "kind": "sqlite" }` uses the SQLite database and file
-lease inside `home_directory` and serves the JSON surface, so the `api` section is required. The cloud
-form opens no database, takes no file lease and serves no JSON surface, so `api` must be absent and
-the listener flags are refused:
+lease inside `home_directory`. The cloud form opens no database, takes no file lease and only dials
+out to Cloud:
 
 ```json
 "persistence": {
@@ -201,7 +197,6 @@ so `HEAD` reaches the clone step only for Projects created before that rule.
     "reconnect_ms": 1000,
     "timezone": "Asia/Shanghai"
   },
-  "api": { "node_id": "deployment-node" },
   "single_node": {
     "node_executable": "/opt/ora/bin/ora-node",
     "node_config": "/home/node/config/node.json",
@@ -211,8 +206,7 @@ so `HEAD` reaches the clone step only for Projects created before that rule.
 }
 ```
 
-`api.node_id` names the configured Node that accepted clones are dispatched to; callers never choose a
-Node. A Node in a sandbox is reached through its platform WebSocket router instead:
+A Node in a sandbox is reached through its platform WebSocket router instead:
 
 ```json
 {
@@ -239,25 +233,23 @@ executable recovers already accepted records; its configuration file and stdin a
 channels. Deploy host and Node separately unless hosting the Node, and configure Node's owner to match
 this ControllerId.
 
-With `--single-node`, `nodes` must contain exactly the `api.node_id` Node. Before opening state, the
+With `--single-node`, `nodes` must contain exactly one Node. Before opening state, the
 executable requires an `ipc` endpoint, reads `node_config` read-only and refuses to start when its
 `control.controller_id` or `control.listen` (kind `ipc` and the same path) does not match, or when something already accepts connections on the endpoint. It then
 starts `node_executable <node_config>` in its own process group (no new session), waits up to
-`ready_timeout_ms` for the endpoint, and only then binds the API. Process host and guardian are
+`ready_timeout_ms` for the endpoint, and only then reports the composition up. Process host and guardian are
 prerequisites: the executable neither deploys nor starts them. Controller death alone signals nothing to
 the Node, so an accepted clone keeps running; a group-level stop from an operator or launcher reaches
 both. If the hosted Node exits on its own, the Controller shuts down and exits with failure rather than
-accepting undispatchable requests.
+holding work it cannot dispatch.
 
-Normal shutdown stops in order: API admission (bounded wait for in-flight requests), Node sessions, the
+Normal shutdown stops in order: Node sessions, the
 adapter's own coordination (in the cloud form: a bounded attempt to release the lease, after the
 sessions so nothing writes under a lease about to be released), the hosted Node (`SIGTERM`, waiting up
 to `stop_timeout_ms`; never escalated to `SIGKILL`), then the database lease in the SQLite form.
 Accepted Node executions are never cancelled by this process stopping.
 
-The JSON surface is the transitional clone API documented under
-[minicloud](../minicloud/runtime.md#http-interface); its DTOs live in `ora-contracts::controller_api`.
-It exists only with SQLite persistence. The Cloud-facing contract is defined by the Cloud repository's
+The Cloud-facing contract is defined by the Cloud repository's
 proto and the Controller dials out as its client (see the
 [Controller–Cloud contract](../protocols/controller-cloud-contract.md)); it exposes no service to Cloud.
 
@@ -272,10 +264,11 @@ stubs of `ora-controller-proto` (`test-server` feature) and a fake static Node o
 signal-driven claiming, work queued before the Node's handshake, work held back while the Node
 presents another identity, fallback and reopening after a broken stream, drains, a refused
 stream after a drain, a stale epoch on opening, batching, and cancelling the stream and releasing the
-lease on shutdown. The runtime and executable tests cover that the cloud form opens no local state, serves no
-JSON surface, refuses a JSON section or listener flags, and stays up while Cloud is unreachable. Its
-behavior against a real Cloud (lease, claim, dispatch, takeover, restart without a second clone) is
-verified end to end with the [minicloud cloud form](../minicloud/runtime.md#cloud-persistence-mode) and is not yet an automated test. `apps/ora-controller/tests/workspaces.rs` drives
+lease on shutdown. The runtime and executable tests cover that the cloud form opens no local state and stays up while
+Cloud is unreachable. Its behavior against a real Cloud (lease, claim, dispatch, takeover, restart
+without a second clone) was verified end to end by hand; integration now runs in the cluster
+repository's Compose stack (Gateway → Cloud → Controller → Sandbox Server → Node), and none of it is an
+automated test yet. `apps/ora-controller/tests/workspaces.rs` drives
 Workspace operations against a fake Cloud, a fake Substrate effect server and a fake Node: creating
 and stopping a Workspace runs every step, registers the Node before the clone, reports idle and stops
 the session before terminating without reporting that stop as a lost connection; an unclonable ref blocks the clone step without a dispatch; and quiesce reports busy

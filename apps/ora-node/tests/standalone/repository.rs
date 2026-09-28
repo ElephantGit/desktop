@@ -32,9 +32,6 @@ mod session;
 #[path = "repository_takeover_crash.rs"]
 mod takeover_crash;
 
-#[path = "repository_minicloud.rs"]
-mod minicloud;
-
 #[path = "repository_single_node.rs"]
 mod single_node;
 

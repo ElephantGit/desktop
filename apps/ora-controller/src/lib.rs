@@ -2,8 +2,6 @@
 //! Coordination logic reaches persistence only through [`CoordinationStore`]: the SQLite adapter
 //! under `sqlite` for local deployments, the Cloud RPC adapter under `cloud` for cloud ones.
 #[cfg(target_os = "linux")]
-mod api;
-#[cfg(target_os = "linux")]
 mod cloud;
 mod coordination;
 #[cfg(target_os = "linux")]
@@ -19,12 +17,10 @@ mod single_node;
 mod sqlite;
 mod store;
 #[cfg(target_os = "linux")]
-mod transport;
-#[cfg(target_os = "linux")]
 pub use cloud::CloudStore;
 pub use coordination::take_over;
 #[cfg(target_os = "linux")]
-pub use deployment::{ApiConfig, DeploymentConfig, NodeHosting, SingleNodeConfig};
+pub use deployment::{DeploymentConfig, NodeHosting, SingleNodeConfig};
 use ora_node_protocol::*;
 #[cfg(target_os = "linux")]
 pub use runtime::{
@@ -40,8 +36,6 @@ pub use sqlite::SqliteStore;
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;
 pub use store::{CloneIntake, CoordinationStore, ExecutionOutcome};
-#[cfg(target_os = "linux")]
-pub use transport::{DEFAULT_PORT, Listener, Transport};
 
 /// Persistence failures never authorize dispatch or acknowledgement. The classes an adapter must
 /// distinguish are fixed here: a conflict is never retried as-is, an unavailable authority means

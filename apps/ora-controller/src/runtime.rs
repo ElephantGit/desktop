@@ -45,9 +45,9 @@ pub struct SubstrateConfig {
     pub request_timeout_ms: u64,
 }
 
-/// Shared deployment configuration for the standalone executable and embedded HTTP composition.
-/// `home_directory` is the process-private state root in both modes (API socket, and in SQLite
-/// mode the database); it never holds cloud-authoritative records.
+/// Shared deployment configuration for the standalone executable and embedded compositions.
+/// `home_directory` is the process-private state root; only SQLite mode keeps anything there (the
+/// database), and it never holds cloud-authoritative records.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeConfig {
@@ -103,7 +103,7 @@ impl ControllerRuntime<SqliteStore> {
 
 impl ControllerRuntime<CloudStore> {
     /// Validates deployment and binds the Cloud adapter. No local database, lease or directory is
-    /// created: `home_directory` stays the process-private root for the API socket and nothing else.
+    /// created under `home_directory`.
     pub fn open(config: RuntimeConfig) -> Result<Self, Error> {
         if config.persistence == Persistence::Sqlite {
             return Err(Error::Configuration(
