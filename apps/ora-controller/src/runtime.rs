@@ -1,4 +1,5 @@
 use super::*;
+use crate::session::{SessionObserver, run_observed_session};
 use serde::{Deserialize, Serialize};
 use std::{future::Future, io, sync::Arc, time::Duration};
 use tokio::sync::watch;
@@ -12,12 +13,36 @@ pub enum Persistence {
     /// Local single-node deployments: the SQLite database and its lease live in `home_directory`.
     Sqlite,
     /// Cloud deployments: every durable operation is a call to the Cloud internal control contract
-    /// at `endpoint` (a gRPC URI); no database is opened locally. Work accepted by Cloud is claimed
-    /// every `claim_interval_ms` and dispatched to the single configured Node.
+    /// at `endpoint` (a gRPC URI); no database is opened locally. Tenant clone work accepted by
+    /// Cloud is dispatched to the single configured Node. While a `Watch` stream is live, claims
+    /// follow its signals and every lease renewal; `claim_interval_ms` is the claim cadence while
+    /// no stream is live. With `substrate`, the Controller also drives runtime Workspace
+    /// operations: it creates and terminates Workspace sandboxes through the Substrate effects
+    /// interface and reaches each sandbox's Node through the router; static `nodes` then serve
+    /// only tenant clones and may be empty.
     Cloud {
         endpoint: String,
         claim_interval_ms: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        substrate: Option<SubstrateConfig>,
     },
+}
+
+/// Where Workspace sandboxes are created and how their Nodes are reached. Both implementations of
+/// the Substrate effects interface (the local Sandbox Server and the platform adapter) sit behind
+/// `effects_url`, so the Controller needs no per-platform code.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SubstrateConfig {
+    /// Base URL of `GET/PUT /effects/{effectId}`.
+    pub effects_url: String,
+    /// WebSocket URL of the Node router including its path, such as
+    /// `ws://sandbox-server:18000/ora-node/v1`; every sandbox Node is reached through it.
+    pub router_url: String,
+    /// The atespace that prefixes the `ate-target-actor` routing header.
+    pub atespace: String,
+    /// Deadline of one effect call; an elapsed call is queried again, never assumed absent.
+    pub request_timeout_ms: u64,
 }
 
 /// Shared deployment configuration for the standalone executable and embedded HTTP composition.
@@ -30,7 +55,7 @@ pub struct RuntimeConfig {
     pub persistence: Persistence,
     pub protected_state_directories: Vec<PathBuf>,
     pub controller_id: ControllerId,
-    pub nodes: Vec<NodeEndpoint>,
+    pub nodes: Vec<NodeTarget>,
     pub session: SessionConfig,
     pub reconnect_ms: u64,
     pub timezone: String,
@@ -102,8 +127,12 @@ impl<S: CoordinationStore> ControllerRuntime<S> {
             return Err(Error::InvalidStorage);
         }
         for (index, node) in config.nodes.iter().enumerate() {
+            let endpoint_valid = match &node.endpoint {
+                NodeEndpoint::Ipc { path } => path.is_absolute(),
+                NodeEndpoint::WebSocket(endpoint) => endpoint.validate().is_ok(),
+            };
             if node.node_id.as_str().trim().is_empty()
-                || !node.endpoint.is_absolute()
+                || !endpoint_valid
                 || config.nodes[..index]
                     .iter()
                     .any(|other| other.node_id == node.node_id || other.endpoint == node.endpoint)
@@ -117,10 +146,11 @@ impl<S: CoordinationStore> ControllerRuntime<S> {
             .iter()
             .map(PathBuf::as_path)
             .chain(
-                config
-                    .nodes
-                    .iter()
-                    .filter_map(|node| node.endpoint.parent()),
+                // Only local sockets live on this filesystem; remote endpoints own no local state.
+                config.nodes.iter().filter_map(|node| match &node.endpoint {
+                    NodeEndpoint::Ipc { path } => path.parent(),
+                    NodeEndpoint::WebSocket(_) => None,
+                }),
             )
         {
             if !root.is_absolute() {
@@ -155,17 +185,27 @@ impl<S: CoordinationStore> ControllerRuntime<S> {
     }
 
     /// Reconnects configured Nodes and runs the adapter's authority coordination until shutdown.
-    /// Sessions are aborted first so nothing writes under a lease the adapter is about to release.
+    /// Sessions stop first so nothing writes under a lease the adapter is about to release: a
+    /// stopping session drops its coordination at once and only closes its connection, which is
+    /// bounded and aborted if the Node does not answer.
     pub async fn run(&self, shutdown: impl Future<Output = ()>) -> io::Result<()> {
         let mut sessions = tokio::task::JoinSet::new();
+        let (stop_sessions, sessions_stopping) = watch::channel(false);
         for target in self.config.nodes.clone() {
             let store = self.handle.store.clone();
             let settings = self.config.session.clone();
             let delay = Duration::from_millis(self.config.reconnect_ms);
+            let mut stopping = sessions_stopping.clone();
             sessions.spawn(async move {
                 loop {
-                    if run_session(&store, &target, &settings).await.is_err() { ora_logging::ora_warn!(node_id = %target.node_id.as_str(), "Controller connection unavailable; original execution responsibility retained"); }
-                    tokio::time::sleep(delay).await;
+                    let stop = async {
+                        let _ = stopping.wait_for(|stop| *stop).await;
+                    };
+                    if let Err(error) = run_observed_session(&store, &target, &settings, stop, &StaticNode(&store)).await { ora_logging::ora_warn!(node_id = %target.node_id.as_str(), error = %error, "Controller connection unavailable; original execution responsibility retained"); }
+                    tokio::select! {
+                        _ = stopping.wait_for(|stop| *stop) => return,
+                        () = tokio::time::sleep(delay) => {}
+                    }
                 }
             });
         }
@@ -189,8 +229,17 @@ impl<S: CoordinationStore> ControllerRuntime<S> {
                 Err(io::Error::other(format!("Controller authority coordination stopped: {result:?}")))
             }
         };
-        sessions.abort_all();
-        while sessions.join_next().await.is_some() {}
+        let _ = stop_sessions.send(true);
+        // A session may still be connecting when asked to stop; both steps share the I/O deadline.
+        let closing = Duration::from_millis(self.config.session.io_timeout_ms).saturating_mul(2);
+        let drained = tokio::time::timeout(closing, async {
+            while sessions.join_next().await.is_some() {}
+        })
+        .await;
+        if drained.is_err() {
+            sessions.abort_all();
+            while sessions.join_next().await.is_some() {}
+        }
         let _ = stop_serving.send(true);
         if !serving_done {
             // Releasing a remote lease is bounded; a hung authority must not hold up shutdown.
@@ -201,6 +250,20 @@ impl<S: CoordinationStore> ControllerRuntime<S> {
         }
         result
     }
+}
+
+/// Reports a static Node's handshake to the store, which may wait for that proof of the
+/// configured identity before it registers work for the Node.
+struct StaticNode<'a, S>(&'a S);
+
+impl<S: CoordinationStore> SessionObserver for StaticNode<'_, S> {
+    fn established(&self, node: &NodeRuntimeIdentity) {
+        self.0.static_node_established(node);
+    }
+
+    fn unresolved(&self, _execution: &ExecutionId) {}
+
+    fn answered(&self, _execution: &ExecutionId) {}
 }
 
 impl<S: CloneIntake> ControllerHandle<S> {

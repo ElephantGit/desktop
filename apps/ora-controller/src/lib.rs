@@ -27,11 +27,15 @@ pub use coordination::take_over;
 pub use deployment::{ApiConfig, DeploymentConfig, NodeHosting, SingleNodeConfig};
 use ora_node_protocol::*;
 #[cfg(target_os = "linux")]
-pub use runtime::{ControllerHandle, ControllerRuntime, Persistence, RuntimeConfig};
+pub use runtime::{
+    ControllerHandle, ControllerRuntime, Persistence, RuntimeConfig, SubstrateConfig,
+};
 #[cfg(target_os = "linux")]
 pub use service::Service;
 #[cfg(target_os = "linux")]
-pub use session::{NodeEndpoint, SessionConfig, run_session};
+pub use session::{
+    NodeEndpoint, NodeTarget, SessionConfig, SessionError, run_session, run_session_until,
+};
 pub use sqlite::SqliteStore;
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;
