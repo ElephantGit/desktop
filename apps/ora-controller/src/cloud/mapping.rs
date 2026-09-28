@@ -100,7 +100,7 @@ pub(super) fn command(
     let command = CloneRepositoryMessage {
         protocol_version: CURRENT_PROTOCOL_VERSION,
         request_id: None,
-        operation_id: OperationId::new(record.operation_id.clone()),
+        operation_id: OperationId::new(record.node_operation_id.clone()),
         execution_id: ExecutionId::new(record.execution_id.clone()),
         payload: CloneRepository {
             spec: spec(record.input.clone(), node)?,
@@ -156,6 +156,7 @@ mod tests {
     #[test]
     fn records_rebuild_the_original_command() {
         let record = proto::ExecutionRecord {
+            node_operation_id: "operation".into(),
             operation_id: "operation".into(),
             execution_id: "execution".into(),
             node_id: "node".into(),

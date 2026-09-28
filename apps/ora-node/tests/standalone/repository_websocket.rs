@@ -77,7 +77,8 @@ async fn clone_result(receiver: &mut ClientReceiver) -> CloneResultMessage {
     }
 }
 
-/// Starts the production service listening for WebSocket upgrades instead of a local socket.
+/// Starts a loopback-only library fixture for the original transport and crash obligations.
+/// Production network authorization is exercised separately by mTLS and cluster acceptance.
 pub(super) fn launch(fixture: &Fixture, clone: &CloneConfig, bind: SocketAddr) -> ChildGuard {
     let config = fixture.path().join("websocket-config.json");
     fs::write(
@@ -87,6 +88,7 @@ pub(super) fn launch(fixture: &Fixture, clone: &CloneConfig, bind: SocketAddr) -
             process: fixture.process(),
             clone: Some(clone.clone()),
             control: Some(ora_node::ControlConfig {
+                target: None,
                 controller_id: ControllerId::new("owner"),
                 listen: ora_node::ControlListen::WebSocket {
                     bind,
@@ -101,14 +103,24 @@ pub(super) fn launch(fixture: &Fixture, clone: &CloneConfig, bind: SocketAddr) -
         .unwrap(),
     )
     .unwrap();
+    let rejected = Command::new(env!("CARGO_BIN_EXE_ora-node"))
+        .arg(&config)
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("plaintext is unsupported"));
     ChildGuard(
-        Command::new(env!("CARGO_BIN_EXE_ora-node"))
-            .arg(config)
-            .stdin(Stdio::null())
-            .stdout(fs::File::create(fixture.path().join("websocket.log")).unwrap())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .unwrap(),
+        Command::new(
+            std::path::Path::new(env!("CARGO_BIN_EXE_ora-node"))
+                .with_file_name("examples")
+                .join("loopback-transport-fixture"),
+        )
+        .arg(config)
+        .stdin(Stdio::null())
+        .stdout(fs::File::create(fixture.path().join("websocket.log")).unwrap())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .unwrap(),
     )
 }
 
@@ -139,6 +151,7 @@ fn controller_session_over_websocket_takes_over_clone_and_keeps_single_session()
         )
         .unwrap();
         let endpoint = WsEndpoint {
+            tls: None,
             url: format!("ws://{bind}{PATH}"),
             headers: BTreeMap::new(),
         };
@@ -237,6 +250,7 @@ fn websocket_replays_unacknowledged_result_across_disconnect_and_restart_until_c
         )
         .unwrap();
         let endpoint = WsEndpoint {
+            tls: None,
             url: format!("ws://{bind}{PATH}"),
             headers: BTreeMap::new(),
         };
@@ -378,6 +392,7 @@ fn controller_session_takes_over_interrupted_clone_after_node_stop() {
         let target = NodeTarget {
             node_id: NodeId::new("test-node"),
             endpoint: NodeEndpoint::WebSocket(WsEndpoint {
+                tls: None,
                 url: format!("ws://{bind}{PATH}"),
                 headers: BTreeMap::new(),
             }),
@@ -489,6 +504,7 @@ fn node_closes_sessions_with_the_reason_code() {
                 .contains("Node WebSocket listening")
         });
         let endpoint = WsEndpoint {
+            tls: None,
             url: format!("ws://{bind}{PATH}"),
             headers: BTreeMap::new(),
         };

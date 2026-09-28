@@ -11,6 +11,7 @@ use std::collections::HashSet;
 pub enum NodeCapability {
     WorktreeExecution,
     RepositoryClone,
+    RuntimeControl,
 }
 
 /// Controller greeting used to negotiate a protocol version for a new session.

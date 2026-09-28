@@ -40,6 +40,8 @@ pub struct WsEndpoint {
     pub url: String,
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
+    #[serde(default)]
+    pub tls: Option<crate::mtls::MutualTlsFiles>,
 }
 
 impl WsEndpoint {
@@ -57,6 +59,12 @@ impl WsEndpoint {
             return Err(ConnectError::new(
                 ConnectFailure::Rejected,
                 "WebSocket endpoint URL must use ws:// or wss://",
+            ));
+        }
+        if self.tls.is_some() && request.uri().scheme_str() != Some("wss") {
+            return Err(ConnectError::new(
+                ConnectFailure::Rejected,
+                "management TLS requires wss://",
             ));
         }
         for (name, value) in &self.headers {
@@ -173,10 +181,17 @@ pub async fn connect(
     endpoint: &WsEndpoint,
 ) -> Result<(ClientReceiver, ClientSender), ConnectError> {
     let request = endpoint.request()?;
-    match tokio_tungstenite::connect_async_with_config(
+    let connector = endpoint
+        .tls
+        .as_ref()
+        .map(|files| files.client().map(tokio_tungstenite::Connector::Rustls))
+        .transpose()
+        .map_err(|e| ConnectError::new(ConnectFailure::Rejected, e))?;
+    match tokio_tungstenite::connect_async_tls_with_config(
         request,
         Some(config()),
         /*disable_nagle*/ true,
+        connector,
     )
     .await
     {
@@ -230,7 +245,10 @@ impl WsAcceptor {
 }
 
 /// Completes the server upgrade only for the configured path.
-async fn upgrade(stream: TcpStream, path: &str) -> Result<WebSocketStream<TcpStream>, WsError> {
+async fn upgrade<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+    stream: S,
+    path: &str,
+) -> Result<WebSocketStream<S>, WsError> {
     // tungstenite's handshake callback signature fixes the refusal type; it cannot be boxed.
     #[allow(clippy::result_large_err)]
     let check = |request: &Request, response: Response| -> Result<Response, ErrorResponse> {
@@ -242,6 +260,92 @@ async fn upgrade(stream: TcpStream, path: &str) -> Result<WebSocketStream<TcpStr
         Err(refusal)
     };
     tokio_tungstenite::accept_hdr_async_with_config(stream, check, Some(config())).await
+}
+
+/// TLS and a deployment-owned certificate pin bind the network management service before Hello.
+pub struct MutualTlsWsAcceptor {
+    listener: TcpListener,
+    path: Arc<str>,
+    tls: tokio_rustls::TlsAcceptor,
+    peer: rustls::pki_types::CertificateDer<'static>,
+}
+impl MutualTlsWsAcceptor {
+    pub fn new(
+        listener: TcpListener,
+        path: impl Into<Arc<str>>,
+        files: &crate::mtls::MutualTlsFiles,
+    ) -> io::Result<Self> {
+        Ok(Self {
+            listener,
+            path: path.into(),
+            tls: tokio_rustls::TlsAcceptor::from(files.server()?),
+            peer: files.peer_certificate()?,
+        })
+    }
+    async fn secured(
+        &self,
+        pending: TcpStream,
+    ) -> io::Result<tokio_rustls::server::TlsStream<TcpStream>> {
+        let stream = self.tls.accept(pending).await?;
+        if stream
+            .get_ref()
+            .1
+            .peer_certificates()
+            .and_then(|c| c.first())
+            != Some(&self.peer)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "management service identity mismatch",
+            ));
+        }
+        Ok(stream)
+    }
+}
+impl Acceptor for MutualTlsWsAcceptor {
+    type Pending = TcpStream;
+    type Receiver = WsReceiver<tokio_rustls::server::TlsStream<TcpStream>>;
+    type Sender = WsSender<tokio_rustls::server::TlsStream<TcpStream>>;
+    async fn accept(&self) -> io::Result<TcpStream> {
+        self.listener.accept().await.map(|(s, _)| s)
+    }
+    async fn open(
+        &self,
+        pending: TcpStream,
+    ) -> Result<(Self::Receiver, Self::Sender), TransportError> {
+        Ok(split(
+            upgrade(self.secured(pending).await?, &self.path).await?,
+        ))
+    }
+    fn reject_busy(&self, pending: TcpStream) -> impl Future<Output = ()> + Send + 'static {
+        let tls = self.tls.clone();
+        let path = self.path.clone();
+        let peer = self.peer.clone();
+        async move {
+            let Ok(stream) = tls.accept(pending).await else {
+                return;
+            };
+            if stream
+                .get_ref()
+                .1
+                .peer_certificates()
+                .and_then(|c| c.first())
+                != Some(&peer)
+            {
+                return;
+            }
+            let Ok(mut stream) = upgrade(stream, &path).await else {
+                return;
+            };
+            let close = CloseFrame {
+                code: CloseCode::from(CONTROL_SESSION_BUSY_CLOSE_CODE),
+                reason: "control session busy".into(),
+            };
+            if stream.close(Some(close)).await.is_ok() {
+                while let Some(Ok(_)) = stream.next().await {}
+            }
+        }
+    }
 }
 
 impl Acceptor for WsAcceptor {

@@ -5,12 +5,15 @@
 //! whole conversation of the coordination loop; the reads a Node session repeats on every query
 //! tick are recorded apart so they do not make that order depend on session timing. Hooks let a
 //! test publish signals, drain, break the stream, or refuse later subscriptions.
+#[path = "fake_cloud/runtime_control.rs"]
+mod runtime_control;
 use futures::{Stream, stream};
 use ora_controller_proto::v1::{
     self as proto,
     control_signal_service_server::{ControlSignalService, ControlSignalServiceServer},
     controller_lease_service_server::{ControllerLeaseService, ControllerLeaseServiceServer},
     execution_service_server::{ExecutionService, ExecutionServiceServer},
+    runtime_control_service_server::RuntimeControlServiceServer,
     watch_response::Signal,
 };
 use std::{
@@ -132,6 +135,7 @@ impl FakeCloud {
         let router = tonic::transport::Server::builder()
             .add_service(ControllerLeaseServiceServer::new(self.clone()))
             .add_service(ExecutionServiceServer::new(self.clone()))
+            .add_service(RuntimeControlServiceServer::new(self.clone()))
             .add_service(ControlSignalServiceServer::new(self.clone()));
         tokio::spawn(async move {
             router
@@ -357,6 +361,7 @@ impl ExecutionService for FakeCloud {
             message.epoch,
         )?;
         let record = proto::ExecutionRecord {
+            node_operation_id: message.operation_id.clone(),
             operation_id: message.operation_id,
             execution_id: message.execution_id,
             node_id: message.node_id,

@@ -50,6 +50,15 @@ pub(super) async fn serve(
             ora_logging::ora_info!(address = %acceptor.local_addr()?, path = %path, "Node WebSocket listening");
             listen(acceptor, &config, &info, &sender, &shutdown).await
         }
+        ControlListen::MutualTlsWebSocket { bind, path, tls } => {
+            let listener = TcpListener::bind(bind).await?;
+            let acceptor = ora_node_transport::websocket::MutualTlsWsAcceptor::new(
+                listener,
+                path.as_str(),
+                tls,
+            )?;
+            listen(acceptor, &config, &info, &sender, &shutdown).await
+        }
     }
 }
 

@@ -1,5 +1,6 @@
 mod execution;
 mod repository;
+mod runtime_control;
 mod session;
 mod validation;
 mod worktree;
@@ -9,6 +10,7 @@ pub use execution::{
     GetExecutionStatus, GetExecutionStatusMessage,
 };
 pub use repository::{CloneRepository, CloneRepositoryMessage, CloneResultMessage};
+pub use runtime_control::{ControlledClone, RuntimeBinding, RuntimeControlState};
 use serde::{Deserialize, Serialize};
 pub use session::{
     ControllerHeartbeat, ControllerHeartbeatMessage, Heartbeat, HeartbeatMessage, Hello,
@@ -31,6 +33,8 @@ pub enum ControllerToNodeMessage {
     /// decode through separate enums, so the two never mix.
     Heartbeat(ControllerHeartbeatMessage),
     CloneRepository(CloneRepositoryMessage),
+    BindRuntime(RuntimeBinding),
+    ControlledClone(ControlledClone),
     EnsureWorktree(EnsureWorktreeMessage),
     RemoveWorktree(RemoveWorktreeMessage),
     GetExecutionStatus(GetExecutionStatusMessage),
@@ -44,6 +48,8 @@ impl ValidateMessage for ControllerToNodeMessage {
             Self::Hello(message) => message.validate(),
             Self::Heartbeat(message) => message.validate(),
             Self::CloneRepository(message) => message.validate(),
+            Self::BindRuntime(message) => message.validate(),
+            Self::ControlledClone(message) => message.validate(),
             Self::EnsureWorktree(message) => message.validate(),
             Self::RemoveWorktree(message) => message.validate(),
             Self::GetExecutionStatus(message) => message.validate(),
@@ -60,6 +66,7 @@ pub enum NodeToControllerMessage {
     HelloAccepted(HelloAcceptedMessage),
     Heartbeat(HeartbeatMessage),
     ExecutionStatus(ExecutionStatusMessage),
+    RuntimeControlState(RuntimeControlState),
     WorktreeReady(WorktreeReadyMessage),
     WorktreeFailed(WorktreeFailedMessage),
     WorktreeRemoved(WorktreeRemovedMessage),
@@ -74,6 +81,7 @@ impl ValidateMessage for NodeToControllerMessage {
             Self::HelloAccepted(message) => message.validate(),
             Self::Heartbeat(message) => message.validate(),
             Self::ExecutionStatus(message) => message.validate(),
+            Self::RuntimeControlState(message) => message.validate(),
             Self::WorktreeReady(message) => message.validate(),
             Self::WorktreeFailed(message) => message.validate(),
             Self::WorktreeRemoved(message) => message.validate(),

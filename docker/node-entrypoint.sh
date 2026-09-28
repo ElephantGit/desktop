@@ -22,18 +22,28 @@ prepare() {
   fi
   # A volume created before its first mount can come up root-owned; only its root is adjusted,
   # never its contents, so a foreign volume is refused by the services instead of rewritten.
-  chown "$node_user:$node_user" "$data_root"
-  chmod 0700 "$data_root"
+  chown root:root "$data_root"
+  chmod 0711 "$data_root"
   # The Node requires the clone root to exist before startup and never creates it.
   repository_root=$(printf '%s' "$ORA_NODE_CONFIG" | jq -er '.clone.repository_root')
   if [ ! -d "$repository_root" ]; then
-    install -d -o "$node_user" -g "$node_user" -m 0700 "$repository_root"
+    install -d -o root -g root -m 0755 "$repository_root"
   fi
   umask 077
   printf '%s' "$ORA_NODE_CONFIG" | jq -e . >"$config_file"
-  chown "$node_user:$node_user" "$config_file"
+  for name in node-cert node-key ca controller-cert; do
+    case "$name" in
+      node-cert) value=${ORA_NODE_CERT:?} ;;
+      node-key) value=${ORA_NODE_KEY:?} ;;
+      ca) value=${ORA_NODE_CA:?} ;;
+      controller-cert) value=${ORA_CONTROLLER_CERT:?} ;;
+    esac
+    printf '%s' "$value" | base64 -d >"/run/ora/$name.pem"
+    chmod 0600 "/run/ora/$name.pem"
+  done
+  unset ORA_NODE_CERT ORA_NODE_KEY ORA_NODE_CA ORA_CONTROLLER_CERT value
   unset ORA_NODE_CONFIG
-  exec setpriv --reuid="$node_user" --regid="$node_user" --init-groups -- "$0" supervise
+  supervise
 }
 
 # Succeeds once something accepts connections on the socket; a leftover socket file from an

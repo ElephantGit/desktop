@@ -5,6 +5,7 @@ mod model;
 mod process;
 mod repository;
 mod repository_model;
+mod runtime_control;
 mod schema;
 pub use execution::owns;
 pub use model::*;

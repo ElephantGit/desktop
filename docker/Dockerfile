@@ -32,10 +32,10 @@ RUN apt-get update && \
 # the entrypoint runs the process host and the Node as the unprivileged `node` user.
 FROM runtime AS node
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends git jq tini && \
+    apt-get install -y --no-install-recommends git jq tini util-linux && \
     rm -rf /var/lib/apt/lists/* && \
     useradd --uid 1000 --create-home --home-dir /home/node --shell /usr/sbin/nologin node && \
-    install -d -o node -g node -m 0700 /var/lib/ora /run/ora && \
+    install -d -o root -g root -m 0700 /var/lib/ora /run/ora && \
     install -d -m 0755 /etc/ora /opt/ora/bin
 # Root-owned and not group/other-writable: the host refuses a guardian under a writable ancestor and
 # the Node refuses a writable clone Git configuration in release builds. The parent directories exist

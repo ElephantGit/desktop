@@ -27,6 +27,7 @@ type Expectation = fn(Result<Option<Vec<u8>>, TransportError>) -> bool;
 /// Endpoint for a local listener with an optional routing header.
 fn endpoint(address: SocketAddr, path: &str, headers: &[(&str, &str)]) -> WsEndpoint {
     WsEndpoint {
+        tls: None,
         url: format!("ws://{address}{path}"),
         headers: headers
             .iter()
@@ -145,6 +146,7 @@ async fn connect_failures_are_classified() {
 
     for invalid in [
         WsEndpoint {
+            tls: None,
             url: "http://127.0.0.1/ora-node/v1".into(),
             headers: BTreeMap::new(),
         },

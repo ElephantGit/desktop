@@ -4,6 +4,8 @@
 //! (a succeeded effect, a registered and connected Node, a ready clone, accepted idle evidence),
 //! writes are fenced by epoch and version, and every decision the Controller made is appended to a
 //! timeline the fake Substrate and fake Node share, so tests can assert ordering across all three.
+#[path = "workspace_cloud/runtime_control.rs"]
+mod runtime_control;
 use futures::{Stream, stream};
 use ora_controller_proto::v1::{
     self as proto,
@@ -13,6 +15,7 @@ use ora_controller_proto::v1::{
     effect_request::Request as EffectRequest,
     execution_service_server::{ExecutionService, ExecutionServiceServer},
     node_report_service_server::{NodeReportService, NodeReportServiceServer},
+    runtime_control_service_server::RuntimeControlServiceServer,
     watch_response::Signal,
     workspace_operation_service_server::{
         WorkspaceOperationService, WorkspaceOperationServiceServer,
@@ -220,6 +223,7 @@ impl WorkspaceCloud {
         let router = tonic::transport::Server::builder()
             .add_service(ControllerLeaseServiceServer::new(self.clone()))
             .add_service(ExecutionServiceServer::new(self.clone()))
+            .add_service(RuntimeControlServiceServer::new(self.clone()))
             .add_service(ControlSignalServiceServer::new(self.clone()))
             .add_service(WorkspaceOperationServiceServer::new(self.clone()))
             .add_service(NodeReportServiceServer::new(self.clone()));
@@ -301,6 +305,7 @@ impl WorkspaceCloud {
         let execution = Self::next_id(&mut state);
         let branch = state.workspace.requested_ref.clone();
         state.clones.push(proto::ExecutionRecord {
+            node_operation_id: execution.clone(),
             operation_id: operation.into(),
             execution_id: execution,
             node_id: node.into(),
@@ -1024,6 +1029,7 @@ impl ExecutionService for WorkspaceCloud {
                 return Err(conflict("dispatch_conflict"));
             }
             let record = proto::ExecutionRecord {
+                node_operation_id: message.execution_id.clone(),
                 operation_id: message.operation_id,
                 execution_id: message.execution_id,
                 node_id: message.node_id,

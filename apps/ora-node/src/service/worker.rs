@@ -12,6 +12,21 @@ pub(super) fn run(
     ready: oneshot::Sender<Result<SessionInfo, String>>,
     shutdown: Shutdown,
 ) -> Result<(), String> {
+    let target = config.control.as_ref().and_then(|c| c.target.clone());
+    if config
+        .control
+        .as_ref()
+        .is_some_and(|c| matches!(c.listen, ControlListen::MutualTlsWebSocket { .. }))
+        && target.is_none()
+    {
+        return Err("network management requires a platform-assigned runtime scope".into());
+    }
+    let controlled = config.control.as_ref().is_some_and(|c| {
+        matches!(
+            c.listen,
+            ControlListen::WebSocket { .. } | ControlListen::MutualTlsWebSocket { .. }
+        )
+    });
     // A stop may let the outstanding step settle its Run before the final cleanup.
     let drain = Duration::from_millis(
         config
@@ -22,7 +37,16 @@ pub(super) fn run(
     let initialized = (|| {
         let mut node =
             Node::open(config.node, config.process, shutdown.clone()).map_err(|e| e.to_string())?;
+        if controlled {
+            let incarnation = node.identity().incarnation_id.as_str().to_owned();
+            node.database
+                .enforce_runtime_incarnation(&incarnation)
+                .map_err(|e| e.to_string())?;
+        }
         if let Some(clone) = config.clone {
+            if controlled {
+                clone.validate_cloud_policy().map_err(|e| e.to_string())?;
+            }
             node.configure_clone(clone).map_err(|e| e.to_string())?;
         }
         let controller = config
@@ -48,7 +72,10 @@ pub(super) fn run(
     let info = SessionInfo {
         identity: node.identity().clone(),
         controller: controller.clone(),
-        capabilities: vec![NodeCapability::RepositoryClone],
+        capabilities: vec![
+            NodeCapability::RepositoryClone,
+            NodeCapability::RuntimeControl,
+        ],
     };
     if ready.send(Ok(info)).is_err() {
         clones.drain(&mut node, Duration::ZERO)?;
@@ -65,11 +92,17 @@ pub(super) fn run(
                         .lock()
                         .map_err(|_| "session admission poisoned".to_owned())?;
                     let result = if *active {
-                        handle(&mut node, &mut clones, &controller, work.request).map_err(|error| {
-                            Rejection {
-                                close: close_reason(&error),
-                                message: error.to_string(),
-                            }
+                        handle(
+                            &mut node,
+                            &mut clones,
+                            &controller,
+                            controlled,
+                            target.as_ref(),
+                            work.request,
+                        )
+                        .map_err(|error| Rejection {
+                            close: close_reason(&error),
+                            message: error.to_string(),
                         })
                     } else {
                         // The session is already ending; nobody reads this reason.
@@ -131,17 +164,61 @@ fn handle(
     node: &mut ManagedNode,
     clones: &mut Clones,
     controller: &ControllerId,
+    controlled: bool,
+    target: Option<&RuntimeScope>,
     request: Request,
 ) -> Result<Vec<NodeToControllerMessage>, crate::Error> {
     match request {
         Request::Replay => Ok(node.database.controller_events(controller)?),
         Request::Message(ControllerToNodeMessage::CloneRepository(command)) => {
+            if controlled {
+                return Err(crate::Error::UnsupportedMessage);
+            }
             node.database.check_controller_execution(
                 controller,
                 &command.operation_id,
                 &command.execution_id,
             )?;
             let (status, fresh) = node.reserve_clone(&command)?;
+            if fresh.is_some() {
+                clones.admit(command.operation_id.clone(), command.execution_id.clone());
+            }
+            Ok(vec![NodeToControllerMessage::ExecutionStatus(
+                ExecutionStatusMessage {
+                    protocol_version: CURRENT_PROTOCOL_VERSION,
+                    operation_id: command.operation_id,
+                    execution_id: command.execution_id,
+                    payload: status,
+                },
+            )])
+        }
+        Request::Message(ControllerToNodeMessage::BindRuntime(binding)) => {
+            if target.is_some_and(|scope| !scope.permits(&binding)) {
+                return Err(StorageError::NodeMismatch.into());
+            }
+            if binding.node_incarnation_id != node.identity().incarnation_id.as_str() {
+                return Err(StorageError::NodeMismatch.into());
+            }
+            let unfinished_execution_ids = node.database.bind_runtime(&binding)?;
+            Ok(vec![NodeToControllerMessage::RuntimeControlState(
+                RuntimeControlState {
+                    binding,
+                    unfinished_execution_ids,
+                },
+            )])
+        }
+        Request::Message(ControllerToNodeMessage::ControlledClone(envelope)) => {
+            envelope.validate()?;
+            if envelope.binding.node_incarnation_id != node.identity().incarnation_id.as_str() {
+                return Err(StorageError::NodeMismatch.into());
+            }
+            let command = envelope.command;
+            node.database.check_controller_execution(
+                controller,
+                &command.operation_id,
+                &command.execution_id,
+            )?;
+            let (status, fresh) = node.reserve_controlled_clone(&command, &envelope.binding)?;
             if fresh.is_some() {
                 clones.admit(command.operation_id.clone(), command.execution_id.clone());
             }

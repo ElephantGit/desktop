@@ -40,6 +40,8 @@ pub(super) struct SandboxDeployment {
     reconnect: Duration,
     /// The static Node of tenant clones; a sandbox claiming the same NodeId is refused.
     static_node: Option<NodeId>,
+    tls: Option<ora_node_transport::mtls::MutualTlsFiles>,
+    direct_node_port: Option<u16>,
 }
 
 impl SandboxDeployment {
@@ -52,6 +54,7 @@ impl SandboxDeployment {
             ));
         }
         let probe = WsEndpoint {
+            tls: None,
             url: config.router_url.clone(),
             headers: BTreeMap::from([(TARGET_HEADER.to_owned(), format!("{atespace}/probe"))]),
         };
@@ -59,12 +62,14 @@ impl SandboxDeployment {
             Error::Configuration(format!("invalid substrate.router_url: {error}"))
         })?;
         Ok(Self {
-            substrate: Substrate::new(config)?,
+            substrate: Substrate::with_tls(config, runtime.management_tls.as_ref())?,
             router_url: config.router_url.clone(),
             atespace: atespace.to_owned(),
             session: runtime.session.clone(),
             reconnect: Duration::from_millis(runtime.reconnect_ms),
             static_node: runtime.nodes.first().map(|node| node.node_id.clone()),
+            tls: runtime.management_tls.clone(),
+            direct_node_port: config.direct_node_port,
         })
     }
 
@@ -73,7 +78,16 @@ impl SandboxDeployment {
         NodeTarget {
             node_id: binding.node_id.clone(),
             endpoint: NodeEndpoint::WebSocket(WsEndpoint {
-                url: self.router_url.clone(),
+                url: self.direct_node_port.map_or_else(
+                    || self.router_url.clone(),
+                    |port| {
+                        format!(
+                            "wss://ora-sandbox-{}:{port}/ora-node/v1",
+                            binding.sandbox_id
+                        )
+                    },
+                ),
+                tls: self.tls.clone(),
                 headers: BTreeMap::from([(
                     TARGET_HEADER.to_owned(),
                     format!("{}/{}", self.atespace, binding.external_id),
@@ -379,6 +393,7 @@ mod tests {
 
     fn runtime() -> RuntimeConfig {
         RuntimeConfig {
+            management_tls: None,
             home_directory: "/nonexistent/controller".into(),
             persistence: Persistence::Sqlite,
             protected_state_directories: Vec::new(),
@@ -395,6 +410,7 @@ mod tests {
 
     fn substrate(atespace: &str) -> SubstrateConfig {
         SubstrateConfig {
+            direct_node_port: None,
             effects_url: "http://sandbox-server:18001".into(),
             router_url: "ws://sandbox-server:18000/ora-node/v1".into(),
             atespace: atespace.into(),
@@ -418,6 +434,7 @@ mod tests {
         assert_eq!(
             target.endpoint,
             NodeEndpoint::WebSocket(WsEndpoint {
+                tls: None,
                 url: "ws://sandbox-server:18000/ora-node/v1".into(),
                 headers: BTreeMap::from([("ate-target-actor".into(), "local/external".into())]),
             })

@@ -27,12 +27,13 @@ pub use identity::{
     WorkspaceId, WorktreeId,
 };
 pub use message::{
-    CloneRepository, CloneRepositoryMessage, CloneResultMessage, ControllerHeartbeat,
-    ControllerHeartbeatMessage, ControllerToNodeMessage, EnsureWorktree, EnsureWorktreeMessage,
-    EventAck, EventAckMessage, ExecutionState, ExecutionStatus, ExecutionStatusMessage,
-    GetExecutionStatus, GetExecutionStatusMessage, Heartbeat, HeartbeatMessage, Hello,
-    HelloAccepted, HelloAcceptedMessage, HelloMessage, MessageValidationError, NodeCapability,
-    NodeToControllerMessage, RemoveWorktree, RemoveWorktreeMessage, ValidateMessage,
+    CloneRepository, CloneRepositoryMessage, CloneResultMessage, ControlledClone,
+    ControllerHeartbeat, ControllerHeartbeatMessage, ControllerToNodeMessage, EnsureWorktree,
+    EnsureWorktreeMessage, EventAck, EventAckMessage, ExecutionState, ExecutionStatus,
+    ExecutionStatusMessage, GetExecutionStatus, GetExecutionStatusMessage, Heartbeat,
+    HeartbeatMessage, Hello, HelloAccepted, HelloAcceptedMessage, HelloMessage,
+    MessageValidationError, NodeCapability, NodeToControllerMessage, RemoveWorktree,
+    RemoveWorktreeMessage, RuntimeBinding, RuntimeControlState, ValidateMessage,
     WorktreeFailedMessage, WorktreeReadyMessage, WorktreeRemovalFailedMessage,
     WorktreeRemovedMessage,
 };

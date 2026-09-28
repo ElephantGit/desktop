@@ -6,10 +6,12 @@ mod claim;
 mod coordinate;
 mod fault;
 mod fleet;
+mod force_stop;
 mod lease;
 mod mapping;
 mod operations;
 mod reports;
+mod runtime_control;
 mod signals;
 mod substrate;
 
@@ -129,14 +131,31 @@ impl CloudStore {
             .ok_or_else(|| {
                 Error::Configuration("controller_id must be printable ASCII to reach Cloud".into())
             })?;
-        let channel = tonic::transport::Endpoint::from_shared(endpoint.clone())
+        let mut connection = tonic::transport::Endpoint::from_shared(endpoint.clone())
             .map_err(|error| Error::Configuration(format!("invalid cloud endpoint: {error}")))?
             .connect_timeout(fault::RPC_TIMEOUT)
             .http2_keep_alive_interval(KEEPALIVE_INTERVAL)
             .keep_alive_timeout(KEEPALIVE_TIMEOUT)
             // Also while no call is active: the fallback without a stream needs a live connection.
-            .keep_alive_while_idle(true)
-            .connect_lazy();
+            .keep_alive_while_idle(true);
+        if let Some(files) = &config.management_tls {
+            if !endpoint.starts_with("https://") {
+                return Err(Error::Configuration(
+                    "Cloud management TLS requires https://".into(),
+                ));
+            }
+            let ca = std::fs::read(&files.ca_file)?;
+            let certificate = std::fs::read(&files.certificate_file)?;
+            let key = std::fs::read(&files.private_key_file)?;
+            connection = connection
+                .tls_config(
+                    tonic::transport::ClientTlsConfig::new()
+                        .ca_certificate(tonic::transport::Certificate::from_pem(ca))
+                        .identity(tonic::transport::Identity::from_pem(certificate, key)),
+                )
+                .map_err(|e| Error::Configuration(e.to_string()))?;
+        }
+        let channel = connection.connect_lazy();
         Ok(Self {
             inner: Arc::new(Inner {
                 id: config.controller_id.clone(),
@@ -260,6 +279,21 @@ impl CoordinationStore for CloudStore {
     fn id(&self) -> &ControllerId {
         &self.inner.id
     }
+    fn requires_runtime_control(&self) -> bool {
+        true
+    }
+    async fn runtime_bindings(&self, node: &NodeId) -> Result<Vec<RuntimeBinding>, Error> {
+        self.control_bindings(node).await
+    }
+    async fn acknowledge_runtime_binding(&self, state: &RuntimeControlState) -> Result<(), Error> {
+        self.control_ack(state).await
+    }
+    async fn dispatch_message(
+        &self,
+        command: CloneRepositoryMessage,
+    ) -> Result<Option<ControllerToNodeMessage>, Error> {
+        self.controlled_dispatch(command).await
+    }
 
     async fn take_over_node_event(
         &self,
@@ -277,16 +311,22 @@ impl CoordinationStore for CloudStore {
             .await?;
         let epoch = self.epoch()?;
         let result = mapping::result(&event.payload);
+        let business_operation = self
+            .record(&command.execution_id)
+            .await?
+            .ok_or(Error::Conflict)?
+            .operation_id;
         // The exact event travels verbatim so a replay with the same sequence but different
         // content is detected by the authority as a conflict, as the local receipt table does.
         let encoded = serde_json::to_vec(event)?;
         let write = fault::write(|submission_id| {
+            let business_operation = business_operation.clone();
             let (result, encoded, command) = (result.clone(), encoded.clone(), &command);
             async move {
                 let request = self.request(proto::TakeOverNodeEventRequest {
                     submission_id,
                     epoch,
-                    operation_id: command.operation_id.as_str().into(),
+                    operation_id: business_operation.clone(),
                     execution_id: command.execution_id.as_str().into(),
                     sequence: event.sequence.value(),
                     result: Some(result),
@@ -313,13 +353,19 @@ impl CoordinationStore for CloudStore {
             .await?;
         let epoch = self.epoch()?;
         let result = mapping::result(result);
+        let business_operation = self
+            .record(&command.execution_id)
+            .await?
+            .ok_or(Error::Conflict)?
+            .operation_id;
         let write = fault::write(|submission_id| {
+            let business_operation = business_operation.clone();
             let (result, command) = (result.clone(), &command);
             async move {
                 let request = self.request(proto::RecordQueriedResultRequest {
                     submission_id,
                     epoch,
-                    operation_id: command.operation_id.as_str().into(),
+                    operation_id: business_operation.clone(),
                     execution_id: command.execution_id.as_str().into(),
                     result: Some(result),
                 });
@@ -339,7 +385,9 @@ impl CoordinationStore for CloudStore {
         execution: &ExecutionId,
     ) -> Result<CloneRepositoryMessage, Error> {
         let record = self.record(execution).await?.ok_or(Error::Conflict)?;
-        if record.operation_id != operation.as_str() || record.node_id != session.node_id.as_str() {
+        if record.node_operation_id != operation.as_str()
+            || record.node_id != session.node_id.as_str()
+        {
             return Err(Error::Conflict);
         }
         mapping::command(&record, &session.node_id)
@@ -399,6 +447,7 @@ mod tests {
 
     fn config(controller_id: &str) -> RuntimeConfig {
         RuntimeConfig {
+            management_tls: None,
             home_directory: "/nonexistent/controller".into(),
             persistence: Persistence::Cloud {
                 endpoint: "http://127.0.0.1:1".into(),

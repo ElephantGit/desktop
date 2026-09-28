@@ -43,6 +43,9 @@ pub struct SubstrateConfig {
     pub atespace: String,
     /// Deadline of one effect call; an elapsed call is queried again, never assumed absent.
     pub request_timeout_ms: u64,
+    /// Direct sandbox TLS endpoint. Certificate DNS names bind this to its stable external ID.
+    #[serde(default)]
+    pub direct_node_port: Option<u16>,
 }
 
 /// Shared deployment configuration for the standalone executable and embedded compositions.
@@ -51,6 +54,8 @@ pub struct SubstrateConfig {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeConfig {
+    #[serde(default)]
+    pub management_tls: Option<ora_node_transport::mtls::MutualTlsFiles>,
     pub home_directory: PathBuf,
     pub persistence: Persistence,
     pub protected_state_directories: Vec<PathBuf>,

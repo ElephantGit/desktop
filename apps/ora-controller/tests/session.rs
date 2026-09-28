@@ -239,6 +239,7 @@ fn connection_failures_are_classified_without_releasing_responsibility() {
                         path: root.path().join("missing.sock"),
                     },
                     NodeEndpoint::WebSocket(ora_node_transport::websocket::WsEndpoint {
+                        tls: None,
                         url: format!("ws://{closed}/ora-node/v1"),
                         headers: Default::default(),
                     }),
@@ -312,6 +313,7 @@ fn controller_closes_with_the_reason_code() {
                     let target = NodeTarget {
                         node_id: NodeId::new("node"),
                         endpoint: NodeEndpoint::WebSocket(WsEndpoint {
+                            tls: None,
                             url: format!("ws://{address}/ora-node/v1"),
                             headers: Default::default(),
                         }),
@@ -417,6 +419,7 @@ fn node_identity_close_is_a_mismatch() {
                 let target = NodeTarget {
                     node_id: NodeId::new("node"),
                     endpoint: NodeEndpoint::WebSocket(WsEndpoint {
+                        tls: None,
                         url: format!("ws://{address}/ora-node/v1"),
                         headers: Default::default(),
                     }),

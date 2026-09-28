@@ -16,20 +16,40 @@ use std::{
 };
 use tokio::sync::oneshot;
 
-/// The control session is explicitly configured; it neither authenticates peers nor changes
-/// ownership. Exactly one listening entry is served, so session admission has a single source.
+/// Production network sessions authenticate a pinned Controller and a platform-assigned scope.
+/// Local IPC and loopback transport fixtures do not establish cloud user authority.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ControlConfig {
+    /// Platform-assigned target; a valid Controller certificate cannot choose another tenant.
+    #[serde(default)]
+    pub target: Option<RuntimeScope>,
     pub controller_id: ControllerId,
     pub listen: ControlListen,
     pub heartbeat_ms: u64,
     pub frame_timeout_ms: u64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeScope {
+    pub tenant_id: String,
+    pub workspace_id: String,
+    pub sandbox_id: String,
+    pub runtime_generation: i64,
+}
+impl RuntimeScope {
+    fn permits(&self, binding: &ora_node_protocol::RuntimeBinding) -> bool {
+        self.tenant_id == binding.tenant_id
+            && self.workspace_id == binding.workspace_id
+            && self.sandbox_id == binding.sandbox_id
+            && self.runtime_generation == binding.runtime_generation
+    }
+}
+
 /// Where the Node accepts its Controller. Local deployments use a private Unix socket under the
-/// Node home; sandboxes listen for WebSocket upgrades that only the platform router can reach,
-/// because the Node itself performs no authentication.
+/// Node home; sandboxes use mutually authenticated TLS. The plaintext variant is retained only
+/// for loopback transport fixtures and is rejected by the production executable.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", deny_unknown_fields)]
 pub enum ControlListen {
@@ -37,6 +57,12 @@ pub enum ControlListen {
     Ipc { path: PathBuf },
     #[serde(rename = "websocket")]
     WebSocket { bind: SocketAddr, path: String },
+    #[serde(rename = "mutual_tls_websocket")]
+    MutualTlsWebSocket {
+        bind: SocketAddr,
+        path: String,
+        tls: ora_node_transport::mtls::MutualTlsFiles,
+    },
 }
 
 /// Composition keeps deployment paths separate from business requests and supports recovery-only startup.
@@ -98,7 +124,8 @@ pub async fn serve(config: ServiceConfig, shutdown: Shutdown) -> io::Result<()> 
             ControlListen::Ipc { path } => {
                 path.is_absolute() && path.parent() == Some(config.node.home_directory.as_path())
             }
-            ControlListen::WebSocket { path, .. } => path.starts_with('/'),
+            ControlListen::WebSocket { path, .. }
+            | ControlListen::MutualTlsWebSocket { path, .. } => path.starts_with('/'),
         };
         if control.heartbeat_ms == 0
             || control.frame_timeout_ms <= control.heartbeat_ms

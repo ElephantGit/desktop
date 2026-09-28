@@ -12,6 +12,8 @@ use thiserror::Error;
 #[cfg(unix)]
 pub mod ipc;
 #[cfg(feature = "websocket")]
+pub mod mtls;
+#[cfg(feature = "websocket")]
 pub mod websocket;
 
 /// WebSocket close code a Node sends when it already has a live control session. Routers forward

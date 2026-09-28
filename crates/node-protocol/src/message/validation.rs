@@ -4,6 +4,8 @@ use thiserror::Error;
 /// Explains why a decoded or outbound typed message violates protocol invariants.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum MessageValidationError {
+    #[error("invalid or unscoped runtime control binding")]
+    InvalidRuntimeBinding,
     #[error("clone result must belong to its requested Node")]
     CloneTargetMismatch,
     #[error("clone commit must be a full hexadecimal Git object ID")]

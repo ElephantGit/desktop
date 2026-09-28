@@ -60,7 +60,14 @@ pub(super) struct Substrate {
 
 impl Substrate {
     /// Validates the configured base URL and deadline; nothing is contacted.
+    #[cfg(test)]
     pub(super) fn new(config: &SubstrateConfig) -> Result<Self, Error> {
+        Self::with_tls(config, None)
+    }
+    pub(super) fn with_tls(
+        config: &SubstrateConfig,
+        tls: Option<&ora_node_transport::mtls::MutualTlsFiles>,
+    ) -> Result<Self, Error> {
         let url = reqwest::Url::parse(&config.effects_url).map_err(|error| {
             Error::Configuration(format!("invalid substrate.effects_url: {error}"))
         })?;
@@ -69,8 +76,27 @@ impl Substrate {
                 "substrate.effects_url must be http(s) and request_timeout_ms nonzero".into(),
             ));
         }
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_millis(config.request_timeout_ms))
+        let mut builder =
+            reqwest::Client::builder().timeout(Duration::from_millis(config.request_timeout_ms));
+        if let Some(files) = tls {
+            if url.scheme() != "https" {
+                return Err(Error::Configuration(
+                    "Substrate management requires https://".into(),
+                ));
+            }
+            let root = reqwest::Certificate::from_pem(&std::fs::read(&files.ca_file)?)
+                .map_err(|e| Error::Configuration(e.to_string()))?;
+            let mut pem = std::fs::read(&files.certificate_file)?;
+            pem.extend_from_slice(&std::fs::read(&files.private_key_file)?);
+            let identity = reqwest::Identity::from_pem(&pem)
+                .map_err(|e| Error::Configuration(e.to_string()))?;
+            builder = builder
+                .https_only(true)
+                .tls_built_in_root_certs(false)
+                .add_root_certificate(root)
+                .identity(identity);
+        }
+        let client = builder
             .build()
             .map_err(|error| Error::Configuration(format!("substrate client: {error}")))?;
         Ok(Self {
@@ -113,14 +139,31 @@ impl Substrate {
     /// Carries one effect to the Substrate: an effect it already completed is only read back, any
     /// other is sent with Cloud's exact request. When the send is not answered, the same ID is
     /// queried, because the Substrate may have journaled and executed it.
-    pub(super) async fn execute(
+    #[cfg(test)]
+    async fn execute(&self, effect: &proto::Effect) -> Result<Observation, SubstrateError> {
+        self.execute_inner(effect, None).await
+    }
+
+    pub(super) async fn execute_authorized(
         &self,
         effect: &proto::Effect,
+        permit: &proto::RuntimeEffectPermit,
+    ) -> Result<Observation, SubstrateError> {
+        self.execute_inner(effect, Some(permit)).await
+    }
+
+    async fn execute_inner(
+        &self,
+        effect: &proto::Effect,
+        permit: Option<&proto::RuntimeEffectPermit>,
     ) -> Result<Observation, SubstrateError> {
         if let Some(observed @ Observation::Succeeded { .. }) = self.get(effect).await? {
             return Ok(observed);
         }
-        let body = request(effect)?;
+        let mut body = request(effect)?;
+        if let Some(p) = permit {
+            body["authorization"] = json!({"tenantId":p.tenant_id,"workspaceId":p.workspace_id,"sandboxId":p.sandbox_id,"runtimeGeneration":p.runtime_generation,"controllerEpoch":p.controller_epoch,"controlEpoch":p.control_epoch,"issuedAtMs":p.issued_at_ms,"expiresAtMs":p.expires_at_ms});
+        }
         let sent = self
             .client
             .put(self.url(&effect.id))
@@ -265,7 +308,9 @@ fn evidence(kind: proto::EffectKind, result: &Value) -> Option<Evidence> {
             node_id: text("nodeId")?,
         })),
         proto::EffectKind::SandboxTerminate => {
-            flag("terminated").then_some(Evidence::SandboxTerminated(proto::SandboxTerminated {}))
+            flag("terminated").then_some(Evidence::SandboxTerminated(proto::SandboxTerminated {
+                late_ensure_fenced: flag("lateEnsureFenced"),
+            }))
         }
         proto::EffectKind::WorkspaceDataDelete => flag("removed").then_some(
             Evidence::WorkspaceDataDeleted(proto::WorkspaceDataDeleted {}),
@@ -361,6 +406,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await });
         let substrate = Substrate::new(&SubstrateConfig {
+            direct_node_port: None,
             effects_url: format!("http://{address}"),
             router_url: "ws://127.0.0.1:1/ora-node/v1".into(),
             atespace: "local".into(),

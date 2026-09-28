@@ -255,6 +255,7 @@ fn websocket_session_answers_ping_and_close_while_clone_git_runs() {
                 // heartbeat writes still succeed and only reading the close can release the slot.
                 let _lingering = socket;
                 let endpoint = WsEndpoint {
+                    tls: None,
                     url,
                     headers: BTreeMap::new(),
                 };
