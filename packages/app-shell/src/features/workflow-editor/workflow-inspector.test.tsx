@@ -721,3 +721,65 @@ describe("WorkflowInspector kind-specific layouts", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("WorkflowInspector aggregator panel", () => {
+  it("edits ordered candidates, reorders them explicitly, and flags type mismatches", async () => {
+    await appI18n.changeLanguage("zh-CN");
+    const user = userEvent.setup();
+    render(
+      <StatefulInspectorHarness
+        node={{
+          id: "agg",
+          type: "workflow",
+          position: { x: 0, y: 0 },
+          data: {
+            kind: "aggregator",
+            title: "变量聚合器",
+            description: "",
+            aggregatorConfig: { variables: [] },
+          },
+        }}
+        capabilities={createMockWorkflowCapabilities("zh-CN")}
+      />,
+    );
+
+    expect(screen.getByText(/尚无候选变量/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "添加候选变量" }));
+    await user.click(screen.getByLabelText("候选变量 1"));
+    await user.click(
+      await screen.findByRole("option", { name: "writer.output" }),
+    );
+    expect(
+      within(screen.getByLabelText("候选变量 1").parentElement!).getByText(
+        "string",
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "添加候选变量" }));
+    await user.click(screen.getByLabelText("候选变量 2"));
+    await user.click(
+      await screen.findByRole("option", { name: "工具1.exit_code" }),
+    );
+    expect(
+      within(screen.getByLabelText("候选变量 2").parentElement!).getByText(
+        "integer",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("候选变量类型不一致，运行前需要统一为相同类型。"),
+    ).toBeInTheDocument();
+
+    // Declaration order is the priority contract, so only the explicit move buttons reorder.
+    const moveUpButtons = screen.getAllByRole("button", {
+      name: "上移候选变量",
+    });
+    expect(moveUpButtons[0]).toBeDisabled();
+    await user.click(moveUpButtons[1]!);
+    expect(
+      within(screen.getByLabelText("候选变量 1")).getByText("exit_code"),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByLabelText("候选变量 2")).getByText("output"),
+    ).toBeInTheDocument();
+  });
+});

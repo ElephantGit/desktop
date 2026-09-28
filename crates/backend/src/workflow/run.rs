@@ -1,5 +1,7 @@
 //! Backend composition and runtime adapters for workflow runs.
 
+#[cfg(test)]
+mod aggregator_persistence_tests;
 mod api;
 mod checkpoint;
 mod diagnosis;

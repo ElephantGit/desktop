@@ -208,7 +208,7 @@ pub(super) fn update_run_execution_state(
         return Ok(());
     };
     let mut payload: WorkflowRunPayload = serde_json::from_str(serialized_payload)?;
-    let mut changed = if node_type != "condition"
+    let mut changed = if !matches!(node_type, "condition" | "aggregator")
         && let Some(output) = output
     {
         write_pool_variable(
@@ -253,6 +253,19 @@ pub(super) fn update_run_execution_state(
                     &format!("{node_id}.structured_output"),
                     node_id,
                     structured.clone(),
+                )?;
+            }
+        }
+        "aggregator" => {
+            if let Some(output) = output {
+                // The runtime serializes the selected pool value as JSON into the output
+                // column; parse it back so the typed declaration check sees the real value.
+                let value: serde_json::Value = serde_json::from_str(output)?;
+                changed |= write_pool_variable(
+                    &mut payload.variable_pool,
+                    &format!("{node_id}.output"),
+                    node_id,
+                    value,
                 )?;
             }
         }

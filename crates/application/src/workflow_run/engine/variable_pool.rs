@@ -1,10 +1,11 @@
+use crate::workflow_run::engine::aggregator::AggregatorConfig;
 use crate::workflow_run::engine::graph::{AgentOutputContract, WorkflowGraph, WorkflowGraphNode};
 use crate::workflow_run::engine::iteration::IterationConfig;
 use crate::workflow_run::engine::node_type::NodeType;
 use crate::workflow_run::engine::variable_value::normalize_workflow_value;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use thiserror::Error;
 
 /// A declared workflow variable and the node that owns writes to it.
@@ -113,6 +114,36 @@ pub(crate) enum IterationDeclarationError {
     CollectUndeclared { selector: String },
 }
 
+/// Why an aggregator node's selectors cannot be statically validated against the graph's
+/// variable declarations.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub(crate) enum AggregatorDeclarationError {
+    #[error("aggregator selector {selector} is not declared")]
+    SelectorUndeclared { selector: String },
+    #[error(
+        "aggregator selector {selector} is produced by {producer}, which is not a transitive predecessor"
+    )]
+    ProducerNotPredecessor { selector: String, producer: String },
+    #[error(
+        "aggregator selector {selector} has type {actual}, but the aggregation requires {expected}"
+    )]
+    SelectorTypeMismatch {
+        selector: String,
+        expected: String,
+        actual: String,
+    },
+}
+
+/// Why a derived (iteration or aggregator) node's selectors cannot be statically typed against
+/// the graph's variable declarations.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub(crate) enum DerivedDeclarationError {
+    #[error(transparent)]
+    Iteration(#[from] IterationDeclarationError),
+    #[error(transparent)]
+    Aggregator(#[from] AggregatorDeclarationError),
+}
+
 impl WorkflowVariablePool {
     /// Creates declarations for explicit Start inputs and node outputs in the current graph.
     ///
@@ -139,10 +170,10 @@ impl WorkflowVariablePool {
             }
         }
 
-        // Parsed graphs already passed `validate_iteration_declarations`, so declaration
+        // Parsed graphs already passed `validate_derived_declarations`, so declaration
         // failures here are impossible; skipping keeps `from_graph` total for hand-built
         // graphs in tests.
-        let _ = declare_iteration_variables(&mut pool, graph);
+        let _ = declare_derived_variables(&mut pool, graph);
         pool
     }
 
@@ -246,12 +277,12 @@ impl WorkflowVariablePool {
 }
 
 /// Declares one non-composite node's base variables: the shared `.output` for data-producing
-/// nodes, Start inputs, and structured-output objects. Iteration nodes declare nothing here;
-/// their exposed variables derive from these declarations in a second pass.
+/// nodes, Start inputs, and structured-output objects. Iteration and aggregator nodes declare
+/// nothing here; their exposed variables derive from these declarations in a second pass.
 fn declare_base_node_variables(pool: &mut WorkflowVariablePool, node: &WorkflowGraphNode) {
     if !matches!(
         node.node_type,
-        NodeType::Start | NodeType::Condition | NodeType::Iteration
+        NodeType::Start | NodeType::Condition | NodeType::Iteration | NodeType::Aggregator
     ) {
         pool.declare(&format!("{}.output", node.id), "string", &node.id);
     }
@@ -371,33 +402,104 @@ fn declare_one_iteration(
     Ok(())
 }
 
-/// Declares every iteration node's exposed variables in topological order.
+/// Declares every iteration or aggregator node's exposed variables in topological order.
 ///
 /// Returns the failing node's id together with the error so parse-time validation can point
-/// the author at the offending iteration node.
-fn declare_iteration_variables(
+/// the author at the offending node. Both kinds share one pass because they feed each other:
+/// an aggregator may consume an iteration's exposed arrays, and a downstream iteration may
+/// iterate an aggregator's output.
+fn declare_derived_variables(
     pool: &mut WorkflowVariablePool,
     graph: &WorkflowGraph,
-) -> Result<(), (String, IterationDeclarationError)> {
+) -> Result<(), (String, DerivedDeclarationError)> {
     for node in graph.nodes_in_topological_order() {
-        if let Some(config) = node.iteration_config.as_ref()
-            && let Err(error) = declare_one_iteration(pool, graph, &node.id, config)
-        {
+        let failure = if let Some(config) = node.iteration_config.as_ref() {
+            declare_one_iteration(pool, graph, &node.id, config)
+                .map_err(DerivedDeclarationError::Iteration)
+        } else if let Some(config) = node.aggregator_config.as_ref() {
+            declare_one_aggregator(pool, graph, &node.id, config)
+                .map_err(DerivedDeclarationError::Aggregator)
+        } else {
+            Ok(())
+        };
+        if let Err(error) = failure {
             return Err((node.id.clone(), error));
         }
     }
     Ok(())
 }
 
-/// Graph-parse-time validation of every iteration node's selectors against the graph's
-/// derived variable declarations (ADR "iteration composite runtime" D1: statically decidable
-/// at parse). Non-iteration graphs short-circuit so per-wave parsing pays nothing.
-pub(super) fn validate_iteration_declarations(
+/// Validates one aggregator config against the working catalog and declares its typed
+/// `{id}.output` (V1 contract: source must be a global or a static transitive predecessor,
+/// all selectors share one declared type).
+///
+/// Mutual exclusion between sibling branches is irrelevant here: producers on both branches are
+/// predecessors because their edges feed the aggregator, so each candidate is available exactly
+/// when its branch ran. Only producers outside the upstream closure — self, downstream, or
+/// unrelated nodes — are rejected, because their variables can never be assigned when the
+/// aggregator runs.
+fn declare_one_aggregator(
+    pool: &mut WorkflowVariablePool,
+    graph: &WorkflowGraph,
+    node_id: &str,
+    config: &AggregatorConfig,
+) -> Result<(), AggregatorDeclarationError> {
+    let predecessors: HashSet<&str> = graph
+        .transitive_predecessors(node_id)
+        .iter()
+        .map(|node| node.id.as_str())
+        .collect();
+    let mut expected_type: Option<String> = None;
+    for selector in &config.variables {
+        let qualified = selector.qualified();
+        // Producer identity separates node variables (the qualified prefix names a graph node,
+        // so it must be upstream) from global/system variables (declared without a producer
+        // node, always available). The predecessor check runs first so self, downstream, and
+        // lateral references all report the reachability failure even before typing.
+        if graph.node(&selector.node_id).is_some()
+            && !predecessors.contains(selector.node_id.as_str())
+        {
+            return Err(AggregatorDeclarationError::ProducerNotPredecessor {
+                selector: qualified,
+                producer: selector.node_id.clone(),
+            });
+        }
+        let declared = pool.catalog.get(&qualified).ok_or_else(|| {
+            AggregatorDeclarationError::SelectorUndeclared {
+                selector: qualified.clone(),
+            }
+        })?;
+        let actual = declared.value_type.clone();
+        match &expected_type {
+            None => expected_type = Some(actual),
+            Some(expected) if *expected != actual => {
+                return Err(AggregatorDeclarationError::SelectorTypeMismatch {
+                    selector: qualified,
+                    expected: expected.clone(),
+                    actual,
+                });
+            }
+            _ => {}
+        }
+    }
+    pool.declare(
+        &format!("{node_id}.output"),
+        expected_type.as_deref().unwrap_or("any"),
+        node_id,
+    );
+    Ok(())
+}
+
+/// Graph-parse-time validation of every iteration and aggregator node's selectors against the
+/// graph's derived variable declarations (iteration ADR D1; aggregator V1 contract: statically
+/// decidable at parse). Graphs without either kind short-circuit so per-wave parsing pays
+/// nothing.
+pub(super) fn validate_derived_declarations(
     graph: &WorkflowGraph,
 ) -> Result<(), crate::workflow_run::engine::graph::GraphError> {
     if !graph
         .nodes()
-        .any(|node| node.node_type == NodeType::Iteration)
+        .any(|node| node.node_type == NodeType::Iteration || node.node_type == NodeType::Aggregator)
     {
         return Ok(());
     }
@@ -409,10 +511,18 @@ pub(super) fn validate_iteration_declarations(
     for node in graph.nodes() {
         declare_base_node_variables(&mut pool, node);
     }
-    declare_iteration_variables(&mut pool, graph).map_err(|(node_id, error)| {
-        crate::workflow_run::engine::graph::GraphError::InvalidIteration {
-            node_id,
-            reason: error.to_string(),
+    declare_derived_variables(&mut pool, graph).map_err(|(node_id, error)| match error {
+        DerivedDeclarationError::Iteration(iteration) => {
+            crate::workflow_run::engine::graph::GraphError::InvalidIteration {
+                node_id,
+                reason: iteration.to_string(),
+            }
+        }
+        DerivedDeclarationError::Aggregator(aggregator) => {
+            crate::workflow_run::engine::graph::GraphError::InvalidAggregator {
+                node_id,
+                reason: aggregator.to_string(),
+            }
         }
     })
 }
