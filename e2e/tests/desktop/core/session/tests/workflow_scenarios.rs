@@ -80,6 +80,38 @@ impl ScenarioRun {
             .and_then(|variable| variable.value.as_ref())
     }
 
+    /// Node-level failure detail for assertion messages and CI diagnostics.
+    fn failure_summary(&self) -> String {
+        let nodes = self
+            .detail
+            .nodes
+            .iter()
+            .map(|node| {
+                format!(
+                    "{}({:?}{}{})",
+                    node.node_id,
+                    node.status,
+                    node.error
+                        .as_deref()
+                        .map(|error| format!(", error: {error}"))
+                        .unwrap_or_default(),
+                    node.output
+                        .as_deref()
+                        .map(|output| format!(
+                            ", output: {}",
+                            output.chars().take(120).collect::<String>()
+                        ))
+                        .unwrap_or_default(),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" | ");
+        format!(
+            "status {:?}; run error {:?}; nodes [{}]; journal {}",
+            self.detail.run.status, self.detail.run.error, nodes, self.journal
+        )
+    }
+
     /// The run's terminal output document, parsed as JSON.
     fn run_output(&self) -> Value {
         serde_json::from_str(
@@ -284,8 +316,8 @@ fn start_values_of_every_supported_type_reach_the_agent_prompt() -> TestResult {
                 ("raw".into(), json!(42)),
             ])).await?;
 
-            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "journal: {}", run.journal);
-            assert_eq!(run.sessions(), 1, "journal: {}", run.journal);
+            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "{}", run.failure_summary());
+            assert_eq!(run.sessions(), 1, "{}", run.failure_summary());
             let output = run.node_outputs("agent").join("\n");
             for fragment in [
                 "text=hello",
@@ -373,7 +405,7 @@ fn run_inputs_are_validated_against_declared_types() -> TestResult {
                 .workflow_runs()
                 .start(StartWorkflowRunRequest { run_id: run_id.clone() })?;
             let run = harness.wait_terminal(&run_id).await?;
-            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "journal: {}", run.journal);
+            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "{}", run.failure_summary());
             Ok(())
         })
     })
@@ -452,8 +484,8 @@ fn condition_routes_string_equality_and_falls_back_to_else() -> TestResult {
                 [("fast", "fast-branch", "slow-branch"), ("slow", "slow-branch", "fast-branch")]
             {
                 let run = harness.run(graph.clone(), BTreeMap::from([("mode".into(), json!(mode))])).await?;
-                assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "journal: {}", run.journal);
-                assert_eq!(run.sessions(), 1, "journal: {}", run.journal);
+                assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "{}", run.failure_summary());
+                assert_eq!(run.sessions(), 1, "{}", run.failure_summary());
                 let outputs = format!(
                     "{}{}",
                     run.node_outputs("fast-agent").join("\n"),
@@ -521,8 +553,8 @@ fn condition_compares_numbers_and_booleans_with_first_match_wins() -> TestResult
                 (json!(5), json!(false), "mid-branch"),
             ] {
                 let run = harness.run(graph(count, flag), BTreeMap::new()).await?;
-                assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "journal: {}", run.journal);
-                assert_eq!(run.sessions(), 1, "journal: {}", run.journal);
+                assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "{}", run.failure_summary());
+                assert_eq!(run.sessions(), 1, "{}", run.failure_summary());
                 let outputs = format!(
                     "{}{}{}",
                     run.node_outputs("big-agent").join("\n"),
@@ -578,8 +610,8 @@ fn iteration_over_object_arrays_renders_nested_paths() -> TestResult {
                 json!([{"id":1,"note":"alpha"},{"id":2,"note":"beta"}]),
             )])).await?;
 
-            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "journal: {}", run.journal);
-            assert_eq!(run.sessions(), 2, "journal: {}", run.journal);
+            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "{}", run.failure_summary());
+            assert_eq!(run.sessions(), 2, "{}", run.failure_summary());
             let outputs = run.node_outputs("body").join("\n");
             assert!(outputs.contains("note=alpha"), "{outputs:?}");
             assert!(outputs.contains("note=beta"), "{outputs:?}");
@@ -632,7 +664,7 @@ fn iteration_round_bypassing_the_collect_target_settles_failed_under_continue() 
                 json!([{"id":1,"note":"alpha"},{"id":2,"note":"beta"}]),
             )])).await?;
 
-            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "journal: {}", run.journal);
+            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "{}", run.failure_summary());
             assert_eq!(run.sessions(), 1, "only the id=2 round reaches the body; journal: {}", run.journal);
             assert_eq!(run.variable("iter", "failed_count"), Some(&json!(1)));
             let collected = run.variable("iter", "output").cloned().unwrap_or_default();
@@ -672,8 +704,8 @@ fn iteration_over_an_empty_array_completes_without_rounds() -> TestResult {
             });
             let run = harness.run(graph, BTreeMap::from([("items".into(), json!([]))])).await?;
 
-            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "journal: {}", run.journal);
-            assert_eq!(run.sessions(), 0, "journal: {}", run.journal);
+            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "{}", run.failure_summary());
+            assert_eq!(run.sessions(), 0, "{}", run.failure_summary());
             assert_eq!(run.variable("iter", "output"), Some(&json!([])));
             assert_eq!(run.variable("iter", "failed_count"), Some(&json!(0)));
             assert_eq!(run.run_output()["collected"], json!([]));
@@ -714,8 +746,8 @@ fn iteration_fails_fast_when_the_source_exceeds_max_iterations() -> TestResult {
                 json!(["a", "b", "c"]),
             )])).await?;
 
-            assert_eq!(run.status(), WorkflowRunStatus::Failed, "journal: {}", run.journal);
-            assert_eq!(run.sessions(), 0, "journal: {}", run.journal);
+            assert_eq!(run.status(), WorkflowRunStatus::Failed, "{}", run.failure_summary());
+            assert_eq!(run.sessions(), 0, "{}", run.failure_summary());
             let errors = run.node_errors("iter").join("\n");
             assert!(
                 errors.contains("exceeding maxIterations"),
@@ -760,8 +792,8 @@ fn loop_exits_as_soon_as_the_until_condition_holds() -> TestResult {
             });
             let run = harness.run(graph, BTreeMap::new()).await?;
 
-            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "journal: {}", run.journal);
-            assert_eq!(run.sessions(), 1, "journal: {}", run.journal);
+            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "{}", run.failure_summary());
+            assert_eq!(run.sessions(), 1, "{}", run.failure_summary());
             let result = run
                 .variable("loop", "result")
                 .and_then(Value::as_str)
@@ -808,8 +840,8 @@ fn loop_fails_at_the_round_ceiling_without_termination() -> TestResult {
             });
             let run = harness.run(graph, BTreeMap::new()).await?;
 
-            assert_eq!(run.status(), WorkflowRunStatus::Failed, "journal: {}", run.journal);
-            assert_eq!(run.sessions(), 2, "journal: {}", run.journal);
+            assert_eq!(run.status(), WorkflowRunStatus::Failed, "{}", run.failure_summary());
+            assert_eq!(run.sessions(), 2, "{}", run.failure_summary());
             let errors = run.node_errors("loop").join("\n");
             assert!(
                 errors.contains("did not terminate within 2 rounds"),
@@ -853,8 +885,8 @@ fn loop_carries_typed_feedback_into_the_next_round() -> TestResult {
             });
             let run = harness.run(graph, BTreeMap::new()).await?;
 
-            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "journal: {}", run.journal);
-            assert_eq!(run.sessions(), 2, "journal: {}", run.journal);
+            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "{}", run.failure_summary());
+            assert_eq!(run.sessions(), 2, "{}", run.failure_summary());
             let outputs = run.node_outputs("writer");
             assert_eq!(outputs.len(), 2, "{outputs:?}");
             assert!(
@@ -913,8 +945,8 @@ fn aggregator_passes_the_first_assigned_branch_output() -> TestResult {
             };
             for (choice, expected_fragment) in [("a", "a-branch-work"), ("b", "b-branch-work")] {
                 let run = harness.run(branch_graph(choice), BTreeMap::new()).await?;
-                assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "journal: {}", run.journal);
-                assert_eq!(run.sessions(), 1, "journal: {}", run.journal);
+                assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "{}", run.failure_summary());
+                assert_eq!(run.sessions(), 1, "{}", run.failure_summary());
                 let aggregated = run
                     .variable("aggregator", "output")
                     .and_then(Value::as_str)
@@ -942,7 +974,7 @@ fn aggregator_passes_the_first_assigned_branch_output() -> TestResult {
                 "globalVariables":[{"name":"flag.value","valueType":"boolean","value":false}]
             });
             let run = harness.run(false_graph, BTreeMap::new()).await?;
-            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "journal: {}", run.journal);
+            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "{}", run.failure_summary());
             assert_eq!(run.variable("aggregator", "output"), Some(&json!(false)));
             assert_eq!(run.run_output()["result"], json!(false));
             Ok(())
@@ -1025,9 +1057,9 @@ fn combined_condition_iteration_loop_pipeline() -> TestResult {
                 ("items".into(), json!(["alpha", "beta", "gamma"])),
                 ("meta".into(), json!({"team": "ora"})),
             ])).await?;
-            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "journal: {}", run.journal);
+            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "{}", run.failure_summary());
             // Two iteration rounds reach the body (beta is gated away) plus two loop rounds.
-            assert_eq!(run.sessions(), 4, "journal: {}", run.journal);
+            assert_eq!(run.sessions(), 4, "{}", run.failure_summary());
             let body_outputs = run.node_outputs("body").join("\n");
             assert!(body_outputs.contains("item=alpha index=0"), "{body_outputs:?}");
             assert!(body_outputs.contains("item=gamma index=2"), "{body_outputs:?}");
@@ -1068,8 +1100,8 @@ fn combined_condition_iteration_loop_pipeline() -> TestResult {
                 ("items".into(), json!([])),
                 ("meta".into(), json!({"team": "ora"})),
             ])).await?;
-            assert_eq!(skipped.status(), WorkflowRunStatus::Succeeded, "journal: {}", skipped.journal);
-            assert_eq!(skipped.sessions(), 0, "journal: {}", skipped.journal);
+            assert_eq!(skipped.status(), WorkflowRunStatus::Succeeded, "{}", skipped.failure_summary());
+            assert_eq!(skipped.sessions(), 0, "{}", skipped.failure_summary());
             assert_eq!(skipped.run_output()["skipped"], json!("skip"));
             Ok(())
         })
@@ -1138,8 +1170,8 @@ fn file_typed_start_values_render_as_references_and_reject_unsafe_paths() -> Tes
                     ]),
                 )
                 .await?;
-            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "journal: {}", run.journal);
-            assert_eq!(run.sessions(), 1, "journal: {}", run.journal);
+            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "{}", run.failure_summary());
+            assert_eq!(run.sessions(), 1, "{}", run.failure_summary());
             let output = run.node_outputs("agent").join("\n");
             assert!(
                 output.contains("source={\"kind\":\"workspace_file\",\"path\":\"docs/input.txt\"}"),
