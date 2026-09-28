@@ -1,5 +1,5 @@
 use super::*;
-use crate::support::until;
+use crate::support::{ChildGuard, until};
 use ora_contracts::controller_api::*;
 use ora_controller::{
     ApiConfig, DeploymentConfig, NodeEndpoint, NodeHosting, NodeTarget, Persistence, RuntimeConfig,
@@ -7,7 +7,11 @@ use ora_controller::{
 };
 use ora_utils::process::{LinuxPidFd, ProcessSignal, linux_process_snapshot};
 use pretty_assertions::assert_eq;
-use std::time::Duration;
+use std::{
+    os::unix::process::CommandExt,
+    process::{Command, Stdio},
+    time::Duration,
+};
 
 /// Pins the Node the Controller started; test failure must not leave it listening in a deleted root.
 struct HostedNode(LinuxPidFd, u32);
@@ -135,7 +139,7 @@ fn single_node_composition_hosts_and_retires_its_node() {
 
         let node_config_bytes = fs::read(&node_config).unwrap();
         let (mut controller, address) =
-            minicloud::launch(&fixture, &config, /*port*/ 0, NodeHosting::Managed);
+            launch(&fixture, &config, /*port*/ 0, NodeHosting::Managed);
         let port: u16 = address.rsplit(':').next().unwrap().parse().unwrap();
         let first = hosted_node(&node_config);
         // The hosted Node shares the Controller's process group without a new session of its own.
@@ -225,7 +229,7 @@ fn single_node_composition_hosts_and_retires_its_node() {
                 until(|| first.0.has_exited().unwrap());
                 // A replacement composition starts a fresh Node, which replays the original result.
                 let (replacement, _) =
-                    minicloud::launch(&fixture, &config, port, NodeHosting::Managed);
+                    launch(&fixture, &config, port, NodeHosting::Managed);
                 controller = replacement;
                 let second = hosted_node(&node_config);
                 let record = tokio::time::timeout(Duration::from_secs(/*secs*/ 40), async {
@@ -275,7 +279,7 @@ fn single_node_composition_hosts_and_retires_its_node() {
                 assert!(second.0.has_exited().unwrap());
                 assert!(git.has_exited().unwrap());
                 let (replacement, _) =
-                    minicloud::launch(&fixture, &config, port, NodeHosting::Managed);
+                    launch(&fixture, &config, port, NodeHosting::Managed);
                 controller = replacement;
                 let third = hosted_node(&node_config);
                 let mut records: Vec<MiniCloneOperation> = client
@@ -346,4 +350,59 @@ fn launch_expecting_exit(
         .unwrap(),
     );
     (child, path)
+}
+
+/// Starts the production Controller executable on loopback and reads its actual bound address.
+/// Port 0 picks an ephemeral port; restarts pass the first address's port back to keep clients stable.
+pub(super) fn launch(
+    fixture: &Fixture,
+    config: &DeploymentConfig,
+    port: u16,
+    hosting: NodeHosting,
+) -> (ChildGuard, String) {
+    let path = fixture.path().join("controller.json");
+    fs::write(&path, serde_json::to_vec(config).unwrap()).unwrap();
+    let log = fixture.path().join("controller.log");
+    let mut command = Command::new(
+        std::path::Path::new(env!("CARGO_BIN_EXE_ora-node")).with_file_name("ora-controller"),
+    );
+    command
+        .arg("--config")
+        .arg(path)
+        .args(["--transport", "tcp", "--host", "127.0.0.1", "--port"])
+        .arg(port.to_string());
+    match hosting {
+        NodeHosting::Managed => {
+            command.arg("--single-node");
+        }
+        NodeHosting::External => {}
+    }
+    // Lead a fresh process group like the launcher's setsid does, so hosting tests can address the
+    // Controller and its Node together without signaling the test runner's own group.
+    let child = ChildGuard(
+        command
+            .process_group(/*pgroup*/ 0)
+            .stdin(Stdio::null())
+            .stdout(fs::File::create(&log).unwrap())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("build ora-controller before standalone acceptance"),
+    );
+    let mut address = None;
+    until(|| {
+        // The bound endpoint is a structured log event, ordered with the rest of the log.
+        address = fs::read_to_string(&log)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .find(|event| event["message"] == "ora-controller listening")
+            .and_then(|event| {
+                event["context"]["endpoint"]
+                    .as_str()
+                    .and_then(|endpoint| endpoint.strip_prefix("tcp://"))
+                    .map(str::to_owned)
+            });
+        address.is_some()
+    });
+    (child, address.unwrap())
 }
