@@ -22,6 +22,8 @@ pub(super) enum Verdict {
     NotFound,
     /// Identity or content disagrees with the durable record; retrying as-is cannot succeed.
     Conflict,
+    /// A delayed control acknowledgement names a version that has already moved on.
+    StaleRuntimeBinding,
     /// The lease epoch is not current or another holder owns the lease.
     Stale(Detail),
     /// Nothing was committed and the same call may be retried later.
@@ -85,6 +87,9 @@ pub(super) fn classify(status: &Status) -> Verdict {
     };
     match status.code() {
         Code::NotFound => Verdict::NotFound,
+        Code::Aborted if status.message() == "stale_runtime_control" => {
+            Verdict::StaleRuntimeBinding
+        }
         Code::Aborted | Code::InvalidArgument | Code::AlreadyExists | Code::OutOfRange => {
             Verdict::Conflict
         }
@@ -197,6 +202,19 @@ where
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+    /// Only a versioned runtime snapshot may be discarded; target/identity conflicts stay fatal.
+    #[test]
+    fn delayed_runtime_snapshot_is_distinct_from_target_and_lease_failures() {
+        assert_eq!(
+            classify(&Status::aborted("stale_runtime_control")),
+            Verdict::StaleRuntimeBinding
+        );
+        assert_eq!(classify(&Status::aborted("stale_node")), Verdict::Conflict);
+        assert!(matches!(
+            classify(&Status::failed_precondition("stale_controller")),
+            Verdict::Stale(_)
+        ));
+    }
     use super::*;
     use pretty_assertions::assert_eq;
 
@@ -278,7 +296,7 @@ mod tests {
         /// Renders the carried detail so tests can pin the message shape without matching structure.
         fn to_string_for_test(&self) -> String {
             match self {
-                Self::NotFound | Self::Conflict => format!("{self:?}"),
+                Self::NotFound | Self::Conflict | Self::StaleRuntimeBinding => format!("{self:?}"),
                 Self::Stale(detail) | Self::Unavailable(detail) | Self::Unknown(detail) => {
                     detail.to_string()
                 }

@@ -59,9 +59,10 @@ impl CloudStore {
         }
         let epoch = self.epoch()?;
         if state.binding.controller_epoch != epoch {
-            return Err(Error::StaleEligibility);
+            // A late acknowledgement cannot revoke the current management lease or reopen input.
+            return Ok(());
         }
-        fault::write(|submission_id| async move {
+        let outcome = fault::write(|submission_id| async move {
             RuntimeControlServiceClient::new(self.inner.channel.clone())
                 .acknowledge_binding(self.request(proto::AcknowledgeBindingRequest {
                     submission_id,
@@ -75,9 +76,11 @@ impl CloudStore {
                 }))
                 .await
         })
-        .await
-        .map(drop)
-        .map_err(|v| self.settle(v))
+        .await;
+        match outcome {
+            Ok(_) | Err(fault::Verdict::StaleRuntimeBinding) => Ok(()),
+            Err(verdict) => Err(self.settle(verdict)),
+        }
     }
 
     pub(super) async fn controlled_dispatch(
@@ -111,7 +114,7 @@ impl CloudStore {
         .await;
         let response = match response {
             Ok(p) => p,
-            Err(fault::Verdict::Conflict) => return Ok(None),
+            Err(fault::Verdict::Conflict | fault::Verdict::StaleRuntimeBinding) => return Ok(None),
             Err(v) => return Err(self.settle(v)),
         };
         let permit = binding(response.binding.ok_or(Error::Conflict)?);

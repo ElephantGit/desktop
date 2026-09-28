@@ -2,7 +2,7 @@
 
 [English](runtime-control.md)
 
-权威规则链接 [Cloud ADR](../specs/decisions/cloud/controller-integration/20260927-fenced-runtime-control-delivery.md)，Controller/Node 不复制租户角色政策。Cloud proto 固定 f0b5d9c；Controller 只拨出、无过渡 HTTP 监听，云端不另建 SQLite。
+权威规则链接 [Cloud ADR](../specs/decisions/cloud/controller-integration/20260927-fenced-runtime-control-delivery.md)，Controller/Node 不复制租户角色政策。Cloud proto 固定 fe33eb49633028f3fd466de966d3a5754d126557；Controller 只拨出、无过渡 HTTP 监听，云端不另建 SQLite。
 
 执行入口携带独立控制代次、Controller 租约、运行时代次、Node incarnation 与稳定 execution ID。Node 绑定持久后才能确认；接受及首次真实变更都检查旧资格，关闭在同代次不可恢复。Controller 新派发前取得 Cloud 短期许可；到期或断线后查询原责任，不把未知当未执行。
 

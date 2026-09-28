@@ -2,9 +2,9 @@
 # Sandbox Node entrypoint. The Sandbox Server passes the complete Node service configuration as JSON
 # in ORA_NODE_CONFIG and mounts the Workspace volume that holds every state path it names.
 #
-# As root it only prepares what the unprivileged services cannot: the private data root on a fresh
-# volume and the configuration file. It then re-executes itself as `node` to supervise the process
-# host and the Node. Stop order matters: the Node stops first so it can close its managed scopes
+# The root management process owns protected configuration, Node and process-host journals.
+# Git workloads run as UID/GID 1000 through the scoped process boundary. Stop order matters:
+# the Node stops first so it can close its managed scopes
 # through a live host, and only then is the host stopped. Guardians outlive both by design; their
 # journals stay on the volume and the next container recovers them.
 set -eu
@@ -20,8 +20,8 @@ prepare() {
     echo "node-entrypoint: ORA_NODE_CONFIG is empty; this image is started by the Sandbox Server" >&2
     exit 64
   fi
-  # A volume created before its first mount can come up root-owned; only its root is adjusted,
-  # never its contents, so a foreign volume is refused by the services instead of rewritten.
+  # Only the volume mount point is prepared. Existing journals retain their ownership and
+  # services refuse unsafe legacy layouts instead of recursively rewriting user data.
   chown root:root "$data_root"
   chmod 0711 "$data_root"
   # The Node requires the clone root to exist before startup and never creates it.

@@ -6,4 +6,4 @@ The Rust Node requires mutual TLS, a fixed platform scope, and root management s
 
 ## Verification boundary
 
-Module tests cover their real protocol, recovery, Git or TLS boundary. Cloud doubles and the loopback fixture do not prove production multiplayer authorization. Use cluster Compose for acceptance. third_party/cloud pins contract f0b5d9c; generated output is never edited by hand. See [runtime control](../../docs/runtime-control.md) for dependencies and missing evidence.
+Module tests cover their real protocol, recovery, Git or TLS boundary. Cloud doubles and the loopback fixture do not prove production multiplayer authorization. Use cluster Compose for acceptance. third_party/cloud pins contract fe33eb49633028f3fd466de966d3a5754d126557; generated output is never edited by hand. See [runtime control](../../docs/runtime-control.md) for dependencies and missing evidence.

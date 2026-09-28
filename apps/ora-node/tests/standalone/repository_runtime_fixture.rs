@@ -2,6 +2,7 @@
 use super::*;
 use ora_controller::{CoordinationStore, ExecutionOutcome, SqliteStore};
 use ora_node_transport::{mtls::MutualTlsFiles, websocket::WsEndpoint};
+use pretty_assertions::assert_eq;
 use std::{
     ops::Deref,
     path::Path,
@@ -9,6 +10,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+/// Creates ephemeral test-only credentials without sharing the private issuer with workloads.
 pub(super) fn tls(root: &Path, peer: &str) -> MutualTlsFiles {
     let ca_path = root.join("management-ca.pem");
     if !ca_path.exists() {
@@ -42,6 +44,7 @@ pub(super) fn tls(root: &Path, peer: &str) -> MutualTlsFiles {
         peer_certificate_file: Some(root.join("management-controller.pem")),
     }
 }
+/// Uses authenticated loopback transport while retaining actual process and Git boundaries.
 pub(super) fn endpoint(fixture: &Fixture, bind: std::net::SocketAddr) -> WsEndpoint {
     WsEndpoint {
         url: format!("wss://localhost:{}{}", bind.port(), websocket::PATH),
@@ -49,6 +52,7 @@ pub(super) fn endpoint(fixture: &Fixture, bind: std::net::SocketAddr) -> WsEndpo
         tls: Some(tls(fixture.path(), "controller")),
     }
 }
+/// Supplies a fixed test target; this fixture never substitutes for Cloud authorization.
 pub(super) fn scope() -> ora_node::RuntimeScope {
     ora_node::RuntimeScope {
         tenant_id: "test-tenant".into(),
@@ -57,6 +61,7 @@ pub(super) fn scope() -> ora_node::RuntimeScope {
         runtime_generation: 1,
     }
 }
+/// Models a fresh authority decision after restart without reviving an old qualification.
 pub(super) fn advance_epoch(root: &Path) {
     let p = root.join("control-epoch");
     let epoch = fs::read_to_string(&p)
@@ -65,6 +70,7 @@ pub(super) fn advance_epoch(root: &Path) {
         + 1;
     fs::write(p, epoch.to_string()).unwrap();
 }
+/// Binds the real handshake identity to a short-lived test authority decision.
 pub(super) fn binding(root: &Path, node: &NodeRuntimeIdentity) -> RuntimeBinding {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -95,6 +101,7 @@ pub(super) fn binding(root: &Path, node: &NodeRuntimeIdentity) -> RuntimeBinding
         expires_at_ms: now + 30_000,
     }
 }
+/// Names the exact execution being dispatched through the production controlled entrance.
 pub(super) fn controlled(
     mut permit: RuntimeBinding,
     command: CloneRepositoryMessage,
@@ -150,9 +157,9 @@ impl CoordinationStore for RuntimeStore {
         &self,
         state: &RuntimeControlState,
     ) -> Result<(), ora_controller::Error> {
-        if !state.unfinished_execution_ids.is_empty() {
-            return Err(ora_controller::Error::Conflict);
-        };
+        // Renewal keeps the same accepted responsibility; activity does not invalidate the binding.
+        // The real Node independently rejects a second conflicting execution.
+        assert_eq!(state.binding.workspace_id, "test-workspace");
         if let Some((_, confirmed)) = self.current.lock().unwrap().as_mut() {
             *confirmed = true
         };

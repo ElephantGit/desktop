@@ -2,7 +2,7 @@
 
 [中文](runtime-control.zh.md)
 
-The authoritative rules live in the [Cloud ADR](../specs/decisions/cloud/controller-integration/20260927-fenced-runtime-control-delivery.md). Controller and Node do not duplicate tenant role policy. Cloud proto is pinned at f0b5d9c. Controller only dials out and has no cloud business SQLite.
+The authoritative rules live in the [Cloud ADR](../specs/decisions/cloud/controller-integration/20260927-fenced-runtime-control-delivery.md). Controller and Node do not duplicate tenant role policy. Cloud proto is pinned at fe33eb49633028f3fd466de966d3a5754d126557. Controller only dials out and has no cloud business SQLite.
 
 Binding persistence precedes acknowledgement. User epoch, Controller lease, runtime generation, Node incarnation and stable execution ID remain distinct. Acceptance and first real mutation both fence old qualification. Closure is sticky within an epoch. New dispatch requires a fresh Cloud permit; disconnection or expiry permits reconciliation of original responsibility, never inference that unknown work did not execute.
 

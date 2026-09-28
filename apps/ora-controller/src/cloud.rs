@@ -219,7 +219,7 @@ impl CloudStore {
     /// fact was required, which the interface defines as a conflict.
     fn settle(&self, verdict: Verdict) -> Error {
         match verdict {
-            Verdict::NotFound | Verdict::Conflict => Error::Conflict,
+            Verdict::NotFound | Verdict::Conflict | Verdict::StaleRuntimeBinding => Error::Conflict,
             Verdict::Stale(detail) => {
                 ora_logging::ora_warn!(detail = %detail, "Cloud lease is no longer current");
                 self.set_lease(None);
