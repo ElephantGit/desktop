@@ -430,9 +430,11 @@ export type TaskBaseBranchNotFoundParams = { branchName: string };
 /**
  * Names the Start variable whose supplied or missing value a run rejected, with the reason.
  *
- * `variable` is the name as the run-input screen shows it; `reason` is a stable English
- * detail such as "value does not match the declared type number" that the UI may surface
- * verbatim next to the localized title.
+ * `variable` is the Start variable's declared name — the identifier the run-input payload keys
+ * values by. The run-input screen may label the field with a configured display name instead,
+ * so clients highlighting the rejected field must match on this name, not the screen label.
+ * `reason` is a stable English detail such as "value does not match the declared type number"
+ * that the UI may surface verbatim next to the localized title.
  */
 export type WorkflowRunInputInvalidParams = {
   variable: string;

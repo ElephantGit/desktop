@@ -57,10 +57,11 @@ impl StartInputFieldType {
                 "boolean" => Some(Self::Checkbox),
                 "file" => Some(Self::File),
                 "array[file]" => Some(Self::FileList),
-                "object" | "any" | "array" | "array[string]" | "array[number]"
-                | "array[object]" | "array[boolean]" | "array[any]" => Some(Self::Json),
                 "string" | "secret" => Some(Self::TextInput),
-                _ => None,
+                // Legacy structured declarations derive the JSON control through `produces`,
+                // keeping the accepted set in one place: a type round-trips to the JSON control
+                // if and only if the control produces it.
+                _ => Self::Json.produces(value_type).then_some(Self::Json),
             },
         }
     }

@@ -43,7 +43,15 @@ const REPLY_DIRECTIVE: &str = "FAKE_REPLY: ";
 
 /// Marker line the workflow prompt assembler emits before the node's task instructions.
 const TASK_INSTRUCTIONS_MARKER: &str = "Task instructions:\n";
-const TASK_INSTRUCTIONS_MARKER_ZH: &str = "任务要求：\n";
+/// Same marker for the zh-CN prompt copy. The assembler appends the half-width colon itself
+/// (`writeln!(text, "{}:\n{prompt}", copy.task_instructions)`), so this must not use the
+/// full-width `：` or Chinese runs never match and fall back to the whole-prompt echo.
+const TASK_INSTRUCTIONS_MARKER_ZH: &str = "任务要求:\n";
+
+/// Boundary every assembled workflow step block ends with. The host appends its injected
+/// context (workflow overview, previous-failure summaries, structured-output contracts) only
+/// after this boundary, so text beyond it is never user-authored task content.
+const STEP_BLOCK_END: &str = "\n</current_workflow_step>";
 
 /// One fake session retained for the life of the plugin process.
 #[derive(Debug, Clone)]
@@ -421,13 +429,19 @@ fn default_model_id() -> &'static str {
 
 /// Builds the fake's deterministic answer for one rendered prompt.
 ///
-/// Precedence: a retry (previous-failure block) always answers `"{\"ok\":true}"` so
-/// structured-output resume flows converge; an explicit `FAKE_REPLY:` directive in the task
-/// instructions answers with exactly that text (exact equals-conditions, JSON answers); a
-/// workflow task answers with the task-instruction text so outputs stay production-realistic;
-/// anything else keeps the legacy whole-prompt echo (direct sessions, held fixtures).
+/// Precedence: a retry (previous-failure block after the step block) always answers
+/// `"{\"ok\":true}"` so structured-output resume flows converge; an explicit `FAKE_REPLY:`
+/// directive in the task instructions answers with exactly that text (exact equals-conditions,
+/// JSON answers); a workflow task answers with the task-instruction text so outputs stay
+/// production-realistic; anything else keeps the legacy whole-prompt echo (direct sessions,
+/// held fixtures).
 fn fake_reply(prompt: &str) -> String {
-    if prompt.contains("## Previous attempt") || prompt.contains("## 上一次尝试") {
+    // Only text after the step block counts as a retry signal: the assembler appends the
+    // previous-failure summary after `</current_workflow_step>`, while a task template that
+    // merely quotes the failure heading must not trigger the retry answer.
+    if prompt_after_step_block(prompt)
+        .is_some_and(|tail| tail.contains("## Previous attempt") || tail.contains("## 上一次尝试"))
+    {
         return r#"{"ok":true}"#.to_string();
     }
     if prompt.trim().is_empty() {
@@ -444,6 +458,10 @@ fn fake_reply(prompt: &str) -> String {
 
 /// Extracts the workflow step's task instructions (the user-authored prompt template with
 /// variables already rendered) from an assembled workflow prompt.
+///
+/// A missing end boundary returns `None` on purpose: falling back to the legacy whole-prompt
+/// echo makes exact-equality scenarios fail loudly when the assembler wording drifts, instead
+/// of silently swallowing the injected context blocks that follow the step block.
 fn task_instructions(prompt: &str) -> Option<&str> {
     let marker = if prompt.contains(TASK_INSTRUCTIONS_MARKER) {
         TASK_INSTRUCTIONS_MARKER
@@ -454,10 +472,15 @@ fn task_instructions(prompt: &str) -> Option<&str> {
     };
     let start = prompt.rfind(marker)? + marker.len();
     let end = prompt[start..]
-        .find("\n</current_workflow_step>")
-        .map(|offset| start + offset)
-        .unwrap_or(prompt.len());
+        .find(STEP_BLOCK_END)
+        .map(|offset| start + offset)?;
     Some(&prompt[start..end])
+}
+
+/// Returns the host-injected text after the workflow step block, if the prompt carries one.
+fn prompt_after_step_block(prompt: &str) -> Option<&str> {
+    let end = prompt.rfind(STEP_BLOCK_END)? + STEP_BLOCK_END.len();
+    Some(&prompt[end..])
 }
 
 /// Deserializes method parameters while preserving the method in diagnostics.

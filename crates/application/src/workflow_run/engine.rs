@@ -54,11 +54,12 @@ pub use node_executor::{
 pub use node_type::{NodeType, UnknownNodeType};
 pub use ports::{
     AdvanceWorkflowRunResult, BindWorkflowNodeSessionResult, CancelWorkflowRunResult,
-    ExecutionContext, FailurePropagation, FileChange, IterationRoundContinuation, LoopRoundAdvance,
-    LoopRoundToStart, NoRunInvalidations, NodeRunToStart, RestartWorkflowRunResult,
-    ResumeWorkflowRunResult, RunInputRejection, RunInputRejectionReason, StartPrerequisitesError,
-    StartWorkflowRunResult, UpdateWorkflowRunInputResult, WorkflowNodeRunIdGenerator,
-    WorkflowRunEngineRepository, WorkflowRunInvalidationPublisher, WorkflowRunWorkspaceInitializer,
+    ExecutionContext, FailurePropagation, FileChange, INVALID_START_OPTION_DETAIL,
+    IterationRoundContinuation, LoopRoundAdvance, LoopRoundToStart, MISSING_REQUIRED_START_DETAIL,
+    NoRunInvalidations, NodeRunToStart, RestartWorkflowRunResult, ResumeWorkflowRunResult,
+    RunInputRejection, RunInputRejectionReason, StartPrerequisitesError, StartWorkflowRunResult,
+    UpdateWorkflowRunInputResult, WorkflowNodeRunIdGenerator, WorkflowRunEngineRepository,
+    WorkflowRunInvalidationPublisher, WorkflowRunWorkspaceInitializer,
 };
 pub use region::{resume_clear_node_ids, resume_unit_owner_id, running_row_blocks_resume};
 pub use skill_delivery::{

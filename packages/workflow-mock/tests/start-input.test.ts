@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  isWorkflowJsonFieldValueType,
   resolveWorkflowInputFieldType,
   resolveWorkflowInputVariableValueType,
-  workflowInputFieldProducesValueType,
-  workflowInputFieldValueType,
   WORKFLOW_INPUT_FIELD_TYPES,
   WORKFLOW_JSON_FIELD_VALUE_TYPES,
+  workflowInputFieldProducesValueType,
+  workflowInputFieldValueType,
 } from "../src";
 
 describe("Start input field types", () => {
@@ -45,19 +46,59 @@ describe("Start input field types", () => {
       // Every structured declaration must keep resolving back to the JSON control so
       // re-saving an edited variable never rewrites its declared pool type.
       expect(resolveWorkflowInputFieldType({ valueType })).toBe("json");
+      // The shared guard accepts exactly the members the control can declare.
+      expect(isWorkflowJsonFieldValueType(valueType)).toBe(true);
     }
     // Scalar and file pool types belong to their dedicated controls.
-    for (const valueType of [
+    for (
+      const valueType of [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "secret",
+        "file",
+        "array[file]",
+      ] as const
+    ) {
+      expect(workflowInputFieldProducesValueType("json", valueType)).toBe(
+        false,
+      );
+      expect(isWorkflowJsonFieldValueType(valueType)).toBe(false);
+    }
+  });
+
+  it("derives every legacy declaration from the constant alone", () => {
+    // The exhaustive vocabulary every Start declaration may use. A new pool type that
+    // belongs on the JSON control but is missing from the constant fails this loop (or the
+    // compiler's exhaustiveness guard in `resolveWorkflowInputFieldType`), instead of
+    // silently collapsing a saved declaration to `any` when the variable is reopened.
+    const everyPoolType = [
       "string",
       "number",
       "integer",
       "boolean",
       "secret",
       "file",
+      ...WORKFLOW_JSON_FIELD_VALUE_TYPES,
       "array[file]",
-    ] as const) {
-      expect(workflowInputFieldProducesValueType("json", valueType)).toBe(
-        false,
+    ] as const;
+    // `integer` and `secret` are legacy aliases without their own control: they collapse to
+    // the producing type of the control they derive to (number / string).
+    const legacyAliases: Record<string, string> = {
+      integer: "number",
+      secret: "string",
+    };
+    for (const valueType of everyPoolType) {
+      const fieldType = resolveWorkflowInputFieldType({ valueType });
+      // Only members of the constant may derive the JSON control.
+      if (fieldType === "json") {
+        expect(isWorkflowJsonFieldValueType(valueType)).toBe(true);
+      }
+      // Whatever control a type derives to, reopening keeps either the type itself (the
+      // pair round-trips) or the legacy alias's documented collapse.
+      expect(resolveWorkflowInputVariableValueType({ valueType })).toBe(
+        legacyAliases[valueType] ?? valueType,
       );
     }
   });

@@ -18,8 +18,10 @@ export const WORKFLOW_INPUT_FIELD_TYPES = [
 
 /** Pool types a JSON control may declare: arbitrary JSON covers objects, arrays, and mixed values.
  *
- * This is exactly the set `resolveWorkflowInputFieldType` maps back to the JSON control, so a
- * saved (control, type) pair always round-trips without rewriting the declaration.
+ * This is the single source of truth for which pool types resolve back to the JSON control:
+ * `resolveWorkflowInputFieldType` derives the control through `isWorkflowJsonFieldValueType`,
+ * so a saved (control, type) pair always round-trips without rewriting the declaration, and a
+ * new pool type that is not listed here is a compile error there instead of a silent collapse.
  */
 export const WORKFLOW_JSON_FIELD_VALUE_TYPES = [
   "object",
@@ -31,6 +33,10 @@ export const WORKFLOW_JSON_FIELD_VALUE_TYPES = [
   "array[boolean]",
   "array[any]",
 ] as const satisfies readonly WorkflowVariableValueType[];
+
+/** The pool types the JSON control can declare, as a union. */
+export type WorkflowJsonFieldValueType =
+  (typeof WORKFLOW_JSON_FIELD_VALUE_TYPES)[number];
 
 /** Returns the variable-pool type produced by one Start form control. */
 export function workflowInputFieldValueType(
@@ -66,8 +72,19 @@ export function workflowInputFieldProducesValueType(
   valueType: WorkflowVariableValueType,
 ): boolean {
   return fieldType === "json"
-    ? (WORKFLOW_JSON_FIELD_VALUE_TYPES as readonly string[]).includes(valueType)
+    ? isWorkflowJsonFieldValueType(valueType)
     : workflowInputFieldValueType(fieldType) === valueType;
+}
+
+/** Narrows a string to a pool type the JSON control can declare.
+ *
+ * The single membership check for `WORKFLOW_JSON_FIELD_VALUE_TYPES`; every consumer (this
+ * package and the editor) routes through it so the supported set cannot drift per call site.
+ */
+export function isWorkflowJsonFieldValueType(
+  value: string,
+): value is WorkflowJsonFieldValueType {
+  return (WORKFLOW_JSON_FIELD_VALUE_TYPES as readonly string[]).includes(value);
 }
 
 /** Returns the pool type an existing declaration keeps when its control still produces it.
@@ -85,7 +102,13 @@ export function resolveWorkflowInputVariableValueType(
     : workflowInputFieldValueType(fieldType);
 }
 
-/** Resolves legacy Start declarations that predate explicit form control metadata. */
+/** Resolves legacy Start declarations that predate explicit form control metadata.
+ *
+ * Structured types derive the JSON control through the shared membership check instead of a
+ * hand-maintained case list, so `WORKFLOW_JSON_FIELD_VALUE_TYPES` stays the only place that
+ * enumerates them; a pool type missing from both the explicit cases and the constant is a
+ * compile error (the `default` arm only accepts `never`), not a silent control change.
+ */
 export function resolveWorkflowInputFieldType(
   variable: Pick<WorkflowInputVariable, "fieldType" | "valueType">,
 ): WorkflowInputFieldType {
@@ -100,17 +123,18 @@ export function resolveWorkflowInputFieldType(
       return "file";
     case "array[file]":
       return "file-list";
-    case "object":
-    case "any":
-    case "array":
-    case "array[string]":
-    case "array[number]":
-    case "array[object]":
-    case "array[boolean]":
-    case "array[any]":
-      return "json";
     case "string":
     case "secret":
       return "text-input";
+    default:
+      if (isWorkflowJsonFieldValueType(variable.valueType)) return "json";
+      // Exhaustiveness guard: with the current vocabulary every remaining pool type is a
+      // JSON-control member, so this only compiles while that invariant holds.
+      return unreachablePoolType(variable.valueType);
   }
+}
+
+/** Fails at compile time for pool types no Start control can produce. */
+function unreachablePoolType(value: never): never {
+  throw new Error(`unsupported workflow variable value type: ${value}`);
 }

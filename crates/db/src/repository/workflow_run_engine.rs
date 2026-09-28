@@ -790,6 +790,67 @@ mod tests {
         );
     }
 
+    /// Payload whose catalog carries an entry the Start node does not own and a max-length text
+    /// declaration, covering the rejection reasons beyond undeclared and type mismatch.
+    const START_PAYLOAD_WITH_EDGE_DECLARATIONS: &str = r#"{
+        "locale":"en-US",
+        "skillMaterialization":{"bindings":[]},
+        "variablePool":{
+            "revision":0,
+            "catalog":{
+                "start.count":{"valueType":"integer","writer":"start"},
+                "start.hijacked":{"valueType":"string","writer":"agent"},
+                "start.summary":{"valueType":"string","writer":"start","maxLength":4}
+            },
+            "values":{}
+        },
+        "startNodeId":"start"
+    }"#;
+
+    /// A declared-but-foreign-writer entry is rejected as not Start-owned, so a corrupted or
+    /// future layout cannot be silently written through the run-input boundary.
+    #[test]
+    fn rejects_a_start_prefixed_variable_owned_by_another_writer() {
+        let error = update_task_input_in_payload(
+            Some(START_PAYLOAD_WITH_EDGE_DECLARATIONS),
+            &BTreeMap::from([("hijacked".to_string(), json!("value"))]),
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                UpdateTaskInputError::Rejected {
+                    variable,
+                    reason: RunInputRejectionReason::NotStartOwned
+                } if variable == "hijacked"
+            ),
+            "unexpected rejection {error:?}"
+        );
+    }
+
+    /// A value over the declaration's max length is rejected with the limit, mirroring the
+    /// editor's text-field constraint at the repository boundary.
+    #[test]
+    fn rejects_a_start_value_over_its_declared_maximum_length() {
+        let error = update_task_input_in_payload(
+            Some(START_PAYLOAD_WITH_EDGE_DECLARATIONS),
+            &BTreeMap::from([("summary".to_string(), json!("longer"))]),
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                UpdateTaskInputError::Rejected {
+                    variable,
+                    reason: RunInputRejectionReason::LengthExceeded { max_length }
+                } if variable == "summary" && *max_length == 4
+            ),
+            "unexpected rejection {error:?}"
+        );
+    }
+
     /// Updating the run instruction keeps the reserved selector in sync with the input column.
     #[test]
     fn mirrors_a_run_instruction_into_the_reserved_start_input_selector() {

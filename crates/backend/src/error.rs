@@ -1,5 +1,8 @@
 use ora_agent_runtime::{ErrorClassification as RuntimeErrorClassification, RuntimeError};
-use ora_application::{ApplicationError, SkillImportError, WorkflowValidationError};
+use ora_application::{
+    ApplicationError, INVALID_START_OPTION_DETAIL, MISSING_REQUIRED_START_DETAIL, SkillImportError,
+    WorkflowValidationError,
+};
 use ora_contracts::{
     ContractError, EmptyErrorParams, PublicError, RequestId, SkillFolderConflictParams,
     WorkflowRunInputInvalidParams, WorkflowSnapshotIncompatibleWithResumeParams,
@@ -642,7 +645,7 @@ impl From<ApplicationError> for BackendError {
                 ErrorClassification::InvalidRequest,
                 PublicError::WorkflowRunInputInvalid(WorkflowRunInputInvalidParams {
                     variable: name.clone(),
-                    reason: "required value is missing".to_string(),
+                    reason: MISSING_REQUIRED_START_DETAIL.to_string(),
                 }),
                 "workflow run input value was rejected",
             ),
@@ -652,7 +655,7 @@ impl From<ApplicationError> for BackendError {
                 ErrorClassification::InvalidRequest,
                 PublicError::WorkflowRunInputInvalid(WorkflowRunInputInvalidParams {
                     variable: name.clone(),
-                    reason: "value is not one of the configured options".to_string(),
+                    reason: INVALID_START_OPTION_DETAIL.to_string(),
                 }),
                 "workflow run input value was rejected",
             ),
@@ -723,7 +726,8 @@ impl From<ApplicationError> for BackendError {
 mod tests {
     use super::{BackendError, ErrorClassification};
     use ora_application::{
-        ApplicationError, RepositoryError, SkillImportError, WorkflowValidationError,
+        ApplicationError, INVALID_START_OPTION_DETAIL, MISSING_REQUIRED_START_DETAIL,
+        RepositoryError, SkillImportError, WorkflowValidationError,
     };
     use ora_contracts::{
         EmptyErrorParams, PublicError, SkillFolderConflictParams, WorkflowRunInputInvalidParams,
@@ -812,7 +816,27 @@ mod tests {
             error.public_error().clone(),
             PublicError::WorkflowRunInputInvalid(WorkflowRunInputInvalidParams {
                 variable: "brief".to_string(),
-                reason: "required value is missing".to_string(),
+                reason: MISSING_REQUIRED_START_DETAIL.to_string(),
+            })
+        );
+    }
+
+    /// Verifies an out-of-option Start value names the variable instead of a generic failure,
+    /// pinning the third start-validation branch of the same public contract.
+    #[test]
+    fn maps_an_invalid_start_variable_option_with_its_name() {
+        let error = BackendError::from(ApplicationError::WorkflowRunValidation(
+            WorkflowValidationError::InvalidStartVariableOption {
+                name: "mode".to_string(),
+            },
+        ));
+
+        assert_eq!(error.classification(), ErrorClassification::InvalidRequest);
+        assert_eq!(
+            error.public_error().clone(),
+            PublicError::WorkflowRunInputInvalid(WorkflowRunInputInvalidParams {
+                variable: "mode".to_string(),
+                reason: INVALID_START_OPTION_DETAIL.to_string(),
             })
         );
     }

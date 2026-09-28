@@ -47,6 +47,13 @@ pub(super) fn seed_system_variables(
     Ok(changed)
 }
 
+/// Folds user-supplied Start values into a run payload.
+///
+/// Single-rejection contract: values fold in `BTreeMap` order (alphabetical by variable name,
+/// not form order), and the first rejected value aborts the whole submission before any value
+/// is applied, so one save reports exactly one variable and the run keeps its previously stored
+/// input. Surfacing every rejected field at once would need a multi-rejection port and public
+/// error shape; until then callers must not assume batch diagnostics here.
 pub(super) fn update_task_input_in_payload(
     serialized_payload: Option<&str>,
     variables: &std::collections::BTreeMap<String, serde_json::Value>,
@@ -100,8 +107,12 @@ pub(super) fn update_task_input_in_payload(
                             variable: name.clone(),
                             reason: RunInputRejectionReason::LengthExceeded { max_length },
                         },
+                        // Defensive guard: `set()` re-checks the declaration and writer the
+                        // pre-checks above already validated, so reaching here means the stored
+                        // pool disagrees with its own catalog. Kept as a dedicated corrupt-state
+                        // variant so it never surfaces as a misleading SQL conversion failure.
                         other => UpdateTaskInputError::Database(
-                            rusqlite::Error::ToSqlConversionFailure(Box::new(other)).into(),
+                            crate::DatabaseError::CorruptWorkflowVariablePool(other),
                         ),
                     })?;
             }

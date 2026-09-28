@@ -229,8 +229,17 @@ impl WorkflowHarness {
 
     /// Creates a pending run on a freshly published graph without providing values yet.
     fn pending_run(&mut self, graph: Value) -> Result<String, Box<dyn std::error::Error>> {
+        self.pending_run_with_locale(graph, WorkflowRunLocale::EnUs)
+    }
+
+    /// Creates a pending run on a freshly published graph with an explicit display language.
+    fn pending_run_with_locale(
+        &mut self,
+        graph: Value,
+        locale: WorkflowRunLocale,
+    ) -> Result<String, Box<dyn std::error::Error>> {
         self.publish(graph)?;
-        self.create_pending_run()
+        self.create_pending_run_with_locale(locale)
             .map_err(|error| format!("run creation failed: {error}").into())
     }
 
@@ -255,6 +264,14 @@ impl WorkflowHarness {
 
     /// Creates a pending run on the most recently published workflow.
     fn create_pending_run(&self) -> Result<String, ora_backend::BackendError> {
+        self.create_pending_run_with_locale(WorkflowRunLocale::EnUs)
+    }
+
+    /// Creates a pending run whose prompt copy freezes the given display language.
+    fn create_pending_run_with_locale(
+        &self,
+        locale: WorkflowRunLocale,
+    ) -> Result<String, ora_backend::BackendError> {
         let workflow_id = self.published_workflow_ids.last().cloned().ok_or_else(|| {
             ora_backend::BackendError::new(
                 ora_backend::ErrorClassification::NotFound,
@@ -269,7 +286,7 @@ impl WorkflowHarness {
                 inject_last_failure: None,
                 workspace_id: self.workspace_id.clone(),
                 workflow_id,
-                locale: WorkflowRunLocale::EnUs,
+                locale,
                 snapshot_id: None,
                 kickoff_input: None,
                 name: None,
@@ -557,6 +574,104 @@ fn starting_without_a_required_start_value_is_rejected() -> TestResult {
     })
 }
 
+/// Starting a run with a select value outside its options is rejected naming the variable and
+/// the option constraint, completing the start-validation rejection coverage.
+#[test]
+fn starting_with_an_out_of_option_start_value_is_rejected() -> TestResult {
+    ora_logging::with_trace_logging(|| {
+        current_thread_runtime()?.block_on(async {
+            let mut harness = WorkflowHarness::open()?;
+            let graph = json!({
+                "nodes": [
+                    {"id":"start","type":"workflow","position":{"x":0,"y":0},"data":{"kind":"start","inputVariables":[
+                        {"name":"mode","fieldType":"select","valueType":"string","options":["fast","slow"]}
+                    ]}},
+                    {"id":"agent","type":"workflow","position":{"x":360,"y":0},"data":agent_data("ok")},
+                    {"id":"out","type":"workflow","position":{"x":720,"y":0},"data":{"kind":"output","outputs":[]}}
+                ],
+                "edges":[
+                    {"source":"start","target":"agent"},
+                    {"source":"agent","target":"out"}
+                ]
+            });
+            let run_id = harness.pending_run(graph)?;
+            // The value is a well-typed string, so the input boundary accepts it; the option
+            // constraint fires when the run starts, mirroring the editor's select control.
+            harness
+                .backend
+                .workflow_runs()
+                .update_input(UpdateWorkflowRunInputRequest {
+                    run_id: run_id.clone(),
+                    input: None,
+                    variables: BTreeMap::from([("mode".into(), json!("turbo"))]),
+                })
+                .map_err(|error| format!("update_input rejected a well-typed option value: {error}"))?;
+            let error = harness
+                .backend
+                .workflow_runs()
+                .start(StartWorkflowRunRequest { run_id })
+                .err()
+                .ok_or("start accepted a value outside the select options")?;
+            assert_eq!(
+                error.public_error().clone(),
+                PublicError::WorkflowRunInputInvalid(WorkflowRunInputInvalidParams {
+                    variable: "mode".to_string(),
+                    reason: "value is not one of the configured options".to_string(),
+                }),
+                "start rejection must name the out-of-option variable"
+            );
+            Ok(())
+        })
+    })
+}
+
+/// A zh-CN run renders the Chinese prompt copy and the fake agent must still answer with the
+/// task instructions alone: the Chinese marker matches the assembler's half-width colon, so a
+/// locale drift fails this exact-equality assertion instead of silently embedding the injected
+/// context blocks into node outputs.
+#[test]
+fn zh_cn_runs_answer_with_the_task_instructions_only() -> TestResult {
+    ora_logging::with_trace_logging(|| {
+        current_thread_runtime()?.block_on(async {
+            let mut harness = WorkflowHarness::open()?;
+            let graph = json!({
+                "nodes": [
+                    {"id":"start","type":"workflow","position":{"x":0,"y":0},"data":{"kind":"start","inputVariables":[]}},
+                    {"id":"agent","type":"workflow","position":{"x":360,"y":0},"data":agent_data("请用一句话总结当前任务。")},
+                    {"id":"out","type":"workflow","position":{"x":720,"y":0},"data":{"kind":"output","outputs":[
+                        {"name":"answer","variableSelector":["agent","output"]}
+                    ]}}
+                ],
+                "edges":[
+                    {"source":"start","target":"agent"},
+                    {"source":"agent","target":"out"}
+                ]
+            });
+            let run_id =
+                harness.pending_run_with_locale(graph, WorkflowRunLocale::ZhCn)?;
+            let run = harness.run_on_pending(run_id, BTreeMap::new()).await?;
+            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "{}", run.failure_summary());
+            // Exact equality pins both the marker match and the absence of injected blocks
+            // (workspace boundary, workflow overview) in either locale.
+            assert_eq!(
+                run.node_outputs("agent").join("\n"),
+                "Fake agent received: 请用一句话总结当前任务。"
+            );
+            let prompts = run
+                .prompts()
+                .iter()
+                .map(|(_, prompt)| prompt.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                prompts.contains("任务要求:\n请用一句话总结当前任务。"),
+                "zh-CN prompt must carry the Chinese task-instruction marker: {prompts:?}"
+            );
+            Ok(())
+        })
+    })
+}
+
 // ── Condition nodes ──
 
 /// String equality routes to the matching branch; a non-matching value falls back to the
@@ -619,7 +734,8 @@ fn condition_routes_string_equality_and_falls_back_to_else() -> TestResult {
 }
 
 /// Numeric and boolean operators combine under one case's logic, and the first matching case
-/// wins when several could match.
+/// wins when several could match: `big` and `small` deliberately overlap for `count > 3`, so
+/// `(count=5, flag=true)` satisfies both and must resolve to `big-branch`.
 #[test]
 fn condition_compares_numbers_and_booleans_with_first_match_wins() -> TestResult {
     ora_logging::with_trace_logging(|| {
@@ -637,7 +753,7 @@ fn condition_compares_numbers_and_booleans_with_first_match_wins() -> TestResult
                             {"variableSelector":["start","flag"],"operator":"is","value":true}
                         ]},
                         {"id":"small","logic":"or","conditions":[
-                            {"variableSelector":["start","count"],"operator":"less_than","value":3},
+                            {"variableSelector":["start","count"],"operator":"greater_than","value":3},
                             {"variableSelector":["start","count"],"operator":"equals","value":1}
                         ]}
                     ]}},
@@ -661,10 +777,15 @@ fn condition_compares_numbers_and_booleans_with_first_match_wins() -> TestResult
                 graph
             };
             for (count, flag, expected) in [
+                // Both cases match (count > 3 with flag true): the first case must win.
                 (json!(5), json!(true), "big-branch"),
-                (json!(1), json!(false), "small-branch"),
+                // Only `small` matches (count > 3 but flag false), proving the second case is
+                // reachable instead of dead ordering.
+                (json!(5), json!(false), "small-branch"),
+                // Neither matches: the else fallback.
                 (json!(3), json!(false), "mid-branch"),
-                (json!(5), json!(false), "mid-branch"),
+                // The `or` fallback inside `small` (count == 1).
+                (json!(1), json!(false), "small-branch"),
             ] {
                 let run = harness.run(graph(count, flag), BTreeMap::new()).await?;
                 assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "{}", run.failure_summary());

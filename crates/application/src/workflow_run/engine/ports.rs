@@ -240,13 +240,19 @@ pub enum UpdateWorkflowRunInputResult {
     /// One supplied value was rejected before entering the pool; the run keeps its previously
     /// stored input. Carries which Start variable was rejected and why, so the run-input screen
     /// can point the user at the exact field instead of a generic failure.
+    ///
+    /// Single-rejection contract: a submission reports at most one rejection — the first
+    /// refused value in the payload's alphabetical fold order — and no value from that
+    /// submission is applied.
     Rejected(RunInputRejection),
 }
 
 /// One Start variable the run-input boundary refused, with the rejection's cause.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunInputRejection {
-    /// The Start variable's name as the run-input screen displays it.
+    /// The Start variable's declared name, the identifier the run-input payload keys values by.
+    /// The run-input screen may label the field with a configured display name instead, so
+    /// clients highlighting the rejected field must match on this name, not the screen label.
     pub variable: String,
     pub reason: RunInputRejectionReason,
 }
@@ -281,6 +287,16 @@ impl RunInputRejectionReason {
         }
     }
 }
+
+/// Stable public detail for a Start variable whose required value is missing at start time.
+///
+/// Start-time validation failures reuse the run-input rejection's public error, so their
+/// user-facing details belong beside the other stable reason strings instead of living as
+/// inline literals in adapter mapping layers.
+pub const MISSING_REQUIRED_START_DETAIL: &str = "required value is missing";
+
+/// Stable public detail for a Start value outside its select options at start time.
+pub const INVALID_START_OPTION_DETAIL: &str = "value is not one of the configured options";
 
 /// Persistence operations for the workflow run execution engine.
 ///
