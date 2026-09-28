@@ -5,10 +5,10 @@ use crate::support::until;
 use futures_util::{SinkExt, StreamExt};
 use ora_node_transport::{
     FrameReceiver, FrameSender,
-    websocket::{self as transport, WsEndpoint},
+    websocket::{self as transport},
 };
 use pretty_assertions::assert_eq;
-use std::{collections::BTreeMap, net::Ipv4Addr, time::Duration};
+use std::{net::Ipv4Addr, time::Duration};
 use tokio::{io::AsyncWriteExt, net::UnixStream, time::timeout};
 use tokio_tungstenite::tungstenite::{
     Message,
@@ -167,24 +167,51 @@ fn websocket_session_answers_ping_and_close_while_clone_git_runs() {
         until(|| {
             fs::read_to_string(fixture.path().join("websocket.log"))
                 .unwrap_or_default()
-                .contains("Node WebSocket listening")
+                .contains("Node mutual TLS WebSocket listening")
         });
-        let url = format!("ws://{bind}{}", websocket::PATH);
+        let endpoint = runtime_fixture::endpoint(&fixture, bind);
+        let url = endpoint.url.clone();
         let command = request(&server, "busy-websocket", "main");
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap()
             .block_on(async {
-                let (mut socket, _) = tokio_tungstenite::connect_async(url.as_str())
+                let (mut socket, _) = tokio_tungstenite::connect_async_tls_with_config(
+                    url.as_str(),
+                    None,
+                    true,
+                    Some(tokio_tungstenite::Connector::Rustls(
+                        endpoint.tls.as_ref().unwrap().client().unwrap(),
+                    )),
+                )
+                .await
+                .unwrap();
+                socket
+                    .send(Message::Binary(
+                        encode_controller_frame(&hello()).unwrap().into(),
+                    ))
                     .await
                     .unwrap();
+                let Message::Binary(greeting) = socket.next().await.unwrap().unwrap() else {
+                    panic!("expected greeting")
+                };
+                let NodeToControllerMessage::HelloAccepted(greeting) =
+                    decode_node_frame(&greeting).unwrap()
+                else {
+                    panic!("expected HelloAccepted")
+                };
+                let binding = runtime_fixture::binding(fixture.path(), &greeting.payload.node);
                 for message in [
-                    hello(),
-                    ControllerToNodeMessage::CloneRepository(command.clone()),
+                    ControllerToNodeMessage::BindRuntime(binding.clone()),
+                    runtime_fixture::controlled(binding, command.clone()),
                 ] {
-                    let frame = encode_controller_frame(&message).unwrap();
-                    socket.send(Message::Binary(frame.into())).await.unwrap();
+                    socket
+                        .send(Message::Binary(
+                            encode_controller_frame(&message).unwrap().into(),
+                        ))
+                        .await
+                        .unwrap();
                 }
                 let mut accepted = false;
                 while !accepted {
@@ -254,11 +281,7 @@ fn websocket_session_answers_ping_and_close_while_clone_git_runs() {
                 // A router waiting for the close handshake keeps the TCP connection open, so
                 // heartbeat writes still succeed and only reading the close can release the slot.
                 let _lingering = socket;
-                let endpoint = WsEndpoint {
-                    tls: None,
-                    url,
-                    headers: BTreeMap::new(),
-                };
+                let endpoint = runtime_fixture::endpoint(&fixture, bind);
                 timeout(RELEASE_BOUND, async {
                     loop {
                         let (mut receiver, mut sender) =

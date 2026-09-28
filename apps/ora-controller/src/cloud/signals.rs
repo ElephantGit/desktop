@@ -186,6 +186,15 @@ pub(super) async fn next(signals: &mut Signals<Stream>) -> Event {
                 Event::NodeAssignment
             }
             Some(Signal::Drain(_)) => Event::Drain,
+            // Thread command relay is not implemented yet; the command stays durable in Cloud,
+            // so dropping the hint loses nothing.
+            Some(Signal::ThreadCommandAvailable(available)) => {
+                ora_logging::ora_info!(
+                    run_id = %available.run_id,
+                    "Cloud signalled a Thread command; ignored until the session relay exists"
+                );
+                Event::Unrecognized
+            }
             None => Event::Unrecognized,
         },
         Ok(None) => Event::Ended,

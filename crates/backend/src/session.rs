@@ -50,7 +50,7 @@ impl Sessions {
         &self,
         request: StartSessionRequest,
     ) -> Result<StartSessionResponse, BackendError> {
-        self.agent_runtime.start_session(request).await
+        Ok(self.agent_runtime.start_session(request).await?)
     }
 
     /// Applies one configuration option to a persisted session.
@@ -58,7 +58,7 @@ impl Sessions {
         &self,
         request: SetSessionConfigRequest,
     ) -> Result<SetSessionConfigResponse, BackendError> {
-        self.agent_runtime.set_session_config(request).await
+        Ok(self.agent_runtime.set_session_config(request).await?)
     }
 
     /// Gets one session through the shared application composition.
@@ -102,7 +102,7 @@ impl Sessions {
         &self,
         request: LoadSessionRequest,
     ) -> Result<SessionEventStream<LoadSessionEvent>, BackendError> {
-        self.agent_runtime.load_session(request).await
+        Ok(self.agent_runtime.load_session(request).await?.into())
     }
 
     /// Streams a human prompt with workflow admission and drop cleanup owned by the run module.
@@ -120,7 +120,7 @@ impl Sessions {
         &self,
         request: RespondToPermissionRequest,
     ) -> Result<RespondToPermissionResponse, BackendError> {
-        self.agent_runtime.respond_to_permission(request).await
+        Ok(self.agent_runtime.respond_to_permission(request).await?)
     }
 
     /// Unloads one running session while retaining its provider history and Ora record.
@@ -128,7 +128,7 @@ impl Sessions {
         &self,
         request: StopSessionRequest,
     ) -> Result<StopSessionResponse, BackendError> {
-        self.agent_runtime.stop_session(request).await
+        Ok(self.agent_runtime.stop_session(request).await?)
     }
 
     /// Cancels one active prompt while keeping its session available for another turn.
@@ -136,7 +136,7 @@ impl Sessions {
         &self,
         request: CancelSessionPromptRequest,
     ) -> Result<CancelSessionPromptResponse, BackendError> {
-        self.agent_runtime.cancel_session_prompt(request)
+        Ok(self.agent_runtime.cancel_session_prompt(request)?)
     }
 
     /// Moves one existing conversation onto a different agent CLI.
@@ -144,7 +144,7 @@ impl Sessions {
         &self,
         request: SwitchSessionAgentRequest,
     ) -> Result<SwitchSessionAgentResponse, BackendError> {
-        self.agent_runtime.switch_agent(request).await
+        Ok(self.agent_runtime.switch_agent(request).await?)
     }
 
     /// Returns a session whose history writes failed to a writable state.
@@ -152,7 +152,7 @@ impl Sessions {
         &self,
         request: ResumeSessionHistoryRequest,
     ) -> Result<ResumeSessionHistoryResponse, BackendError> {
-        self.agent_runtime.resume_history(request).await
+        Ok(self.agent_runtime.resume_history(request).await?)
     }
 
     /// Stops one session before removing its Ora-owned record and recorded history.
@@ -160,6 +160,9 @@ impl Sessions {
         &self,
         request: DeleteSessionRequest,
     ) -> Result<DeleteSessionResponse, BackendError> {
-        self.agent_runtime.delete_session(&request.session_id).await
+        Ok(self
+            .agent_runtime
+            .delete_session(&request.session_id)
+            .await?)
     }
 }

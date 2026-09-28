@@ -35,6 +35,8 @@ mod takeover_crash;
 #[path = "repository_single_node.rs"]
 mod single_node;
 
+#[path = "repository_runtime_fixture.rs"]
+mod runtime_fixture;
 #[path = "repository_websocket.rs"]
 mod websocket;
 

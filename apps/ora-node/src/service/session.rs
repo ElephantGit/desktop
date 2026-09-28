@@ -57,6 +57,7 @@ pub(super) async fn serve(
                 path.as_str(),
                 tls,
             )?;
+            ora_logging::ora_info!(address = %bind, path = %path, "Node mutual TLS WebSocket listening");
             listen(acceptor, &config, &info, &sender, &shutdown).await
         }
     }

@@ -45,7 +45,14 @@ pub async fn take_over<S: CoordinationStore>(
                         )
                         .await?;
                 }
-                ExecutionState::Completed(ExecutionResult::Worktree(_)) => {
+                // This Controller dispatches only clones, so any other result family cannot
+                // belong to one of its dispatches.
+                ExecutionState::Completed(
+                    ExecutionResult::Worktree(_)
+                    | ExecutionResult::Plugin(_)
+                    | ExecutionResult::AgentSession(_)
+                    | ExecutionResult::Revision(_),
+                ) => {
                     return Err(Error::Conflict);
                 }
                 // A status for an unknown dispatch is a conflict even when it carries no result.
@@ -65,6 +72,15 @@ pub async fn take_over<S: CoordinationStore>(
         | NodeToControllerMessage::WorktreeReady(_)
         | NodeToControllerMessage::WorktreeFailed(_)
         | NodeToControllerMessage::WorktreeRemoved(_)
-        | NodeToControllerMessage::WorktreeRemovalFailed(_) => Err(Error::Conflict),
+        | NodeToControllerMessage::WorktreeRemovalFailed(_)
+        // Plugin, session and delivery executions are never dispatched by this Controller yet,
+        // so their events and replies cannot match a dispatch it owns.
+        | NodeToControllerMessage::PluginsResult(_)
+        | NodeToControllerMessage::ThreadEvent(_)
+        | NodeToControllerMessage::AgentSessionEnded(_)
+        | NodeToControllerMessage::SessionCommandAccepted(_)
+        | NodeToControllerMessage::SessionCommandRejected(_)
+        | NodeToControllerMessage::RevisionResult(_)
+        | NodeToControllerMessage::UploadGrantNeeded(_) => Err(Error::Conflict),
     }
 }

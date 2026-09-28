@@ -2,7 +2,7 @@
 
 [English](agent-runtime.md) | 中文
 
-Backend 启动时，会为每个已安装的 [Agent 插件](../crates/backend/src/agent_runtime/plugin_agent/README.md)建立一条独立监管的 ACP 连接。每个 Ora Session 拥有一个串行 actor；指向同一 Agent 的 actor 共享应用级连接，并通过私有 provider session id 路由事件。同一 Session 同时只能有一个 prompt owner，但 load 可以跟随正在进行的 prompt，不同 Session 则可以并发运行。取消只作用于目标 Session 的 prompt owner，不会把 load follower 变成 owner，也不会卸载可复用 Session。
+Backend 启动时，会为每个已安装的 [Agent 插件](../crates/agent-runtime/src/plugin_agent/README.md)建立一条独立监管的 ACP 连接。每个 Ora Session 拥有一个串行 actor；指向同一 Agent 的 actor 共享应用级连接，并通过私有 provider session id 路由事件。同一 Session 同时只能有一个 prompt owner，但 load 可以跟随正在进行的 prompt，不同 Session 则可以并发运行。取消只作用于目标 Session 的 prompt owner，不会把 load follower 变成 owner，也不会卸载可复用 Session。
 
 ## 进程与 Session 生命周期
 
@@ -127,7 +127,25 @@ Prompt 以有序 ACP `ContentBlock` 传递，包括文本、图片、音频、re
 
 Ora 删除自身数据库记录和 session history，并异步注册 Git 清理任务以移除 task worktree 与 `ora/*` branch；provider history 不随 Ora 侧删除。`session/delete` 只用于回滚从未暴露的 provider session，用户可见 Session 始终 close 而非 delete。Session 删除与 actor 新操作串行，先卸载 route，再软删除数据库行并移除 history 文件。
 
-Ora 拥有 transcript，Agent 拥有模型上下文。transcript 可跨 Agent 携带，模型上下文不可，这也是切换时采用注入而非 provider replay 的原因。最后一个 Backend owner 释放时，所有 supervisor 停止接收新工作，取消 routed operation，并有界终止 CLI 进程树。
+Ora 拥有 transcript，Agent 拥有模型上下文。transcript 可跨 Agent 携带，模型上下文不可，这也是切换时采用注入而非 provider replay 的原因。最后一个运行时 owner（Desktop 上即最后一个 Backend owner）释放时，所有 supervisor 停止接收新工作，取消 routed operation，并有界终止 CLI 进程树。
+
+## 运行时 crate 与宿主
+
+运行时位于 `ora-agent-runtime`（`crates/agent-runtime`），拥有上文全部会话语义：连接监管、路由与背压、会话 actor、prompt 无活动重试、记录、切换与 handoff。它不知道自己运行在哪里。宿主通过 `AgentRuntimeHost` 组合它，其关联类型提供五个接口；它们以泛型参数而非 trait object 注入，每个宿主得到各自单态化的运行时。
+
+| 接口                 | 运行时需要的能力                                                                                | Desktop 实现                       |
+| -------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------- |
+| `SessionStore`       | 创建、读取、列出会话行；更新状态、binding、标题与 history 状态；软删除                          | `SqliteSessionRepository`          |
+| `AgentAttach`        | 列出已安装的 agent 插件、附着插件进程及其 notification tap、停止插件、登记 Effect consumer 声明 | `PluginApi`                        |
+| `SessionSetup`       | 会话级 MCP 视图；Desired 修订与完整快照；每个投递边界的健康观察；按 agent 找到屏障所属插件      | Session MCP 解析器与 Host MCP 健康 |
+| `RuntimeEvents`      | 发布 `SessionTitleUpdated`、`AgentModelsInvalidated`                                            | `AppEventPublisher`                |
+| `WorkspaceDirectory` | 把 Workspace 解析为会话 `cwd`                                                                   | Workspace 仓储 + 启动路径基准      |
+
+crate 拥有 Session MCP Snapshot 的定义（servers 加不含 secret 的修订）以及活跃会话如何收敛到它（`LiveMcpState`、Agent Session Barrier）；快照的来源——已安装包、Settings、健康探测——留在宿主。写入会话行的时间戳来自 crate 自身的 Unix 毫秒时钟，它与时区无关，宿主无需替换。
+
+失败以 `RuntimeError` 离开 crate：分类、类型化 `PublicError`、上下文与 source 链。Desktop 在它与 `BackendError` 之间双向无损转换，因此 Workspace 不可用这类宿主失败穿过运行时后原样回到客户端；分类因而保留 Desktop 区分的全部类别，而不只是运行时自己产生的那些。插件无法停止时以宿主自己的错误类型报告，运行时只记录日志。`SessionEventStream` 的生命周期（取消、清理回执、drop 时尽力取消）留在运行时；Desktop 只包装它以在边界转换错误。
+
+crate 不得依赖 `ora-backend`、SQLite 或 Tauri，这正是沙盒 Node 能以自己的宿主运行同一套会话语义的前提。
 
 ## 开放 Agent 身份的兼容注意事项
 

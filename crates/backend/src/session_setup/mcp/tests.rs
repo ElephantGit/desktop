@@ -1,9 +1,8 @@
 use super::SessionMcpHost;
 use super::{
-    AgentSessionMcpCapabilities, InstalledMcpCandidate, LiveMcpEvent, LiveMcpPromptAdmission,
-    LiveMcpState, McpConfigurationEligibility, SessionMcpCatalog, SessionMcpConfigurationSource,
-    SessionMcpError, SessionMcpMemberRevision, SessionMcpRevision, SessionMcpTransportKind,
-    resolve_session_mcp, resolve_session_mcp_revision,
+    AgentSessionMcpCapabilities, InstalledMcpCandidate, McpConfigurationEligibility,
+    SessionMcpCatalog, SessionMcpConfigurationSource, SessionMcpError, SessionMcpMemberRevision,
+    SessionMcpRevision, SessionMcpTransportKind, resolve_session_mcp, resolve_session_mcp_revision,
 };
 use crate::app_event::AppEventHub;
 use crate::clock::SystemClock;
@@ -447,114 +446,6 @@ fn desired_revision_excludes_setting_values() {
 }
 
 #[test]
-fn live_idle_session_owes_refresh_when_desired_changes() {
-    let previous = SessionMcpRevision::new(vec![revision(
-        "ready",
-        Version::new(1, 0, 0),
-        1,
-        SessionMcpTransportKind::Stdio,
-    )]);
-    let next = SessionMcpRevision::new(vec![revision(
-        "ready",
-        Version::new(1, 0, 0),
-        2,
-        SessionMcpTransportKind::Stdio,
-    )]);
-    let (state, refresh) = LiveMcpState::Active(previous.clone())
-        .on_event(LiveMcpEvent::DesiredObserved(next.clone()));
-    assert_eq!(
-        state,
-        LiveMcpState::RefreshPending {
-            active: previous,
-            desired: next.clone(),
-        }
-    );
-    assert!(refresh);
-    assert_eq!(
-        state.prompt_admission(&next),
-        LiveMcpPromptAdmission::RefreshFirst { desired: next }
-    );
-}
-
-#[test]
-fn live_busy_success_cannot_clear_a_newer_pending_revision() {
-    let first = SessionMcpRevision::new(vec![revision(
-        "ready",
-        Version::new(1, 0, 0),
-        1,
-        SessionMcpTransportKind::Stdio,
-    )]);
-    let second = SessionMcpRevision::new(vec![revision(
-        "ready",
-        Version::new(1, 0, 0),
-        2,
-        SessionMcpTransportKind::Stdio,
-    )]);
-    let third = SessionMcpRevision::new(vec![revision(
-        "ready",
-        Version::new(1, 0, 0),
-        3,
-        SessionMcpTransportKind::Stdio,
-    )]);
-    let refreshing = LiveMcpState::Refreshing {
-        in_flight: first.clone(),
-        newer: None,
-    };
-    let (refreshing, _) = refreshing.on_event(LiveMcpEvent::DesiredObserved(second.clone()));
-    let (refreshing, _) = refreshing.on_event(LiveMcpEvent::DesiredObserved(third.clone()));
-    let (state, refresh) = refreshing.on_event(LiveMcpEvent::RefreshSucceeded(first.clone()));
-    assert_eq!(
-        state,
-        LiveMcpState::RefreshPending {
-            active: first,
-            desired: third.clone(),
-        }
-    );
-    assert!(refresh);
-    assert!(!state.is_current(&second));
-}
-
-#[test]
-fn live_refresh_failure_blocks_prompts_until_retry() {
-    let desired = SessionMcpRevision::new(vec![revision(
-        "ready",
-        Version::new(1, 0, 0),
-        4,
-        SessionMcpTransportKind::Stdio,
-    )]);
-    let (state, _) = LiveMcpState::Refreshing {
-        in_flight: desired.clone(),
-        newer: None,
-    }
-    .on_event(LiveMcpEvent::RefreshFailed {
-        requested: desired.clone(),
-    });
-    assert_eq!(
-        state,
-        LiveMcpState::Blocked {
-            desired: desired.clone()
-        }
-    );
-    assert_eq!(
-        state.prompt_admission(&desired),
-        LiveMcpPromptAdmission::RefreshFirst { desired }
-    );
-}
-
-#[test]
-fn stopped_sessions_ignore_desired_changes() {
-    let desired = SessionMcpRevision::new(vec![revision(
-        "ready",
-        Version::new(1, 0, 0),
-        1,
-        SessionMcpTransportKind::Stdio,
-    )]);
-    let (state, refresh) = LiveMcpState::Inactive.on_event(LiveMcpEvent::DesiredObserved(desired));
-    assert_eq!(state, LiveMcpState::Inactive);
-    assert!(!refresh);
-}
-
-#[test]
 fn resolver_does_not_create_workspace_files() {
     let fixture = Fixture::new();
     let workspace = TempDir::new().expect("workspace");
@@ -596,47 +487,6 @@ fn collect_paths(root: &Path) -> Vec<PathBuf> {
     walk(root, &mut paths);
     paths.sort();
     paths
-}
-
-#[tokio::test]
-async fn mcp_and_effect_share_one_agent_session_barrier() {
-    use crate::session_setup::{AgentSessionBarriers, BarrierReason};
-    let barriers = AgentSessionBarriers::new();
-    let plugin = plugin("opencode");
-    let first = barriers
-        .for_plugin(&plugin)
-        .try_acquire(BarrierReason::McpRefresh)
-        .expect("first hold");
-    assert!(barriers.for_plugin(&plugin).is_held());
-    assert!(
-        barriers
-            .for_plugin(&plugin)
-            .try_acquire(BarrierReason::EffectMutation)
-            .is_none()
-    );
-    drop(first);
-    assert!(
-        barriers
-            .for_plugin(&plugin)
-            .try_acquire(BarrierReason::AgentReplacement)
-            .is_some()
-    );
-}
-
-#[test]
-fn unrelated_agents_do_not_share_a_barrier() {
-    use crate::session_setup::{AgentSessionBarriers, BarrierReason};
-    let barriers = AgentSessionBarriers::new();
-    let _hold = barriers
-        .for_plugin(&plugin("opencode"))
-        .try_acquire(BarrierReason::McpRefresh)
-        .expect("opencode hold");
-    assert!(
-        barriers
-            .for_plugin(&plugin("claude"))
-            .try_acquire(BarrierReason::EffectMutation)
-            .is_some()
-    );
 }
 
 /// The barrier lookup must resolve the identity the runtime actually supervises a session under.

@@ -251,11 +251,20 @@ fn handle(
             Ok(vec![])
         }
         // The session read loop consumes Controller heartbeats; they never reach admission.
+        // Plugin, session and delivery executions are refused until this Node implements them;
+        // it does not advertise their capabilities, so a conforming Controller never sends them.
         Request::Message(
             ControllerToNodeMessage::Hello(_)
             | ControllerToNodeMessage::Heartbeat(_)
             | ControllerToNodeMessage::EnsureWorktree(_)
-            | ControllerToNodeMessage::RemoveWorktree(_),
+            | ControllerToNodeMessage::RemoveWorktree(_)
+            | ControllerToNodeMessage::InstallPlugins(_)
+            | ControllerToNodeMessage::RemovePlugins(_)
+            | ControllerToNodeMessage::StartAgentSession(_)
+            | ControllerToNodeMessage::SubmitUserTurn(_)
+            | ControllerToNodeMessage::EndSession(_)
+            | ControllerToNodeMessage::DeliverRevision(_)
+            | ControllerToNodeMessage::UploadGrant(_),
         ) => Err(crate::Error::UnsupportedMessage),
     }
 }

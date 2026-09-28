@@ -1,0 +1,39 @@
+[package]
+name = "ora-agent-runtime"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "ora_agent_runtime"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+agent-client-protocol-schema = { workspace = true }
+ora-acp = { workspace = true }
+ora-contracts = { workspace = true }
+ora-domain = { workspace = true }
+ora-effect = { workspace = true }
+ora-history = { workspace = true }
+ora-logging = { workspace = true }
+ora-plugin-lifecycle = { workspace = true }
+ora-plugin-protocol = { workspace = true }
+ora-plugin-runtime = { workspace = true }
+ora-scheduler = { workspace = true }
+semver = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "rt", "sync", "time"] }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+chrono-tz = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
+tracing-subscriber = { workspace = true }

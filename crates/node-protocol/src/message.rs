@@ -1,15 +1,33 @@
+mod agent_session;
 mod execution;
+mod plugin;
 mod repository;
+mod revision;
 mod runtime_control;
 mod session;
 mod validation;
 mod worktree;
 
+pub use agent_session::{
+    AgentSessionEndedMessage, EndSession, EndSessionMessage, EndSessionReason,
+    SessionCommandAccepted, SessionCommandAcceptedMessage, SessionCommandRejected,
+    SessionCommandRejectedMessage, SessionCommandRejection, StartAgentSession,
+    StartAgentSessionMessage, SubmitUserTurn, SubmitUserTurnMessage, ThreadEventMessage,
+};
+
 pub use execution::{
     EventAck, EventAckMessage, ExecutionState, ExecutionStatus, ExecutionStatusMessage,
     GetExecutionStatus, GetExecutionStatusMessage,
 };
+pub use plugin::{
+    InstallPlugins, InstallPluginsMessage, PluginsResultMessage, RemovePlugins,
+    RemovePluginsMessage,
+};
 pub use repository::{CloneRepository, CloneRepositoryMessage, CloneResultMessage};
+pub use revision::{
+    DeliverRevision, DeliverRevisionMessage, RevisionResultMessage, UploadGrant,
+    UploadGrantMessage, UploadGrantNeeded, UploadGrantNeededMessage,
+};
 pub use runtime_control::{ControlledClone, RuntimeBinding, RuntimeControlState};
 use serde::{Deserialize, Serialize};
 pub use session::{
@@ -39,6 +57,14 @@ pub enum ControllerToNodeMessage {
     RemoveWorktree(RemoveWorktreeMessage),
     GetExecutionStatus(GetExecutionStatusMessage),
     EventAck(EventAckMessage),
+    InstallPlugins(InstallPluginsMessage),
+    RemovePlugins(RemovePluginsMessage),
+    StartAgentSession(StartAgentSessionMessage),
+    SubmitUserTurn(SubmitUserTurnMessage),
+    EndSession(EndSessionMessage),
+    DeliverRevision(DeliverRevisionMessage),
+    /// Memory-only: never persisted, logged, or acknowledged.
+    UploadGrant(UploadGrantMessage),
 }
 
 impl ValidateMessage for ControllerToNodeMessage {
@@ -54,6 +80,13 @@ impl ValidateMessage for ControllerToNodeMessage {
             Self::RemoveWorktree(message) => message.validate(),
             Self::GetExecutionStatus(message) => message.validate(),
             Self::EventAck(message) => message.validate(),
+            Self::InstallPlugins(message) => message.validate(),
+            Self::RemovePlugins(message) => message.validate(),
+            Self::StartAgentSession(message) => message.validate(),
+            Self::SubmitUserTurn(message) => message.validate(),
+            Self::EndSession(message) => message.validate(),
+            Self::DeliverRevision(message) => message.validate(),
+            Self::UploadGrant(message) => message.validate(),
         }
     }
 }
@@ -71,6 +104,13 @@ pub enum NodeToControllerMessage {
     WorktreeFailed(WorktreeFailedMessage),
     WorktreeRemoved(WorktreeRemovedMessage),
     WorktreeRemovalFailed(WorktreeRemovalFailedMessage),
+    PluginsResult(PluginsResultMessage),
+    ThreadEvent(ThreadEventMessage),
+    AgentSessionEnded(AgentSessionEndedMessage),
+    SessionCommandAccepted(SessionCommandAcceptedMessage),
+    SessionCommandRejected(SessionCommandRejectedMessage),
+    RevisionResult(RevisionResultMessage),
+    UploadGrantNeeded(UploadGrantNeededMessage),
 }
 
 impl ValidateMessage for NodeToControllerMessage {
@@ -86,6 +126,13 @@ impl ValidateMessage for NodeToControllerMessage {
             Self::WorktreeFailed(message) => message.validate(),
             Self::WorktreeRemoved(message) => message.validate(),
             Self::WorktreeRemovalFailed(message) => message.validate(),
+            Self::PluginsResult(message) => message.validate(),
+            Self::ThreadEvent(message) => message.validate(),
+            Self::AgentSessionEnded(message) => message.validate(),
+            Self::SessionCommandAccepted(message) => message.validate(),
+            Self::SessionCommandRejected(message) => message.validate(),
+            Self::RevisionResult(message) => message.validate(),
+            Self::UploadGrantNeeded(message) => message.validate(),
         }
     }
 }

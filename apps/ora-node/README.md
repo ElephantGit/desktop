@@ -6,4 +6,4 @@ Rust Node 是执行程序。Cloud 网络入口要求双向 TLS、固定目标与
 
 ## 验证与边界
 
-模块测试覆盖真实协议、恢复日志、Git 或 TLS 的所属边界；cloud fixture 及回环程序不证明生产多人授权。真实部署用 cluster Compose，契约源为 third_party/cloud 固定提交 e48cc41，生成文件不手改。完整验收与缺口见根 [运行时控制说明](../../docs/runtime-control.zh.md)。
+模块测试覆盖真实协议、恢复日志、Git 或 TLS 的所属边界；cloud fixture 及回环程序不证明生产多人授权。真实部署用 cluster Compose，契约源为 third_party/cloud 固定提交 f0b5d9c，生成文件不手改。完整验收与缺口见根 [运行时控制说明](../../docs/runtime-control.zh.md)。
