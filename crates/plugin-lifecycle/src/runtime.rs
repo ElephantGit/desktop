@@ -12,6 +12,7 @@ use ora_plugin_runtime::{
 };
 use ora_process::TokioProcessSpawner;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::time::Duration;
 
@@ -132,6 +133,12 @@ impl<E: ChildProcessEnvironmentProvider> PluginRuntimeLauncher for DenoPluginRun
                         .map_err(|error| PluginRuntimeFailure::new(error.to_string()))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            // Only agent plugins may run processes, so only they receive a process environment.
+            let environment = if request.allow_childprocess {
+                environment_provider.plugin_environment(&request.plugin_id.to_string())
+            } else {
+                BTreeMap::new()
+            };
             let processes = request.allow_childprocess.then(|| {
                 PluginProcessHost::with_environment_provider(
                     request.plugin_id.to_string(),
@@ -152,6 +159,7 @@ impl<E: ChildProcessEnvironmentProvider> PluginRuntimeLauncher for DenoPluginRun
                     entrypoint: request.entrypoint,
                     permissions,
                     cwd: Some(request.package_root),
+                    environment,
                     ready_timeout: timeouts.ready,
                     call_timeout: timeouts.call,
                     shutdown_timeout: timeouts.shutdown,

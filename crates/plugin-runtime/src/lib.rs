@@ -21,6 +21,7 @@ pub use plugin_log::{
 };
 pub use protocol::PluginNotification;
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -47,6 +48,9 @@ pub struct PluginRuntimeConfig {
     /// Working directory of the plugin process, normally its package root so that relative
     /// imports and configuration discovery resolve against the package instead of the host.
     pub cwd: Option<PathBuf>,
+    /// Variables set on the plugin process, on top of the host's own environment. Every process
+    /// the plugin spawns directly inherits them.
+    pub environment: BTreeMap<String, String>,
     pub ready_timeout: Duration,
     pub call_timeout: Duration,
     pub shutdown_timeout: Duration,
@@ -147,6 +151,9 @@ impl PluginRuntime {
             .arg(config.entrypoint.as_os_str());
         if let Some(cwd) = &config.cwd {
             spec = spec.cwd(cwd);
+        }
+        for (key, value) in &config.environment {
+            spec = spec.env(key, value);
         }
         let mut process = spawner
             .spawn(spec)
