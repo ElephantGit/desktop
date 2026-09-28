@@ -178,19 +178,19 @@ describe("createMockWorkflowNode", () => {
           supportedScopes: ["workflow", "iteration", "loop"],
         },
         {
-          kind: "loop",
-          label: "循环",
-          description: "重复执行直到满足条件",
-          configFields: ["maxIterations", "loopInitialValue"],
-          supportedScopes: ["workflow"],
-        },
-        {
           kind: "aggregator",
           label: "变量聚合器",
           description:
             "将多分支变量聚合为一个变量，按声明顺序取第一个已产出的值",
           configFields: ["aggregation"],
           supportedScopes: ["workflow", "iteration"],
+        },
+        {
+          kind: "loop",
+          label: "循环",
+          description: "重复执行直到满足条件",
+          configFields: ["maxIterations", "loopInitialValue"],
+          supportedScopes: ["workflow"],
         },
         {
           kind: "iteration",

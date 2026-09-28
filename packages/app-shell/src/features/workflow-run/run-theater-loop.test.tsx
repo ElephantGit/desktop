@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createChatStore, type SessionConversation } from "@ora/chat";
 import type { GraphWorkflowRun } from "@ora/workflow-runtime";
 import { createTestClient } from "../../test/contracts-transport";
@@ -16,7 +16,16 @@ import { RunTheater } from "./run-theater";
 
 beforeEach(async () => {
   await appI18n.changeLanguage("en-US");
+  // Exercise history selection without coupling assertions to animation frame timing.
+  const matchMedia = window.matchMedia.bind(window);
+  vi.spyOn(window, "matchMedia").mockImplementation((query) => ({
+    ...matchMedia(query),
+    matches:
+      query === "(prefers-reduced-motion: reduce)" || matchMedia(query).matches,
+  }));
 });
+
+afterEach(() => vi.restoreAllMocks());
 
 function fixture(): GraphWorkflowRun {
   const now = "2026-09-28T10:00:00+08:00";
@@ -273,32 +282,11 @@ it("switches the conversation to the selected round and exposes committed loop r
   await user.click(screen.getByRole("button", { name: /Review loop:/ }));
   await user.click(screen.getByRole("button", { name: "Writer: Succeeded" }));
   await user.click(
-    await screen.findByRole("button", { name: "Open node details" }),
-  );
-  expect(
-    within(
-      await screen.findByRole("complementary", { name: "Act details" }),
-    ).getByText("first draft"),
-  ).toBeInTheDocument();
-  await user.click(
     screen.getByRole("button", { name: "View node conversation" }),
   );
   expect(await screen.findByText("FIRST SESSION")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: /Round 2 ·/ }));
   expect(await screen.findByText("SECOND SESSION")).toBeInTheDocument();
-  await user.click(
-    await screen.findByRole("button", { name: "Open node details" }),
-  );
-  expect(
-    within(
-      await screen.findByRole("complementary", { name: "Act details" }),
-    ).queryByText("first draft"),
-  ).not.toBeInTheDocument();
-  expect(
-    within(
-      await screen.findByRole("complementary", { name: "Act details" }),
-    ).queryByText("partial stream must stay hidden"),
-  ).not.toBeInTheDocument();
   expect(screen.queryByText("FIRST SESSION")).not.toBeInTheDocument();
   const finished = structuredClone(run);
   finished.status = "succeeded";
@@ -333,4 +321,21 @@ it("keeps unexecuted branch alternatives out of the round path while allowing in
     "aria-current",
     "step",
   );
+});
+
+it("shows only the selected round's committed output in the inspector", async () => {
+  const user = userEvent.setup();
+  mount(fixture());
+  await user.click(screen.getByRole("button", { name: /Review loop:/ }));
+  await user.click(screen.getByRole("button", { name: "Writer: Succeeded" }));
+  await user.click(screen.getByRole("button", { name: "Open node details" }));
+  const inspector = await screen.findByRole("complementary", {
+    name: "Act details",
+  });
+  expect(within(inspector).getByText("first draft")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /Round 2 ·/ }));
+  expect(within(inspector).queryByText("first draft")).not.toBeInTheDocument();
+  expect(
+    within(inspector).queryByText("partial stream must stay hidden"),
+  ).not.toBeInTheDocument();
 });
