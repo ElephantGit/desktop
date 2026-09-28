@@ -131,6 +131,9 @@ struct WorkflowHarness {
     package_root: PathBuf,
     workspace_id: String,
     workflow_seq: usize,
+    /// Kept alive so the sandbox's TempDir outlives the backend; dropping it first would delete
+    /// the workspace directory out from under running sessions (Unix deletes eagerly).
+    _setup: DesktopTestSetup,
 }
 
 impl WorkflowHarness {
@@ -145,6 +148,7 @@ impl WorkflowHarness {
             package_root,
             workspace_id,
             workflow_seq: 0,
+            _setup: setup,
         })
     }
 

@@ -74,6 +74,9 @@ workflow run is not executable
 
 测试 8 验证:区域内条件把某轮路由到非 collectSelector 目标(或无边可走)时,该轮结算为 failed——运行成功、`failed_count` +1、该轮不收集。这是迭代 ADR D3 的明确语义(防止读到上一轮的陈旧池值),但对预期"跳过该轮"的用户,`failed_count` 上升可能显得意外。建议在编辑器/运行文档中显式说明该语义(非代码缺陷)。
 
-## 维护注意(测试基础设施)
+## 维护注意（测试基础设施）
 
-在 current-thread tokio runtime 中轮询运行状态必须用 `tokio::time::sleep(...).await`(本文件 `WorkflowHarness::poll`),不能用 `std::thread::sleep`——阻塞运行时线程会饿死后端派生的 Agent 会话泵,表现为所有含 Agent 会话的测试超时( swift 节点不受影响)。现有 `iteration.rs` 也遵循此约定。
+两处在本套件开发中实际踩过的坑，后续新增场景时务必遵守：
+
+1. **在 current-thread tokio runtime 中轮询必须用 `tokio::time::sleep(...).await`**（本文件 `WorkflowHarness::poll`），不能用 `std::thread::sleep`——阻塞运行时线程会饿死后端派生的 Agent 会话泵，表现为所有含 Agent 会话的测试超时（swift 节点不受影响）。现有 `iteration.rs` 也遵循此约定。
+2. **`DesktopTestSetup` 必须存活到测试结束**（本文件 `WorkflowHarness::_setup` 字段）。它的 `TempDir` 在 Drop 时删除沙箱：Unix 上删除立即生效，运行中的 Agent 会话因 workspace 目录消失而以 "workspace is unavailable" 失败；Windows 上因 SQLite 句柄占用删除静默失败、目录侥幸保留，于是出现“本机全绿、Linux CI 全红”的假象。若把 setup 的构建封装进 harness/辅助函数，必须把 setup 本体存进存活期覆盖整个测试的结构体。
