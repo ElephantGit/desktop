@@ -40,11 +40,11 @@ mod tool_timing;
 #[cfg(test)]
 mod history_tests;
 #[cfg(test)]
+mod host_start_tests;
+#[cfg(test)]
 mod load_tests;
 #[cfg(test)]
 mod replaced_sessions_tests;
-#[cfg(test)]
-mod session_identity_tests;
 #[cfg(test)]
 mod test_host;
 

@@ -1,11 +1,11 @@
-//! Covers the host-chosen session identity: a host that names sessions after its own durable
-//! records must never be able to attach a new conversation to an existing one.
+//! Covers what a host that starts sessions on its own relies on: a session identity it chose can
+//! never join an existing conversation, and waiting for an agent ends with an answer.
 
 use crate::ErrorClassification;
 use crate::MemorySessionStore;
 use crate::host::SessionStore;
 use crate::test_host::{TestRuntime, test_runtime};
-use ora_contracts::StartSessionRequest;
+use ora_contracts::{EmptyErrorParams, PublicError, StartSessionRequest};
 use ora_domain::{
     AgentRef, AuditFields, Session, SessionId, SessionMcpSelection, SessionStatus, WorkspaceId,
 };
@@ -57,6 +57,31 @@ async fn an_identity_already_in_use_is_refused() {
             store.list_sessions().expect("list sessions"),
         ),
         (ErrorClassification::Conflict, vec![existing]),
+    );
+    scheduler.shutdown().await;
+}
+
+/// Waiting for an agent nothing supplies answers at once instead of waiting forever, because no
+/// supervisor exists to ever report it ready.
+#[tokio::test]
+async fn waiting_for_an_agent_that_is_not_installed_fails_at_once() {
+    let temporary = TempDir::new().expect("create test directory");
+    let scheduler = Scheduler::new(chrono_tz::UTC);
+    let TestRuntime { manager, .. } = test_runtime(
+        temporary.path(),
+        Vec::new(),
+        MemorySessionStore::default(),
+        scheduler.clone(),
+    );
+
+    let error = manager
+        .wait_for_agent(&AgentRef::parse("official/ora-space.echo").expect("agent identity"))
+        .await
+        .expect_err("an agent nothing supplies is never ready");
+
+    assert_eq!(
+        error.public_error(),
+        &PublicError::AgentRuntimeUnavailable(EmptyErrorParams {}),
     );
     scheduler.shutdown().await;
 }
