@@ -10,6 +10,7 @@ use super::{AgentRuntimeManager, SESSION_SETUP_TIMEOUT, session_setup_window};
 use crate::AgentRuntimeHost;
 use crate::host::SessionSetup;
 use crate::host::SessionStore;
+use crate::host::WorkspaceDirectory;
 use crate::session_setup::{
     AgentSessionMcpCapabilities, LiveMcpState, SessionMcpRevision, SessionMcpSnapshot,
 };
@@ -28,7 +29,7 @@ use ora_domain::SessionMcpSelection;
 use ora_domain::{AgentRef, SessionId};
 use ora_domain::{AuditFields, Session, SessionStatus, WorkspaceId};
 use ora_logging::{ora_debug, ora_info, ora_warn};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::time::timeout;
 
@@ -89,6 +90,11 @@ impl<H: AgentRuntimeHost> Drop for ProviderSessionRelease<H> {
 }
 
 impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
+    /// Resolves a workspace's execution directory without consulting a Task projection.
+    pub fn workspace_cwd(&self, workspace_id: &WorkspaceId) -> Result<PathBuf, RuntimeError> {
+        self.inner.directory.workspace_cwd(workspace_id)
+    }
+
     /// Creates a session under an identity the host already owns.
     ///
     /// A host whose sessions are named by something durable of its own, such as a Node session

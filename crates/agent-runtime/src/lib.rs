@@ -16,6 +16,7 @@ mod history;
 mod host;
 mod limits;
 mod load;
+mod memory_host;
 mod operations;
 mod plugin_agent;
 mod prompt;
@@ -52,6 +53,7 @@ pub use host::{
     AgentAttach, AgentPluginAttachment, AgentRuntimeHost, RuntimeEvents, SessionSetup,
     SessionStore, WorkspaceDirectory,
 };
+pub use memory_host::{MemorySessionStore, MissingSession, NoSessionMcp};
 pub use operations::AgentRuntime;
 pub use replaced::ReplacedAgentSessions;
 
@@ -615,11 +617,6 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
             ),
         };
         Ok((self.settle_record(session, outcome), opened.recorder))
-    }
-
-    /// Resolves a workspace's execution directory without consulting a Task projection.
-    pub fn workspace_cwd(&self, workspace_id: &WorkspaceId) -> Result<PathBuf, RuntimeError> {
-        self.inner.directory.workspace_cwd(workspace_id)
     }
 
     /// Routes one opaque permission response to the actor that registered the request.

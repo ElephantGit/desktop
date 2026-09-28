@@ -832,8 +832,9 @@ mod tests {
         ConnectionError, ConnectionSupervisors, PluginAgentError, StartFailure,
         plugin_attach_error, plugin_start_error, spawn_runtime_thread,
     };
+    use crate::MemorySessionStore;
     use crate::clock::SystemClock;
-    use crate::test_host::{InstalledAgents, MemorySessionStore, TestHost};
+    use crate::test_host::{InstalledAgents, TestHost};
     use ora_contracts::{EmptyErrorParams, PublicError};
     use ora_domain::{AgentRef, PluginId};
     use pretty_assertions::assert_eq;

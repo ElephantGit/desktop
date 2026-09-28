@@ -7,8 +7,9 @@
 
 use super::history::SessionRecorder;
 use super::{AgentRuntimeManager, RuntimeActorHandle, RuntimeCommand};
+use crate::MemorySessionStore;
 use crate::host::SessionStore;
-use crate::test_host::{MemorySessionStore, RecordedEvents, TestHost, test_runtime};
+use crate::test_host::{RecordedEvents, TestHost, test_runtime};
 use agent_client_protocol_schema::v1::{
     ContentBlock, ContentChunk, SessionUpdate, StopReason, TextContent,
 };

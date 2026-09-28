@@ -2,8 +2,9 @@
 //! records must never be able to attach a new conversation to an existing one.
 
 use crate::ErrorClassification;
+use crate::MemorySessionStore;
 use crate::host::SessionStore;
-use crate::test_host::{MemorySessionStore, TestRuntime, test_runtime};
+use crate::test_host::{TestRuntime, test_runtime};
 use ora_contracts::StartSessionRequest;
 use ora_domain::{
     AgentRef, AuditFields, Session, SessionId, SessionMcpSelection, SessionStatus, WorkspaceId,
