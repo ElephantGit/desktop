@@ -37,9 +37,16 @@ mod managed;
 #[cfg(target_os = "linux")]
 mod service;
 #[cfg(target_os = "linux")]
+mod session;
+#[cfg(target_os = "linux")]
 pub use managed::{ManagedGitRunner, ProcessConfig, Shutdown};
 #[cfg(target_os = "linux")]
 pub use service::{ControlConfig, ControlListen, ServiceConfig, serve};
+#[cfg(target_os = "linux")]
+pub use session::{
+    AgentSessions, CheckoutResolver, CommandSettlement, HistoryUnavailable, PluginCatalog,
+    QueuedCommand, SessionCommand, SessionConfig, SessionHost, SessionLedger,
+};
 #[cfg(target_os = "linux")]
 pub type ManagedNode = Node<gitlancer::Git<ManagedGitRunner>>;
 pub use ora_node_db::{Command, DurableWrites, WriteGuard, WritePoint};
