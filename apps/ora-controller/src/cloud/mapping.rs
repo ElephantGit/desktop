@@ -85,6 +85,14 @@ pub(super) fn outcome(result: proto::ExecutionResult) -> Result<ExecutionOutcome
             failure: failure(failed.reason)?,
             retained_path: failed.retained_path.map(NodePath::new),
         },
+        // This Controller registers clones only, so no record it reads back can hold another
+        // execution family.
+        proto::execution_result::Outcome::PluginsResult(_)
+        | proto::execution_result::Outcome::PluginsFailed(_)
+        | proto::execution_result::Outcome::AgentSessionEnded(_)
+        | proto::execution_result::Outcome::RevisionDelivered(_)
+        | proto::execution_result::Outcome::RevisionUnchanged(_)
+        | proto::execution_result::Outcome::RevisionFailed(_) => return Err(Error::Conflict),
     })
 }
 

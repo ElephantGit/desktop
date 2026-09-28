@@ -223,6 +223,8 @@ impl FakeCloud {
                         branch: "main".into(),
                     })),
                 }),
+                // Tenant-level clone work carries no target; the Controller picks the Node.
+                target: None,
             });
         });
     }
