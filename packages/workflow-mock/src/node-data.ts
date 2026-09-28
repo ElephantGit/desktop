@@ -3,6 +3,7 @@ export const WORKFLOW_NODE_KINDS = [
   "start",
   "agent",
   "condition",
+  "aggregator",
   "tool",
   "junction",
   "human",
@@ -296,6 +297,16 @@ export interface WorkflowIterationConfig {
   maxIterations: number;
 }
 
+/**
+ * Ordered variable selectors of an Aggregator node, mirroring the backend
+ * `data.aggregatorConfig` wire shape. Array order is the priority contract:
+ * the first assigned selector's value is passed through as `{agg}.output`.
+ */
+export interface WorkflowAggregatorConfig {
+  /** Dify-style root selectors `["nodeId", "root"]`; nested paths are not selectable. */
+  variables: string[][];
+}
+
 /** Uses React Flow's `Node.data` extension point for executable workflow data. */
 export interface WorkflowNodeData extends Record<string, unknown> {
   kind: WorkflowNodeKind;
@@ -317,6 +328,8 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   conditionCases?: WorkflowConditionCase[];
   /** Executable cases for Condition nodes, matching the backend `data.cases` wire format. */
   cases?: WorkflowConditionCase[];
+  /** Aggregator node: ordered candidate selectors (backend `data.aggregatorConfig`). */
+  aggregatorConfig?: WorkflowAggregatorConfig;
   /** Named result bindings of an Output node, resolved from the variable pool at completion. */
   outputs?: WorkflowOutputBinding[];
   /** Owning Loop id for one child node. */

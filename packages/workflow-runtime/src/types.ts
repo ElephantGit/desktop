@@ -3,6 +3,7 @@ export type WorkflowNodeKind =
   | "start"
   | "agent"
   | "condition"
+  | "aggregator"
   | "tool"
   | "junction"
   | "human"
@@ -113,6 +114,16 @@ export interface WorkflowConditionCase {
   conditions: WorkflowConditionComparison[];
 }
 
+/**
+ * Ordered variable selectors of an Aggregator node, mirroring the backend
+ * `data.aggregatorConfig` wire shape. Array order is the priority contract: the first
+ * assigned selector's value is passed through as `{agg}.output`.
+ */
+export interface WorkflowAggregatorConfig {
+  /** Dify-style root selectors `["nodeId", "root"]`; nested paths are not selectable. */
+  variables: string[][];
+}
+
 /** One named result an Output node exposes, resolved from the run variable pool at completion. */
 export interface WorkflowOutputBinding {
   name: string;
@@ -217,6 +228,8 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   conditionCases?: WorkflowConditionCase[];
   /** Executable cases for Condition nodes, matching the backend `data.cases` wire format. */
   cases?: WorkflowConditionCase[];
+  /** Aggregator node: ordered candidate selectors (backend `data.aggregatorConfig`). */
+  aggregatorConfig?: WorkflowAggregatorConfig;
   /** Named result bindings of an Output node, resolved from the variable pool at completion. */
   outputs?: WorkflowOutputBinding[];
   /** Owning Loop id for one child node. */

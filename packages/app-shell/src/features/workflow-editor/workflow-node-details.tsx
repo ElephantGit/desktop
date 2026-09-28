@@ -1,6 +1,8 @@
 import { Fragment, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  IconArrowDown,
+  IconArrowUp,
   IconLayoutSidebarRightCollapse,
   IconPlus,
   IconTrash,
@@ -83,6 +85,17 @@ export function WorkflowNodeDetailsLayout({
     case "condition":
       return (
         <ConditionNodeDetails
+          node={node}
+          nodeType={nodeType}
+          capabilities={capabilities}
+          onUpdate={onUpdate}
+          onClose={onClose}
+          variableCatalog={variableCatalog}
+        />
+      );
+    case "aggregator":
+      return (
+        <AggregatorNodeDetails
           node={node}
           nodeType={nodeType}
           capabilities={capabilities}
@@ -627,6 +640,184 @@ function ConditionNodeDetails({
           <span className="text-[11px] font-medium">ELSE</span>
           <p className="text-[11px] leading-5 text-muted-foreground">
             {t("settings.workflow.condition.elseDescription")}
+          </p>
+        </div>
+      </WorkflowNodeBody>
+    </>
+  );
+}
+
+/**
+ * Aggregator panel: an ordered list of candidate variables. Array order is the priority
+ * contract, so the only ordering control is the explicit move buttons and no operation ever
+ * reorders the list implicitly. Candidate types must agree for the graph to parse.
+ */
+function AggregatorNodeDetails({
+  node,
+  nodeType,
+  onUpdate,
+  onClose,
+  variableCatalog,
+}: WorkflowNodeDetailsLayoutProps) {
+  const { t } = useTranslation();
+  const selectors = node.data.aggregatorConfig?.variables ?? [];
+  const updateSelectors = (next: string[][]): void => {
+    onUpdate({
+      ...node,
+      data: { ...node.data, aggregatorConfig: { variables: next } },
+    });
+  };
+  const setSelector = (index: number, selector: string[]): void => {
+    updateSelectors(
+      selectors.map((candidate, candidateIndex) =>
+        candidateIndex === index ? selector : candidate,
+      ),
+    );
+  };
+  const removeSelector = (index: number): void => {
+    updateSelectors(
+      selectors.filter((_, candidateIndex) => candidateIndex !== index),
+    );
+  };
+  const moveSelector = (index: number, offset: -1 | 1): void => {
+    const target = index + offset;
+    if (target < 0 || target >= selectors.length) {
+      return;
+    }
+    const next = [...selectors];
+    const [moved] = next.splice(index, 1);
+    next.splice(target, 0, moved!);
+    updateSelectors(next);
+  };
+  const selectorType = (selector: string[]): string | undefined =>
+    variableCatalog.find(
+      (entry) => selectorToText(entry.selector) === selectorToText(selector),
+    )?.valueType;
+  const assignedTypes = selectors
+    .map(selectorType)
+    .filter((valueType) => valueType !== undefined);
+  const mixedTypes = new Set(assignedTypes).size > 1;
+  return (
+    <>
+      <WorkflowNodeDetailsHeader
+        node={node}
+        nodeType={nodeType}
+        onUpdate={onUpdate}
+        onClose={onClose}
+      />
+      <WorkflowNodeBody>
+        <p className="text-[11px] leading-5 text-muted-foreground">
+          {t("settings.workflow.aggregation.description")}
+        </p>
+        {selectors.map((selector, index) => {
+          const valueType = selectorType(selector);
+          return (
+            <div key={index} className="flex items-start gap-1.5">
+              <div className="min-w-0 flex-1 space-y-1">
+                <Select
+                  value={selectorToText(selector)}
+                  onValueChange={(value) => {
+                    if (value !== null) {
+                      setSelector(index, textToSelector(value));
+                    }
+                  }}
+                >
+                  <SelectTrigger
+                    className="h-8 w-full bg-background"
+                    aria-label={t(
+                      "settings.workflow.aggregation.selectorLabel",
+                      {
+                        index: index + 1,
+                      },
+                    )}
+                  >
+                    <VariableSelectValue
+                      catalog={variableCatalog}
+                      selector={selector}
+                      placeholder={t(
+                        "settings.workflow.aggregation.variablePlaceholder",
+                      )}
+                    />
+                  </SelectTrigger>
+                  <SelectContent
+                    alignItemWithTrigger={false}
+                    align="start"
+                    className="w-70 min-w-70 max-w-70"
+                  >
+                    <WorkflowVariableSelectGroups
+                      variables={variableCatalog}
+                      globalVariablesLabel={t(
+                        "settings.workflow.globalVariables",
+                      )}
+                    />
+                  </SelectContent>
+                </Select>
+                {valueType !== undefined && (
+                  <span className="text-[10px] text-muted-foreground">
+                    {valueType}
+                  </span>
+                )}
+              </div>
+              <div className="mt-0.5 flex shrink-0 flex-col gap-0.5">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="size-6 text-muted-foreground"
+                  aria-label={t("settings.workflow.aggregation.moveUp")}
+                  disabled={index === 0}
+                  onClick={() => moveSelector(index, -1)}
+                >
+                  <IconArrowUp className="size-3" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="size-6 text-muted-foreground"
+                  aria-label={t("settings.workflow.aggregation.moveDown")}
+                  disabled={index === selectors.length - 1}
+                  onClick={() => moveSelector(index, 1)}
+                >
+                  <IconArrowDown className="size-3" />
+                </Button>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="mt-1 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                aria-label={t("settings.workflow.aggregation.removeSelector")}
+                onClick={() => removeSelector(index)}
+              >
+                <IconTrash className="size-3.5" />
+              </Button>
+            </div>
+          );
+        })}
+        {selectors.length === 0 && (
+          <p className="text-[11px] leading-5 text-muted-foreground">
+            {t("settings.workflow.aggregation.emptyHint")}
+          </p>
+        )}
+        {mixedTypes && (
+          <p className="text-[11px] leading-5 text-destructive">
+            {t("settings.workflow.aggregation.typeMismatch")}
+          </p>
+        )}
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="w-full justify-center bg-muted/70 font-semibold"
+          onClick={() => updateSelectors([...selectors, []])}
+        >
+          <IconPlus />
+          {t("settings.workflow.aggregation.addSelector")}
+        </Button>
+        <div className="space-y-1 border-t border-border/70 pt-4">
+          <p className="text-[11px] leading-5 text-muted-foreground">
+            {t("settings.workflow.aggregation.outputHint")}
           </p>
         </div>
       </WorkflowNodeBody>
