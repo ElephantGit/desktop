@@ -36,11 +36,14 @@ import {
   formatWorkflowVariableValue,
   parseWorkflowVariableValueText,
   resolveWorkflowInputFieldType,
+  resolveWorkflowInputVariableValueType,
   workflowInputFieldValueType,
   workflowVariableValueExample,
   WORKFLOW_INPUT_FIELD_TYPES,
+  WORKFLOW_JSON_FIELD_VALUE_TYPES,
   type WorkflowInputFieldType,
   type WorkflowInputVariable,
+  type WorkflowVariableValueType,
 } from "@ora/workflow-mock";
 
 interface WorkflowStartVariablesProps {
@@ -224,7 +227,12 @@ function WorkflowStartVariableDialog({
   const [fieldType, setFieldType] = useState<WorkflowInputFieldType>(() =>
     resolveWorkflowInputFieldType(state.variable),
   );
-  const valueType = workflowInputFieldValueType(fieldType);
+  // The declared pool type is dialog state, not a derived value: reopening a variable must
+  // keep compatible declarations (for example a legacy `array[string]` Start input) instead
+  // of collapsing them to the control default.
+  const [valueType, setValueType] = useState<WorkflowVariableValueType>(() =>
+    resolveWorkflowInputVariableValueType(state.variable),
+  );
   const [required, setRequired] = useState(state.variable.required ?? false);
   const [options, setOptions] = useState<string[]>(
     state.variable.options ?? [],
@@ -233,7 +241,10 @@ function WorkflowStartVariableDialog({
     state.variable.maxLength?.toString() ?? "",
   );
   const [valueText, setValueText] = useState(
-    formatWorkflowVariableValue(state.variable.value, state.variable.valueType),
+    formatWorkflowVariableValue(
+      state.variable.value,
+      resolveWorkflowInputVariableValueType(state.variable),
+    ),
   );
   const [attemptedSave, setAttemptedSave] = useState(false);
   const trimmedName = name.trim();
@@ -301,6 +312,9 @@ function WorkflowStartVariableDialog({
                   return;
                 setFieldType(candidate);
                 setValueText("");
+                // Switching controls re-declares the pool type because the new control may not
+                // produce the previous declaration.
+                setValueType(workflowInputFieldValueType(candidate));
                 if (candidate !== "select") setOptions([]);
               }}
             >
@@ -330,6 +344,41 @@ function WorkflowStartVariableDialog({
               </SelectContent>
             </Select>
           </div>
+          {fieldType === "json" && (
+            <div className="space-y-1.5">
+              <Label htmlFor="workflow-start-variable-value-type">
+                {t("settings.workflow.start.valueType")}
+              </Label>
+              <Select
+                value={valueType}
+                onValueChange={(candidate) => {
+                  if (
+                    candidate !== null &&
+                    isWorkflowJsonFieldValueType(candidate)
+                  ) {
+                    setValueType(candidate);
+                  }
+                }}
+              >
+                <SelectTrigger
+                  id="workflow-start-variable-value-type"
+                  className="w-full bg-muted/45"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {WORKFLOW_JSON_FIELD_VALUE_TYPES.map((candidate) => (
+                    <SelectItem key={candidate} value={candidate}>
+                      <code className="text-[10px]">{candidate}</code>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] leading-4 text-muted-foreground">
+                {t("settings.workflow.start.valueTypeHint")}
+              </p>
+            </div>
+          )}
           <div className="space-y-1.5">
             <Label htmlFor="workflow-start-variable-name">
               {t("settings.workflow.start.variableName")}
@@ -582,6 +631,13 @@ function isWorkflowInputFieldType(
   value: string,
 ): value is WorkflowInputFieldType {
   return WORKFLOW_INPUT_FIELD_TYPES.includes(value as WorkflowInputFieldType);
+}
+
+/** Narrows the select's string value to a pool type the JSON control can declare. */
+function isWorkflowJsonFieldValueType(
+  value: string,
+): value is WorkflowVariableValueType {
+  return (WORKFLOW_JSON_FIELD_VALUE_TYPES as readonly string[]).includes(value);
 }
 
 /** Gives each Start form control a stable visual identity in lists and selectors. */

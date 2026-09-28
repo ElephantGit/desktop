@@ -16,6 +16,22 @@ export const WORKFLOW_INPUT_FIELD_TYPES = [
   "json",
 ] as const satisfies readonly WorkflowInputFieldType[];
 
+/** Pool types a JSON control may declare: arbitrary JSON covers objects, arrays, and mixed values.
+ *
+ * This is exactly the set `resolveWorkflowInputFieldType` maps back to the JSON control, so a
+ * saved (control, type) pair always round-trips without rewriting the declaration.
+ */
+export const WORKFLOW_JSON_FIELD_VALUE_TYPES = [
+  "object",
+  "any",
+  "array",
+  "array[string]",
+  "array[number]",
+  "array[object]",
+  "array[boolean]",
+  "array[any]",
+] as const satisfies readonly WorkflowVariableValueType[];
+
 /** Returns the variable-pool type produced by one Start form control. */
 export function workflowInputFieldValueType(
   fieldType: WorkflowInputFieldType,
@@ -34,8 +50,39 @@ export function workflowInputFieldValueType(
     case "file-list":
       return "array[file]";
     case "json":
-      return "object";
+      // Arbitrary JSON has no single shape, so the default declaration is `any`; the
+      // editor can narrow it to any type in WORKFLOW_JSON_FIELD_VALUE_TYPES.
+      return "any";
   }
+}
+
+/** Returns whether one Start form control can produce the declared pool type.
+ *
+ * Single-shape controls accept exactly the type they emit; the JSON control accepts every
+ * structured type because its textarea can hold any JSON document.
+ */
+export function workflowInputFieldProducesValueType(
+  fieldType: WorkflowInputFieldType,
+  valueType: WorkflowVariableValueType,
+): boolean {
+  return fieldType === "json"
+    ? (WORKFLOW_JSON_FIELD_VALUE_TYPES as readonly string[]).includes(valueType)
+    : workflowInputFieldValueType(fieldType) === valueType;
+}
+
+/** Returns the pool type an existing declaration keeps when its control still produces it.
+ *
+ * Editors call this when reopening a variable so compatible declarations (for example a
+ * legacy `array[string]` Start input) survive editing instead of collapsing to the control
+ * default.
+ */
+export function resolveWorkflowInputVariableValueType(
+  variable: Pick<WorkflowInputVariable, "fieldType" | "valueType">,
+): WorkflowVariableValueType {
+  const fieldType = resolveWorkflowInputFieldType(variable);
+  return workflowInputFieldProducesValueType(fieldType, variable.valueType)
+    ? variable.valueType
+    : workflowInputFieldValueType(fieldType);
 }
 
 /** Resolves legacy Start declarations that predate explicit form control metadata. */
