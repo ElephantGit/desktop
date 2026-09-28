@@ -7,7 +7,8 @@
 //! double as data-flow assertions.
 
 use super::{
-    current_thread_runtime, install_fake_opencode_plugin, open_ready_backend, seed_workspace,
+    current_thread_runtime, install_fake_opencode_plugin, install_mcp_plugin, install_skill_plugin,
+    open_ready_backend, seed_workspace,
 };
 use crate::setup::DesktopTestSetup;
 use ora_backend::Backend;
@@ -29,11 +30,38 @@ const RUN_DEADLINE: Duration = Duration::from_secs(20);
 struct ScenarioRun {
     detail: GetWorkflowRunResponse,
     journal: String,
+    package_root: PathBuf,
 }
 
 impl ScenarioRun {
     fn status(&self) -> WorkflowRunStatus {
         self.detail.run.status
+    }
+
+    /// Every rendered prompt the fake agent served, as `(session_id, prompt)` pairs in served
+    /// order. Prompt-level content (injected skill blocks, workspace boundaries) is asserted
+    /// here because node outputs carry only the agent's final answer.
+    fn prompts(&self) -> Vec<(String, String)> {
+        std::fs::read_to_string(self.package_root.join("acp_prompts.jsonl"))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| {
+                let entry: Value = serde_json::from_str(line).ok()?;
+                Some((
+                    entry["sessionId"].as_str()?.to_string(),
+                    entry["prompt"].as_str()?.to_string(),
+                ))
+            })
+            .collect()
+    }
+
+    /// The MCP server selections the fake agent recorded per session lifecycle call.
+    fn mcp_calls(&self) -> Vec<Value> {
+        std::fs::read_to_string(self.package_root.join("mcp_calls.jsonl"))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect()
     }
 
     /// Sessions opened for this run; one per executed agent round.
@@ -131,6 +159,9 @@ struct WorkflowHarness {
     package_root: PathBuf,
     workspace_id: String,
     workflow_seq: usize,
+    /// Ids of graphs this harness published, newest last, so a scenario can create runs on a
+    /// published graph while still observing the creation error itself.
+    published_workflow_ids: Vec<String>,
     /// Kept alive so the sandbox's TempDir outlives the backend; dropping it first would delete
     /// the workspace directory out from under running sessions (Unix deletes eagerly).
     _setup: DesktopTestSetup,
@@ -139,8 +170,18 @@ struct WorkflowHarness {
 impl WorkflowHarness {
     /// Opens a ready backend with the fake OpenCode agent installed.
     fn open() -> Result<Self, Box<dyn std::error::Error>> {
+        Self::open_with_plugins(|_| Ok(()))
+    }
+
+    /// Opens a ready backend after installing extra plugins beside the fake agent; plugins are
+    /// written before the backend opens so boot discovery and skill projection pick them up.
+    fn open_with_plugins(
+        extra: impl FnOnce(&std::path::Path) -> Result<(), Box<dyn std::error::Error>>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let setup = DesktopTestSetup::new()?;
-        let package_root = install_fake_opencode_plugin(&setup.backend_paths().home_directory)?;
+        let home = setup.backend_paths().home_directory.clone();
+        let package_root = install_fake_opencode_plugin(&home)?;
+        extra(&home)?;
         let backend = open_ready_backend(&setup)?;
         let workspace_id = seed_workspace(&setup, &backend)?;
         Ok(Self {
@@ -148,6 +189,7 @@ impl WorkflowHarness {
             package_root,
             workspace_id,
             workflow_seq: 0,
+            published_workflow_ids: Vec::new(),
             _setup: setup,
         })
     }
@@ -187,6 +229,13 @@ impl WorkflowHarness {
 
     /// Creates a pending run on a freshly published graph without providing values yet.
     fn pending_run(&mut self, graph: Value) -> Result<String, Box<dyn std::error::Error>> {
+        self.publish(graph)?;
+        self.create_pending_run()
+            .map_err(|error| format!("run creation failed: {error}").into())
+    }
+
+    /// Publishes a graph as the next workflow version.
+    fn publish(&mut self, graph: Value) -> Result<(), Box<dyn std::error::Error>> {
         self.workflow_seq += 1;
         let workflow = self
             .backend
@@ -200,13 +249,26 @@ impl WorkflowHarness {
             workflow_id: workflow.id.clone(),
             version: Some("v1".into()),
         })?;
+        self.published_workflow_ids.push(workflow.id);
+        Ok(())
+    }
+
+    /// Creates a pending run on the most recently published workflow.
+    fn create_pending_run(&self) -> Result<String, ora_backend::BackendError> {
+        let workflow_id = self.published_workflow_ids.last().cloned().ok_or_else(|| {
+            ora_backend::BackendError::new(
+                ora_backend::ErrorClassification::NotFound,
+                PublicError::WorkflowNotFound(EmptyErrorParams {}),
+                "no published workflow",
+            )
+        })?;
         let run = self
             .backend
             .workflow_runs()
             .create(CreateWorkflowRunRequest {
                 inject_last_failure: None,
                 workspace_id: self.workspace_id.clone(),
-                workflow_id: workflow.id,
+                workflow_id,
                 locale: WorkflowRunLocale::EnUs,
                 snapshot_id: None,
                 kickoff_input: None,
@@ -221,7 +283,11 @@ impl WorkflowHarness {
         let detail = self.poll(run_id).await?;
         let journal =
             std::fs::read_to_string(self.package_root.join("acp_calls.txt")).unwrap_or_default();
-        Ok(ScenarioRun { detail, journal })
+        Ok(ScenarioRun {
+            detail,
+            journal,
+            package_root: self.package_root.clone(),
+        })
     }
 
     /// Yields with `tokio::time::sleep` so the current-thread runtime keeps driving the
@@ -370,13 +436,33 @@ fn run_inputs_are_validated_against_declared_types() -> TestResult {
             });
             let run_id = harness.pending_run(graph)?;
 
-            let cases: [(String, Value); 4] = [
-                ("count".into(), json!("not-a-number")),
-                ("meta".into(), json!([1, 2])),
-                ("tags".into(), json!({"a": 1})),
-                ("typo".into(), json!("value")),
+            let cases: [(String, Value, &str, &str); 4] = [
+                (
+                    "count".into(),
+                    json!("not-a-number"),
+                    "count",
+                    "value does not match the declared type number",
+                ),
+                (
+                    "meta".into(),
+                    json!([1, 2]),
+                    "meta",
+                    "value does not match the declared type object",
+                ),
+                (
+                    "tags".into(),
+                    json!({"a": 1}),
+                    "tags",
+                    "value does not match the declared type array[string]",
+                ),
+                (
+                    "typo".into(),
+                    json!("value"),
+                    "typo",
+                    "no declared Start variable has this name",
+                ),
             ];
-            for (name, value) in cases {
+            for (name, value, expected_variable, expected_reason) in cases {
                 let error = harness
                     .backend
                     .workflow_runs()
@@ -387,7 +473,22 @@ fn run_inputs_are_validated_against_declared_types() -> TestResult {
                     })
                     .err()
                     .ok_or(format!("update_input accepted a mistyped value for {name}"))?;
-                eprintln!("update_input rejection for {name}: {error}");
+                // The rejection must stay user-actionable: the classification is a bad request,
+                // and the public error names the variable and the expected pool type instead of
+                // a detail-free "application operation failed".
+                assert_eq!(
+                    error.classification(),
+                    ora_backend::ErrorClassification::InvalidRequest,
+                    "rejection for {name} must be a bad request, not internal: {error}"
+                );
+                assert_eq!(
+                    error.public_error().clone(),
+                    PublicError::WorkflowRunInputInvalid(WorkflowRunInputInvalidParams {
+                        variable: expected_variable.to_string(),
+                        reason: expected_reason.to_string(),
+                    }),
+                    "rejection for {name} must name the variable and reason"
+                );
             }
 
             harness
@@ -441,7 +542,16 @@ fn starting_without_a_required_start_value_is_rejected() -> TestResult {
                 .start(StartWorkflowRunRequest { run_id })
                 .err()
                 .ok_or("start accepted a run missing its required Start value")?;
-            eprintln!("start rejection without required value: {error}");
+            // The rejection names the missing variable so a user with several required values
+            // does not have to guess which one is absent.
+            assert_eq!(
+                error.public_error().clone(),
+                PublicError::WorkflowRunInputInvalid(WorkflowRunInputInvalidParams {
+                    variable: "brief".to_string(),
+                    reason: "required value is missing".to_string(),
+                }),
+                "start rejection must name the missing variable"
+            );
             Ok(())
         })
     })
@@ -986,6 +1096,120 @@ fn aggregator_passes_the_first_assigned_branch_output() -> TestResult {
     })
 }
 
+// ── Agent output semantics: the node output is the agent's final answer ──
+
+/// Conditions and downstream bindings see exactly the agent's final answer: the default echo
+/// answers with the task text (no injected workspace or workflow-context blocks), and a
+/// `FAKE_REPLY:` directive answers with exact text, so equality-based routing and matching work
+/// the way a real agent's answers would.
+#[test]
+fn conditions_route_on_the_exact_agent_output_without_injected_context() -> TestResult {
+    ora_logging::with_trace_logging(|| {
+        current_thread_runtime()?.block_on(async {
+            let mut harness = WorkflowHarness::open()?;
+            let graph = json!({
+                "nodes": [
+                    {"id":"start","type":"workflow","position":{"x":0,"y":0},"data":{"kind":"start","inputVariables":[]}},
+                    {"id":"echo","type":"workflow","position":{"x":200,"y":0},"data":agent_data("review the code")},
+                    {"id":"judge","type":"workflow","position":{"x":440,"y":0},"data":agent_data("FAKE_REPLY: approved")},
+                    {"id":"gate","type":"workflow","position":{"x":680,"y":0},"data":{"kind":"condition","cases":[
+                        {"id":"approved","logic":"and","conditions":[
+                            {"variableSelector":["judge","output"],"operator":"equals","value":"approved"}
+                        ]}
+                    ]}},
+                    {"id":"pass","type":"workflow","position":{"x":920,"y":-100},"data":agent_data("FAKE_REPLY: gate passed")},
+                    {"id":"fail","type":"workflow","position":{"x":920,"y":100},"data":agent_data("FAKE_REPLY: gate rejected")},
+                    {"id":"out","type":"workflow","position":{"x":1160,"y":-100},"data":{"kind":"output","outputs":[
+                        {"name":"echo_text","variableSelector":["echo","output"]},
+                        {"name":"answer","variableSelector":["pass","output"]}
+                    ]}},
+                    {"id":"out2","type":"workflow","position":{"x":1160,"y":100},"data":{"kind":"output","outputs":[
+                        {"name":"answer","variableSelector":["fail","output"]}
+                    ]}}
+                ],
+                "edges":[
+                    {"source":"start","target":"echo"},
+                    {"source":"echo","target":"judge"},
+                    {"source":"judge","target":"gate"},
+                    {"source":"gate","sourceHandle":"approved","target":"pass"},
+                    {"source":"gate","sourceHandle":"else","target":"fail"},
+                    {"source":"pass","target":"out"},
+                    {"source":"fail","target":"out2"}
+                ]
+            });
+            let run = harness.run(graph, BTreeMap::new()).await?;
+
+            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "{}", run.failure_summary());
+            assert_eq!(run.sessions(), 3, "{}", run.failure_summary());
+            // The default answer is the task text alone: injected context blocks never reach the
+            // output, the variable pool, or downstream bindings.
+            assert_eq!(
+                run.node_outputs("echo"),
+                vec!["Fake agent received: review the code"],
+                "the node output must be the agent's final answer without injected context"
+            );
+            let echo_output = run.variable("echo", "output").cloned().unwrap_or_default();
+            assert_eq!(echo_output, json!("Fake agent received: review the code"));
+            for marker in ["<workspace_boundary>", "<current_workflow_step>", "<workflow_context>"] {
+                assert!(
+                    !run.node_outputs("echo").join("").contains(marker),
+                    "injected block {marker} leaked into the output"
+                );
+            }
+            // The directive answer is exact, so equality routing works on agent outputs.
+            assert_eq!(run.node_outputs("judge"), vec!["approved"]);
+            assert_eq!(run.node_outputs("fail"), Vec::<&str>::new(), "else branch must not run");
+            assert_eq!(run.node_outputs("pass"), vec!["gate passed"]);
+            let output = run.run_output();
+            assert_eq!(output["echo_text"], json!("Fake agent received: review the code"));
+            assert_eq!(output["answer"], json!("gate passed"));
+            Ok(())
+        })
+    })
+}
+
+/// A Loop whose until condition compares the agent output for equality exits on the first
+/// matching round; feedback variables carry only the answer, not the injected prompt context.
+#[test]
+fn loop_until_equals_matches_the_exact_agent_output() -> TestResult {
+    ora_logging::with_trace_logging(|| {
+        current_thread_runtime()?.block_on(async {
+            let mut harness = WorkflowHarness::open()?;
+            let graph = json!({
+                "schemaVersion": 2,
+                "nodes": [
+                    {"id":"start","type":"workflow","position":{"x":0,"y":0},"data":{"kind":"start","inputVariables":[]}},
+                    {"id":"loop","type":"workflow","position":{"x":360,"y":0},"data":{"kind":"loop","loopConfig":{
+                        "maxIterations":3,
+                        "variables":[{"name":"draft","valueType":"string","initial":{"kind":"constant","value":""},"feedback":["writer","output"]}],
+                        "until":{"logic":"and","conditions":[
+                            {"variableSelector":["writer","output"],"operator":"equals","value":"done"}
+                        ]},
+                        "outputs":[{"name":"result","variableSelector":["writer","output"]}]
+                    }}},
+                    {"id":"entry","type":"workflow","parentId":"loop","position":{"x":420,"y":160},"data":{"kind":"start","containerId":"loop"}},
+                    {"id":"writer","type":"workflow","parentId":"loop","position":{"x":660,"y":160},"data":loop_agent_data("FAKE_REPLY: done","loop")},
+                    {"id":"out","type":"workflow","position":{"x":960,"y":0},"data":{"kind":"output","outputs":[
+                        {"name":"result","variableSelector":["loop","result"]}
+                    ]}}
+                ],
+                "edges":[
+                    {"source":"start","target":"loop"},
+                    {"source":"entry","target":"writer"},
+                    {"source":"loop","target":"out"}
+                ]
+            });
+            let run = harness.run(graph, BTreeMap::new()).await?;
+
+            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "{}", run.failure_summary());
+            assert_eq!(run.sessions(), 1, "the exact answer must satisfy until on round one; journal: {}", run.journal);
+            assert_eq!(run.variable("loop", "result"), Some(&json!("done")));
+            assert_eq!(run.run_output()["result"], json!("done"));
+            Ok(())
+        })
+    })
+}
+
 // ── Combined pipeline: Condition + Iteration + Loop over typed Start inputs ──
 
 /// The composed pipeline chains every composite control over typed Start inputs: a Condition
@@ -1153,7 +1377,22 @@ fn file_typed_start_values_render_as_references_and_reject_unsafe_paths() -> Tes
                     })
                     .err()
                     .ok_or(format!("update_input accepted the unsafe file path for {name}"))?;
-                eprintln!("update_input rejection for unsafe file path: {error}");
+                // Unsafe paths are ordinary type rejections: a bad request naming the variable,
+                // not an internal failure.
+                assert_eq!(
+                    error.classification(),
+                    ora_backend::ErrorClassification::InvalidRequest,
+                    "unsafe path rejection for {name} must be a bad request: {error}"
+                );
+                assert!(
+                    matches!(
+                        error.public_error(),
+                        PublicError::WorkflowRunInputInvalid(
+                            WorkflowRunInputInvalidParams { variable, .. }
+                        ) if variable == name
+                    ),
+                    "unsafe path rejection for {name} must name the variable"
+                );
             }
 
             let run = harness
@@ -1185,6 +1424,231 @@ fn file_typed_start_values_render_as_references_and_reject_unsafe_paths() -> Tes
                 output.contains("attachments=[{\"kind\":\"workspace_file\",\"path\":\"one.txt\"},{\"kind\":\"workspace_file\",\"path\":\"nested/two.txt\"}]"),
                 "{output:?}"
             );
+            Ok(())
+        })
+    })
+}
+
+// ── Skill plugins inside workflow agent nodes ──
+
+/// An installed Skill plugin contributes a skill the run can bind: deployment freezes the
+/// binding into the materialization receipt, the agent's prompt opens with the mandatory
+/// `/name` invocation contract naming the materialized worktree copy, and the node output
+/// stays the agent's answer. Disabled bindings remain portable without blocking deployment,
+/// while an enabled binding to a skill that does not exist fails run creation actionably.
+#[test]
+fn skill_plugins_bound_to_agent_nodes_reach_the_prompt() -> TestResult {
+    ora_logging::with_trace_logging(|| {
+        current_thread_runtime()?.block_on(async {
+            let mut harness = WorkflowHarness::open_with_plugins(|home| {
+                install_skill_plugin(home, "review-pack", "code_review")?;
+                Ok(())
+            })?;
+            let graph = json!({
+                "nodes": [
+                    {"id":"start","type":"workflow","position":{"x":0,"y":0},"data":{"kind":"start","inputVariables":[]}},
+                    {"id":"reviewer","type":"workflow","position":{"x":360,"y":0},"data":{"kind":"agent","agentConfig":{
+                        "executor":{"agentCli":AGENT_CLI,"modelId":"anthropic/claude-sonnet-4"},
+                        "prompt":"FAKE_REPLY: reviewed",
+                        "interactive":false,
+                        "skills":[
+                            {"skillId":"code_review","enabled":true},
+                            {"skillId":"nonexistent_skill","enabled":false}
+                        ]
+                    }}},
+                    {"id":"out","type":"workflow","position":{"x":720,"y":0},"data":{"kind":"output","outputs":[
+                        {"name":"answer","variableSelector":["reviewer","output"]}
+                    ]}}
+                ],
+                "edges":[
+                    {"source":"start","target":"reviewer"},
+                    {"source":"reviewer","target":"out"}
+                ]
+            });
+            let run = harness.run(graph.clone(), BTreeMap::new()).await?;
+
+            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "{}", run.failure_summary());
+            assert_eq!(run.sessions(), 1, "{}", run.failure_summary());
+            // The invocation contract is prompt-level content: it reaches the agent's session,
+            // never the node output or the variable pool.
+            let prompts = run.prompts();
+            assert_eq!(prompts.len(), 1, "one session, one prompt; journal: {}", run.journal);
+            let prompt = &prompts[0].1;
+            assert!(prompt.contains("<required_skills>"), "missing skill block: {prompt:?}");
+            assert!(
+                prompt.contains("/code-review"),
+                "missing invocation: {prompt:?}"
+            );
+            assert!(
+                prompt.contains(".agents/skills/code-review"),
+                "the prompt must name the materialized worktree copy: {prompt:?}"
+            );
+            assert!(
+                !prompt.contains("nonexistent_skill"),
+                "disabled bindings must stay out of the prompt: {prompt:?}"
+            );
+            assert_eq!(run.node_outputs("reviewer"), vec!["reviewed"]);
+            assert_eq!(run.run_output()["answer"], json!("reviewed"));
+
+            // An enabled binding to a missing skill fails run creation with a named error
+            // instead of failing later during execution.
+            let mut broken = graph.clone();
+            broken["nodes"][1]["data"]["agentConfig"]["skills"] =
+                json!([{"skillId":"nonexistent_skill","enabled":true}]);
+            harness.publish(broken)?;
+            let error = harness
+                .create_pending_run()
+                .err()
+                .ok_or("run creation accepted an enabled binding to a missing skill")?;
+            assert_eq!(
+                error.public_error().clone(),
+                PublicError::WorkflowSkillNotFound(EmptyErrorParams {}),
+                "missing skill must fail run creation with the named public error"
+            );
+            Ok(())
+        })
+    })
+}
+
+// ── MCP plugins inside workflow agent nodes ──
+
+/// An installed MCP plugin reaches the run's agent sessions only through the node's frozen
+/// allowlist: enabled bindings deliver exactly their server, disabled bindings deliver nothing,
+/// and every round of an iteration region gets the same frozen selection.
+#[test]
+fn mcp_plugins_bound_to_agent_nodes_reach_only_the_frozen_allowlist() -> TestResult {
+    ora_logging::with_trace_logging(|| {
+        current_thread_runtime()?.block_on(async {
+            let mut harness = WorkflowHarness::open_with_plugins(|home| {
+                install_mcp_plugin(home, "tools")?;
+                install_mcp_plugin(home, "other")?;
+                Ok(())
+            })?;
+            let graph = json!({
+                "nodes": [
+                    {"id":"start","type":"workflow","position":{"x":0,"y":0},"data":{"kind":"start","inputVariables":[
+                        input("items","json","array[string]")
+                    ]}},
+                    {"id":"iter","type":"workflow","position":{"x":360,"y":0},"initialWidth":760,"initialHeight":420,"data":{"kind":"iteration","iterationConfig":{
+                        "iteratorSelector":["start","items"],"collectSelector":["body","output"],
+                        "errorStrategy":"fail","maxIterations":10
+                    }}},
+                    {"id":"body","type":"workflow","parentId":"iter","position":{"x":420,"y":160},"data":{"kind":"agent","agentConfig":{
+                        "executor":{"agentCli":AGENT_CLI,"modelId":"anthropic/claude-sonnet-4"},
+                        "prompt":"item={{#iter.item#}}",
+                        "interactive":false,
+                        "mcps":[
+                            {"mcpId":"official/tools","enabled":true},
+                            {"mcpId":"official/other","enabled":false}
+                        ]
+                    }}},
+                    {"id":"out","type":"workflow","position":{"x":1240,"y":0},"data":{"kind":"output","outputs":[
+                        {"name":"collected","variableSelector":["iter","output"]}
+                    ]}}
+                ],
+                "edges":[
+                    {"source":"start","target":"iter"},
+                    {"source":"iter","sourceHandle":"iteration-entry","target":"body"},
+                    {"source":"iter","target":"out"}
+                ]
+            });
+            let run = harness.run(graph, BTreeMap::from([("items".into(), json!(["a", "b"]))])).await?;
+
+            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "{}", run.failure_summary());
+            assert_eq!(run.sessions(), 2, "{}", run.failure_summary());
+            let calls = run.mcp_calls();
+            let session_news: Vec<&Value> = calls
+                .iter()
+                .filter(|call| call["method"] == "session/new")
+                .collect();
+            assert_eq!(
+                session_news.len(),
+                2,
+                "each round opens its own session; calls: {calls:?}"
+            );
+            for call in &session_news {
+                assert_eq!(
+                    call["servers"], json!(["official/tools"]),
+                    "the frozen allowlist must deliver only the enabled MCP; calls: {calls:?}"
+                );
+            }
+            assert!(
+                !calls.iter().any(|call| call["servers"] == json!(["official/other"])),
+                "disabled MCP bindings must never reach a session; calls: {calls:?}"
+            );
+            let collected = run.variable("iter", "output").cloned().unwrap_or_default();
+            assert_eq!(
+                collected,
+                json!(["Fake agent received: item=a", "Fake agent received: item=b"])
+            );
+            Ok(())
+        })
+    })
+}
+
+// ── Structured agent outputs feeding iteration collection ──
+
+/// A structured-output agent inside an iteration answers typed JSON: the contract parses the
+/// final answer into the node's structured variable, the collect target gathers one object per
+/// round into a typed array of objects, and the run output carries the objects unchanged.
+#[test]
+fn structured_outputs_collect_into_typed_object_arrays() -> TestResult {
+    ora_logging::with_trace_logging(|| {
+        current_thread_runtime()?.block_on(async {
+            let mut harness = WorkflowHarness::open()?;
+            let graph = json!({
+                "nodes": [
+                    {"id":"start","type":"workflow","position":{"x":0,"y":0},"data":{"kind":"start","inputVariables":[
+                        input("items","json","array[string]")
+                    ]}},
+                    {"id":"iter","type":"workflow","position":{"x":360,"y":0},"initialWidth":760,"initialHeight":420,"data":{"kind":"iteration","iterationConfig":{
+                        "iteratorSelector":["start","items"],"collectSelector":["body","structured_output"],
+                        "errorStrategy":"fail","maxIterations":10
+                    }}},
+                    {"id":"body","type":"workflow","parentId":"iter","position":{"x":420,"y":160},"data":{"kind":"agent","agentConfig":{
+                        "executor":{"agentCli":AGENT_CLI,"modelId":"anthropic/claude-sonnet-4"},
+                        "prompt":"FAKE_REPLY: {\"item\":\"{{#iter.item#}}\",\"score\":7,\"tags\":[\"keep\"]}",
+                        "interactive":false,
+                        "outputContract":{
+                            "type":"structured",
+                            "schema":{
+                                "type":"object",
+                                "properties":{
+                                    "item":{"type":"string"},
+                                    "score":{"type":"number"},
+                                    "tags":{"type":"array[string]"}
+                                },
+                                "required":["item","score","tags"],
+                                "additionalProperties":false
+                            }
+                        }
+                    }}},
+                    {"id":"out","type":"workflow","position":{"x":1240,"y":0},"data":{"kind":"output","outputs":[
+                        {"name":"collected","variableSelector":["iter","output"]}
+                    ]}}
+                ],
+                "edges":[
+                    {"source":"start","target":"iter"},
+                    {"source":"iter","sourceHandle":"iteration-entry","target":"body"},
+                    {"source":"iter","target":"out"}
+                ]
+            });
+            let run = harness
+                .run(graph, BTreeMap::from([("items".into(), json!(["alpha", "beta"]))]))
+                .await?;
+
+            assert_eq!(run.status(), WorkflowRunStatus::Succeeded, "{}", run.failure_summary());
+            assert_eq!(run.sessions(), 2, "{}", run.failure_summary());
+            let expected = json!([
+                {"item":"alpha","score":7,"tags":["keep"]},
+                {"item":"beta","score":7,"tags":["keep"]}
+            ]);
+            assert_eq!(run.variable("iter", "output"), Some(&expected));
+            assert_eq!(
+                run.variable("body", "structured_output"),
+                Some(&json!({"item":"beta","score":7,"tags":["keep"]}))
+            );
+            assert_eq!(run.run_output()["collected"], expected);
             Ok(())
         })
     })
