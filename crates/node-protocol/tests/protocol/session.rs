@@ -20,6 +20,20 @@ async fn accepts_independent_and_combined_execution_capabilities() -> Result<(),
             ],
             json!(["repository_clone", "worktree_execution"]),
         ),
+        (
+            vec![
+                NodeCapability::RepositoryClone,
+                NodeCapability::PluginInstall,
+                NodeCapability::AgentSession,
+                NodeCapability::RevisionDelivery,
+            ],
+            json!([
+                "repository_clone",
+                "plugin_install",
+                "agent_session",
+                "revision_delivery"
+            ]),
+        ),
     ] {
         let mut case = fixtures::hello_accepted();
         let Message::Node(NodeToControllerMessage::HelloAccepted(message)) = &mut case.message

@@ -1,3 +1,4 @@
+use super::validate_commit;
 use crate::{
     CloneExecutionSpec, CommitId, MessageValidationError, NodePath, NodeRuntimeIdentity,
     RepositoryId,
@@ -73,13 +74,8 @@ impl CloneExecutionResult {
         match self {
             Self::CloneReady(result) => {
                 validate_destination(&result.repository_id, &result.path)?;
-                let commit = result.commit.as_str();
-                if !matches!(commit.len(), 40 | 64)
-                    || !commit.bytes().all(|b| b.is_ascii_hexdigit())
-                {
-                    return Err(MessageValidationError::InvalidCloneCommit);
-                }
-                Ok(())
+                validate_commit(&result.commit)
+                    .map_err(|_| MessageValidationError::InvalidCloneCommit)
             }
             Self::CloneFailed(result) => match &result.residual {
                 CloneResidual::NoDirectory {} => Ok(()),
