@@ -320,7 +320,7 @@ impl RuntimeEvents for AppEventPublisher {
     }
 
     /// Desktop clients read the history file itself, so there is no mirror to update.
-    fn records_settled(&self, _session_id: &SessionId, _lines: &[HistoryLine]) {}
+    fn record_settled(&self, _session_id: &SessionId, _line: &HistoryLine) {}
 }
 
 /// Resolves a Workspace's local directory against the bootstrap path base.

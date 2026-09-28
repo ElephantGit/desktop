@@ -150,11 +150,11 @@ impl RuntimeEvents for RecordedEvents {
             .push(RecordedEvent::AgentModelsInvalidated(agent_ref.clone()));
     }
 
-    fn records_settled(&self, session_id: &SessionId, lines: &[HistoryLine]) {
+    fn record_settled(&self, session_id: &SessionId, line: &HistoryLine) {
         self.settled
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .extend(lines.iter().map(|line| (session_id.clone(), line.clone())));
+            .push((session_id.clone(), line.clone()));
     }
 }
 

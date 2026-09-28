@@ -49,8 +49,8 @@ pub(super) enum RecordOutcome {
 /// installs at startup. Production callers pass [`LocalHistoryClock`], which the
 /// type parameter defaults to so the runtime never has to name it.
 ///
-/// Every successful append is handed to the host's [`RuntimeEvents::records_settled`] after the
-/// file write, so a host mirroring the conversation never holds a line the file lacks.
+/// Every line is handed to the host's [`RuntimeEvents::record_settled`] right after the file
+/// holds it, so a host mirroring the conversation never holds a line the file lacks.
 pub(super) struct SessionRecorder<E, C: HistoryClock = LocalHistoryClock> {
     session_id: SessionId,
     writer: HistoryWriter<C>,
@@ -225,16 +225,21 @@ impl<E: RuntimeEvents, C: HistoryClock> SessionRecorder<E, C> {
         self.append(&[AssembledRecord { seq, record }])
     }
 
-    /// Appends a batch, stopping this recorder for good if the write fails.
+    /// Appends records one line at a time, stopping this recorder for good if a write fails.
+    ///
+    /// Each line reaches the host before the next is written, so a host mirroring the history
+    /// that crashes between the two writes is behind the file by at most one line rather than by
+    /// a whole turn's worth of settled items.
     fn append(&mut self, records: &[AssembledRecord]) -> RecordOutcome {
-        match self.state {
-            RecorderState::Stopped => RecordOutcome::Continued,
-            RecorderState::Recording => match self.writer.append(records) {
+        if let RecorderState::Stopped = self.state {
+            return RecordOutcome::Continued;
+        }
+        for record in records {
+            match self.writer.append(std::slice::from_ref(record)) {
                 Ok(lines) => {
-                    if !lines.is_empty() {
-                        self.events.records_settled(&self.session_id, &lines);
+                    for line in &lines {
+                        self.events.record_settled(&self.session_id, line);
                     }
-                    RecordOutcome::Continued
                 }
                 Err(error) => {
                     self.state = RecorderState::Stopped;
@@ -244,10 +249,11 @@ impl<E: RuntimeEvents, C: HistoryClock> SessionRecorder<E, C> {
                         error = %error,
                         "session history write failed",
                     );
-                    RecordOutcome::JustFailed { reason }
+                    return RecordOutcome::JustFailed { reason };
                 }
-            },
+            }
         }
+        RecordOutcome::Continued
     }
 }
 

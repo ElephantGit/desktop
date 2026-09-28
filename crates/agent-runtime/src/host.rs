@@ -178,14 +178,14 @@ pub trait RuntimeEvents: Clone + Send + Sync + 'static {
     /// A replaced agent process may expose a different model catalog.
     fn agent_models_invalidated(&self, agent_ref: &AgentRef);
 
-    /// Lines were just appended to a session's history file, in file order.
+    /// One line was just appended to a session's history file.
     ///
-    /// Called synchronously from the session's actor after the append succeeded and before the
-    /// actor handles anything else, so a host that mirrors the conversation elsewhere sees every
-    /// settled record exactly once, in order, and never one the file does not hold. A host may do
-    /// a short durable write here; anything slower stalls the session. A host with no mirror
-    /// ignores it.
-    fn records_settled(&self, session_id: &SessionId, lines: &[HistoryLine]);
+    /// Called synchronously from the session's actor after the line is in the file and before the
+    /// next one is written, so a host that mirrors the conversation elsewhere sees every line
+    /// exactly once, in file order, never one the file lacks, and after a crash is behind the file
+    /// by at most one line. A host may do a short durable write here; anything slower stalls the
+    /// session. A host with no mirror ignores it.
+    fn record_settled(&self, session_id: &SessionId, line: &HistoryLine);
 }
 
 /// Maps a Workspace onto the directory its sessions run in.
