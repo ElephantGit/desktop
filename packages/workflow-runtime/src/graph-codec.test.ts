@@ -290,3 +290,73 @@ it("preserves canonical MCP IDs and disabled bindings across graph round trips",
   };
   expect(parseWorkflowGraph(serializeWorkflowGraph(input))).toEqual(input);
 });
+
+describe("graph codec aggregator round trip", () => {
+  it("preserves the aggregator selector order and config through save and reload", () => {
+    const aggregator: WorkflowDefinitionNode = {
+      id: "agg",
+      type: "workflow",
+      position: { x: 0, y: 0 },
+      data: {
+        kind: "aggregator",
+        title: "Agg",
+        description: "",
+        aggregatorConfig: {
+          variables: [
+            ["b", "output"],
+            ["a", "output"],
+          ],
+        },
+      },
+    };
+    const agentA: WorkflowDefinitionNode = {
+      id: "a",
+      type: "workflow",
+      position: { x: 0, y: 0 },
+      data: {
+        kind: "agent",
+        title: "A",
+        description: "",
+        agentConfig: {
+          schemaVersion: 3,
+          executor: { agentCli: "c", modelId: "m" },
+          roleId: "",
+          skills: [],
+          mcps: [],
+          prompt: "a",
+        },
+      },
+    };
+    const agentB: WorkflowDefinitionNode = {
+      ...agentA,
+      id: "b",
+      data: { ...agentA.data, title: "B" },
+    };
+    const serialized = serializeWorkflowGraph({
+      nodes: [aggregator, agentA, agentB],
+      edges: [
+        { id: "e1", source: "a", target: "agg" },
+        { id: "e2", source: "b", target: "agg" },
+      ],
+      viewport: { x: 0, y: 0, zoom: 1 },
+    });
+    const parsed = parseWorkflowGraph(serialized);
+    const reserialized = serializeWorkflowGraph({
+      nodes: parsed.nodes,
+      edges: parsed.edges,
+      viewport: parsed.viewport,
+    });
+    expect(parseWorkflowGraph(reserialized).nodes[0]?.data).toEqual(
+      aggregator.data,
+    );
+    const config = (
+      parseWorkflowGraph(reserialized).nodes[0]?.data as {
+        aggregatorConfig?: { variables: string[][] };
+      }
+    ).aggregatorConfig;
+    expect(config?.variables).toEqual([
+      ["b", "output"],
+      ["a", "output"],
+    ]);
+  });
+});

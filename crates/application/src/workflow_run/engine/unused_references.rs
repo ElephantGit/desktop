@@ -23,6 +23,11 @@ pub(super) fn validate(graph: &WorkflowGraph, unused: &[String]) -> Result<(), G
                         .flat_map(|config| &config.outputs)
                         .map(|binding| &binding.variable_selector),
                 )
+                .chain(
+                    node.aggregator_config
+                        .iter()
+                        .flat_map(|config| &config.variables),
+                )
             {
                 check(selector)?;
             }

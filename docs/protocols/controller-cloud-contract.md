@@ -85,4 +85,5 @@ Controller's tests enable the feature to host an in-memory Cloud over the real c
 
 Generation proves structural agreement. The Controller's tests exercise the adapter against an
 in-memory Cloud built on the generated server stubs; behavioral agreement with the real Cloud gRPC
-server is verified end to end through the minicloud cloud form and is not yet an automated test.
+server was verified end to end by hand, is now integrated in the cluster repository's Compose stack,
+and is not yet an automated test.

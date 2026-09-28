@@ -251,7 +251,7 @@ fn update_scope_execution_state(
         return Err(crate::DatabaseError::IncompleteWorkflowRunContext);
     };
     let mut state: LoopRoundExecutionState = serde_json::from_str(serialized_state)?;
-    let mut changed = if completion.node_type != "condition"
+    let mut changed = if !matches!(completion.node_type, "condition" | "aggregator")
         && let Some(output) = completion.output
     {
         write_pool_variable(
@@ -284,6 +284,19 @@ fn update_scope_execution_state(
                     &format!("{}.structured_output", completion.node_id),
                     completion.node_id,
                     structured.clone(),
+                )?;
+            }
+        }
+        "aggregator" => {
+            if let Some(output) = completion.output {
+                // The runtime serializes the selected pool value as JSON into the output
+                // column; parse it back so the typed declaration check sees the real value.
+                let value: serde_json::Value = serde_json::from_str(output)?;
+                changed |= write_pool_variable(
+                    &mut state.variable_pool,
+                    &format!("{}.output", completion.node_id),
+                    completion.node_id,
+                    value,
                 )?;
             }
         }

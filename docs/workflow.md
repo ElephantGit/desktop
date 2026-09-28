@@ -97,6 +97,25 @@ Ordinary chats keep automatic discovery. Package and configuration updates for s
 still use the existing safe refresh boundary; no credentials are persisted in the graph. See
 [Session MCP](session-mcp.md) for runtime delivery and refresh behavior.
 
+## Variable Aggregator
+
+The aggregator is a swift control node that collapses mutually exclusive branch outputs into one
+variable. Its `data.aggregatorConfig.variables` holds an ordered list of Dify-style root selectors
+`["nodeId", "root"]`; the array order is the priority contract, so the first **assigned** candidate
+in declaration order passes its pool value through unchanged as `{agg}.output`. Assigned means the
+selector's key exists in the pool — never a truthiness check, so `null`, `false`, `0`, `""`, `[]`,
+and `{}` all hit. When every candidate is unassigned the node fails the run with the stable
+`aggregator_no_match` failure kind.
+
+Parse-time validation keeps the output type static: every candidate must be declared, must be
+produced by the aggregator's static transitive predecessor or a global variable (producers on
+mutually exclusive sibling branches qualify, because their edges feed the aggregator), and all
+candidates must share one declared type — `{agg}.output` is declared with that common type. The
+node never reads Condition decisions and the scheduling core stays type-agnostic: branch selection
+is expressed entirely by the existing branch projection (inactive Condition edges never gate
+readiness) plus pool facts. Groups, nested-path selectors, and type coercion are out of scope for
+V1.
+
 ## Handlers
 
 The `workflow` module exposes the full set of CRUD and lifecycle handlers, all following the existing port-adapter pattern with `WorkflowRepository`, `WorkflowIdGenerator`, and `Clock`:

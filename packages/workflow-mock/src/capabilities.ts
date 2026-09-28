@@ -19,6 +19,7 @@ export type WorkflowConfigField =
   | "initialPrompt"
   | "tool"
   | "condition"
+  | "aggregation"
   | "approvalPrompt"
   | "waitStrategy"
   | "failureStrategy"
@@ -138,6 +139,7 @@ export function createMockWorkflowCapabilities(
     createMockWorkflowNodeType("start", locale),
     createMockWorkflowNodeType("agent", locale),
     createMockWorkflowNodeType("condition", locale),
+    createMockWorkflowNodeType("aggregator", locale),
     createMockWorkflowNodeType("loop", locale),
     createMockWorkflowNodeType("iteration", locale),
     createMockWorkflowNodeType("output", locale),
@@ -283,6 +285,17 @@ export function createMockWorkflowNodeType(
             : "Route execution based on rules",
         configFields: ["condition"],
         supportedScopes: ["workflow", "iteration", "loop"],
+      };
+    case "aggregator":
+      return {
+        kind,
+        label: locale === "zh-CN" ? "变量聚合器" : "Variable Aggregator",
+        description:
+          locale === "zh-CN"
+            ? "将多分支变量聚合为一个变量，按声明顺序取第一个已产出的值"
+            : "Collapse multi-branch variables into one, passing through the first produced value in declaration order",
+        configFields: ["aggregation"],
+        supportedScopes: ["workflow", "iteration"],
       };
     case "tool":
       return {

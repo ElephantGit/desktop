@@ -14,6 +14,9 @@ pub enum NodeType {
     Agent,
     Prompt,
     Condition,
+    /// The ordered variable pass-through: passes the first assigned declared selector's value
+    /// through as `{id}.output` (V1 contract; see `aggregator.rs`).
+    Aggregator,
     Tool,
     Output,
     Loop,
@@ -37,6 +40,7 @@ impl NodeType {
             Self::Agent => "agent",
             Self::Prompt => "prompt",
             Self::Condition => "condition",
+            Self::Aggregator => "aggregator",
             Self::Tool => "tool",
             Self::Output => "output",
             Self::Loop => "loop",
@@ -55,6 +59,7 @@ impl NodeType {
             Self::Start
                 | Self::Agent
                 | Self::Condition
+                | Self::Aggregator
                 | Self::Output
                 | Self::Loop
                 | Self::LoopExit
@@ -81,6 +86,7 @@ impl FromStr for NodeType {
             "agent" => Ok(Self::Agent),
             "prompt" => Ok(Self::Prompt),
             "condition" => Ok(Self::Condition),
+            "aggregator" => Ok(Self::Aggregator),
             "tool" => Ok(Self::Tool),
             "output" => Ok(Self::Output),
             "loop" => Ok(Self::Loop),

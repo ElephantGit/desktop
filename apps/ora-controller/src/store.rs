@@ -7,7 +7,7 @@ use std::{future::Future, io};
 /// Every method is one atomic business operation that the implementation commits as a whole; the
 /// trait deliberately exposes no transaction, connection or table so a remote adapter can honor the
 /// same promises with a single request. Implementations are cheap to clone and shared across the
-/// runtime, the Node sessions and the API. The ordering promises are the contract, not a hint:
+/// runtime, the Node sessions and local intake. The ordering promises are the contract, not a hint:
 ///
 /// - `take_over_node_event` returns only after the execution fact and the exact event receipt are
 ///   durable; callers acknowledge that sequence to the Node only after it succeeds.
@@ -76,9 +76,9 @@ pub trait CoordinationStore: Clone + Send + Sync + 'static {
 }
 
 /// The intake side of an authority that accepts caller requests itself and can catalogue every
-/// accepted operation: the local SQLite adapter behind the transitional JSON surface. A cloud
-/// deployment accepts through Cloud's public API and has no catalogue here, so it does not implement
-/// this trait and the JSON surface is never composed for it instead of answering with errors.
+/// accepted operation: the local SQLite adapter, reached through [`ControllerHandle`] by whatever
+/// embeds a local Controller. A cloud deployment accepts through Cloud's public API and has no
+/// catalogue here, so it does not implement this trait and offers no local intake at all.
 pub trait CloneIntake: CoordinationStore {
     /// Freezes caller intent and the original dispatch identities before any network operation.
     fn accept_request(

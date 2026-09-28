@@ -2,9 +2,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Executable-level composition tests. A child-only stand-in replaces `ora-node` at the process
 //! boundary so readiness, stop and crash behavior can be shaped without Git, host or guardian.
-use ora_contracts::controller_api::*;
 use ora_controller::{CloneIntake, SqliteStore};
-use ora_node_protocol::{ControllerId, RequestId};
+use ora_node_protocol::{
+    BranchName, CloneExecutionSpec, CloneRepositoryUrl, ControllerId, NodeId, RequestId,
+};
 use ora_utils::process::{LinuxPidFd, ProcessSignal, linux_process};
 use pretty_assertions::assert_eq;
 use std::{
@@ -124,7 +125,6 @@ fn deployment(mode: FakeNode, ready_timeout_ms: u64, stop_timeout_ms: u64) -> De
                 "reconnect_ms": 200,
                 "timezone": "Asia/Shanghai",
             },
-            "api": { "node_id": "node" },
             "single_node": {
                 "node_executable": wrapper,
                 "node_config": node_config,
@@ -168,14 +168,9 @@ impl Executable {
     fn errors(&self) -> String {
         fs::read_to_string(&self.errors).unwrap_or_default()
     }
-    /// Waits for the actual bound address; the executable logs it only after its Node is ready.
-    fn address(&self) -> String {
-        let mut address = None;
-        until(|| {
-            address = listening(&self.log());
-            address.is_some()
-        });
-        address.unwrap()
+    /// Waits until the composition is up; the executable logs it only after its Node is ready.
+    fn ready(&self) {
+        until(|| self.log().contains(COMPOSED));
     }
     fn wait(&mut self) -> std::process::ExitStatus {
         until(|| self.child.try_wait().unwrap().is_some());
@@ -220,18 +215,8 @@ fn until(mut ready: impl FnMut() -> bool) {
     }
 }
 
-/// The TCP address the executable reported as bound, read from its structured log line.
-fn listening(log: &str) -> Option<String> {
-    log.lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .find(|event| event["message"] == "ora-controller listening")
-        .and_then(|event| {
-            event["context"]["endpoint"]
-                .as_str()
-                .and_then(|endpoint| endpoint.strip_prefix("tcp://"))
-                .map(str::to_owned)
-        })
-}
+/// The structured event a local composition logs once its owner and hosted Node are up.
+const COMPOSED: &str = "ora-controller coordinating locally";
 
 /// Byte offset of a log line so ordering assertions read the actual sequence of events.
 fn position(log: &str, needle: &str) -> usize {
@@ -239,25 +224,18 @@ fn position(log: &str, needle: &str) -> usize {
         .unwrap_or_else(|| panic!("missing {needle:?} in log:\n{log}"))
 }
 
-/// Refused flags and configuration exit before any Controller state or Node exists.
+/// Refused flags and configuration exit before any Controller state or Node exists; listener
+/// flags are no longer part of the executable at all.
 #[test]
 fn refused_composition_leaves_no_state_behind() {
     let deployment = deployment(FakeNode::Listen, 5000, 5000);
     let config = deployment.config.to_str().unwrap();
     let relative = Path::new("controller.json");
     let refusals: Vec<Vec<&str>> = vec![
-        vec!["--config", config, "--transport", "unix", "--port", "1"],
-        vec!["--config", config, "--transport", "unix"],
+        vec!["--config", config, "--port", "0"],
+        vec!["--config", config, "--transport", "tcp"],
         vec!["--config", config, "--socket", "/tmp/api.sock"],
         vec!["--config", relative.to_str().unwrap()],
-        vec![
-            "--config",
-            config,
-            "--transport",
-            "unix",
-            "--socket",
-            "relative.sock",
-        ],
     ];
     for args in refusals {
         let mut executable = Executable::start(deployment.root.path(), &args);
@@ -277,7 +255,7 @@ fn refused_composition_leaves_no_state_behind() {
     .unwrap();
     let mut executable = Executable::start(
         deployment.root.path(),
-        &["--config", config, "--single-node", "--port", "0"],
+        &["--config", config, "--single-node"],
     );
     assert!(!executable.wait().success());
     assert!(
@@ -294,34 +272,9 @@ fn refused_composition_leaves_no_state_behind() {
     fs::write(&deployment.node_config, original).unwrap();
 }
 
-/// A non-loopback listener is allowed but leaves an explicit warning in the log.
+/// Readiness failure terminates the stand-in, never reports a composition and releases the lease.
 #[test]
-fn non_loopback_listener_warns() {
-    let deployment = deployment(FakeNode::Listen, 5000, 5000);
-    let mut executable = Executable::start(
-        deployment.root.path(),
-        &[
-            "--config",
-            deployment.config.to_str().unwrap(),
-            "--host",
-            "0.0.0.0",
-            "--port",
-            "0",
-        ],
-    );
-    let address = executable.address();
-    assert!(address.starts_with("0.0.0.0:"));
-    assert!(
-        executable
-            .log()
-            .contains("non-loopback address without authentication")
-    );
-    assert!(executable.terminate().success());
-}
-
-/// Readiness failure terminates the stand-in, never prints an address and releases the lease.
-#[test]
-fn readiness_timeout_stops_node_and_never_opens_api() {
+fn readiness_timeout_stops_node_and_never_composes() {
     let deployment = deployment(FakeNode::Silent, 300, 5000);
     let mut executable = Executable::start(
         deployment.root.path(),
@@ -329,15 +282,13 @@ fn readiness_timeout_stops_node_and_never_opens_api() {
             "--config",
             deployment.config.to_str().unwrap(),
             "--single-node",
-            "--port",
-            "0",
         ],
     );
     let node = fake_node(&deployment);
     let status = executable.wait();
     assert!(!status.success());
     assert!(executable.errors().contains("did not become ready"));
-    assert!(!executable.log().contains("ora-controller listening"));
+    assert!(!executable.log().contains(COMPOSED));
     until(|| node.has_exited().unwrap());
     // The lease is free again: the same identity reopens the state the refused run created.
     drop(SqliteStore::open(&deployment.home, ControllerId::new("owner")).unwrap());
@@ -354,23 +305,18 @@ fn normal_stop_orders_phases_and_retires_node() {
             "--config",
             deployment.config.to_str().unwrap(),
             "--single-node",
-            "--port",
-            "0",
         ],
     );
-    let address = executable.address();
+    executable.ready();
     let node = fake_node(&deployment);
     let log = executable.log();
-    assert!(position(&log, "managed Node ready") < position(&log, "ora-controller listening"));
-    assert!(std::net::TcpStream::connect(&address).is_ok());
+    assert!(position(&log, "managed Node ready") < position(&log, COMPOSED));
     assert!(executable.terminate().success());
     let log = executable.log();
-    let api = position(&log, "API admission stopped");
     let sessions = position(&log, "Node sessions stopped");
     let stopped = position(&log, "managed Node stopped");
-    assert!(api < sessions && sessions < stopped, "{log}");
+    assert!(sessions < stopped, "{log}");
     assert!(node.has_exited().unwrap());
-    assert!(std::net::TcpStream::connect(&address).is_err());
     assert_eq!(fs::read(&deployment.node_config).unwrap(), node_config);
 }
 
@@ -384,11 +330,9 @@ fn stop_timeout_warns_without_sigkill() {
             "--config",
             deployment.config.to_str().unwrap(),
             "--single-node",
-            "--port",
-            "0",
         ],
     );
-    executable.address();
+    executable.ready();
     let node = fake_node(&deployment);
     let started = Instant::now();
     assert!(executable.terminate().success());
@@ -403,41 +347,37 @@ fn stop_timeout_warns_without_sigkill() {
     until(|| node.has_exited().unwrap());
 }
 
-/// Losing the hosted Node stops admission and exits with failure while accepted records survive.
+/// Losing the hosted Node stops the composition and exits with failure while accepted records survive.
 #[test]
-fn node_exit_stops_admission_and_keeps_records() {
+fn node_exit_stops_composition_and_keeps_records() {
     let deployment = deployment(FakeNode::Listen, 5000, 5000);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    // Work reaches a local owner through the embedding caller, never through the executable.
+    let owner = SqliteStore::open(&deployment.home, ControllerId::new("owner")).unwrap();
+    let accepted = runtime
+        .block_on(owner.accept_request(
+            RequestId::new("before-node-loss"),
+            CloneExecutionSpec {
+                node_id: NodeId::new("node"),
+                repository: CloneRepositoryUrl::parse("https://example.com/repo.git").unwrap(),
+                branch: BranchName::new("main"),
+            },
+        ))
+        .unwrap();
+    drop(owner);
     let mut executable = Executable::start(
         deployment.root.path(),
         &[
             "--config",
             deployment.config.to_str().unwrap(),
             "--single-node",
-            "--port",
-            "0",
         ],
     );
-    let address = executable.address();
+    executable.ready();
     let node = fake_node(&deployment);
-    let accepted: MiniCloneAccepted = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(async {
-            reqwest::Client::new()
-                .post(format!("http://{address}/api/clones"))
-                .json(&MiniCloneRequest {
-                    request_id: "before-node-loss".into(),
-                    repository: "https://example.com/repo.git".into(),
-                    branch: "main".into(),
-                })
-                .send()
-                .await
-                .unwrap()
-                .json()
-                .await
-                .unwrap()
-        });
     node.signal(ProcessSignal::Kill).unwrap();
     let status = executable.wait();
     assert!(!status.success());
@@ -446,32 +386,15 @@ fn node_exit_stops_admission_and_keeps_records() {
             .errors()
             .contains("managed Node exited unexpectedly")
     );
-    assert!(std::net::TcpStream::connect(&address).is_err());
     let owner = SqliteStore::open(&deployment.home, ControllerId::new("owner")).unwrap();
-    let operations = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(owner.operations())
-        .unwrap();
+    let operations = runtime.block_on(owner.operations()).unwrap();
     assert_eq!(operations.len(), 1);
-    assert_eq!(
-        operations[0].command.execution_id.as_str(),
-        accepted.execution_id
-    );
-    assert_eq!(
-        operations[0]
-            .command
-            .request_id
-            .as_ref()
-            .map(RequestId::as_str),
-        Some("before-node-loss")
-    );
+    assert_eq!(operations[0].command, accepted);
     assert!(operations[0].result.is_none());
 }
 
-/// A cloud deployment binds no JSON surface, refuses listener flags and creates no local state;
-/// with Cloud unreachable it stays up, ineligible, until asked to stop.
+/// A cloud deployment creates no local state; with Cloud unreachable it stays up, ineligible,
+/// until asked to stop.
 #[test]
 fn cloud_persistence_serves_no_surface_and_creates_no_local_state() {
     let root = tempfile::Builder::new()
@@ -503,10 +426,6 @@ fn cloud_persistence_serves_no_surface_and_creates_no_local_state() {
     )
     .unwrap();
     let config = config.to_str().unwrap();
-    let mut refused = Executable::start(path, &["--config", config, "--port", "0"]);
-    assert!(!refused.wait().success());
-    assert!(refused.errors().contains("serves no JSON surface"));
-    assert!(!home.exists());
     let mut executable = Executable::start(path, &["--config", config]);
     until(|| {
         let log = executable.log();
@@ -514,7 +433,6 @@ fn cloud_persistence_serves_no_surface_and_creates_no_local_state() {
             && log.contains("http://127.0.0.1:1")
     });
     until(|| executable.log().contains("Cloud lease not acquired"));
-    assert!(!executable.log().contains("ora-controller listening"));
     assert!(!home.exists());
     assert!(executable.terminate().success());
     assert!(!home.exists());

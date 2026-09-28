@@ -1,3 +1,4 @@
+import { selectorToText, textToSelector } from "./workflow-selector-text";
 import { Fragment } from "react";
 import { useTranslation } from "react-i18next";
 import { IconPlus, IconTrash } from "@tabler/icons-react";
@@ -346,19 +347,6 @@ export function LocalizedSelectValue({
       }
     </SelectValue>
   );
-}
-
-/** Joins a selector array into its dotted text form for the editor input. */
-function selectorToText(selector: string[]): string {
-  return selector.join(".");
-}
-
-/** Splits the dotted selector text into `[nodeId, root, ...nested]` parts. */
-function textToSelector(text: string): string[] {
-  return text
-    .split(".")
-    .map((part) => part.trim())
-    .filter((part) => part !== "");
 }
 
 /** Coerces the comparison value's text form into a JSON-ish value for the backend. */

@@ -7,6 +7,7 @@
 // The design places the run engine in `engine/engine.rs`, so the nested module name matches the
 // containing directory on purpose.
 mod agent_config;
+mod aggregator;
 mod branch_projection;
 mod condition;
 #[allow(clippy::module_inception)]
@@ -70,6 +71,8 @@ pub use structured_output::{StructuredOutputError, extract_json_object, validate
 pub use variable_pool::{WorkflowVariablePool, WorkflowVariablePoolError};
 pub use variable_template::{VariableTemplateError, render_variable_template};
 
+#[cfg(test)]
+mod aggregator_tests;
 #[cfg(test)]
 mod d2_tests;
 #[cfg(test)]

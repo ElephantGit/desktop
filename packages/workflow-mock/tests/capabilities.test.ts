@@ -5,14 +5,14 @@ import {
 } from "../src/capabilities";
 
 describe("workflow node scopes", () => {
-  it("allows only Agent and Condition inside an iteration region", () => {
+  it("allows only Agent, Condition, and Aggregator inside an iteration region", () => {
     const capabilities = createMockWorkflowCapabilities("en-US");
 
     expect(
       capabilities.nodeTypes
         .filter((nodeType) => supportsWorkflowNodeScope(nodeType, "iteration"))
         .map((nodeType) => nodeType.kind),
-    ).toEqual(["agent", "condition"]);
+    ).toEqual(["agent", "condition", "aggregator"]);
   });
 
   it("keeps exit nodes inside loops while preserving the outer catalog", () => {
@@ -22,7 +22,15 @@ describe("workflow node scopes", () => {
       capabilities.nodeTypes
         .filter((nodeType) => supportsWorkflowNodeScope(nodeType, "workflow"))
         .map((nodeType) => nodeType.kind),
-    ).toEqual(["start", "agent", "condition", "loop", "iteration", "output"]);
+    ).toEqual([
+      "start",
+      "agent",
+      "condition",
+      "aggregator",
+      "loop",
+      "iteration",
+      "output",
+    ]);
     expect(
       capabilities.nodeTypes
         .filter((nodeType) => supportsWorkflowNodeScope(nodeType, "loop"))

@@ -1,5 +1,6 @@
 import type { ComponentType } from "react";
 import {
+  IconArrowsJoin2,
   IconArrowRight,
   IconLogout,
   IconBinaryTree,
@@ -36,6 +37,11 @@ const WORKFLOW_NODE_METADATA: Record<WorkflowNodeKind, WorkflowNodeMetadata> = {
     kind: "condition",
     icon: IconBinaryTree,
     tone: "bg-amber-500/12 text-amber-700 dark:text-amber-400",
+  },
+  aggregator: {
+    kind: "aggregator",
+    icon: IconArrowsJoin2,
+    tone: "bg-lime-500/12 text-lime-700 dark:text-lime-400",
   },
   tool: {
     kind: "tool",

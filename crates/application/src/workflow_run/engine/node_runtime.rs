@@ -13,7 +13,7 @@ use crate::workflow_run::engine::iteration::RoundOutcome;
 use crate::workflow_run::engine::node_type::NodeType;
 use crate::workflow_run::engine::ports::ExecutionContext;
 use crate::workflow_run::engine::variable_pool::WorkflowVariablePool;
-use control::{ConditionRuntime, LoopExitRuntime, OutputRuntime, StartRuntime};
+use control::{AggregatorRuntime, ConditionRuntime, LoopExitRuntime, OutputRuntime, StartRuntime};
 use iteration::IterationRuntime;
 use ora_domain::{WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus};
 use std::cmp::Reverse;
@@ -289,6 +289,10 @@ where
     runtimes.register(
         NodeType::Condition,
         RegisteredNodeRuntime::Swift(Arc::new(ConditionRuntime)),
+    );
+    runtimes.register(
+        NodeType::Aggregator,
+        RegisteredNodeRuntime::Swift(Arc::new(AggregatorRuntime)),
     );
     runtimes.register(
         NodeType::Output,

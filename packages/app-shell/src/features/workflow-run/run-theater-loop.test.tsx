@@ -272,10 +272,12 @@ it("switches the conversation to the selected round and exposes committed loop r
   const view = mount(run);
   await user.click(screen.getByRole("button", { name: /Review loop:/ }));
   await user.click(screen.getByRole("button", { name: "Writer: Succeeded" }));
-  await user.click(screen.getByRole("button", { name: "Open node details" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Open node details" }),
+  );
   expect(
     within(
-      screen.getByRole("complementary", { name: "Act details" }),
+      await screen.findByRole("complementary", { name: "Act details" }),
     ).getByText("first draft"),
   ).toBeInTheDocument();
   await user.click(
@@ -284,15 +286,17 @@ it("switches the conversation to the selected round and exposes committed loop r
   expect(await screen.findByText("FIRST SESSION")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: /Round 2 ·/ }));
   expect(await screen.findByText("SECOND SESSION")).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Open node details" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Open node details" }),
+  );
   expect(
     within(
-      screen.getByRole("complementary", { name: "Act details" }),
+      await screen.findByRole("complementary", { name: "Act details" }),
     ).queryByText("first draft"),
   ).not.toBeInTheDocument();
   expect(
     within(
-      screen.getByRole("complementary", { name: "Act details" }),
+      await screen.findByRole("complementary", { name: "Act details" }),
     ).queryByText("partial stream must stay hidden"),
   ).not.toBeInTheDocument();
   expect(screen.queryByText("FIRST SESSION")).not.toBeInTheDocument();
