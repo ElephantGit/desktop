@@ -2,9 +2,8 @@
 
 [English](local-runtime.md) | 中文
 
-`ora-controller` 负责本机 clone 意图的持久接受与结果接管，其可执行入口同时承载
-[minicloud](../minicloud/runtime.zh.md) 调用的过渡 clone API。它不执行 Git、不替换 Backend 写入入口，
-也不充当 Cloud 权威存储。Linux 会话使用现有 [Node IPC](../node/local-ipc.zh.md)
+`ora-controller` 负责 clone 意图的持久接受与结果接管。它不执行 Git、不替换 Backend 写入入口，
+也不充当 Cloud 权威存储；可执行入口在任何形态下都不打开监听。Linux 会话使用现有 [Node IPC](../node/local-ipc.zh.md)
 和长度前缀 JSON 消息，不增加应用凭据。
 
 ## 接受与存储
@@ -13,11 +12,11 @@
 （`take_over_node_event`、`record_queried_result`、`original_dispatch`、`pending_dispatches`、`result`，
 以及适配器与其权威方自有协调的 `serve`），异步形态，不暴露事务、连接或表。两个适配器实现它，在部署期
 选定其一，不互为后备：本机部署用 `SqliteStore::open(home, controller_id)`，每个操作在 blocking pool 上
-执行，SQLite 的 fsync 不占用承载 Node 会话与 API 的异步运行时；云端部署用 `CloudStore::open(&config)`，
+执行，SQLite 的 fsync 不占用承载 Node 会话与内嵌调用方的异步运行时；云端部署用 `CloudStore::open(&config)`，
 每个操作是对 [Controller–Cloud 契约](../protocols/controller-cloud-contract.zh.md) 的一次调用，由 Cloud
 在 PostgreSQL 中提交。接受调用方请求与目录列表（`accept_request`、`operations`、`operation`）是独立的
-`CloneIntake` 接口，只有 SQLite 适配器实现：云端部署的接受入口属于 Cloud 公开 API，所以 JSON 表面根本
-不会被组合。`result(execution_id)` 以 `ExecutionOutcome`（Node incarnation 加 `ready{path, commit}` 或
+`CloneIntake` 接口，只有 SQLite 适配器实现，由内嵌本机 Controller 的调用方（将来的 Desktop 本机模式）
+经 `ControllerHandle` 使用；云端部署的接受入口属于 Cloud 公开 API，本机没有任何受理入口。`result(execution_id)` 以 `ExecutionOutcome`（Node incarnation 加 `ready{path, commit}` 或
 `failed{reason, retained_path}`）报告终态，这是两种权威存储共同持久的形状；本机目录保留完整线上结果供展示。
 
 `accept_request(request_id, spec)` 返回的命令包含稳定 operation／execution。完整输入及目标 Node 落盘后
@@ -41,28 +40,22 @@ application ID 为 `0x4f524143`、schema version 为 1；精确结构／完整�
 
 `ControllerRuntime::open(RuntimeConfig)` 支持内嵌。`handle()` 提供持久 clone 接受、操作列表和查询；
 `run(shutdown)` 拥有重连循环，不安装进程信号。查询不存在与操作已接受但尚无终态明确区分。
-库本身不依赖任何监听器；`Service::start(DeploymentConfig, Transport, NodeHosting)` 为可执行入口和测试
-组合 API 监听、唯一运行时所有者以及可选托管的 Node。
+`Service::start(DeploymentConfig, NodeHosting)` 为可执行入口和测试组合唯一运行时所有者以及可选托管的
+Node，不打开任何监听。可执行程序本身没有受理入口：SQLite 形态下它派发并接管该所有者已接受的工作，
+组合完成后记录 `ora-controller coordinating locally`；新工作由内嵌 `ControllerHandle` 的调用方接受。
 
 构建 `cargo build -p ora-controller -p ora-node -p ora-process-host -p ora-process-guardian`。
 部署状态放在一个配置文件里，本次进程的组合方式由命令行给出：
 
 ```text
 ora-controller --config /absolute/path/controller.json [--single-node]
-               [--transport tcp|unix] [--host 127.0.0.1] [--port 4820] [--socket /path/api.sock]
 ```
 
-| 参数                      | 规则                                                                                                                                      |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `--transport tcp`（默认） | `--host` 默认 `127.0.0.1`，`--port` 默认 `4820`。非回环地址允许启动但会记录警告：API 没有认证，回环只是部署约束而不是安全保证。           |
-| `--transport unix`        | 需要 `--socket`，必须是直接位于 `home_directory` 内的绝对路径，按与 Node endpoint 相同的私有 socket 规则创建；不接受 `--host`／`--port`。 |
-| `--single-node`           | 按 `single_node` 段启动配置的 Node，正常关停时停止它，见下文。                                                                            |
-
-非法参数组合与配置都在获取数据库租约前拒绝。
+`--single-node` 按 `single_node` 段启动配置的 Node，正常关停时停止它，见下文。非法参数与配置都在获取
+数据库租约前拒绝。
 
 `persistence` 在部署期选定持久适配器；运行中不切换，两者互不为后备。`{ "kind": "sqlite" }` 用
-`home_directory` 内的 SQLite 与文件租约并提供 JSON 表面，因此 `api` 段必填。云端形态不开库、不取文件租约、
-不提供 JSON 表面，因此 `api` 必须缺省，监听器参数会被拒绝：
+`home_directory` 内的 SQLite 与文件租约。云端形态不开库、不取文件租约，只主动调用 Cloud：
 
 ```json
 "persistence": {
@@ -166,7 +159,6 @@ Controller 从不自行重建沙箱。握手后它以 `RegisterNode` 登记 Node
     "reconnect_ms": 1000,
     "timezone": "Asia/Shanghai"
   },
-  "api": { "node_id": "deployment-node" },
   "single_node": {
     "node_executable": "/opt/ora/bin/ora-node",
     "node_config": "/home/node/config/node.json",
@@ -176,8 +168,7 @@ Controller 从不自行重建沙箱。握手后它以 `RegisterNode` 登记 Node
 }
 ```
 
-`api.node_id` 指定已接受 clone 派发到的 Node，调用方不选择 Node。沙盒中的 Node 改为经平台
-WebSocket 路由访问：
+沙盒中的 Node 改为经平台 WebSocket 路由访问：
 
 ```json
 {
@@ -202,21 +193,19 @@ close code `4409` 关闭）；IPC 的 Node 只能关闭 socket，会话占用会
 重叠时，在开库前拒绝。独立程序恢复已接受记录，配置文件和 stdin 不是业务命令通道。
 不托管 Node 时分别部署 host 和 Node，Node 配置的归属须匹配 ControllerId。
 
-`--single-node` 要求 `nodes` 恰好包含 `api.node_id` 这一个使用 `ipc` endpoint 的 Node。开库前，程序只读
+`--single-node` 要求 `nodes` 恰好包含一个使用 `ipc` endpoint 的 Node。开库前，程序只读
 读取 `node_config`，其 `control.controller_id` 或 `control.listen`（`ipc` 类型且路径相同）不匹配、
 或 endpoint 上已有进程接受连接时拒绝启动。随后在
 自身进程组内（不新建会话）启动 `node_executable <node_config>`，在 `ready_timeout_ms` 内等待 endpoint
-可连接，然后才绑定 API。process host 与 guardian 是前置条件，程序不部署也不启动它们。Controller
+可连接，然后才报告组合完成。process host 与 guardian 是前置条件，程序不部署也不启动它们。Controller
 单独退出不会向 Node 发送任何信号，已接受的 clone 继续执行；运维或启动器按进程组停止时两者都会收到。
-托管的 Node 自行退出时，Controller 关停并以失败退出，而不是继续受理无法派发的请求。
+托管的 Node 自行退出时，Controller 关停并以失败退出，而不是继续持有无法派发的工作。
 
-正常关停顺序固定为：API 受理（有限等待在途请求）→ Node 会话 → 适配器自有协调（云端形态下有限时间内
+正常关停顺序固定为：Node 会话 → 适配器自有协调（云端形态下有限时间内
 释放租约，放在会话之后，避免在即将释放的租约下写入）→ 托管 Node（`SIGTERM`，最多等待
 `stop_timeout_ms`，不升级为 `SIGKILL`）→ SQLite 形态的数据库租约。本进程停止从不取消 Node 已接受的执行。
 
-JSON 接口是 [minicloud](../minicloud/runtime.zh.md#http-接口) 文档描述的过渡 clone API，
-DTO 位于 `ora-contracts::controller_api`，只在 SQLite 持久模式下存在。面向 Cloud 的契约由 Cloud 仓库的
-proto 定义，Controller 作为客户端拨出（见 [Controller–Cloud 契约](../protocols/controller-cloud-contract.zh.md)），
+面向 Cloud 的契约由 Cloud 仓库的 proto 定义，Controller 作为客户端拨出（见 [Controller–Cloud 契约](../protocols/controller-cloud-contract.zh.md)），
 不向 Cloud 暴露任何服务。
 
 ## 验证与保留范围
@@ -226,9 +215,9 @@ proto 定义，Controller 作为客户端拨出（见 [Controller–Cloud 契约
 有单元测试；`apps/ora-controller/tests/cloud.rs` 以内存假 Cloud 驱动运行时，假 Cloud 经 `ora-controller-proto`
 测试专用的服务端桩（`test-server` feature）提供真实契约，并配一个经 IPC 的假静态 Node，覆盖信号触发领取、
 Node 握手前已排队的工作、Node 声称其他身份时不领取、断流回退与
-重开、排空、排空后流被拒绝、打开时 epoch 陈旧、批量登记，以及关停时关闭流并释放租约。运行时与可执行程序测试覆盖云端形态不建本机状态、不提供 JSON 表面、拒绝 `api` 段或监听器参数、Cloud
-不可达时保持运行。它对真实 Cloud 的行为（租约、领取、派发、接管、重启不重复 clone）经 [minicloud 云端
-形态](../minicloud/runtime.zh.md#云端持久模式)端到端验证，尚未自动化；
+重开、排空、排空后流被拒绝、打开时 epoch 陈旧、批量登记，以及关停时关闭流并释放租约。运行时与可执行程序测试覆盖云端形态不建本机状态、Cloud 不可达时保持运行。它对真实 Cloud 的行为（租约、
+领取、派发、接管、重启不重复 clone）曾经手动端到端验证，现在的联调环境是 cluster 仓库的 Compose 栈
+（Gateway → Cloud → Controller → Sandbox Server → Node），尚未自动化；
 `apps/ora-controller/tests/workspaces.rs` 以假 Cloud、假 Substrate 效果服务和假 Node 驱动 Workspace 操作：
 创建和停止 Workspace 走完所有步骤、clone 前登记 Node、终止前先报告空闲并停会话且不把这次停止报告为断开；不可 clone 的 ref 使 clone 步骤阻塞且
 不派发；派发没有结果时 quiesce 报告忙碌。Substrate 客户端有单元测试覆盖超时效果按同一 id 查询、已完成效果
