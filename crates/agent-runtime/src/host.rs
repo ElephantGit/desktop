@@ -13,6 +13,7 @@ use ora_domain::{
     SessionTitle, WorkspaceId,
 };
 use ora_effect::ConsumerDeclaration;
+use ora_history::HistoryLine;
 use ora_plugin_lifecycle::{ConnectionError, InboundNotification};
 use ora_plugin_runtime::PluginRuntime;
 use std::error::Error;
@@ -176,6 +177,15 @@ pub trait RuntimeEvents: Clone + Send + Sync + 'static {
 
     /// A replaced agent process may expose a different model catalog.
     fn agent_models_invalidated(&self, agent_ref: &AgentRef);
+
+    /// Lines were just appended to a session's history file, in file order.
+    ///
+    /// Called synchronously from the session's actor after the append succeeded and before the
+    /// actor handles anything else, so a host that mirrors the conversation elsewhere sees every
+    /// settled record exactly once, in order, and never one the file does not hold. A host may do
+    /// a short durable write here; anything slower stalls the session. A host with no mirror
+    /// ignores it.
+    fn records_settled(&self, session_id: &SessionId, lines: &[HistoryLine]);
 }
 
 /// Maps a Workspace onto the directory its sessions run in.

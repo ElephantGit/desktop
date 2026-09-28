@@ -226,7 +226,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
         &mut self,
         operation_id: u64,
         prompt: Vec<ContentBlock>,
-        record_prompt: Option<Vec<ContentBlock>>,
+        record_prompt: RecordedTurn,
         events: mpsc::Sender<Result<PromptSessionEvent, RuntimeError>>,
     ) {
         // An exit without a terminal provider response cannot prove remote work stopped.
@@ -273,9 +273,11 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
             blocks,
             settles_handoff,
         } = prompt_for_agent(self, &prompt);
-        let outcome = self
-            .recorder
-            .record_prompt(record_prompt.as_deref().unwrap_or(&prompt));
+        let recorded = record_prompt.blocks.as_deref().unwrap_or(&prompt);
+        let outcome = match record_prompt.message_id {
+            Some(message_id) => self.recorder.record_identified_prompt(recorded, message_id),
+            None => self.recorder.record_prompt(recorded),
+        };
         let stopped_recording = matches!(outcome, RecordOutcome::JustFailed { .. });
         self.settle_record(outcome);
         if stopped_recording {
@@ -859,6 +861,7 @@ mod tests {
             "session-1",
             0,
             &ora_domain::HistoryState::Writable,
+            crate::test_host::RecordedEvents::default(),
             crate::history::LocalHistoryClock,
         )
         .expect("open actor recorder");
@@ -937,6 +940,7 @@ mod tests {
             "session-1",
             0,
             &ora_domain::HistoryState::Writable,
+            crate::test_host::RecordedEvents::default(),
             crate::history::LocalHistoryClock,
         )
         .expect("open actor recorder");

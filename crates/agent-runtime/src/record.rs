@@ -22,8 +22,8 @@ use ora_history::{HistoryIntegrity, read_session_history};
 use ora_logging::ora_warn;
 
 /// One session's opened recorder together with what reading its file revealed.
-pub(super) struct OpenedRecorder {
-    pub recorder: SessionRecorder,
+pub(super) struct OpenedRecorder<E> {
+    pub recorder: SessionRecorder<E>,
     pub handoff_pending: bool,
     /// Set when the history could not be read, which degrades the session.
     ///
@@ -87,7 +87,10 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
     }
 
     /// Opens one session's recorder, resuming its position counter from the file.
-    pub(super) fn open_recorder(&self, session: &Session) -> Result<OpenedRecorder, RuntimeError> {
+    pub(super) fn open_recorder(
+        &self,
+        session: &Session,
+    ) -> Result<OpenedRecorder<H::Events>, RuntimeError> {
         let root = &self.inner.sessions_root;
         let session_id = session.id.as_ref();
         match read_session_history(root, session_id) {
@@ -104,6 +107,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                     session_id,
                     history.next_seq,
                     &session.history_state,
+                    self.inner.events.clone(),
                     LocalHistoryClock,
                 )
                 .map_err(|source| {
@@ -127,6 +131,7 @@ impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
                     &HistoryState::Degraded {
                         reason: failure.clone(),
                     },
+                    self.inner.events.clone(),
                     LocalHistoryClock,
                 )
                 .map_err(|source| {

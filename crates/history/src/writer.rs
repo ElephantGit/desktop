@@ -57,26 +57,29 @@ impl<C: HistoryClock> HistoryWriter<C> {
 
     /// Appends one record at a caller-chosen position.
     pub fn append_record(&self, seq: u32, record: HistoryRecord) -> Result<(), HistoryError> {
-        self.append(&[AssembledRecord { seq, record }])
+        self.append(&[AssembledRecord { seq, record }]).map(drop)
     }
 
-    /// Appends a batch of records in one open-write-flush cycle.
+    /// Appends a batch of records in one open-write-flush cycle and returns the lines written.
     ///
     /// The batch is encoded fully before the file is touched, so a record that
     /// cannot be serialized fails without leaving a partial line behind. Writes
     /// are flushed but not synced: losing the last few records to a power cut is
     /// an acceptable trade for keeping a long turn's appends off the disk's
-    /// latency path.
-    pub fn append(&self, records: &[AssembledRecord]) -> Result<(), HistoryError> {
+    /// latency path. The returned lines are exactly what the file now holds, so a
+    /// caller that mirrors the history elsewhere never re-derives a timestamp.
+    pub fn append(&self, records: &[AssembledRecord]) -> Result<Vec<HistoryLine>, HistoryError> {
         if records.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
         let at = format_timestamp(self.clock.now_local());
         let mut buffer = Vec::new();
+        let mut lines = Vec::with_capacity(records.len());
         for record in records {
             let line = HistoryLine::new(at.clone(), record.seq, record.record.clone());
             serde_json::to_writer(&mut buffer, &line).map_err(HistoryError::Encode)?;
             buffer.push(b'\n');
+            lines.push(line);
         }
         let mut file = self.open_for_append()?;
         file.write_all(&buffer)
@@ -92,7 +95,7 @@ impl<C: HistoryClock> HistoryWriter<C> {
         // cutoff never sees a record that is not yet durable.
         self.durable_bytes
             .fetch_add(buffer.len() as u64, Ordering::Relaxed);
-        Ok(())
+        Ok(lines)
     }
 
     /// Opens the file, creating its shard directories only if they are missing.

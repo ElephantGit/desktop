@@ -122,6 +122,8 @@ fn reads_only_the_durable_prefix_up_to_a_byte_cutoff() {
     assert_eq!(full.next_seq, 2);
 }
 
+/// Verifies a batch append reports exactly the lines it put in the file, so a host mirroring
+/// the history elsewhere carries the same timestamps and positions the file does.
 #[test]
 fn round_trips_appended_records_in_conversation_order() {
     let root = tempfile::tempdir().expect("create history root");
@@ -136,7 +138,7 @@ fn round_trips_appended_records_in_conversation_order() {
     });
 
     writer.append_record(0, meta.clone()).expect("append meta");
-    writer
+    let appended = writer
         .append(&[
             AssembledRecord {
                 seq: 1,
@@ -153,6 +155,7 @@ fn round_trips_appended_records_in_conversation_order() {
 
     let history = read_session_history(root.path(), SESSION_ID).expect("read history");
 
+    assert_eq!(appended, history.lines[1..].to_vec());
     assert_eq!(
         history.lines,
         vec![

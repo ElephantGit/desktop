@@ -16,6 +16,7 @@ use ora_domain::{
     SessionTitle, WorkspaceId,
 };
 use ora_effect::ConsumerDeclaration;
+use ora_history::HistoryLine;
 use ora_plugin_lifecycle::ConnectionError;
 use ora_scheduler::Scheduler;
 use std::path::{Path, PathBuf};
@@ -275,15 +276,27 @@ pub(crate) enum RecordedEvent {
 }
 
 /// Keeps every published notification in order for assertions.
+///
+/// Settled history lines are kept apart from lifecycle notifications, so a test about one never
+/// has to account for the other.
 #[derive(Clone, Default)]
 pub(crate) struct RecordedEvents {
     events: Arc<Mutex<Vec<RecordedEvent>>>,
+    settled: Arc<Mutex<Vec<(SessionId, HistoryLine)>>>,
 }
 
 impl RecordedEvents {
     /// Returns everything published so far.
     pub(crate) fn published(&self) -> Vec<RecordedEvent> {
         self.events
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Returns every settled history line in the order the runtime reported it.
+    pub(crate) fn settled(&self) -> Vec<(SessionId, HistoryLine)> {
+        self.settled
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
@@ -303,6 +316,13 @@ impl RuntimeEvents for RecordedEvents {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(RecordedEvent::AgentModelsInvalidated(agent_ref.clone()));
+    }
+
+    fn records_settled(&self, session_id: &SessionId, lines: &[HistoryLine]) {
+        self.settled
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .extend(lines.iter().map(|line| (session_id.clone(), line.clone())));
     }
 }
 
