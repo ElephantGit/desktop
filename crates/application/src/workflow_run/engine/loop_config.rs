@@ -80,9 +80,6 @@ impl LoopConfig {
         if !(1..=100).contains(&wire.max_iterations) {
             return Err("maxIterations must be between 1 and 100".into());
         }
-        if wire.until.conditions.is_empty() {
-            return Err("until must contain at least one condition".into());
-        }
         let until = ConditionConfig::from_wire(vec![WireConditionCase {
             id: Some("until".into()),
             logic: Some(wire.until.logic),

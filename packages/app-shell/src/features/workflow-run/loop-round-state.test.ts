@@ -77,7 +77,7 @@ function createRun(): GraphWorkflowRun {
         id: "round-1",
         parentLoopNodeRunId: "loop-run",
         parentLoopNodeId: "loop",
-        roundIndex: 0,
+        roundIndex: 1,
         status: "succeeded",
         nodeStates: {
           writer: {
@@ -94,7 +94,7 @@ function createRun(): GraphWorkflowRun {
         id: "round-2",
         parentLoopNodeRunId: "loop-run",
         parentLoopNodeId: "loop",
-        roundIndex: 1,
+        roundIndex: 2,
         status: "running",
         nodeStates: {
           writer: {
@@ -115,27 +115,33 @@ function createRun(): GraphWorkflowRun {
 }
 
 describe("Loop round state projection", () => {
-  it("uses the latest round by default while preserving root-scope states", () => {
+  it("never falls back to another round's session for an unexecuted member", () => {
+    const run = createRun();
+    run.nodeStates.reviewer = {
+      status: "succeeded",
+      sessionId: "stale",
+      output: { summary: "stale result" },
+    };
+    delete run.rounds![0].nodeStates.reviewer;
+    expect(projectLoopRoundNodeStates(run, {}).reviewer).toEqual({
+      status: "inactive",
+    });
+    run.rounds = [];
+    expect(projectLoopRoundNodeStates(run, {}).writer).toEqual({
+      status: "inactive",
+    });
+  });
+  it("uses the first round by default while preserving root-scope states", () => {
     const run = createRun();
     const nodeStates = projectLoopRoundNodeStates(run, {});
 
     expect(nodeStates).toEqual({
-      loop: {
-        status: "running",
-        startedAt: "2026-09-18T08:00:00.000Z",
-      },
-      outside: { status: "succeeded" },
-      writer: {
-        status: "running",
-        sessionId: "writer-round-2",
-        startedAt: "2026-09-18T08:02:00.000Z",
-      },
-      reviewer: { status: "idle" },
+      ...run.nodeStates,
+      ...run.rounds![0].nodeStates,
     });
-    expect(resolveTheaterFocus({ ...run, nodeStates }, null)).toEqual({
-      primaryId: "writer",
-      activeIds: ["loop", "writer"],
-    });
+    expect(resolveTheaterFocus({ ...run, nodeStates }, null).activeIds).toEqual(
+      ["loop"],
+    );
   });
 
   it("projects the explicitly selected historical round with its session and output", () => {

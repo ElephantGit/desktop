@@ -47,8 +47,10 @@ pub use iteration::{
     CompositeRegion, IterationConfig, IterationErrorStrategy, IterationLedger, RoundOutcome,
 };
 pub use loop_config::{LoopConfig, LoopInitialValue, LoopVariable};
-pub use loop_round::{LoopRoundDecision, LoopRoundError, LoopRoundExecutionState};
-pub use node_executor::{EngineError, NodeExecutor, WorkflowRunCallback, WorkflowValidationError};
+pub use loop_round::{LoopExitState, LoopRoundDecision, LoopRoundError, LoopRoundExecutionState};
+pub use node_executor::{
+    EngineError, LoopExitCleanup, NodeExecutor, WorkflowRunCallback, WorkflowValidationError,
+};
 pub use node_type::{NodeType, UnknownNodeType};
 pub use ports::{
     AdvanceWorkflowRunResult, BindWorkflowNodeSessionResult, CancelWorkflowRunResult,

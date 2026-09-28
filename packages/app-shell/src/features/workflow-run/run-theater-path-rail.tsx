@@ -3,7 +3,11 @@ import { useMemo, type RefObject } from "react";
 import { cn } from "@ora/ui";
 import { RunStatusMark } from "./run-status-mark";
 import { runStatusTone } from "./run-status-style";
-import { type GraphWorkflowRun, type HitlRequest } from "@ora/workflow-runtime";
+import {
+  type GraphWorkflowRun,
+  type GraphWorkflowRound,
+  type HitlRequest,
+} from "@ora/workflow-runtime";
 import {
   projectRunPathStructure,
   type RunPathRegionStage,
@@ -26,6 +30,11 @@ interface RunTheaterPathRailProps {
   onExpandHitl: (requestId: string) => void;
   /** Terminal path review → back to the result act. */
   onShowResultAct?: () => void;
+  loopRound?: GraphWorkflowRound;
+  onLoopRoundChange?: (roundId: string) => void;
+  onLoopOverview?: () => void;
+  onLoopResult?: () => void;
+  loopResultSelected?: boolean;
 }
 
 /**
@@ -45,6 +54,11 @@ export function RunTheaterPathRail({
   onFocusNode,
   onExpandHitl,
   onShowResultAct,
+  loopRound,
+  onLoopRoundChange,
+  onLoopOverview,
+  onLoopResult,
+  loopResultSelected,
 }: RunTheaterPathRailProps) {
   const { t } = useTranslation();
   const nodeById = useMemo(
@@ -133,7 +147,7 @@ export function RunTheaterPathRail({
         </div>
         <div className="overflow-x-auto" data-slot="theater-path-rail">
           <ol
-            className="flex w-max gap-2 pb-0.5"
+            className="flex w-max items-center gap-2 pb-0.5"
             aria-label={t("workflowRun.theater.topLevelPath")}
             data-slot="theater-top-level-path"
           >
@@ -158,7 +172,7 @@ export function RunTheaterPathRail({
               const roundCount =
                 stage.type === "region" ? countRegionRounds(run, stage) : 0;
               return (
-                <li key={stage.nodeId}>
+                <li key={stage.nodeId} className="flex items-center">
                   <button
                     type="button"
                     data-path-node={stage.nodeId}
@@ -175,7 +189,7 @@ export function RunTheaterPathRail({
                     className={cn(
                       "inline-flex cursor-pointer items-center gap-2 rounded-full border px-2.5 py-1.5 text-left transition-[transform,colors,box-shadow] duration-200",
                       stage.type === "region"
-                        ? "max-w-[18rem]"
+                        ? "min-w-48 max-w-[24rem] rounded-xl py-3"
                         : "max-w-[12rem]",
                       selected && waiting
                         ? "theater-chip-pop border-amber-500/55 bg-amber-500/15 text-amber-950 shadow-sm dark:text-amber-50"
@@ -221,7 +235,7 @@ export function RunTheaterPathRail({
               );
             })}
             {terminal && (
-              <li>
+              <li className="flex items-center">
                 <button
                   type="button"
                   data-path-result=""
@@ -266,6 +280,11 @@ export function RunTheaterPathRail({
             artifactCountByNode={artifactCountByNode}
             onRoundChange={onRoundChange}
             onFocusNode={onFocusNode}
+            loopRound={loopRound}
+            onLoopRoundChange={onLoopRoundChange}
+            onLoopOverview={onLoopOverview}
+            onLoopResult={onLoopResult}
+            loopResultSelected={loopResultSelected}
           />
         )}
       </div>
@@ -278,6 +297,14 @@ function countRegionRounds(
   run: GraphWorkflowRun,
   region: RunPathRegionStage,
 ): number {
+  if (
+    run.definitionSnapshot.nodes.find((node) => node.id === region.nodeId)?.data
+      .kind === "loop"
+  ) {
+    return (run.rounds ?? []).filter(
+      (round) => round.parentLoopNodeId === region.nodeId,
+    ).length;
+  }
   const rounds = new Set<number>();
   for (const nodeId of region.phases.flatMap((phase) => phase.nodeIds)) {
     for (const state of run.roundStates?.[nodeId] ?? []) {

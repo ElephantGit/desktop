@@ -69,10 +69,13 @@ export function serializeAggregatorSmokeGraph(smokeCase: SmokeCase): string {
         title: "Aggregator",
         description: "",
         aggregatorConfig: {
-          variables: smokeCase === "false" ? [["flag", "value"]] : [
-            ["a", "output"],
-            ["b", "output"],
-          ],
+          variables:
+            smokeCase === "false"
+              ? [["flag", "value"]]
+              : [
+                  ["a", "output"],
+                  ["b", "output"],
+                ],
         },
       },
     },

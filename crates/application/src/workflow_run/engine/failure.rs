@@ -153,7 +153,8 @@ impl NodeFailure {
             | NodeType::Prompt
             | NodeType::Tool
             | NodeType::Iteration
-            | NodeType::Loop => NodeFailureKind::InvalidRunPayload,
+            | NodeType::Loop
+            | NodeType::LoopExit => NodeFailureKind::InvalidRunPayload,
         };
         Self::new(kind, message)
     }

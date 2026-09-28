@@ -8,6 +8,7 @@ export const WORKFLOW_NODE_KINDS = [
   "junction",
   "human",
   "loop",
+  "loopExit",
   "iteration",
   "subflow",
   "output",

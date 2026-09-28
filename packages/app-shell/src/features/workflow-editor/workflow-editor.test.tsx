@@ -1689,6 +1689,158 @@ describe("WorkflowEditor", () => {
     });
   });
 
+  it.each([
+    ["Agent", "agent"],
+    ["条件分支", "condition"],
+    ["输出", "output"],
+    ["退出循环", "loopExit"],
+  ])(
+    "adds and persists a loop %s through its member output menu",
+    async (label, kind) => {
+      const state = createFixtureState();
+      const user = userEvent.setup();
+      const view = renderEditor(<WorkflowEditor />, state);
+      await screen.findByLabelText("工作流画布");
+      await user.click(screen.getByRole("button", { name: "循环" }));
+      expect(screen.queryByRole("button", { name: "退出循环" })).toBeNull();
+      const port = await screen.findByLabelText("从循环 Agent开始连接");
+      await user.hover(port);
+      expect(screen.getByLabelText("在 循环 Agent 后添加节点")).toHaveClass(
+        "opacity-100",
+      );
+      await user.click(port);
+      expect(
+        (await screen.findAllByRole("menuitem")).map(
+          (item) => item.textContent,
+        ),
+      ).toEqual(["Agent", "条件分支", "输出", "退出循环"]);
+      await user.click(screen.getByRole("menuitem", { name: label }));
+      await waitFor(
+        () => {
+          const graph = JSON.parse(state.workflows[0]!.draft.graph) as {
+            nodes: WorkflowDefinitionNode[];
+            edges: WorkflowDefinitionEdge[];
+          };
+          const added = graph.nodes.find((node) => node.id === `${kind}-1`)!;
+          expect(added).toMatchObject({
+            data: { kind, containerId: "loop-1" },
+          });
+          expect(graph.edges).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                source: "loop-1-agent",
+                target: added.id,
+              }),
+            ]),
+          );
+          const loop = graph.nodes.find((node) => node.id === "loop-1")!;
+          expect(loop.initialWidth).toBeGreaterThan(
+            added.position.x +
+              (kind === "condition" ? 320 : WORKFLOW_NODE_WIDTH),
+          );
+        },
+        { timeout: 3_000 },
+      );
+      if (kind === "loopExit") {
+        expect(screen.queryByLabelText("从退出循环 1开始连接")).toBeNull();
+      }
+      if (kind === "condition") {
+        await user.click(screen.getByLabelText("从条件分支 1开始连接 · else"));
+        await user.click(
+          await screen.findByRole("menuitem", { name: "Agent" }),
+        );
+        await waitFor(
+          () => {
+            const graph = JSON.parse(state.workflows[0]!.draft.graph);
+            expect(graph.edges).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({
+                  source: "condition-1",
+                  sourceHandle: "else",
+                  target: "agent-1",
+                }),
+              ]),
+            );
+          },
+          { timeout: 3_000 },
+        );
+        await user.click(screen.getByRole("button", { name: "撤销" }));
+        await waitFor(() =>
+          expect(
+            document.querySelector('[data-workflow-node-id="agent-1"]'),
+          ).toBeNull(),
+        );
+        await user.click(screen.getByRole("button", { name: "重做" }));
+        await waitFor(() =>
+          expect(
+            document.querySelector('[data-workflow-node-id="agent-1"]'),
+          ).not.toBeNull(),
+        );
+      }
+      view.unmount();
+      renderEditor(<WorkflowEditor />, state, undefined, false);
+      await waitFor(() =>
+        expect(
+          document.querySelector(`[data-workflow-node-id="${kind}-1"]`),
+        ).not.toBeNull(),
+      );
+    },
+  );
+
+  it("persists loop end conditions through draft saving and reopening", async () => {
+    const state = createFixtureState();
+    const user = userEvent.setup();
+    const view = renderEditor(<WorkflowEditor />, state);
+    await screen.findByLabelText("工作流画布");
+    await user.click(screen.getByRole("button", { name: "循环" }));
+    await screen.findByLabelText("循环节点: 循环 1");
+    await waitFor(
+      () => {
+        expect(
+          JSON.parse(state.workflows[0]!.draft.graph).nodes.some(
+            (node: { id: string }) => node.id === "loop-1",
+          ),
+        ).toBe(true);
+      },
+      { timeout: 3_000 },
+    );
+    act(() => screen.getByLabelText("条件 1").focus());
+    await user.keyboard("{ArrowDown}");
+    await user.click(await screen.findByRole("option", { name: "包含" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("listbox")).not.toBeInTheDocument(),
+    );
+    act(() => screen.getByLabelText("值 1").focus());
+    await user.keyboard("APPROVED");
+    expect(screen.getByLabelText("值 1")).toHaveValue("APPROVED");
+    const expected = {
+      logic: "and",
+      conditions: [
+        {
+          variableSelector: ["loop-1-agent", "output"],
+          operator: "contains",
+          value: "APPROVED",
+        },
+      ],
+    };
+    await waitFor(
+      () => {
+        const graph = JSON.parse(state.workflows[0]!.draft.graph);
+        expect(
+          graph.nodes.find((node: { id: string }) => node.id === "loop-1").data
+            .loopConfig.until,
+        ).toEqual(expected);
+      },
+      { timeout: 3_000 },
+    );
+    view.unmount();
+    renderEditor(<WorkflowEditor />, state, undefined, false);
+    const loop = await screen.findByLabelText("循环节点: 循环 1");
+    await user.click(loop.closest(".react-flow__node") ?? loop);
+    expect(await screen.findByLabelText("值 1")).toHaveValue("APPROVED");
+    expect(screen.getByLabelText("条件 1")).toHaveTextContent("包含");
+  });
+
   it("auto-saves draft edits after the debounce window", async () => {
     const state = createFixtureState();
     renderEditor(<WorkflowEditor />, state);

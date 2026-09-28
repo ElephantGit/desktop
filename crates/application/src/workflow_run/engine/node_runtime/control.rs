@@ -450,3 +450,35 @@ mod tests {
         );
     }
 }
+
+/// A scoped control marker; the Loop scheduler persists the actual exit transition.
+pub(super) struct LoopExitRuntime;
+impl NodeRuntime for LoopExitRuntime {
+    /// Break nodes have no independent input contract.
+    fn start_input(
+        &self,
+        _node: &WorkflowGraphNode,
+        _context: &ExecutionContext,
+    ) -> Option<String> {
+        None
+    }
+    /// The owning Loop exports results, never the break marker.
+    fn run_output_rank(&self) -> Option<u32> {
+        None
+    }
+}
+impl SwiftNodeRuntime for LoopExitRuntime {
+    /// The enclosing scheduler owns cancellation and public result publication.
+    fn requests_loop_exit(&self) -> bool {
+        true
+    }
+
+    /// Rejects accidental execution outside the scoped scheduler.
+    fn complete_running(
+        &self,
+        _node: &WorkflowGraphNode,
+        _completion: &SwiftCompletion<'_>,
+    ) -> Result<String, String> {
+        Err("loopExit requires the Loop scheduler".into())
+    }
+}

@@ -31,25 +31,31 @@ export function projectRunPathStructure(
   const nodeById = new Map(definition.nodes.map((node) => [node.id, node]));
   const membersByRegion = new Map<string, WorkflowDefinitionNode[]>();
   for (const node of definition.nodes) {
-    if (node.parentId === undefined) {
+    const ownerId = node.data.containerId ?? node.parentId;
+    if (ownerId === undefined) {
       continue;
     }
-    const members = membersByRegion.get(node.parentId) ?? [];
+    const members = membersByRegion.get(ownerId) ?? [];
     members.push(node);
-    membersByRegion.set(node.parentId, members);
+    membersByRegion.set(ownerId, members);
   }
 
   return workflowPathOrder(definition).flatMap<RunPathStage>((nodeId) => {
     const node = nodeById.get(nodeId);
     if (
       node === undefined ||
-      (node.parentId !== undefined &&
-        nodeById.get(node.parentId)?.data.kind === "iteration")
+      ["iteration", "loop"].includes(
+        nodeById.get(node.data.containerId ?? node.parentId ?? "")?.data.kind ??
+          "",
+      )
     ) {
       return [];
     }
     const members = membersByRegion.get(nodeId);
-    if (node.data.kind !== "iteration" || members === undefined) {
+    if (
+      !["iteration", "loop"].includes(node.data.kind) ||
+      members === undefined
+    ) {
       return [{ type: "node" as const, nodeId }];
     }
     return [

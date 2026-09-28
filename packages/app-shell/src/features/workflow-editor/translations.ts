@@ -351,8 +351,10 @@ export const workflowEditorTranslations = {
     "settings.workflow.junction.collectResults": "收集结果继续",
     "settings.workflow.loop.exitConditionPlaceholder":
       "如 verification.status == passed",
+    "settings.workflow.loop.until": "结束条件",
+    "settings.workflow.loop.untilLogic": "结束条件组合方式",
     "settings.workflow.loop.defaultBehavior":
-      "每轮将 Agent 输出反馈为下一轮的 value；输出非空时结束，并导出为 result。",
+      "执行到退出循环节点时提前结束；否则每轮完成后检查结束条件。可删除所有条件，仅使用退出节点。达到最大轮次仍未结束时，循环失败。输出引用的值必须已生成。",
     "settings.workflow.loop.legacyUnsupported":
       "此旧循环节点缺少可执行配置，请删除后重新添加。",
     "settings.workflow.subflow.hint":
@@ -896,8 +898,10 @@ export const workflowEditorTranslations = {
     "settings.workflow.junction.collectResults": "Collect results and continue",
     "settings.workflow.loop.exitConditionPlaceholder":
       "e.g. verification.status == passed",
+    "settings.workflow.loop.until": "End conditions",
+    "settings.workflow.loop.untilLogic": "End condition logic",
     "settings.workflow.loop.defaultBehavior":
-      "Each Agent output feeds the next round as value; a non-empty output stops the Loop and is exported as result.",
+      "Exit loop nodes stop the loop early; otherwise conditions are checked after each round. Remove all conditions to use only exit nodes. Reaching the limit without an exit fails the loop. Output bindings must already have values.",
     "settings.workflow.loop.legacyUnsupported":
       "This legacy Loop lacks executable configuration. Delete it and add a new Loop.",
     "settings.workflow.subflow.hint":

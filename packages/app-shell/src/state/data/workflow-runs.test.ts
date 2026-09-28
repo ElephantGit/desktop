@@ -273,9 +273,83 @@ describe("buildDisplayRun", () => {
     ],
   };
 
+  it("projects condition decisions from each selected scope without using the global decision", () => {
+    const graph = JSON.stringify({
+      ...JSON.parse(GRAPH),
+      nodes: [
+        {
+          id: "loop",
+          type: "workflow",
+          position: { x: 0, y: 0 },
+          data: { kind: "loop", title: "Loop", description: "" },
+        },
+        {
+          id: "decision",
+          parentId: "loop",
+          type: "workflow",
+          position: { x: 0, y: 0 },
+          data: {
+            kind: "condition",
+            title: "Decision",
+            description: "",
+            containerId: "loop",
+          },
+        },
+      ],
+      edges: [],
+    });
+    const display = buildDisplayRun(
+      {
+        ...detail,
+        conditionDecisions: { decision: "wrong-global" },
+        scopes: ["else", "pass", undefined].map((branch, index) => ({
+          id: `scope-${index}`,
+          parentLoopNodeRunId: "parent",
+          roundIndex: index + 1,
+          status: "succeeded" as const,
+          createdAt: 1n,
+          updatedAt: 2n,
+          ...(branch ? { conditionDecisions: { decision: branch } } : {}),
+        })),
+        nodes: [0, 1, 2].map((index) => ({
+          id: `node-${index}`,
+          scopeId: `scope-${index}`,
+          nodeId: "decision",
+          status: "succeeded",
+          startedAt: null,
+          finishedAt: null,
+          error: null,
+          output: null,
+          payload: null,
+        })),
+      },
+      graph,
+    );
+    expect(display.rounds?.map((round) => round.nodeStates.decision)).toEqual([
+      { status: "succeeded", selectedBranchId: "else" },
+      { status: "succeeded", selectedBranchId: "pass" },
+      { status: "succeeded" },
+    ]);
+  });
+
   it("projects a paused pending run to awaiting_input", () => {
     const display = buildDisplayRun(detail, GRAPH);
     expect(display.status).toBe("awaiting_input");
+  });
+
+  it("preserves the committed workflow output separately from node outputs", () => {
+    const display = buildDisplayRun(
+      {
+        ...detail,
+        run: {
+          ...detail.run,
+          status: "succeeded",
+          output: '{"result":"done"}',
+        },
+      },
+      GRAPH,
+    );
+    expect(display.finalOutput).toBe('{"result":"done"}');
   });
 
   it("carries the run-task's real project id onto the display run", () => {

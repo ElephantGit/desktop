@@ -20,6 +20,8 @@ pub enum NodeType {
     Tool,
     Output,
     Loop,
+    /// Ends the owning feedback loop through its scoped scheduler.
+    LoopExit,
     /// The foreach composite runtime: drives its region once per array element
     /// (ADR "iteration composite runtime" D1).
     Iteration,
@@ -42,6 +44,7 @@ impl NodeType {
             Self::Tool => "tool",
             Self::Output => "output",
             Self::Loop => "loop",
+            Self::LoopExit => "loopExit",
             Self::Iteration => "iteration",
         }
     }
@@ -59,6 +62,7 @@ impl NodeType {
                 | Self::Aggregator
                 | Self::Output
                 | Self::Loop
+                | Self::LoopExit
                 | Self::Iteration
         )
     }
@@ -86,6 +90,7 @@ impl FromStr for NodeType {
             "tool" => Ok(Self::Tool),
             "output" => Ok(Self::Output),
             "loop" => Ok(Self::Loop),
+            "loopExit" => Ok(Self::LoopExit),
             "iteration" => Ok(Self::Iteration),
             _ => Err(UnknownNodeType(value.to_string())),
         }

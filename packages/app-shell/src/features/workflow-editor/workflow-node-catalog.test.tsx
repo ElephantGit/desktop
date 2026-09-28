@@ -119,7 +119,8 @@ describe("WorkflowNodeCatalog", () => {
       </AppI18nProvider>,
     );
 
-    expect(capabilities.nodeTypes).toHaveLength(7);
+    expect(capabilities.nodeTypes).toHaveLength(8);
+    expect(screen.queryByRole("button", { name: "Exit loop" })).toBeNull();
     expect(within(screen.getByRole("toolbar")).getAllByRole("button")).toEqual([
       screen.getByRole("button", { name: "Start" }),
       screen.getByRole("button", { name: "Agent" }),
