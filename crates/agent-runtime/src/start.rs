@@ -1,0 +1,954 @@
+//! Creates provider sessions only when a caller is ready to persist and use them.
+
+use super::connection::ConnectionSupervisors;
+use super::history::RecordOutcome;
+use super::routing::{SessionChannel, SessionEvent, SetupActivity};
+use super::support::{agent_timed_out, map_acp_error};
+use super::support::{contract_session, domain_agent_ref};
+use super::{ActorSetup, HandoffDebt, SessionVisibility, TitleAcquisition};
+use super::{AgentRuntimeManager, SESSION_SETUP_TIMEOUT, session_setup_window};
+use crate::AgentRuntimeHost;
+use crate::RuntimeError;
+use crate::host::SessionSetup;
+use crate::host::SessionStore;
+use crate::session_setup::{
+    AgentSessionMcpCapabilities, LiveMcpState, SessionMcpRevision, SessionMcpSnapshot,
+};
+use agent_client_protocol_schema::v1::{
+    AGENT_METHOD_NAMES, AvailableCommand, CloseSessionRequest, CloseSessionResponse,
+    DeleteSessionRequest, DeleteSessionResponse, McpServer, NewSessionRequest, NewSessionResponse,
+    RequestPermissionOutcome, RequestPermissionResponse, SessionConfigId, SessionConfigKind,
+    SessionConfigOption, SessionConfigOptionCategory, SessionConfigOptionValue,
+    SessionConfigSelectOptions, SessionUpdate, SetSessionConfigOptionRequest,
+    SetSessionConfigOptionResponse,
+};
+use ora_acp::{AcpClient, AcpTransport};
+use ora_contracts::{StartSessionRequest, StartSessionResponse};
+use ora_domain::SessionMcpSelection;
+use ora_domain::{AgentRef, SessionId};
+use ora_domain::{AuditFields, Session, SessionStatus, WorkspaceId};
+use ora_logging::{ora_debug, ora_info, ora_warn};
+use std::path::Path;
+use std::time::Duration;
+use tokio::time::timeout;
+
+const SESSION_RELEASE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Everything one authoritative provider handshake produced, plus its rollback guard.
+///
+/// Destructured by the caller rather than accessed through methods: the route channel has to move
+/// into the actor while the guard stays behind covering every later step, and owning both in one
+/// value that is never partially valid is what removes the "channel already taken" state entirely.
+pub(super) struct PendingProviderSession<H: AgentRuntimeHost> {
+    /// Releases the provider session unless the caller commits, including on cancellation.
+    pub(super) release: ProviderSessionRelease<H>,
+    pub(super) agent_session_id: String,
+    /// The capability captured from the same connection generation as this session.
+    pub(super) list_session_supported: bool,
+    /// The only route channel opened for this session; the actor takes it over verbatim.
+    pub(super) channel: SessionChannel,
+    pub(super) available_commands: Vec<AvailableCommand>,
+    pub(super) config_options: Vec<SessionConfigOption>,
+    /// Secret-free identity of the MCP Snapshot sent with this `session/new`.
+    pub(super) mcp_revision: SessionMcpRevision,
+}
+
+/// Owns a provider session that no Ora record points at yet.
+///
+/// Dropping an uncommitted guard schedules best-effort cleanup. That covers ordinary errors and
+/// the command future being cancelled after `session/new` already succeeded — the window in which
+/// a provider session would otherwise survive with nothing left to close it.
+pub(super) struct ProviderSessionRelease<H: AgentRuntimeHost> {
+    connections: ConnectionSupervisors<H>,
+    agent_ref: AgentRef,
+    generation: u64,
+    agent_session_id: String,
+    committed: bool,
+}
+
+impl<H: AgentRuntimeHost> ProviderSessionRelease<H> {
+    /// Transfers cleanup responsibility to the persisted session actor.
+    pub(super) fn commit(mut self) {
+        self.committed = true;
+    }
+}
+
+impl<H: AgentRuntimeHost> Drop for ProviderSessionRelease<H> {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        let connections = self.connections.clone();
+        let agent_ref = self.agent_ref.clone();
+        let agent_session_id = self.agent_session_id.clone();
+        let generation = self.generation;
+        tokio::spawn(async move {
+            release_provider_session(&connections, &agent_ref, &agent_session_id, generation).await;
+        });
+    }
+}
+
+impl<H: AgentRuntimeHost> AgentRuntimeManager<H> {
+    /// Runs the only path allowed to create and persist a provider session.
+    pub(super) async fn start_session_with_visibility(
+        &self,
+        request: StartSessionRequest,
+        visibility: SessionVisibility,
+        session_mcp: H::Setup,
+    ) -> Result<StartSessionResponse, RuntimeError> {
+        let workspace_id = WorkspaceId::new(request.workspace_id);
+        let agent_ref = domain_agent_ref(request.agent_ref)?;
+        let cwd = self.workspace_cwd(&workspace_id)?;
+        let session_id = SessionId::new(uuid::Uuid::new_v4().to_string());
+        let PendingProviderSession {
+            release,
+            agent_session_id,
+            list_session_supported,
+            channel,
+            available_commands,
+            config_options,
+            mcp_revision,
+        } = self
+            .create_provider_session(
+                &session_id,
+                &agent_ref,
+                &cwd,
+                request.model.as_deref(),
+                &session_mcp,
+            )
+            .await?;
+        let mut persisted = false;
+        let unpublished = matches!(visibility, SessionVisibility::UnpublishedWorkflow);
+
+        if unpublished {
+            self.unpublished_workflow_sessions_write()?
+                .insert(session_id.clone());
+        }
+        let result = async {
+            let _lifecycle = self.inner.lifecycle.lock().await;
+            let supervisor = self.inner.connections.for_agent(&agent_ref)?;
+            let now = self.inner.clock.now_timestamp_millis();
+            let session = Session::new(
+                session_id.clone(),
+                workspace_id,
+                agent_ref,
+                agent_session_id,
+                SessionStatus::Running,
+                session_mcp.selection().clone(),
+                AuditFields::new(now, now, false),
+            );
+            let mut opened = self.open_recorder(&session)?;
+            let outcome = match opened.failure.take() {
+                Some(reason) => RecordOutcome::JustFailed { reason },
+                None => opened.recorder.record_meta(&session, &cwd),
+            };
+            self.inner
+                .store
+                .create_session(session.clone())
+                .map_err(|source| {
+                    RuntimeError::internal("failed to persist agent CLI session", source)
+                })?;
+            persisted = true;
+            let session = self.settle_record(session, outcome);
+            let title_acquisition = TitleAcquisition::awaiting_first_prompt(list_session_supported);
+            self.insert_actor(
+                session.clone(),
+                ActorSetup {
+                    session_mcp,
+                    cwd,
+                    connection: supervisor,
+                    channel: Some(channel),
+                    recorder: opened.recorder,
+                    handoff: HandoffDebt::Settled,
+                    title_acquisition,
+                    live_mcp: LiveMcpState::Active(mcp_revision),
+                    config_options: config_options.clone(),
+                },
+            )?;
+            Ok::<_, RuntimeError>(StartSessionResponse {
+                session: contract_session(session),
+                available_commands,
+                config_options,
+            })
+        }
+        .await;
+
+        match result {
+            Ok(response) => {
+                release.commit();
+                Ok(response)
+            }
+            Err(error) => {
+                if persisted {
+                    let _ = self
+                        .inner
+                        .store
+                        .soft_delete_session(&session_id, self.inner.clock.now_timestamp_millis());
+                }
+                let _ = ora_history::remove_session_history(
+                    &self.inner.sessions_root,
+                    session_id.as_ref(),
+                );
+                if unpublished {
+                    self.unpublished_workflow_sessions_write()?
+                        .remove(&session_id);
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Creates a provider session and keeps it unpublished until the caller persists ownership.
+    pub(super) async fn create_provider_session(
+        &self,
+        ora_session_id: &SessionId,
+        agent_ref: &AgentRef,
+        cwd: &Path,
+        model: Option<&str>,
+        session_mcp: &H::Setup,
+    ) -> Result<PendingProviderSession<H>, RuntimeError> {
+        create_provider_session(
+            &self.inner.connections,
+            session_mcp,
+            ora_session_id,
+            agent_ref,
+            cwd,
+            model,
+        )
+        .await
+    }
+}
+
+/// Performs one authoritative provider handshake and applies a pre-session model intent.
+pub(super) async fn create_provider_session<H: AgentRuntimeHost>(
+    connections: &ConnectionSupervisors<H>,
+    session_mcp: &H::Setup,
+    ora_session_id: &SessionId,
+    agent_ref: &AgentRef,
+    cwd: &Path,
+    model: Option<&str>,
+) -> Result<PendingProviderSession<H>, RuntimeError> {
+    let supervisor = connections.for_agent(agent_ref)?;
+    let connection = supervisor.current()?;
+    let mcp = session_mcp.resolve_mcp(
+        cwd,
+        AgentSessionMcpCapabilities::new(
+            connection.load_session_supported,
+            connection.http_mcp_supported,
+        ),
+    )?;
+    record_session_mcp_boundary(
+        session_mcp,
+        ora_session_id,
+        agent_ref,
+        /*agent_session_id*/ None,
+        AGENT_METHOD_NAMES.session_new,
+        &mcp,
+        cwd,
+    );
+    let mcp_revision = mcp.revision().clone();
+    // Read before `into_servers` consumes the snapshot: the window depends on whether the
+    // request asks the agent to connect any MCP servers.
+    let setup_window = session_setup_window(&mcp);
+    let setup_registration = supervisor.begin_session_setup();
+    let response = await_session_new(
+        &connection.client,
+        cwd,
+        mcp.into_servers(),
+        setup_registration.activity(),
+        setup_window,
+    )
+    .await?;
+    let agent_session_id = response.session_id.to_string();
+    ora_debug!(
+        agent = %agent_ref,
+        agent_session_id,
+        "provider session created for immediate persistence",
+    );
+    // The guard exists from here on, so every `?` below releases the session it names.
+    let release = ProviderSessionRelease {
+        connections: connections.clone(),
+        agent_ref: agent_ref.clone(),
+        generation: connection.generation,
+        agent_session_id: agent_session_id.clone(),
+        committed: false,
+    };
+    let mut channel =
+        supervisor.open_session_channel(&agent_session_id, ora_session_id.as_ref())?;
+    // Collected on the channel the actor inherits, so the non-command setup updates the agent sent
+    // alongside them stay queued on it instead of being discarded with a throwaway registration.
+    let available_commands = collect_setup_commands(&mut channel).await;
+    let mut config_options = response.config_options.unwrap_or_default();
+    if let Some(model) = model {
+        config_options = apply_model_intent(
+            connections,
+            agent_ref,
+            &agent_session_id,
+            model,
+            config_options,
+        )
+        .await;
+    }
+    Ok(PendingProviderSession {
+        release,
+        list_session_supported: connection.list_session_supported,
+        agent_session_id,
+        channel,
+        available_commands,
+        config_options,
+        mcp_revision,
+    })
+}
+
+/// Sends one `session/new` and waits under an inactivity deadline that setup traffic rearms.
+///
+/// The ACP session-setup sequence has the agent connect the delivered MCP servers before it
+/// answers, so the deadline is inactivity, not a total budget: notifications the agent emits
+/// while it works — buffered until the response reveals their provider session id — prove it is
+/// alive and rearm the window, while an agent that stays silent past the window fails with
+/// `agent_timed_out` instead of holding the create forever. A request that delivers servers gets
+/// a wider window, because connecting them is exactly the slow part of a conforming setup.
+async fn await_session_new<T: AcpTransport>(
+    client: &AcpClient<T>,
+    cwd: &Path,
+    servers: Vec<McpServer>,
+    activity: &SetupActivity,
+    window: Duration,
+) -> Result<NewSessionResponse, RuntimeError> {
+    let params = NewSessionRequest::new(cwd).mcp_servers(servers);
+    let request = client.request::<_, NewSessionResponse>(AGENT_METHOD_NAMES.session_new, &params);
+    tokio::pin!(request);
+    let inactivity = tokio::time::sleep_until(tokio::time::Instant::now() + window);
+    tokio::pin!(inactivity);
+    loop {
+        tokio::select! {
+            response = &mut request => return response.map_err(map_acp_error),
+            () = activity.wait() => {
+                inactivity.as_mut().reset(tokio::time::Instant::now() + window);
+            }
+            () = &mut inactivity => {
+                return Err(agent_timed_out("agent CLI session creation timed out"));
+            }
+        }
+    }
+}
+
+/// One selected MCP member rendered for logs without executable configuration or credentials.
+struct SessionMcpLogMember {
+    plugin_id: String,
+    package_version: String,
+    configuration_revision: u64,
+    transport: &'static str,
+}
+
+impl std::fmt::Debug for SessionMcpLogMember {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SessionMcpLogMember")
+            .field("plugin_id", &self.plugin_id)
+            .field("package_version", &self.package_version)
+            .field("configuration_revision", &self.configuration_revision)
+            .field("transport", &self.transport)
+            .finish()
+    }
+}
+
+/// Logs the exact secret-free MCP identity sent at an ACP session boundary.
+fn log_session_mcp_request(
+    ora_session_id: &SessionId,
+    agent_ref: &AgentRef,
+    agent_session_id: Option<&str>,
+    acp_method: &str,
+    selection: &SessionMcpSelection,
+    snapshot: &SessionMcpSnapshot,
+) {
+    let selection_mode = match selection {
+        SessionMcpSelection::Automatic => "automatic",
+        SessionMcpSelection::Explicit(_) => "explicit",
+    };
+    let members = snapshot
+        .revision()
+        .members()
+        .iter()
+        .map(|member| SessionMcpLogMember {
+            plugin_id: member.plugin_id.canonical(),
+            package_version: member.package_version.to_string(),
+            configuration_revision: member.configuration_revision,
+            transport: member.transport.as_str(),
+        })
+        .collect::<Vec<_>>();
+    ora_info!(
+        session_id = %ora_session_id,
+        agent = %agent_ref,
+        agent_session_id,
+        acp_method,
+        mcp_selection = selection_mode,
+        mcp_server_count = snapshot.servers().len(),
+        mcp_members = ?members,
+        "sending ACP session configuration"
+    );
+}
+
+/// Records one ACP MCP delivery boundary and pairs the Host health observation with it.
+///
+/// Every `session/new` and `session/load` that carries `mcpServers` reaches this function, and the
+/// raw send log stays private to it, so a delivery boundary can never be logged without also
+/// scheduling Host health observation. The send log is emitted synchronously first; the
+/// observation then reports on its own task with the same `session_id`.
+pub fn record_session_mcp_boundary(
+    host: &impl SessionSetup,
+    session_id: &SessionId,
+    agent_ref: &AgentRef,
+    agent_session_id: Option<&str>,
+    acp_method: &str,
+    snapshot: &SessionMcpSnapshot,
+    cwd: &Path,
+) {
+    log_session_mcp_request(
+        session_id,
+        agent_ref,
+        agent_session_id,
+        acp_method,
+        host.selection(),
+        snapshot,
+    );
+    host.observe_mcp_health(session_id, cwd);
+}
+
+/// Applies a model only when the session authoritatively offers that value.
+pub(super) async fn apply_model_intent<H: AgentRuntimeHost>(
+    connections: &ConnectionSupervisors<H>,
+    agent_ref: &AgentRef,
+    agent_session_id: &str,
+    model: &str,
+    config_options: Vec<SessionConfigOption>,
+) -> Vec<SessionConfigOption> {
+    let Some(config_id) = model_config_id(&config_options, model) else {
+        return config_options;
+    };
+    match request_config_option(
+        connections,
+        agent_ref,
+        agent_session_id,
+        &config_id,
+        &SessionConfigOptionValue::value_id(model.to_string()),
+    )
+    .await
+    {
+        Ok(updated) => updated,
+        Err(error) => {
+            ora_warn!(
+                agent = %agent_ref,
+                model,
+                error = %error,
+                "provider rejected pre-session model intent",
+            );
+            config_options
+        }
+    }
+}
+
+/// Finds the model selector only from the options reported by this exact handshake.
+fn model_config_id(config_options: &[SessionConfigOption], model: &str) -> Option<SessionConfigId> {
+    let option = config_options
+        .iter()
+        .find(|option| matches!(option.category, Some(SessionConfigOptionCategory::Model)))
+        .or_else(|| {
+            let mut selects = config_options
+                .iter()
+                .filter(|option| matches!(option.kind, SessionConfigKind::Select(_)));
+            let only = selects.next()?;
+            selects.next().is_none().then_some(only)
+        })?;
+    let SessionConfigKind::Select(select) = &option.kind else {
+        return None;
+    };
+    let offered = match &select.options {
+        SessionConfigSelectOptions::Ungrouped(options) => options
+            .iter()
+            .any(|option| option.value.0.as_ref() == model),
+        SessionConfigSelectOptions::Grouped(groups) => groups
+            .iter()
+            .flat_map(|group| group.options.iter())
+            .any(|option| option.value.0.as_ref() == model),
+        _ => false,
+    };
+    offered.then(|| option.id.clone())
+}
+
+/// Sends one persisted-session configuration request and returns the provider's full report.
+pub(super) async fn request_config_option<H: AgentRuntimeHost>(
+    connections: &ConnectionSupervisors<H>,
+    agent_ref: &AgentRef,
+    agent_session_id: &str,
+    config_id: &SessionConfigId,
+    value: &SessionConfigOptionValue,
+) -> Result<Vec<SessionConfigOption>, RuntimeError> {
+    let connection = connections.for_agent(agent_ref)?.current()?;
+    let response = timeout(
+        SESSION_SETUP_TIMEOUT,
+        connection
+            .client
+            .request::<_, SetSessionConfigOptionResponse>(
+                AGENT_METHOD_NAMES.session_set_config_option,
+                &SetSessionConfigOptionRequest::new(
+                    agent_session_id.to_string(),
+                    config_id.clone(),
+                    value.clone(),
+                ),
+            ),
+    )
+    .await
+    .map_err(|_| agent_timed_out("agent configuration timed out"))?
+    .map_err(map_acp_error)?;
+    Ok(response.config_options)
+}
+
+/// Releases a provider session that never became visible to a user.
+async fn release_provider_session<H: AgentRuntimeHost>(
+    connections: &ConnectionSupervisors<H>,
+    agent_ref: &AgentRef,
+    agent_session_id: &str,
+    generation: u64,
+) {
+    let Ok(connection) = connections
+        .for_agent(agent_ref)
+        .and_then(|supervisor| supervisor.current())
+    else {
+        return;
+    };
+    if connection.generation != generation {
+        return;
+    }
+    if connection.delete_session_supported {
+        let _ = timeout(
+            SESSION_RELEASE_TIMEOUT,
+            connection.client.request::<_, DeleteSessionResponse>(
+                AGENT_METHOD_NAMES.session_delete,
+                &DeleteSessionRequest::new(agent_session_id.to_string()),
+            ),
+        )
+        .await;
+    } else if connection.close_session_supported {
+        let _ = timeout(
+            SESSION_RELEASE_TIMEOUT,
+            connection.client.request::<_, CloseSessionResponse>(
+                AGENT_METHOD_NAMES.session_close,
+                &CloseSessionRequest::new(agent_session_id.to_string()),
+            ),
+        )
+        .await;
+    }
+}
+
+/// Extracts the latest setup command catalog while preserving other updates for the first prompt.
+pub(super) async fn collect_setup_commands(channel: &mut SessionChannel) -> Vec<AvailableCommand> {
+    let mut available_commands = Vec::new();
+    loop {
+        // ACP sends setup updates before the response, but the shared router runs
+        // independently and may need one short scheduling window to deliver them.
+        let Ok(Some(event)) =
+            tokio::time::timeout(Duration::from_millis(10), channel.events.recv()).await
+        else {
+            break;
+        };
+        match event {
+            SessionEvent::Update(notification) => {
+                if let SessionUpdate::AvailableCommandsUpdate(update) = &notification.update {
+                    // Command updates replace the full catalog, so the last setup value wins.
+                    available_commands = update.available_commands.clone();
+                } else {
+                    channel.pending_updates.push_back(notification);
+                }
+            }
+            SessionEvent::Permission(permission) => {
+                let _ = channel
+                    .connection
+                    .client
+                    .respond(
+                        &permission.request_id,
+                        &RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled),
+                    )
+                    .await;
+            }
+            SessionEvent::Response(_) => {}
+        }
+    }
+    available_commands
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{await_session_new, log_session_mcp_request, model_config_id};
+    use crate::routing::{RouteRegistry, SessionEvent};
+    use crate::session_setup::{
+        SessionMcpMemberRevision, SessionMcpRevision, SessionMcpSnapshot, SessionMcpTransportKind,
+    };
+    use agent_client_protocol_schema::v1::{
+        HttpHeader, McpServer, McpServerHttp, SessionConfigGroupId, SessionConfigId,
+        SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelect,
+        SessionConfigSelectGroup, SessionConfigSelectOption, SessionConfigSelectOptions,
+        SessionConfigValueId, SessionInfoUpdate, SessionNotification, SessionUpdate,
+    };
+    use ora_acp::{AcpError, AcpPeer, AcpTransport};
+    use ora_contracts::PublicError;
+    use ora_domain::SessionMcpSelection;
+    use ora_domain::{AgentRef, PluginId, SessionId};
+    use ora_logging::with_recorded_trace_logging;
+    use pretty_assertions::assert_eq;
+    use semver::Version;
+    use serde_json::{Value, json};
+    use std::collections::BTreeSet;
+    use std::path::Path;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+    use tokio::sync::mpsc;
+    use tracing::field::{Field, Visit};
+    use tracing_subscriber::layer::{Context, Layer};
+
+    /// Transport that records every frame the client sends and answers nothing on its own.
+    struct StallingTransport {
+        sent: mpsc::UnboundedSender<Value>,
+    }
+
+    impl AcpTransport for StallingTransport {
+        async fn send(&self, message: Value) -> Result<(), AcpError> {
+            let _ = self.sent.send(message);
+            Ok(())
+        }
+    }
+
+    /// Spawns one peer whose agent side never speaks unless the test injects a frame.
+    ///
+    /// The peer is returned so its reader task stays owned: a direct request resolves through
+    /// the pending table, but letting the peer drop first would leave that resolution racing
+    /// the reader's own shutdown for no benefit.
+    fn stalling_peer() -> (
+        ora_acp::AcpClient<StallingTransport>,
+        mpsc::UnboundedSender<Result<Value, AcpError>>,
+        mpsc::UnboundedReceiver<Value>,
+    ) {
+        let (inbound, messages) = mpsc::unbounded_channel();
+        let (sent, outbound) = mpsc::unbounded_channel();
+        let peer = AcpPeer::spawn(messages, StallingTransport { sent });
+        (peer.into_parts().0, inbound, outbound)
+    }
+
+    /// A silent agent fails the create with `agent_timed_out` once the window elapses.
+    ///
+    /// The paused clock auto-advances through the deadline, so the window passing is what the
+    /// test observes rather than real waiting.
+    #[tokio::test(start_paused = true)]
+    async fn session_new_times_out_after_the_inactivity_window() {
+        let (client, _inbound, mut outbound) = stalling_peer();
+        let registry = Arc::new(RouteRegistry::default());
+        let registration = registry.begin_session_setup();
+        let started = tokio::time::Instant::now();
+
+        let create = await_session_new(
+            &client,
+            Path::new("C:\\work"),
+            Vec::new(),
+            registration.activity(),
+            Duration::from_millis(200),
+        );
+        tokio::pin!(create);
+
+        // The request must go out before the deadline is the only remaining timer.
+        tokio::select! {
+            frame = outbound.recv() => assert_eq!(frame.expect("session/new frame")["method"], "session/new"),
+            outcome = &mut create => panic!("create settled without an answer: {outcome:?}"),
+        }
+
+        match (&mut create).await {
+            Ok(response) => panic!("unexpected session response: {response:?}"),
+            Err(error) => {
+                assert!(matches!(
+                    error.public_error(),
+                    PublicError::AgentTimedOut(_)
+                ))
+            }
+        }
+        assert!(started.elapsed() >= Duration::from_millis(200));
+    }
+
+    /// Setup traffic observed while the create waits rearms the deadline past its first window.
+    ///
+    /// The agent answers only after the original window would already have expired, so the
+    /// create succeeding proves the buffered unrouted update kept the deadline alive.
+    #[tokio::test(start_paused = true)]
+    async fn setup_activity_rearms_the_session_new_deadline() {
+        let (client, inbound, mut outbound) = stalling_peer();
+        let registry = Arc::new(RouteRegistry::default());
+        let registration = registry.begin_session_setup();
+        let started = tokio::time::Instant::now();
+
+        let create = await_session_new(
+            &client,
+            Path::new("C:\\work"),
+            Vec::new(),
+            registration.activity(),
+            Duration::from_millis(200),
+        );
+        tokio::pin!(create);
+
+        let frame = tokio::select! {
+            frame = outbound.recv() => frame.expect("session/new frame"),
+            outcome = &mut create => panic!("create settled without an answer: {outcome:?}"),
+        };
+        // 150 ms pass with no answer, then the agent emits setup traffic for the session whose
+        // id the still-missing response has not revealed.
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        registry
+            .route_event(SessionEvent::Update(SessionNotification::new(
+                "unrevealed-session",
+                SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().title("Setting up")),
+            )))
+            .expect("buffer setup update");
+        // The woken create must rearm before the original window expires, exactly as a runtime
+        // scheduler would poll it promptly after the wake.
+        tokio::select! {
+            outcome = &mut create => panic!("create settled without an answer: {outcome:?}"),
+            () = tokio::time::sleep(Duration::from_millis(25)) => {}
+        }
+        // The original window expires here; without the rearm the create would already be dead.
+        tokio::time::sleep(Duration::from_millis(75)).await;
+        inbound
+            .send(Ok(json!({
+                "jsonrpc": "2.0",
+                "id": frame["id"],
+                "result": { "sessionId": "provider-1" },
+            })))
+            .expect("answer session/new");
+
+        let response = (&mut create)
+            .await
+            .expect("create survives past its first window");
+        assert_eq!(response.session_id.to_string(), "provider-1");
+        assert!(started.elapsed() >= Duration::from_millis(250));
+    }
+
+    fn select_option(value: &str, name: &str) -> SessionConfigSelectOption {
+        SessionConfigSelectOption::new(
+            SessionConfigValueId::new(value.to_string()),
+            name.to_string(),
+        )
+    }
+
+    fn select(id: &str, options: SessionConfigSelectOptions) -> SessionConfigOption {
+        SessionConfigOption::new(
+            SessionConfigId::new(id.to_string()),
+            "Model",
+            SessionConfigKind::Select(SessionConfigSelect::new(
+                SessionConfigValueId::new("current".to_string()),
+                options,
+            )),
+        )
+    }
+
+    /// The intent is applied only against the selector the fresh handshake itself declared.
+    ///
+    /// A pre-session pick is client-side intent with nothing authoritative behind it, so the
+    /// session that was just created is the only thing allowed to say which selector owns models.
+    #[test]
+    fn resolves_the_declared_model_selector() {
+        let options = vec![
+            select("thinking", SessionConfigSelectOptions::Ungrouped(vec![])),
+            select(
+                "model",
+                SessionConfigSelectOptions::Ungrouped(vec![
+                    select_option("big", "Big"),
+                    select_option("small", "Small"),
+                ]),
+            )
+            .category(SessionConfigOptionCategory::Model),
+        ];
+
+        assert_eq!(
+            model_config_id(&options, "small"),
+            Some(SessionConfigId::new("model".to_string())),
+        );
+    }
+
+    /// Grouped selectors are flattened, because the picker offers one flat list of values.
+    #[test]
+    fn resolves_a_model_offered_inside_a_group() {
+        let options = vec![
+            select(
+                "model",
+                SessionConfigSelectOptions::Grouped(vec![SessionConfigSelectGroup::new(
+                    SessionConfigGroupId::new("anthropic".to_string()),
+                    "Anthropic",
+                    vec![select_option("claude/haiku", "Haiku")],
+                )]),
+            )
+            .category(SessionConfigOptionCategory::Model),
+        ];
+
+        assert_eq!(
+            model_config_id(&options, "claude/haiku"),
+            Some(SessionConfigId::new("model".to_string())),
+        );
+    }
+
+    /// An agent that categorises nothing still has exactly one selector, which must be the models.
+    #[test]
+    fn falls_back_to_a_sole_uncategorised_selector() {
+        let options = vec![select(
+            "model",
+            SessionConfigSelectOptions::Ungrouped(vec![select_option("smart", "Smart")]),
+        )];
+
+        assert_eq!(
+            model_config_id(&options, "smart"),
+            Some(SessionConfigId::new("model".to_string())),
+        );
+    }
+
+    /// Two uncategorised selectors are ambiguous, and guessing would configure the wrong one.
+    #[test]
+    fn refuses_to_guess_between_two_uncategorised_selectors() {
+        let options = vec![
+            select(
+                "model",
+                SessionConfigSelectOptions::Ungrouped(vec![select_option("smart", "Smart")]),
+            ),
+            select(
+                "thinking",
+                SessionConfigSelectOptions::Ungrouped(vec![select_option("smart", "Smart")]),
+            ),
+        ];
+
+        assert_eq!(model_config_id(&options, "smart"), None);
+    }
+
+    /// A model the new session does not offer is never requested.
+    ///
+    /// The intent was recorded against a catalog the plugin answered separately, which can name a
+    /// value this session will not accept. Sending it anyway would trade a picker that silently
+    /// shows the agent's default for a failed configuration request on the user's first send.
+    #[test]
+    fn does_not_request_a_value_the_new_session_never_offered() {
+        let options = vec![
+            select(
+                "model",
+                SessionConfigSelectOptions::Ungrouped(vec![select_option("big", "Big")]),
+            )
+            .category(SessionConfigOptionCategory::Model),
+        ];
+
+        assert_eq!(model_config_id(&options, "retired-model"), None);
+    }
+
+    /// ACP boundary diagnostics identify the selection without serializing server credentials.
+    #[test]
+    fn session_mcp_log_contains_revision_identity_and_omits_secrets() {
+        let plugin_id = PluginId::parse("official/tavily").expect("plugin id");
+        let snapshot = SessionMcpSnapshot::new(
+            vec![McpServer::Http(
+                McpServerHttp::new(plugin_id.canonical(), "https://secret.example.test/mcp")
+                    .headers(vec![HttpHeader::new(
+                        "Authorization",
+                        "Bearer super-secret",
+                    )]),
+            )],
+            SessionMcpRevision::new(vec![SessionMcpMemberRevision {
+                plugin_id: plugin_id.clone(),
+                package_version: Version::new(1, 2, 3),
+                configuration_revision: 7,
+                transport: SessionMcpTransportKind::Http,
+            }]),
+        );
+        let selection = SessionMcpSelection::Explicit(BTreeSet::from([plugin_id]));
+        let recorder = EventTextRecorder::default();
+
+        with_recorded_trace_logging(recorder.layer(), || {
+            log_session_mcp_request(
+                &SessionId::new("ora-session"),
+                &AgentRef::parse("official/opencode").expect("agent ref"),
+                Some("provider-session"),
+                "session/new",
+                &selection,
+                &snapshot,
+            );
+        });
+
+        let recorded = recorder.text();
+        assert!(
+            recorded.contains("sending ACP session configuration"),
+            "{recorded}"
+        );
+        assert!(recorded.contains("official/tavily"), "{recorded}");
+        assert!(recorded.contains("1.2.3"), "{recorded}");
+        assert!(recorded.contains("configuration_revision: 7"), "{recorded}");
+        assert!(recorded.contains("explicit"), "{recorded}");
+        assert!(!recorded.contains("super-secret"));
+        assert!(!recorded.contains("secret.example.test"));
+        assert!(!recorded.contains("Authorization"));
+    }
+
+    /// Captures the rendered fields from one test-scoped logging event.
+    #[derive(Clone, Debug, Default)]
+    struct EventTextRecorder {
+        text: Arc<Mutex<String>>,
+    }
+
+    impl EventTextRecorder {
+        /// Builds a subscriber layer sharing this recorder's output.
+        fn layer(&self) -> EventTextLayer {
+            EventTextLayer {
+                text: self.text.clone(),
+            }
+        }
+
+        /// Returns every field rendered by the captured event.
+        fn text(&self) -> String {
+            self.text.lock().expect("recorded event lock").clone()
+        }
+    }
+
+    /// Records field names and values without using the production formatter.
+    #[derive(Clone, Debug)]
+    struct EventTextLayer {
+        text: Arc<Mutex<String>>,
+    }
+
+    impl<S> Layer<S> for EventTextLayer
+    where
+        S: tracing::Subscriber,
+    {
+        /// Appends each event field under the test-scoped TRACE subscriber.
+        fn on_event(&self, event: &tracing::Event<'_>, _context: Context<'_, S>) {
+            event.record(&mut EventTextVisitor {
+                text: self.text.clone(),
+            });
+        }
+    }
+
+    /// Renders structured values so the test can assert the complete leak boundary.
+    struct EventTextVisitor {
+        text: Arc<Mutex<String>>,
+    }
+
+    impl Visit for EventTextVisitor {
+        fn record_str(&mut self, field: &Field, value: &str) {
+            let mut text = self.text.lock().expect("recorded event lock");
+            text.push_str(field.name());
+            text.push('=');
+            text.push_str(value);
+            text.push('\n');
+        }
+
+        fn record_u64(&mut self, field: &Field, value: u64) {
+            self.record_debug(field, &value);
+        }
+
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            let mut text = self.text.lock().expect("recorded event lock");
+            text.push_str(field.name());
+            text.push('=');
+            text.push_str(&format!("{value:?}"));
+            text.push('\n');
+        }
+    }
+}

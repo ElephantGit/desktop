@@ -1,3 +1,4 @@
+use ora_agent_runtime::{ErrorClassification as RuntimeErrorClassification, RuntimeError};
 use ora_application::{ApplicationError, SkillImportError, WorkflowValidationError};
 use ora_contracts::{
     ContractError, EmptyErrorParams, PublicError, RequestId, SkillFolderConflictParams,
@@ -132,6 +133,55 @@ impl fmt::Display for BackendError {
 impl Error for BackendError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         self.source.as_deref().map(|source| source as &dyn Error)
+    }
+}
+
+impl From<RuntimeError> for BackendError {
+    /// Carries a runtime failure across unchanged: same class, public error, context, and source.
+    fn from(error: RuntimeError) -> Self {
+        let (classification, public_error, context, source) = error.into_parts();
+        Self {
+            classification: match classification {
+                RuntimeErrorClassification::InvalidRequest => ErrorClassification::InvalidRequest,
+                RuntimeErrorClassification::PayloadTooLarge => ErrorClassification::PayloadTooLarge,
+                RuntimeErrorClassification::NotFound => ErrorClassification::NotFound,
+                RuntimeErrorClassification::Forbidden => ErrorClassification::Forbidden,
+                RuntimeErrorClassification::HostUnavailable => ErrorClassification::HostUnavailable,
+                RuntimeErrorClassification::Conflict => ErrorClassification::Conflict,
+                RuntimeErrorClassification::Unprocessable => ErrorClassification::Unprocessable,
+                RuntimeErrorClassification::Internal => ErrorClassification::Internal,
+            },
+            public_error,
+            context,
+            source,
+        }
+    }
+}
+
+impl From<BackendError> for RuntimeError {
+    /// Hands a Desktop host failure to the runtime without losing anything it will report back.
+    fn from(error: BackendError) -> Self {
+        let BackendError {
+            classification,
+            public_error,
+            context,
+            source,
+        } = error;
+        RuntimeError::from_parts(
+            match classification {
+                ErrorClassification::InvalidRequest => RuntimeErrorClassification::InvalidRequest,
+                ErrorClassification::PayloadTooLarge => RuntimeErrorClassification::PayloadTooLarge,
+                ErrorClassification::NotFound => RuntimeErrorClassification::NotFound,
+                ErrorClassification::Forbidden => RuntimeErrorClassification::Forbidden,
+                ErrorClassification::HostUnavailable => RuntimeErrorClassification::HostUnavailable,
+                ErrorClassification::Conflict => RuntimeErrorClassification::Conflict,
+                ErrorClassification::Unprocessable => RuntimeErrorClassification::Unprocessable,
+                ErrorClassification::Internal => RuntimeErrorClassification::Internal,
+            },
+            public_error,
+            context,
+            source,
+        )
     }
 }
 
@@ -681,6 +731,37 @@ mod tests {
     };
     use pretty_assertions::assert_eq;
     use std::error::Error;
+
+    /// Verifies a failure crossing the runtime boundary in both directions comes back unchanged.
+    ///
+    /// Desktop hands host failures (an unavailable Workspace) to the shared runtime and receives
+    /// them back as `BackendError`; anything lost on the way would change what the client sees.
+    #[test]
+    fn round_trips_through_the_runtime_error_without_loss() {
+        let original = BackendError::with_source(
+            ErrorClassification::Conflict,
+            PublicError::WorkspaceUnavailable(EmptyErrorParams {}),
+            "workspace is unavailable",
+            RepositoryError::from_message("row was not found"),
+        );
+
+        let returned = BackendError::from(ora_agent_runtime::RuntimeError::from(original.clone()));
+
+        assert_eq!(
+            (
+                returned.classification(),
+                returned.public_error().clone(),
+                returned.to_string(),
+                returned.source().map(ToString::to_string),
+            ),
+            (
+                original.classification(),
+                original.public_error().clone(),
+                original.to_string(),
+                original.source().map(ToString::to_string),
+            ),
+        );
+    }
 
     /// Verifies non-Git roots retain the stable bad-request contract used by runtime adapters.
     #[test]

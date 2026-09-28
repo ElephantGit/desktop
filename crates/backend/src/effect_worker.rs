@@ -1,6 +1,6 @@
 //! Drives durable Generic Target requests through the Effect reconciler.
 
-use crate::agent_runtime::{ReplacedAgentSessions, plugin_agent};
+use crate::agent_runtime::{ReplacedAgentSessions, plugin_effect as plugin_agent};
 use crate::clock::SystemClock;
 use crate::effect_registration::converge_workspace_targets;
 use crate::plugin::PluginApi;

@@ -1,0 +1,130 @@
+//! Shared Agent Session Barrier for MCP refresh, Effect mutation, and Agent replacement.
+//!
+//! The barrier is the coordination seam only. MCP does not publish Effect state, and Effect
+//! Target readiness does not prove any Session has loaded MCP.
+
+use ora_domain::PluginId;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::{Mutex, OwnedMutexGuard};
+
+/// Why one Agent's sessions must stop admitting new prompts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BarrierReason {
+    McpRefresh,
+    EffectMutation,
+    AgentReplacement,
+}
+
+/// One Agent's mutex that serializes MCP refresh with Effect mutation and process replacement.
+#[derive(Debug, Default)]
+pub struct AgentSessionBarrier {
+    lock: Arc<Mutex<()>>,
+}
+
+/// Holds the barrier until the owning lifecycle step finishes.
+pub struct BarrierGuard {
+    reason: BarrierReason,
+    _guard: OwnedMutexGuard<()>,
+}
+
+impl BarrierGuard {
+    /// Reason recorded when this hold was acquired.
+    pub fn reason(&self) -> BarrierReason {
+        self.reason
+    }
+}
+
+impl AgentSessionBarrier {
+    /// Waits until no other lifecycle step holds the Agent, then records `reason`.
+    pub async fn acquire(&self, reason: BarrierReason) -> BarrierGuard {
+        BarrierGuard {
+            reason,
+            _guard: self.lock.clone().lock_owned().await,
+        }
+    }
+
+    /// Returns a hold only when the Agent is not already fenced.
+    pub fn try_acquire(&self, reason: BarrierReason) -> Option<BarrierGuard> {
+        Some(BarrierGuard {
+            reason,
+            _guard: self.lock.clone().try_lock_owned().ok()?,
+        })
+    }
+
+    /// Whether another lifecycle step currently owns the Agent.
+    pub fn is_held(&self) -> bool {
+        self.lock.try_lock().is_err()
+    }
+}
+
+/// Lazily allocates one barrier per Agent plugin so unrelated Agents stay concurrent.
+#[derive(Debug, Default)]
+pub struct AgentSessionBarriers {
+    by_plugin: std::sync::Mutex<HashMap<PluginId, Arc<AgentSessionBarrier>>>,
+}
+
+impl AgentSessionBarriers {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns the barrier for one Agent plugin, creating it on first use.
+    pub fn for_plugin(&self, plugin_id: &PluginId) -> Arc<AgentSessionBarrier> {
+        let mut barriers = self
+            .by_plugin
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        barriers.entry(plugin_id.clone()).or_default().clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AgentSessionBarriers, BarrierReason};
+    use ora_domain::PluginId;
+
+    /// Names one Agent plugin under the `ora-space` namespace.
+    fn plugin(name: &str) -> PluginId {
+        PluginId::new("ora-space", name).expect("plugin id")
+    }
+
+    #[tokio::test]
+    async fn mcp_and_effect_share_one_agent_session_barrier() {
+        let barriers = AgentSessionBarriers::new();
+        let plugin = plugin("opencode");
+        let first = barriers
+            .for_plugin(&plugin)
+            .try_acquire(BarrierReason::McpRefresh)
+            .expect("first hold");
+        assert!(barriers.for_plugin(&plugin).is_held());
+        assert!(
+            barriers
+                .for_plugin(&plugin)
+                .try_acquire(BarrierReason::EffectMutation)
+                .is_none()
+        );
+        drop(first);
+        assert!(
+            barriers
+                .for_plugin(&plugin)
+                .try_acquire(BarrierReason::AgentReplacement)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn unrelated_agents_do_not_share_a_barrier() {
+        let barriers = AgentSessionBarriers::new();
+        let _hold = barriers
+            .for_plugin(&plugin("opencode"))
+            .try_acquire(BarrierReason::McpRefresh)
+            .expect("opencode hold");
+        assert!(
+            barriers
+                .for_plugin(&plugin("claude"))
+                .try_acquire(BarrierReason::EffectMutation)
+                .is_some()
+        );
+    }
+}

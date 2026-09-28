@@ -52,7 +52,7 @@ impl WorkflowSessionTurns {
         )
         .await?;
         let stream = match agent_runtime.prompt_session(request).await {
-            Ok(stream) => stream,
+            Ok(stream) => SessionEventStream::from(stream),
             Err(error) => {
                 // The turn never started; put the awaiting node back where it was.
                 if let Some(node_run_id) = node_run_id.as_ref() {
@@ -62,7 +62,7 @@ impl WorkflowSessionTurns {
                     )
                     .await?;
                 }
-                return Err(error);
+                return Err(error.into());
             }
         };
         let Some(node_run_id) = node_run_id else {

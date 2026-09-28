@@ -11,6 +11,7 @@ use agent_client_protocol_schema::v1::{
     SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
     SessionConfigSelectOptions,
 };
+use ora_agent_runtime::RuntimeError;
 use ora_application::{
     AgentDefinitionRepository, AgentOutputContract, AgentSkill, BindWorkflowNodeSessionResult,
     Clock, ExecutionContext, FileChange, NodeExecutor, NodeFailure, NodeFailureKind,
@@ -257,6 +258,13 @@ pub enum NodeExecutionError {
     Repository(#[from] RepositoryError),
     #[error("session failed: {0}")]
     Session(#[from] BackendError),
+}
+
+impl From<RuntimeError> for NodeExecutionError {
+    /// Runtime failures reach a node exactly as the Desktop session API reports them.
+    fn from(error: RuntimeError) -> Self {
+        Self::Session(error.into())
+    }
 }
 
 impl NodeExecutionError {

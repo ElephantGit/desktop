@@ -1,43 +1,22 @@
-//! Unified Session Setup boundary shared by every ACP `session/new` and `session/load`.
+//! Desktop's Session Setup source for every ACP `session/new` and `session/load`.
 //!
-//! The first field is MCP. Future session inputs such as hooks would become additional typed
-//! fields here rather than an open JSON map or a private Host/Agent method.
+//! The runtime owns what a Session MCP Snapshot is and how a live session converges on one;
+//! this module resolves the snapshot from installed MCP packages and their Settings and observes
+//! Host MCP health. Future session inputs such as hooks would become additional typed fields of
+//! the runtime's setup rather than an open JSON map or a private Host/Agent method.
 
-mod barrier;
 mod mcp;
 
-pub(crate) use barrier::{AgentSessionBarriers, BarrierGuard, BarrierReason};
-pub(crate) use mcp::{
-    AgentSessionMcpCapabilities, LiveMcpEvent, LiveMcpPromptAdmission, LiveMcpState,
-    McpHealthStore, SessionMcpError, SessionMcpHost, SessionMcpRevision, SessionMcpSelection,
-    SessionMcpSnapshot, observe_session_mcp_health, resolve_session_mcp,
-    resolve_session_mcp_revision,
-};
 #[cfg(test)]
-pub(crate) use mcp::{SessionMcpMemberRevision, SessionMcpTransportKind};
+pub(crate) use mcp::AgentSessionMcpCapabilities;
+pub(crate) use mcp::{
+    McpHealthStore, SessionMcpError, SessionMcpHost, SessionMcpSelection,
+    observe_session_mcp_health, resolve_session_mcp, resolve_session_mcp_revision,
+};
+pub(crate) use ora_agent_runtime::{BarrierGuard, BarrierReason};
 
 use crate::plugin::PluginApi;
-use std::path::Path;
 use std::sync::Arc;
-
-/// Resolved inputs that every ACP session setup or refresh must send together.
-#[derive(Clone)]
-pub(crate) struct SessionSetup {
-    pub mcp: SessionMcpSnapshot,
-}
-
-impl SessionSetup {
-    /// Resolves the current Effective MCP Set for one Agent, one cwd, and one capability snapshot.
-    pub(crate) fn resolve(
-        host: &SessionMcpHost,
-        cwd: &Path,
-        capabilities: AgentSessionMcpCapabilities,
-    ) -> Result<Self, SessionMcpError> {
-        Ok(Self {
-            mcp: resolve_session_mcp(host, host, cwd, capabilities, &host.selection)?,
-        })
-    }
-}
 
 impl SessionMcpHost {
     /// Builds the host-backed catalog and configuration source used by every Session setup path.

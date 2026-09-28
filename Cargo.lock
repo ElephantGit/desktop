@@ -3317,6 +3317,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "ora-agent-runtime"
+version = "0.0.0"
+dependencies = [
+ "agent-client-protocol-schema",
+ "chrono-tz",
+ "ora-acp",
+ "ora-contracts",
+ "ora-domain",
+ "ora-effect",
+ "ora-history",
+ "ora-logging",
+ "ora-plugin-lifecycle",
+ "ora-plugin-protocol",
+ "ora-plugin-runtime",
+ "ora-scheduler",
+ "pretty_assertions",
+ "semver",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "time",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "ora-application"
 version = "0.0.0"
 dependencies = [
@@ -3355,6 +3384,7 @@ dependencies = [
  "futures",
  "gitlancer",
  "ora-acp",
+ "ora-agent-runtime",
  "ora-application",
  "ora-contracts",
  "ora-db",

@@ -14,6 +14,7 @@ workspace = true
 agent-client-protocol-schema = { workspace = true }
 gitlancer = { workspace = true }
 ora-acp = { workspace = true }
+ora-agent-runtime = { workspace = true }
 ora-application = { workspace = true }
 ora-contracts = { workspace = true }
 ora-db = { workspace = true }

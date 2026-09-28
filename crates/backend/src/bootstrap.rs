@@ -1,5 +1,5 @@
 use crate::agent::AgentApi;
-use crate::agent_runtime::{AgentRuntime, AgentRuntimeManager, AgentRuntimeSetup};
+use crate::agent_runtime::{AgentRuntime, AgentRuntimeSetup, open_agent_runtime};
 use crate::app_event::AppEventHub;
 use crate::clock::SystemClock;
 use crate::effects::Effects;
@@ -149,13 +149,12 @@ impl Backend {
         let baselines_root = sessions_root.join("node-baselines");
         let relative_path_base = paths.relative_path_base;
         let agent_runtime = Arc::new(
-            AgentRuntimeManager::new(AgentRuntimeSetup {
+            open_agent_runtime(AgentRuntimeSetup {
                 plugin_host: plugin.clone(),
                 pool: pool.clone(),
                 home_directory: paths.home_directory,
                 relative_path_base: relative_path_base.clone(),
                 sessions_root: sessions_root.clone(),
-                clock,
                 scheduler,
                 app_events: app_events.publisher(),
             })
