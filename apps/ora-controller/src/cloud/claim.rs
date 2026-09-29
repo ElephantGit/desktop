@@ -137,6 +137,9 @@ pub(super) async fn record_dispatch(
             store.executions().record_dispatch(request).await
         }
     });
-    write.await.map_err(|verdict| store.settle(verdict))?;
-    Ok(command)
+    let response = write.await.map_err(|verdict| store.settle(verdict))?;
+    mapping::command(
+        &response.record.ok_or(Error::Conflict)?,
+        &command.payload.spec.node_id,
+    )
 }

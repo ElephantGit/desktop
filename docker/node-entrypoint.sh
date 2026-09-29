@@ -2,9 +2,9 @@
 # Sandbox Node entrypoint. The Sandbox Server passes the complete Node service configuration as JSON
 # in ORA_NODE_CONFIG and mounts the Workspace volume that holds every state path it names.
 #
-# As root it only prepares what the unprivileged services cannot: the private data root on a fresh
-# volume and the configuration file. It then re-executes itself as `node` to supervise the process
-# host and the Node. Stop order matters: the Node stops first so it can close its managed scopes
+# The root management process owns protected configuration, Node and process-host journals.
+# Git workloads run as UID/GID 1000 through the scoped process boundary. Stop order matters:
+# the Node stops first so it can close its managed scopes
 # through a live host, and only then is the host stopped. Guardians outlive both by design; their
 # journals stay on the volume and the next container recovers them.
 set -eu
@@ -20,20 +20,30 @@ prepare() {
     echo "node-entrypoint: ORA_NODE_CONFIG is empty; this image is started by the Sandbox Server" >&2
     exit 64
   fi
-  # A volume created before its first mount can come up root-owned; only its root is adjusted,
-  # never its contents, so a foreign volume is refused by the services instead of rewritten.
-  chown "$node_user:$node_user" "$data_root"
-  chmod 0700 "$data_root"
+  # Only the volume mount point is prepared. Existing journals retain their ownership and
+  # services refuse unsafe legacy layouts instead of recursively rewriting user data.
+  chown root:root "$data_root"
+  chmod 0711 "$data_root"
   # The Node requires the clone root to exist before startup and never creates it.
   repository_root=$(printf '%s' "$ORA_NODE_CONFIG" | jq -er '.clone.repository_root')
   if [ ! -d "$repository_root" ]; then
-    install -d -o "$node_user" -g "$node_user" -m 0700 "$repository_root"
+    install -d -o root -g root -m 0755 "$repository_root"
   fi
   umask 077
   printf '%s' "$ORA_NODE_CONFIG" | jq -e . >"$config_file"
-  chown "$node_user:$node_user" "$config_file"
+  for name in node-cert node-key ca controller-cert; do
+    case "$name" in
+      node-cert) value=${ORA_NODE_CERT:?} ;;
+      node-key) value=${ORA_NODE_KEY:?} ;;
+      ca) value=${ORA_NODE_CA:?} ;;
+      controller-cert) value=${ORA_CONTROLLER_CERT:?} ;;
+    esac
+    printf '%s' "$value" | base64 -d >"/run/ora/$name.pem"
+    chmod 0600 "/run/ora/$name.pem"
+  done
+  unset ORA_NODE_CERT ORA_NODE_KEY ORA_NODE_CA ORA_CONTROLLER_CERT value
   unset ORA_NODE_CONFIG
-  exec setpriv --reuid="$node_user" --regid="$node_user" --init-groups -- "$0" supervise
+  supervise
 }
 
 # Succeeds once something accepts connections on the socket; a leftover socket file from an

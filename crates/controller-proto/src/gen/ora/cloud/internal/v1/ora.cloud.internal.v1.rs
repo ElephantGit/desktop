@@ -529,6 +529,9 @@ pub struct ExecutionRecord {
     pub input: ::core::option::Option<ExecutionInput>,
     #[prost(message, optional, tag="5")]
     pub result: ::core::option::Option<ExecutionResult>,
+    /// Stable Node operation for this execution attempt; distinct from the durable business intent.
+    #[prost(string, tag="6")]
+    pub node_operation_id: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ClaimWorkRequest {
@@ -1232,6 +1235,9 @@ pub struct SandboxEnsured {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SandboxTerminated {
+    /// Durable rejection of the original ensure identity, including late delivery.
+    #[prost(bool, tag="1")]
+    pub late_ensure_fenced: bool,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct WorkspaceDataDeleted {
@@ -1458,6 +1464,7 @@ pub enum OperationKind {
     DeleteProject = 7,
     InstallPlugin = 8,
     RemovePlugin = 9,
+    Restart = 10,
 }
 impl OperationKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1476,6 +1483,7 @@ impl OperationKind {
             Self::DeleteProject => "OPERATION_KIND_DELETE_PROJECT",
             Self::InstallPlugin => "OPERATION_KIND_INSTALL_PLUGIN",
             Self::RemovePlugin => "OPERATION_KIND_REMOVE_PLUGIN",
+            Self::Restart => "OPERATION_KIND_RESTART",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1491,6 +1499,7 @@ impl OperationKind {
             "OPERATION_KIND_DELETE_PROJECT" => Some(Self::DeleteProject),
             "OPERATION_KIND_INSTALL_PLUGIN" => Some(Self::InstallPlugin),
             "OPERATION_KIND_REMOVE_PLUGIN" => Some(Self::RemovePlugin),
+            "OPERATION_KIND_RESTART" => Some(Self::Restart),
             _ => None,
         }
     }
@@ -1772,6 +1781,175 @@ impl DeferReason {
             _ => None,
         }
     }
+}
+/// Scope allocated by Cloud. Epochs name different authorities; none substitutes for another.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RuntimeBinding {
+    #[prost(string, tag="1")]
+    pub tenant_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub workspace_id: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub sandbox_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="4")]
+    pub runtime_generation: i64,
+    #[prost(string, tag="5")]
+    pub node_id: ::prost::alloc::string::String,
+    #[prost(string, tag="6")]
+    pub node_incarnation_id: ::prost::alloc::string::String,
+    #[prost(string, tag="7")]
+    pub node_instance_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="8")]
+    pub controller_epoch: i64,
+    #[prost(int64, tag="9")]
+    pub control_epoch: i64,
+    #[prost(int64, tag="10")]
+    pub control_version: i64,
+    #[prost(string, tag="11")]
+    pub session_id: ::prost::alloc::string::String,
+    #[prost(string, tag="12")]
+    pub actor_user_id: ::prost::alloc::string::String,
+    #[prost(string, tag="13")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(string, tag="14")]
+    pub execution_id: ::prost::alloc::string::String,
+    #[prost(bool, tag="15")]
+    pub input_closed: bool,
+    #[prost(int64, tag="16")]
+    pub issued_at_ms: i64,
+    #[prost(int64, tag="17")]
+    pub expires_at_ms: i64,
+    #[prost(string, tag="18")]
+    pub node_operation_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ListBindingsRequest {
+    #[prost(int64, tag="1")]
+    pub epoch: i64,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListBindingsResponse {
+    #[prost(message, repeated, tag="1")]
+    pub bindings: ::prost::alloc::vec::Vec<RuntimeBinding>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AcknowledgeBindingRequest {
+    #[prost(string, tag="1")]
+    pub submission_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="2")]
+    pub epoch: i64,
+    #[prost(string, tag="3")]
+    pub workspace_id: ::prost::alloc::string::String,
+    #[prost(string, tag="4")]
+    pub node_instance_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="5")]
+    pub control_epoch: i64,
+    #[prost(int64, tag="6")]
+    pub control_version: i64,
+    #[prost(bool, tag="7")]
+    pub input_closed: bool,
+    #[prost(string, repeated, tag="8")]
+    pub unfinished_execution_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AcknowledgeBindingResponse {
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetExecutionPermitRequest {
+    #[prost(int64, tag="1")]
+    pub epoch: i64,
+    #[prost(string, tag="2")]
+    pub workspace_id: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub node_instance_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="4")]
+    pub control_epoch: i64,
+    #[prost(string, tag="5")]
+    pub execution_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetExecutionPermitResponse {
+    #[prost(message, optional, tag="1")]
+    pub binding: ::core::option::Option<RuntimeBinding>,
+}
+/// Fresh authority for one persisted lifecycle effect. Never inferred from an old plan replay.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RuntimeEffectPermit {
+    #[prost(string, tag="1")]
+    pub tenant_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub workspace_id: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub sandbox_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="4")]
+    pub runtime_generation: i64,
+    #[prost(int64, tag="5")]
+    pub controller_epoch: i64,
+    #[prost(int64, tag="6")]
+    pub control_epoch: i64,
+    #[prost(int64, tag="7")]
+    pub issued_at_ms: i64,
+    #[prost(int64, tag="8")]
+    pub expires_at_ms: i64,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetEffectPermitRequest {
+    #[prost(int64, tag="1")]
+    pub epoch: i64,
+    #[prost(string, tag="2")]
+    pub effect_id: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub force_stop_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetEffectPermitResponse {
+    #[prost(message, optional, tag="1")]
+    pub permit: ::core::option::Option<RuntimeEffectPermit>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RuntimeForceStopPlan {
+    #[prost(string, tag="1")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(int64, tag="2")]
+    pub version: i64,
+    #[prost(string, tag="3")]
+    pub workspace_id: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="4")]
+    pub effects: ::prost::alloc::vec::Vec<Effect>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ListForceStopsRequest {
+    #[prost(int64, tag="1")]
+    pub epoch: i64,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListForceStopsResponse {
+    #[prost(message, repeated, tag="1")]
+    pub plans: ::prost::alloc::vec::Vec<RuntimeForceStopPlan>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ConfirmForceStopRequest {
+    #[prost(string, tag="1")]
+    pub submission_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="2")]
+    pub epoch: i64,
+    #[prost(string, tag="3")]
+    pub force_stop_id: ::prost::alloc::string::String,
+    #[prost(int64, tag="4")]
+    pub version: i64,
+    #[prost(string, tag="5")]
+    pub effect_id: ::prost::alloc::string::String,
+    #[prost(bool, tag="6")]
+    pub terminated: bool,
+    #[prost(bool, tag="7")]
+    pub late_ensure_fenced: bool,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ConfirmForceStopResponse {
+    #[prost(int64, tag="1")]
+    pub version: i64,
+    #[prost(bool, tag="2")]
+    pub completed: bool,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct WatchRequest {

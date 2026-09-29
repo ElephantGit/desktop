@@ -52,6 +52,31 @@ impl<G: WriteGuard> NodeDatabase<G> {
         command: &CloneRepositoryMessage,
         target: &CloneTarget,
     ) -> Result<CloneExecution, Error> {
+        self.accept_clone_with_control(command, target, None)
+    }
+
+    /// Control responsibility and clone reservation commit together; neither can survive alone.
+    pub fn accept_controlled_clone(
+        &mut self,
+        command: &CloneRepositoryMessage,
+        target: &CloneTarget,
+        permit: &RuntimeBinding,
+    ) -> Result<CloneExecution, Error> {
+        self.validate_runtime_permit(permit)?;
+        if permit.execution_id != command.execution_id.as_str()
+            || permit.node_operation_id != command.operation_id.as_str()
+        {
+            return Err(Error::IdentityConflict);
+        }
+        self.accept_clone_with_control(command, target, Some(permit))
+    }
+
+    fn accept_clone_with_control(
+        &mut self,
+        command: &CloneRepositoryMessage,
+        target: &CloneTarget,
+        permit: Option<&RuntimeBinding>,
+    ) -> Result<CloneExecution, Error> {
         command.validate()?;
         if command.payload.spec.node_id != self.node_id {
             return Err(Error::NodeMismatch);
@@ -62,6 +87,9 @@ impl<G: WriteGuard> NodeDatabase<G> {
             } else {
                 Err(Error::IdentityConflict)
             };
+        }
+        if permit.is_some() && !self.unfinished_runtime_executions()?.is_empty() {
+            return Err(Error::ResourceConflict);
         }
         if target.repository_id.as_str().trim().is_empty()
             || !target.root.is_absolute()
@@ -100,6 +128,15 @@ impl<G: WriteGuard> NodeDatabase<G> {
                 serde_json::to_string(&progress)?,
             ],
         )?;
+        if let Some(permit) = permit {
+            tx.execute(
+                "INSERT INTO execution_control(execution,permit) VALUES(?1,?2)",
+                params![
+                    command.execution_id.as_str(),
+                    serde_json::to_string(permit)?
+                ],
+            )?;
+        }
         tx.commit()?;
         Ok(CloneExecution {
             command: command.clone(),

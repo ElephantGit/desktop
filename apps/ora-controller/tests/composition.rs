@@ -404,6 +404,18 @@ fn cloud_persistence_serves_no_surface_and_creates_no_local_state() {
     let path = root.path();
     let home = path.join("controller");
     let config = path.join("controller.json");
+    let key = rcgen::KeyPair::generate().unwrap();
+    let mut ca = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+    ca.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    ca.key_usages = vec![rcgen::KeyUsagePurpose::KeyCertSign];
+    let ca = rcgen::CertifiedIssuer::self_signed(ca, key).unwrap();
+    let key = rcgen::KeyPair::generate().unwrap();
+    let mut parameters = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+    parameters.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
+    let cert = parameters.signed_by(&key, &ca).unwrap();
+    fs::write(path.join("controller.pem"), cert.pem()).unwrap();
+    fs::write(path.join("controller.key"), key.serialize_pem()).unwrap();
+    fs::write(path.join("ca.pem"), ca.pem()).unwrap();
     fs::write(
         &config,
         serde_json::to_vec(&serde_json::json!({
@@ -411,9 +423,10 @@ fn cloud_persistence_serves_no_surface_and_creates_no_local_state() {
                 "home_directory": home,
                 "persistence": {
                     "kind": "cloud",
-                    "endpoint": "http://127.0.0.1:1",
+                    "endpoint": "https://127.0.0.1:1",
                     "claim_interval_ms": 100,
                 },
+                "management_tls": {"certificate_file":path.join("controller.pem"),"private_key_file":path.join("controller.key"),"ca_file":path.join("ca.pem")},
                 "protected_state_directories": [path.join("node")],
                 "controller_id": "owner",
                 "nodes": [{ "node_id": "node", "endpoint": { "kind": "ipc", "path": path.join("node").join("control.sock") } }],
@@ -430,7 +443,7 @@ fn cloud_persistence_serves_no_surface_and_creates_no_local_state() {
     until(|| {
         let log = executable.log();
         log.contains("ora-controller coordinating through cloud")
-            && log.contains("http://127.0.0.1:1")
+            && log.contains("https://127.0.0.1:1")
     });
     until(|| executable.log().contains("Cloud lease not acquired"));
     assert!(!home.exists());

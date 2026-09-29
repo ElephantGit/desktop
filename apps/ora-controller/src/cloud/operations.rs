@@ -32,6 +32,7 @@ const RETRY_SECONDS: u32 = 5;
 #[derive(Default)]
 pub(super) struct Operations {
     task: Option<(i64, JoinHandle<()>)>,
+    force_task: Option<(i64, JoinHandle<()>)>,
     /// The latest epoch under which the sandbox targets were rebuilt from Cloud's list; 0 before
     /// the first rebuild. Cloud's epochs start at 1.
     rebuilt: Arc<AtomicI64>,
@@ -44,13 +45,33 @@ impl Operations {
         let Some(epoch) = store.lease() else {
             return;
         };
+        if !self
+            .force_task
+            .as_ref()
+            .is_some_and(|(running, task)| *running == epoch && !task.is_finished())
+        {
+            if let Some((_, old)) = self.force_task.take() {
+                old.abort();
+            }
+            let (store, fleet) = (store.clone(), fleet.clone());
+            self.force_task = Some((
+                epoch,
+                tokio::spawn(async move {
+                    if let Err(error) = super::force_stop::drain(&store, &fleet, epoch).await {
+                        ora_logging::ora_warn!(error = %error,"force stop remains pending; retrying from Cloud intent");
+                    }
+                }),
+            ));
+        }
         if let Some((running, task)) = &self.task
             && *running == epoch
             && !task.is_finished()
         {
             return;
         }
-        self.stop();
+        if let Some((_, old)) = self.task.take() {
+            old.abort();
+        }
         let (store, fleet, rebuilt) = (store.clone(), fleet.clone(), self.rebuilt.clone());
         self.task = Some((
             epoch,
@@ -74,6 +95,9 @@ impl Operations {
     /// Stops the task at once: without the lease nothing it would write can be accepted, and a
     /// successor resumes the operation from Cloud's record. Node sessions are not affected.
     pub(super) fn stop(&mut self) {
+        if let Some((_, task)) = self.force_task.take() {
+            task.abort();
+        }
         if let Some((_, task)) = self.task.take() {
             task.abort();
         }
@@ -359,7 +383,14 @@ impl<'a> Round<'a> {
         {
             return Ok(Carried::Done);
         }
-        let observation = match self.fleet.deployment().substrate.execute(&effect).await {
+        let permit = self.store.effect_permit(self.epoch, &effect.id, "").await?;
+        let observation = match self
+            .fleet
+            .deployment()
+            .substrate
+            .execute_authorized(&effect, &permit)
+            .await
+        {
             Ok(observation) => observation,
             Err(error) => return self.park_on(&effect, &error).await,
         };

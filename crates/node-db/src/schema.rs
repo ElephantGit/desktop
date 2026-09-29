@@ -41,7 +41,7 @@ pub(super) fn initialize(
         "user_version",
         |row| row.get(/*idx*/ 0),
     )?;
-    if app != APPLICATION_ID || !matches!(version, 1..=5) {
+    if app != APPLICATION_ID || !matches!(version, 1..=6) {
         return Err(Error::InvalidSchema);
     }
     let check: String = connection.pragma_query_value(
@@ -66,6 +66,9 @@ pub(super) fn initialize(
     }
     if version >= 5 {
         expected.execute_batch(include_str!("termination.sql"))?;
+    }
+    if version >= 6 {
+        expected.execute_batch(include_str!("runtime_control.sql"))?;
     }
     if schema_objects(connection)? != schema_objects(&expected)? {
         return Err(Error::InvalidSchema);
@@ -106,6 +109,12 @@ pub(super) fn initialize(
             "user_version",
             /*pragma_value*/ 5,
         )?;
+        tx.commit()?;
+    }
+    if version < 6 {
+        let tx = connection.transaction()?;
+        tx.execute_batch(include_str!("runtime_control.sql"))?;
+        tx.pragma_update(None, "user_version", 6)?;
         tx.commit()?;
     }
     Ok(id)

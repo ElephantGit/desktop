@@ -34,6 +34,28 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let hosting = cli.hosting();
     let config: DeploymentConfig = serde_json::from_slice(&std::fs::read(&cli.config)?)?;
+    if let Persistence::Cloud {
+        endpoint,
+        substrate,
+        ..
+    } = &config.controller.persistence
+    {
+        if config.controller.management_tls.is_none() || !endpoint.starts_with("https://") {
+            return Err(
+                "Cloud management requires mutual TLS certificate files and https:// endpoint"
+                    .into(),
+            );
+        }
+        if substrate
+            .as_ref()
+            .is_some_and(|s| s.direct_node_port.is_none() || !s.effects_url.starts_with("https://"))
+        {
+            return Err(
+                "Cloud sandboxes require authenticated HTTPS effects and direct Node TLS endpoints"
+                    .into(),
+            );
+        }
+    }
     let _logging = ora_logging::init_logging(ora_logging::LoggingConfig::new(
         ora_logging::LogLevel::Info,
         ora_logging::LogOutput::Stdout,

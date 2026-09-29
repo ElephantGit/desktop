@@ -1,2 +1,3 @@
 # Non-interactive clone configuration for sandbox Nodes. The image ships no credentials; mount a
-# replacement at /etc/ora/clone.gitconfig to add a CA bundle or a credential helper.
+# replacement at /etc/ora/clone.gitconfig to add an HTTPS CA reference. Cloud mode rejects static
+# credential helpers and SSH identities; controlled private repository resolution is required.

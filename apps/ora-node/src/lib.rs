@@ -41,7 +41,7 @@ mod session;
 #[cfg(target_os = "linux")]
 pub use managed::{ManagedGitRunner, ProcessConfig, Shutdown};
 #[cfg(target_os = "linux")]
-pub use service::{ControlConfig, ControlListen, ServiceConfig, serve};
+pub use service::{ControlConfig, ControlListen, RuntimeScope, ServiceConfig, serve};
 #[cfg(target_os = "linux")]
 pub use session::{
     AgentSessions, CheckoutResolver, CommandSettlement, HistoryUnavailable, PluginCatalog,

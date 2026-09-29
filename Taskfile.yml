@@ -248,6 +248,7 @@ tasks:
         msg: "Deno is not available on PATH. Install it before running Rust tests."
     cmds:
       - task: lint:crates
+      - cargo build --package ora-node --example loopback-transport-fixture
       - cargo test --workspace --exclude ora-desktop --exclude ora-desktop-tests
 
   test:tauri:

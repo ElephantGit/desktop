@@ -112,7 +112,7 @@ impl Node {
                                 payload: HelloAccepted {
                                     selected_version: CURRENT_PROTOCOL_VERSION,
                                     node: identity.clone(),
-                                    capabilities: vec![NodeCapability::RepositoryClone],
+                                    capabilities: vec![NodeCapability::RepositoryClone, NodeCapability::RuntimeControl],
                                 },
                             }))
                         }
@@ -178,6 +178,7 @@ where
                 let endpoint = served.endpoint.clone();
                 let start = Box::new(move |controller_id: &str| {
                     let config = RuntimeConfig {
+                        management_tls: None,
                         home_directory: home,
                         persistence: Persistence::Cloud {
                             endpoint,

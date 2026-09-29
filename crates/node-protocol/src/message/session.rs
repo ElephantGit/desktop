@@ -11,6 +11,7 @@ use std::collections::HashSet;
 pub enum NodeCapability {
     WorktreeExecution,
     RepositoryClone,
+    RuntimeControl,
     /// `InstallPlugins` and `RemovePlugins`.
     PluginInstall,
     /// `StartAgentSession`, Thread events and session commands.

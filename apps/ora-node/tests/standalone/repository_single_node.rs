@@ -101,6 +101,7 @@ fn single_node_composition_hosts_and_retires_its_node() {
                 stop_timeout_ms: 15_000,
             }),
             controller: RuntimeConfig {
+                management_tls: None,
                 home_directory: home.clone(),
                 persistence: Persistence::Sqlite,
                 protected_state_directories: vec![

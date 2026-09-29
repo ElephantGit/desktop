@@ -10,7 +10,6 @@ use ora_node_transport::{
 };
 use pretty_assertions::assert_eq;
 use std::{
-    collections::BTreeMap,
     net::{Ipv4Addr, SocketAddr},
     process::{Command, Stdio},
     time::Duration,
@@ -20,27 +19,42 @@ pub(super) const PATH: &str = "/ora-node/v1";
 
 /// Opens a raw Controller-side WebSocket and completes the owner's handshake, retrying while the
 /// Node still holds admission for a peer that has just disconnected.
-async fn hello(endpoint: &WsEndpoint) -> (ClientReceiver, ClientSender) {
+struct SessionSender {
+    inner: ClientSender,
+    binding: RuntimeBinding,
+}
+
+async fn hello(endpoint: &WsEndpoint) -> (ClientReceiver, SessionSender) {
     loop {
         let (mut receiver, mut sender) = websocket::connect(endpoint).await.unwrap();
-        send(
-            &mut sender,
-            &ControllerToNodeMessage::Hello(HelloMessage {
-                protocol_version: CURRENT_PROTOCOL_VERSION,
-                payload: Hello {
-                    controller_id: ControllerId::new("owner"),
-                    supported_versions: vec![CURRENT_PROTOCOL_VERSION],
-                },
-            }),
-        )
-        .await;
+        sender
+            .send(
+                encode_controller_frame(&ControllerToNodeMessage::Hello(HelloMessage {
+                    protocol_version: CURRENT_PROTOCOL_VERSION,
+                    payload: Hello {
+                        controller_id: ControllerId::new("owner"),
+                        supported_versions: vec![CURRENT_PROTOCOL_VERSION],
+                    },
+                }))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
         match receiver.recv().await {
             Ok(Some(frame)) => {
-                assert!(matches!(
-                    decode_node_frame(&frame).unwrap(),
-                    NodeToControllerMessage::HelloAccepted(_)
-                ));
-                return (receiver, sender);
+                let NodeToControllerMessage::HelloAccepted(hello) =
+                    decode_node_frame(&frame).unwrap()
+                else {
+                    panic!("expected authenticated greeting")
+                };
+                let root = endpoint.tls.as_ref().unwrap().ca_file.parent().unwrap();
+                return (
+                    receiver,
+                    SessionSender {
+                        inner: sender,
+                        binding: runtime_fixture::binding(root, &hello.payload.node),
+                    },
+                );
             }
             Err(error) if error.is_busy() => {
                 tokio::time::sleep(Duration::from_millis(/*millis*/ 50)).await;
@@ -51,9 +65,25 @@ async fn hello(endpoint: &WsEndpoint) -> (ClientReceiver, ClientSender) {
 }
 
 /// Sends one Controller message as one binary WebSocket frame.
-async fn send(sender: &mut ClientSender, message: &ControllerToNodeMessage) {
+async fn send(sender: &mut SessionSender, message: &ControllerToNodeMessage) {
+    let message = if let ControllerToNodeMessage::CloneRepository(command) = message {
+        sender
+            .inner
+            .send(
+                encode_controller_frame(&ControllerToNodeMessage::BindRuntime(
+                    sender.binding.clone(),
+                ))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        runtime_fixture::controlled(sender.binding.clone(), command.clone())
+    } else {
+        message.clone()
+    };
     sender
-        .send(encode_controller_frame(message).unwrap())
+        .inner
+        .send(encode_controller_frame(&message).unwrap())
         .await
         .unwrap();
 }
@@ -77,8 +107,10 @@ async fn clone_result(receiver: &mut ClientReceiver) -> CloneResultMessage {
     }
 }
 
-/// Starts the production service listening for WebSocket upgrades instead of a local socket.
+/// Starts a loopback-only library fixture for the original transport and crash obligations.
+/// Production network authorization is exercised separately by mTLS and cluster acceptance.
 pub(super) fn launch(fixture: &Fixture, clone: &CloneConfig, bind: SocketAddr) -> ChildGuard {
+    runtime_fixture::advance_epoch(fixture.path());
     let config = fixture.path().join("websocket-config.json");
     fs::write(
         &config,
@@ -87,10 +119,12 @@ pub(super) fn launch(fixture: &Fixture, clone: &CloneConfig, bind: SocketAddr) -
             process: fixture.process(),
             clone: Some(clone.clone()),
             control: Some(ora_node::ControlConfig {
+                target: Some(runtime_fixture::scope()),
                 controller_id: ControllerId::new("owner"),
-                listen: ora_node::ControlListen::WebSocket {
+                listen: ora_node::ControlListen::MutualTlsWebSocket {
                     bind,
                     path: PATH.into(),
+                    tls: runtime_fixture::tls(fixture.path(), "node"),
                 },
                 heartbeat_ms: 100,
                 frame_timeout_ms: 40_000,
@@ -101,14 +135,24 @@ pub(super) fn launch(fixture: &Fixture, clone: &CloneConfig, bind: SocketAddr) -
         .unwrap(),
     )
     .unwrap();
+    let rejected = Command::new(env!("CARGO_BIN_EXE_ora-node"))
+        .arg(&config)
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("separate workload OS identity"));
     ChildGuard(
-        Command::new(env!("CARGO_BIN_EXE_ora-node"))
-            .arg(config)
-            .stdin(Stdio::null())
-            .stdout(fs::File::create(fixture.path().join("websocket.log")).unwrap())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .unwrap(),
+        Command::new(
+            std::path::Path::new(env!("CARGO_BIN_EXE_ora-node"))
+                .with_file_name("examples")
+                .join("loopback-transport-fixture"),
+        )
+        .arg(config)
+        .stdin(Stdio::null())
+        .stdout(fs::File::create(fixture.path().join("websocket.log")).unwrap())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .unwrap(),
     )
 }
 
@@ -131,17 +175,15 @@ fn controller_session_over_websocket_takes_over_clone_and_keeps_single_session()
         until(|| {
             fs::read_to_string(fixture.path().join("websocket.log"))
                 .unwrap_or_default()
-                .contains("Node WebSocket listening")
+                .contains("Node mutual TLS WebSocket listening")
         });
         let store = SqliteStore::open(
             &fixture.path().join("controller"),
             ControllerId::new("owner"),
         )
         .unwrap();
-        let endpoint = WsEndpoint {
-            url: format!("ws://{bind}{PATH}"),
-            headers: BTreeMap::new(),
-        };
+        let store = runtime_fixture::RuntimeStore::new(store, fixture.path());
+        let endpoint = runtime_fixture::endpoint(&fixture, bind);
         let target = NodeTarget {
             node_id: NodeId::new("test-node"),
             endpoint: NodeEndpoint::WebSocket(endpoint.clone()),
@@ -227,7 +269,7 @@ fn websocket_replays_unacknowledged_result_across_disconnect_and_restart_until_c
         let listening = |fixture: &Fixture| {
             fs::read_to_string(fixture.path().join("websocket.log"))
                 .unwrap_or_default()
-                .contains("Node WebSocket listening")
+                .contains("Node mutual TLS WebSocket listening")
         };
         let mut node = launch(&fixture, &clone, bind);
         until(|| listening(&fixture));
@@ -236,10 +278,8 @@ fn websocket_replays_unacknowledged_result_across_disconnect_and_restart_until_c
             ControllerId::new("owner"),
         )
         .unwrap();
-        let endpoint = WsEndpoint {
-            url: format!("ws://{bind}{PATH}"),
-            headers: BTreeMap::new(),
-        };
+        let store = runtime_fixture::RuntimeStore::new(store, fixture.path());
+        let endpoint = runtime_fixture::endpoint(&fixture, bind);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -366,7 +406,7 @@ fn controller_session_takes_over_interrupted_clone_after_node_stop() {
         let listening = |fixture: &Fixture| {
             fs::read_to_string(fixture.path().join("websocket.log"))
                 .unwrap_or_default()
-                .contains("Node WebSocket listening")
+                .contains("Node mutual TLS WebSocket listening")
         };
         let mut node = launch(&fixture, &clone, bind);
         until(|| listening(&fixture));
@@ -375,12 +415,10 @@ fn controller_session_takes_over_interrupted_clone_after_node_stop() {
             ControllerId::new("owner"),
         )
         .unwrap();
+        let store = runtime_fixture::RuntimeStore::new(store, fixture.path());
         let target = NodeTarget {
             node_id: NodeId::new("test-node"),
-            endpoint: NodeEndpoint::WebSocket(WsEndpoint {
-                url: format!("ws://{bind}{PATH}"),
-                headers: BTreeMap::new(),
-            }),
+            endpoint: NodeEndpoint::WebSocket(runtime_fixture::endpoint(&fixture, bind)),
         };
         let settings = SessionConfig {
             io_timeout_ms: 40_000,
@@ -486,12 +524,9 @@ fn node_closes_sessions_with_the_reason_code() {
         until(|| {
             fs::read_to_string(fixture.path().join("websocket.log"))
                 .unwrap_or_default()
-                .contains("Node WebSocket listening")
+                .contains("Node mutual TLS WebSocket listening")
         });
-        let endpoint = WsEndpoint {
-            url: format!("ws://{bind}{PATH}"),
-            headers: BTreeMap::new(),
-        };
+        let endpoint = runtime_fixture::endpoint(&fixture, bind);
         let closed = |result: Result<Option<Vec<u8>>, TransportError>| result.unwrap_err();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -499,17 +534,19 @@ fn node_closes_sessions_with_the_reason_code() {
             .unwrap();
         runtime.block_on(async {
             let (mut receiver, mut sender) = websocket::connect(&endpoint).await.unwrap();
-            send(
-                &mut sender,
-                &ControllerToNodeMessage::Hello(HelloMessage {
-                    protocol_version: CURRENT_PROTOCOL_VERSION,
-                    payload: Hello {
-                        controller_id: ControllerId::new("intruder"),
-                        supported_versions: vec![CURRENT_PROTOCOL_VERSION],
-                    },
-                }),
-            )
-            .await;
+            sender
+                .send(
+                    encode_controller_frame(&ControllerToNodeMessage::Hello(HelloMessage {
+                        protocol_version: CURRENT_PROTOCOL_VERSION,
+                        payload: Hello {
+                            controller_id: ControllerId::new("intruder"),
+                            supported_versions: vec![CURRENT_PROTOCOL_VERSION],
+                        },
+                    }))
+                    .unwrap(),
+                )
+                .await
+                .unwrap();
             let refused = closed(receiver.recv().await);
             assert!(
                 refused.is_closed_for(CloseReason::IdentityMismatch),
@@ -517,7 +554,7 @@ fn node_closes_sessions_with_the_reason_code() {
             );
 
             let (mut receiver, mut sender) = hello(&endpoint).await;
-            sender.send(vec![0xff, b'{']).await.unwrap();
+            sender.inner.send(vec![0xff, b'{']).await.unwrap();
             let violation = loop {
                 match receiver.recv().await {
                     // Heartbeats sent before the Node read the bad frame.

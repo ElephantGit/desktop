@@ -27,6 +27,23 @@ fn run(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
         return Err("configuration path must be absolute".into());
     }
     let config: ora_node::ServiceConfig = serde_json::from_slice(&std::fs::read(path)?)?;
+    if config
+        .control
+        .as_ref()
+        .is_some_and(|c| matches!(c.listen, ora_node::ControlListen::WebSocket { .. }))
+    {
+        return Err(
+            "network management requires mutual_tls_websocket; plaintext is unsupported".into(),
+        );
+    }
+    if config
+        .control
+        .as_ref()
+        .is_some_and(|c| matches!(c.listen, ora_node::ControlListen::MutualTlsWebSocket { .. }))
+        && config.process.workload_uid.is_none()
+    {
+        return Err("network management requires a separate workload OS identity".into());
+    }
     let _logging = ora_logging::init_logging(ora_logging::LoggingConfig::new(
         ora_logging::LogLevel::Info,
         ora_logging::LogOutput::Stdout,

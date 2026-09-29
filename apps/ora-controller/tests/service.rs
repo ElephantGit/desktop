@@ -25,6 +25,7 @@ fn local_composition_refuses_before_state_and_holds_an_exclusive_owner() {
         let config = DeploymentConfig {
             single_node: None,
             controller: RuntimeConfig {
+                management_tls: None,
                 home_directory: root.path().join("controller"),
                 persistence: Persistence::Sqlite,
                 protected_state_directories: vec![root.path().join("process")],

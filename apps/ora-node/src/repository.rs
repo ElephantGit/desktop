@@ -61,6 +61,22 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
         &mut self,
         command: &CloneRepositoryMessage,
     ) -> Result<(ExecutionStatus, Option<CloneExecution>), Error> {
+        self.reserve_clone_with_control(command, None)
+    }
+
+    pub(crate) fn reserve_controlled_clone(
+        &mut self,
+        command: &CloneRepositoryMessage,
+        permit: &RuntimeBinding,
+    ) -> Result<(ExecutionStatus, Option<CloneExecution>), Error> {
+        self.reserve_clone_with_control(command, Some(permit))
+    }
+
+    fn reserve_clone_with_control(
+        &mut self,
+        command: &CloneRepositoryMessage,
+        permit: Option<&RuntimeBinding>,
+    ) -> Result<(ExecutionStatus, Option<CloneExecution>), Error> {
         command.validate()?;
         if command.payload.spec.node_id != self.identity.node_id {
             return Err(ora_node_db::Error::NodeMismatch.into());
@@ -93,7 +109,12 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
             root: config.repository_root.clone(),
             path: config.repository_root.join(id),
         };
-        let record = self.database.accept_clone(command, &target)?;
+        let record = if let Some(permit) = permit {
+            self.database
+                .accept_controlled_clone(command, &target, permit)?
+        } else {
+            self.database.accept_clone(command, &target)?
+        };
         self.state = NodeState::RecoveryPending;
         Ok((
             ExecutionStatus {

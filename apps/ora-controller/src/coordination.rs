@@ -9,6 +9,15 @@ pub async fn take_over<S: CoordinationStore>(
 ) -> Result<Option<EventAckMessage>, Error> {
     message.validate()?;
     match message {
+        NodeToControllerMessage::RuntimeControlState(state) => {
+            if state.binding.node_id != session.node_id.as_str()
+                || state.binding.node_incarnation_id != session.incarnation_id.as_str()
+            {
+                return Err(Error::Conflict);
+            }
+            store.acknowledge_runtime_binding(state).await?;
+            Ok(None)
+        }
         NodeToControllerMessage::CloneResult(event) => {
             store.take_over_node_event(session, event).await?;
             Ok(Some(EventAckMessage {

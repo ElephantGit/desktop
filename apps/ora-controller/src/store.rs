@@ -19,6 +19,33 @@ pub trait CoordinationStore: Clone + Send + Sync + 'static {
     /// The persistent coordinator identity presented to Nodes; never a process or connection identity.
     fn id(&self) -> &ControllerId;
 
+    /// Cloud requires a negotiated runtime binding; local private IPC keeps its existing intake.
+    fn requires_runtime_control(&self) -> bool {
+        false
+    }
+
+    fn runtime_bindings(
+        &self,
+        _node: &NodeId,
+    ) -> impl Future<Output = Result<Vec<RuntimeBinding>, Error>> + Send {
+        async { Ok(Vec::new()) }
+    }
+
+    fn acknowledge_runtime_binding(
+        &self,
+        _state: &RuntimeControlState,
+    ) -> impl Future<Output = Result<(), Error>> + Send {
+        async { Err(Error::Conflict) }
+    }
+
+    /// Registration is historical evidence. This method rechecks current permission before send.
+    fn dispatch_message(
+        &self,
+        command: CloneRepositoryMessage,
+    ) -> impl Future<Output = Result<Option<ControllerToNodeMessage>, Error>> + Send {
+        async move { Ok(Some(ControllerToNodeMessage::CloneRepository(command))) }
+    }
+
     /// Commits the execution fact carried by a Node event together with its exact receipt.
     fn take_over_node_event(
         &self,

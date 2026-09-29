@@ -304,6 +304,16 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
             "Node identity or capability mismatch".into(),
         ));
     }
+    if store.requires_runtime_control()
+        && !hello
+            .payload
+            .capabilities
+            .contains(&NodeCapability::RuntimeControl)
+    {
+        return Err(SessionError::Mismatch(
+            "Node lacks mandatory runtime_control capability".into(),
+        ));
+    }
     let identity = hello.payload.node;
     observer.established(&identity);
     let mut tick = interval(Duration::from_millis(config.query_interval_ms));
@@ -319,6 +329,9 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
             tokio::select! {
                 message = &mut read => break message?.ok_or_else(|| SessionError::Disconnected("Node closed the connection".into()))?,
                 _ = tick.tick() => {
+                    for binding in store.runtime_bindings(node_id).await? {
+                        bounded(deadline,transmit(writer,&ControllerToNodeMessage::BindRuntime(binding))).await?;
+                    }
                     let command = {
                         let commands = store.pending_dispatches(node_id).await?;
                         if commands.is_empty() { None } else { let command = commands[cursor % commands.len()].clone(); cursor = cursor.wrapping_add(1); Some(command) }
@@ -334,6 +347,10 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
             }
         };
         let ack = take_over(store, &identity, &message).await?;
+        if let NodeToControllerMessage::CloneResult(event) = &message {
+            // Cloud has durably accepted the terminal fact; a prior Unknown is now resolved.
+            observer.answered(&event.execution_id);
+        }
         if let NodeToControllerMessage::ExecutionStatus(status) = &message
             && status.payload.state != ExecutionState::Unknown
         {
@@ -345,12 +362,22 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
             && status.payload.state == ExecutionState::Unknown
             && store.result(&status.execution_id).await?.is_none()
         {
-            if retransmitted.insert(status.execution_id.clone()) {
-                Some(ControllerToNodeMessage::CloneRepository(
-                    store
-                        .original_dispatch(&identity, &status.operation_id, &status.execution_id)
-                        .await?,
-                ))
+            if !retransmitted.contains(&status.execution_id) {
+                let command = store
+                    .dispatch_message(
+                        store
+                            .original_dispatch(
+                                &identity,
+                                &status.operation_id,
+                                &status.execution_id,
+                            )
+                            .await?,
+                    )
+                    .await?;
+                if command.is_some() {
+                    retransmitted.insert(status.execution_id.clone());
+                }
+                command
             } else {
                 observer.unresolved(&status.execution_id);
                 None

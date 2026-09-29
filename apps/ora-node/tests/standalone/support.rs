@@ -146,6 +146,7 @@ impl Fixture {
     /// Isolates Git configuration from the test runner and makes stop deadlines explicit.
     pub fn process(&self) -> ProcessConfig {
         ProcessConfig {
+            workload_uid: None,
             host_directory: self.path().join("host"),
             expected_uid: self.uid(),
             git_program: self.path().join("git"),

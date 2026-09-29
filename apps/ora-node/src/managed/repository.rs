@@ -132,6 +132,7 @@ impl CloneHost {
             },
         );
         spec.args = command.args.iter().map(OsString::from).collect();
+        self.config.isolate_workload(&mut spec);
         spec.env = command
             .env
             .variables

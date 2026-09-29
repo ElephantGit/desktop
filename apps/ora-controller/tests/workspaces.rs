@@ -148,9 +148,10 @@ impl Node {
                             payload: HelloAccepted {
                                 selected_version: CURRENT_PROTOCOL_VERSION,
                                 node: identity.clone(),
-                                capabilities: vec![NodeCapability::RepositoryClone],
+                                capabilities: vec![NodeCapability::RepositoryClone, NodeCapability::RuntimeControl],
                             },
                         })),
+                        ControllerToNodeMessage::BindRuntime(binding) => Some(NodeToControllerMessage::RuntimeControlState(RuntimeControlState { binding, unfinished_execution_ids:vec![] })),
                         ControllerToNodeMessage::GetExecutionStatus(query) => Some(NodeToControllerMessage::ExecutionStatus(ExecutionStatusMessage {
                             protocol_version: CURRENT_PROTOCOL_VERSION,
                             operation_id: query.operation_id,
@@ -160,7 +161,7 @@ impl Node {
                                 state: results.get(&query.execution_id).map_or(ExecutionState::Unknown, |result| ExecutionState::Completed(ExecutionResult::Clone(result.clone()))),
                             },
                         })),
-                        ControllerToNodeMessage::CloneRepository(command) if self.completes.load(Ordering::SeqCst) => {
+                        ControllerToNodeMessage::ControlledClone(ControlledClone { command, .. }) if self.completes.load(Ordering::SeqCst) => {
                             let result = CloneExecutionResult::CloneReady(CloneReady {
                                 node: identity.clone(),
                                 spec: command.payload.spec.clone(),
@@ -286,11 +287,13 @@ fn scenario<Fut: Future<Output = ()>>(requested_ref: &str, test: impl FnOnce(Wor
                 };
                 let router_url = node.clone().serve().await;
                 let config = RuntimeConfig {
+                    management_tls: None,
                     home_directory: home,
                     persistence: Persistence::Cloud {
                         endpoint: served.endpoint.clone(),
                         claim_interval_ms: 100,
                         substrate: Some(SubstrateConfig {
+                            direct_node_port: None,
                             effects_url,
                             router_url,
                             atespace: "local".into(),

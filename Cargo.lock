@@ -3457,6 +3457,7 @@ dependencies = [
  "pretty_assertions",
  "prost",
  "prost-types",
+ "rcgen",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",
@@ -3741,11 +3742,14 @@ dependencies = [
  "futures-util",
  "ora-node-protocol",
  "pretty_assertions",
+ "rcgen",
+ "rustls",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+ "tokio-rustls",
  "tokio-tungstenite",
  "tokio-util",
 ]
@@ -5038,6 +5042,7 @@ version = "0.23.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0283386ce02abc0151e1761d08802dfe86c173b0b494af5cbc086574e453da06"
 dependencies = [
+ "log",
  "once_cell",
  "ring",
  "rustls-pki-types",
@@ -6750,6 +6755,7 @@ dependencies = [
  "socket2",
  "sync_wrapper",
  "tokio",
+ "tokio-rustls",
  "tokio-stream",
  "tower",
  "tower-layer",

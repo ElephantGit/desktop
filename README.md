@@ -75,3 +75,7 @@ Deno's `deno check` uses the compiler bundled with the pinned Deno release,
 which currently matches the workspace compiler. Third-party tools such as
 `ts-to-zod` still depend on TypeScript 5 APIs; those transitive dependencies
 retain their supported versions instead of being forced across a major boundary.
+
+## Cloud runtime control
+
+See [delivery and limitations](docs/runtime-control.md) / [中文](docs/runtime-control.zh.md). Cloud mode requires authenticated management channels and fenced Node capability; retired listeners and minicloud remain retired.

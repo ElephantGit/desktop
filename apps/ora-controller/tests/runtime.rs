@@ -14,6 +14,7 @@ fn embedded_owner_reopens_original_operations_and_rejects_overlap() {
             .tempdir_in(std::env::var_os("HOME").unwrap())
             .unwrap();
         let config = RuntimeConfig {
+            management_tls: None,
             home_directory: root.path().join("controller"),
             persistence: Persistence::Sqlite,
             protected_state_directories: vec![root.path().join("process")],
@@ -75,6 +76,7 @@ fn embedded_owner_reopens_original_operations_and_rejects_overlap() {
             let mut websocket = config.clone();
             websocket.nodes[0].endpoint =
                 NodeEndpoint::WebSocket(ora_node_transport::websocket::WsEndpoint {
+                    tls: None,
                     url: url.into(),
                     headers: Default::default(),
                 });

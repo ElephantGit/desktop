@@ -90,6 +90,32 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
         &mut self,
         record: CloneExecution,
     ) -> Result<Option<CloneStep>, Error> {
+        if matches!(record.progress, CloneProgress::Completed(_)) {
+            return Ok(None);
+        }
+        let allowed = self.database.start_controlled_execution_for(
+            &record.command.execution_id,
+            Some(self.identity.incarnation_id.as_str()),
+        )?;
+        if !allowed
+            && matches!(
+                record.progress,
+                CloneProgress::Pending(ClonePhase::Reserved)
+            )
+        {
+            // A reserved execution has performed no filesystem or process work. Persist that
+            // refusal as a terminal fact; never report a running or uncertain attempt as cancelled.
+            self.database.complete_clone(
+                &record,
+                CloneExecutionResult::CloneFailed(CloneFailed {
+                    node: self.identity.clone(),
+                    spec: record.command.payload.spec.clone(),
+                    failure: CloneFailureCode::OperationFailed,
+                    residual: CloneResidual::NoDirectory {},
+                }),
+            )?;
+            return Ok(None);
+        }
         let dispatched = match &record.progress {
             CloneProgress::Pending(phase) | CloneProgress::Unknown(phase) => {
                 matches!(phase, ClonePhase::Dispatched { .. })
@@ -97,14 +123,41 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
             CloneProgress::Completed(_) => return Ok(None),
         };
         if !dispatched {
-            return self.continue_clone(record, None);
+            if !allowed
+                && let Some(identity) = directory_identity(&record)
+                && matches_directory(&record.target, &identity)
+            {
+                return self
+                    .fail_clone(
+                        &record,
+                        CloneFailureCode::OperationFailed,
+                        CloneResidual::Retained {
+                            repository_id: record.target.repository_id.clone(),
+                            path: NodePath::new(record.target.path.to_str().ok_or_else(|| {
+                                Error::Configuration("non-UTF8 clone target".into())
+                            })?),
+                        },
+                    )
+                    .map(|()| None);
+            }
+            return if allowed {
+                self.continue_clone(record, None)
+            } else {
+                Ok(None)
+            };
         }
         // Process responsibility is reconciled even if configuration or filesystem ownership
         // changed, so an existing Run is settled before anything else is checked. Absence of any
         // recorded Run proves no dispatch; an existing uncertain Run is never replaced.
         match self.git.runner().clone_attempts(&record) {
             Ok(attempts) => match attempts.as_slice() {
-                [] => self.continue_clone(record, None),
+                [] => {
+                    if allowed {
+                        self.continue_clone(record, None)
+                    } else {
+                        Ok(None)
+                    }
+                }
                 [attempt] => Ok(Some(CloneStep {
                     effect: CloneEffect::Settle(attempt.clone()),
                     record,
@@ -205,6 +258,9 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
                 }
             }
             let evidence = (|| -> Result<String, Box<dyn std::error::Error>> {
+                if let Some(uid) = self.git.runner().process_config().workload_uid {
+                    std::os::unix::fs::chown(&record.target.path, Some(uid), Some(uid))?;
+                }
                 fs::File::open(&record.target.path)?.sync_all()?;
                 fs::File::open(&record.target.root)?.sync_all()?;
                 Ok(serde_json::to_string(&DirectoryEvidence {
