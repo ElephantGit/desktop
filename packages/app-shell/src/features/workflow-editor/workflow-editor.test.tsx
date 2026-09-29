@@ -27,7 +27,7 @@ import {
   type WorkflowDefinitionEdge,
   type WorkflowDefinitionNode,
 } from "@ora/workflow-runtime";
-import { TooltipProvider } from "@ora/ui";
+import { TooltipProvider, toast } from "@ora/ui";
 import { appI18n } from "../../i18n/i18n-instance";
 import { AppI18nProvider } from "../../i18n/i18n";
 import {
@@ -161,6 +161,16 @@ function seedDemoWorkflows(state: FixtureState): void {
     }
     return record;
   });
+}
+
+/** Titles of the toasts still on screen, ignoring the ones a test already dismissed. */
+function activeToastTitles(): string[] {
+  return toast
+    .getToasts()
+    .map((item) =>
+      "title" in item && typeof item.title === "string" ? item.title : null,
+    )
+    .filter((title): title is string => title !== null);
 }
 
 /** Shell providers required by the workspace workflow editor (runtime + react-query). */
@@ -534,6 +544,50 @@ describe("WorkflowEditor", () => {
     expect(
       screen.queryByRole("button", { name: "测试运行" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("loads a draft with an unrenderable node kind by skipping that node", async () => {
+    const state = createFixtureState();
+    seedDemoWorkflows(state);
+    // A workflow package ships its graph JSON verbatim, so a stored draft can carry a node
+    // kind this Ora version has no renderer for. Loading it must keep the editor usable.
+    const record = state.workflows.find(
+      (candidate) => candidate.workflow.id === "code-review",
+    );
+    if (record === undefined) {
+      throw new Error("the code-review fixture workflow is missing");
+    }
+    const graph = JSON.parse(record.draft.graph) as {
+      nodes: Record<string, unknown>[];
+      edges: unknown[];
+    };
+    const startNodeId = graph.nodes[0]?.id;
+    if (typeof startNodeId !== "string") {
+      throw new Error("the code-review fixture draft has no nodes");
+    }
+    graph.nodes.push({
+      id: "route",
+      type: "workflow",
+      position: { x: 0, y: 0 },
+      data: { kind: "router", title: "路由节点", description: "" },
+    });
+    graph.edges.push({
+      id: "e-route",
+      source: startNodeId,
+      target: "route",
+      type: "workflow",
+    });
+    record.draft.graph = JSON.stringify(graph);
+
+    renderEditor(undefined, state, undefined, false);
+
+    expect(await screen.findByLabelText("工作流画布")).toBeInTheDocument();
+    expect(screen.queryByText("路由节点")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(activeToastTitles()).toContain(
+        "已跳过 1 个本版本无法渲染的节点（router）",
+      );
+    });
   });
 
   it("presents backend-derived unused nodes while preserving them in saved documents", async () => {

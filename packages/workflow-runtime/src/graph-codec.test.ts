@@ -2,10 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   isoToWorkflowTimestamp,
   parseWorkflowGraph,
+  parseWorkflowGraphWithReport,
   serializeWorkflowGraph,
   workflowTimestampToIso,
 } from "./graph-codec";
-import type { WorkflowDefinitionEdge, WorkflowDefinitionNode } from "./types";
+import {
+  WORKFLOW_NODE_KINDS,
+  type WorkflowDefinitionEdge,
+  type WorkflowDefinitionNode,
+} from "./types";
 
 const node: WorkflowDefinitionNode = {
   id: "start",
@@ -244,6 +249,156 @@ describe("graph envelope codec", () => {
     expect(parsed.nodes[0]).not.toHaveProperty("initialHeight");
     expect(parsed.nodes[1]?.parentId).toBe("iter");
     expect(parsed.edges[0]?.sourceHandle).toBe("iteration-entry");
+  });
+});
+
+describe("graph node sanitization", () => {
+  /** Builds a graph string from raw node records, the way a foreign package supplies them. */
+  function rawGraph(nodes: unknown[], edges: unknown[] = []): string {
+    return JSON.stringify({
+      nodes,
+      edges,
+      viewport: { x: 0, y: 0, zoom: 1 },
+      annotations: [],
+      globalVariables: [],
+    });
+  }
+
+  it("keeps every node kind the render catalog supports", () => {
+    // Spelled out rather than derived from WORKFLOW_NODE_KINDS: the list under test is the
+    // thing that can shrink by mistake, and a derived expectation would shrink with it.
+    const renderableKinds = [
+      "start",
+      "agent",
+      "condition",
+      "aggregator",
+      "tool",
+      "junction",
+      "human",
+      "loop",
+      "loopExit",
+      "iteration",
+      "subflow",
+      "output",
+    ];
+    expect(WORKFLOW_NODE_KINDS).toEqual(renderableKinds);
+
+    const graph = rawGraph(
+      renderableKinds.map((kind) => ({
+        id: `n-${kind}`,
+        type: "workflow",
+        position: { x: 0, y: 0 },
+        data: { kind, title: kind, description: "" },
+      })),
+    );
+
+    const result = parseWorkflowGraphWithReport(graph);
+
+    expect(result.droppedNodeCount).toBe(0);
+    expect(result.droppedNodeKinds).toEqual([]);
+    expect(result.envelope.nodes.map((item) => item.data.kind)).toEqual(
+      renderableKinds,
+    );
+  });
+
+  it("drops a node whose kind this version cannot render and reports the kind", () => {
+    const graph = rawGraph([
+      node,
+      {
+        id: "router",
+        type: "workflow",
+        position: { x: 0, y: 0 },
+        data: { kind: "router", title: "Router", description: "" },
+      },
+    ]);
+
+    const result = parseWorkflowGraphWithReport(graph);
+
+    expect(result.envelope.nodes).toEqual([node]);
+    expect(result.droppedNodeCount).toBe(1);
+    expect(result.droppedNodeKinds).toEqual(["router"]);
+  });
+
+  it("drops edges into a dropped node and keeps the edges between rendered nodes", () => {
+    const graph = rawGraph(
+      [
+        node,
+        {
+          id: "router",
+          type: "workflow",
+          position: { x: 0, y: 0 },
+          data: { kind: "router", title: "Router", description: "" },
+        },
+        {
+          id: "agent-1",
+          type: "workflow",
+          position: { x: 0, y: 0 },
+          data: { kind: "agent", title: "Agent", description: "" },
+        },
+      ],
+      [
+        { id: "into-router", source: "start", target: "router" },
+        { id: "out-of-router", source: "router", target: "agent-1" },
+        { id: "kept", source: "start", target: "agent-1" },
+      ],
+    );
+
+    const result = parseWorkflowGraphWithReport(graph);
+
+    expect(result.envelope.edges.map((item) => item.id)).toEqual(["kept"]);
+  });
+
+  it("drops malformed node records without failing the parse", () => {
+    const graph = rawGraph([
+      null,
+      { id: "no-data" },
+      { data: { kind: "agent" } },
+      { id: "   ", data: { kind: "agent" } },
+      {
+        id: "ok",
+        type: "workflow",
+        position: { x: 0, y: 0 },
+        data: { kind: "agent", title: "Agent", description: "" },
+      },
+    ]);
+
+    const result = parseWorkflowGraphWithReport(graph);
+
+    expect(result.envelope.nodes.map((item) => item.id)).toEqual(["ok"]);
+    expect(result.droppedNodeCount).toBe(4);
+    expect(result.droppedNodeKinds).toEqual([]);
+  });
+
+  it("upgrades legacy kinds before deciding whether a node is renderable", () => {
+    const graph = rawGraph([
+      {
+        id: "legacy",
+        type: "workflow",
+        position: { x: 0, y: 0 },
+        data: { kind: "prompt", title: "Legacy", description: "" },
+      },
+    ]);
+
+    const result = parseWorkflowGraphWithReport(graph);
+
+    expect(result.droppedNodeCount).toBe(0);
+    expect(result.envelope.nodes[0]?.data.kind).toBe("agent");
+  });
+
+  it("reports nothing dropped when the graph cannot be parsed at all", () => {
+    const result = parseWorkflowGraphWithReport("not json");
+
+    expect(result).toEqual({
+      envelope: {
+        nodes: [],
+        edges: [],
+        viewport: { x: 0, y: 0, zoom: 1 },
+        annotations: [],
+        globalVariables: [],
+      },
+      droppedNodeCount: 0,
+      droppedNodeKinds: [],
+    });
   });
 });
 

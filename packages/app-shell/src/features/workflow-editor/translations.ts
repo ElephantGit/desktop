@@ -17,6 +17,9 @@ export const workflowEditorTranslations = {
     "errors.workflow_snapshot_in_use": "该工作流快照正在使用中。",
     "settings.workflow.nodes": "节点",
     "settings.workflow.nodesHint": "点击添加到画布，再连接执行顺序。",
+    "settings.workflow.unsupportedNodesSkipped":
+      "已跳过 {{count}} 个本版本无法渲染的节点（{{kinds}}）",
+    "settings.workflow.unsupportedNodesUnknownKind": "未知类型",
     "settings.workflow.add": "添加",
     "settings.workflow.addNode": "添加工作流节点",
     "settings.workflow.startAlreadyPresent": "工作流已包含开始节点",
@@ -528,6 +531,9 @@ export const workflowEditorTranslations = {
     "settings.workflow.nodes": "Nodes",
     "settings.workflow.nodesHint":
       "Click to add a node, then connect the execution order.",
+    "settings.workflow.unsupportedNodesSkipped":
+      "Skipped {{count}} nodes this version cannot render ({{kinds}})",
+    "settings.workflow.unsupportedNodesUnknownKind": "unknown kind",
     "settings.workflow.add": "Add",
     "settings.workflow.addNode": "Add workflow node",
     "settings.workflow.startAlreadyPresent":

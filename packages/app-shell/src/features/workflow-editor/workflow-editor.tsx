@@ -11,6 +11,7 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import {
   addEdge,
   applyEdgeChanges,
@@ -73,8 +74,10 @@ import {
 import {
   normalizeWorkflowDocument,
   parseWorkflowGraph,
+  parseWorkflowGraphWithReport,
   serializeWorkflowGraph,
   workflowTimestampToIso,
+  type WorkflowGraphParseResult,
 } from "@ora/workflow-runtime";
 import type { EditorWorkflowVariable } from "./workflow-variable-display";
 import { usePlatform } from "../../platform";
@@ -310,6 +313,25 @@ function workflowSelectionEqual(
   );
 }
 
+/**
+ * Builds the notice shown when a load dropped nodes this version cannot render.
+ *
+ * A node dropped for being malformed has no kind to name, so those report as an unknown kind
+ * rather than an empty parenthesis.
+ */
+function unsupportedNodesMessage(
+  t: TFunction,
+  dropped: WorkflowGraphParseResult,
+): string {
+  return t("settings.workflow.unsupportedNodesSkipped", {
+    count: dropped.droppedNodeCount,
+    kinds:
+      dropped.droppedNodeKinds.length > 0
+        ? dropped.droppedNodeKinds.join(", ")
+        : t("settings.workflow.unsupportedNodesUnknownKind"),
+  });
+}
+
 /** Provides one React Flow store to the canvas and its sibling inspector. */
 export function WorkflowEditor(props: WorkflowEditorProps = {}) {
   return (
@@ -464,6 +486,11 @@ function WorkflowEditorContent({
   const previewedVersionRef = useRef<MockWorkflowVersion | null>(null);
   /** Last name known to be persisted, so autosave skips no-op renames. */
   const persistedNameRef = useRef<string | null>(null);
+  /**
+   * Nodes the last render-phase hydrate had to drop, held until that draft commits. The parse
+   * runs during render, so the notice is raised from an effect rather than in the render pass.
+   */
+  const droppedNodesRef = useRef<WorkflowGraphParseResult | null>(null);
   const libraryActionsRef = useRef<WorkflowEditorLibraryActions | null>(null);
   const initialInspectorWidth = DEFAULT_WORKFLOW_INSPECTOR_WIDTH;
   const inspectorWidthRef = useRef(initialInspectorWidth);
@@ -543,7 +570,8 @@ function WorkflowEditorContent({
     draftQuery.data.workflow.id === resolvedWorkflowId &&
     hydratedWorkflowId !== resolvedWorkflowId
   ) {
-    const envelope = parseWorkflowGraph(draftQuery.data.draft.graph);
+    const parsed = parseWorkflowGraphWithReport(draftQuery.data.draft.graph);
+    const envelope = parsed.envelope;
     // Persisted drafts may reference a model that is no longer available. Keep the
     // selected CLI stable and only substitute a discovered model for that same CLI.
     // Agent nodes without a contract (legacy prompt/model graphs folded into Agent
@@ -623,6 +651,10 @@ function WorkflowEditorContent({
     // Capture the server name in the same hydrate turn so autosave can skip no-op renames.
     // eslint-disable-next-line react-hooks/refs -- render-phase hydrate pairs this with setState
     persistedNameRef.current = draftQuery.data.workflow.name;
+    // Carry the drop report out of the render pass; the effect below raises the notice once
+    // this hydrate has committed, so a discarded render cannot produce a toast.
+    // eslint-disable-next-line react-hooks/refs -- render-phase hydrate pairs this with setState
+    droppedNodesRef.current = parsed.droppedNodeCount > 0 ? parsed : null;
   }
 
   // History belongs to the mounted draft session, so a workflow switch or
@@ -637,6 +669,23 @@ function WorkflowEditorContent({
       resetWorkflowHistory(workflowRef.current);
     }
   }, [hydratedWorkflowId, resetWorkflowHistory, resolvedWorkflowId]);
+
+  // Explain the nodes the hydrate had to drop, once the draft carrying them has committed.
+  // Staying silent would be worse than the loss itself: the dropped nodes leave the draft on
+  // the next autosave, so the user needs to hear about them while the original graph is still
+  // recoverable from the published snapshot.
+  useEffect(() => {
+    const dropped = droppedNodesRef.current;
+    if (
+      dropped === null ||
+      hydratedWorkflowId === null ||
+      hydratedWorkflowId !== resolvedWorkflowId
+    ) {
+      return;
+    }
+    droppedNodesRef.current = null;
+    toast.message(unsupportedNodesMessage(t, dropped));
+  }, [hydratedWorkflowId, resolvedWorkflowId, t]);
 
   // Write the derived id to the store before paint so the sidebar highlight
   // matches the draft that the first render already started loading.
@@ -1461,7 +1510,11 @@ function WorkflowEditorContent({
         workflowId: resolvedWorkflowId,
         version: version.version,
       });
-      const envelope = parseWorkflowGraph(snapshot.graph);
+      const parsed = parseWorkflowGraphWithReport(snapshot.graph);
+      const envelope = parsed.envelope;
+      if (parsed.droppedNodeCount > 0) {
+        toast.message(unsupportedNodesMessage(t, parsed));
+      }
       setPreviewedVersion({
         id: version.id,
         version: version.version,
