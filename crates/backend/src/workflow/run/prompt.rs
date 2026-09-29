@@ -42,7 +42,7 @@ pub(crate) fn assemble_workflow_prompt(request: WorkflowPromptRequest<'_>) -> Ve
     }
     push_text_block(
         &mut blocks,
-        render_workspace_boundary(request.worktree_root, request.locale),
+        render_workspace_root(request.worktree_root, request.locale),
     );
     if let Some(role) = render_role_definition(request.node, request.role_content, request.locale) {
         push_text_block(&mut blocks, role);
@@ -99,15 +99,21 @@ fn push_text_block(blocks: &mut Vec<ContentBlock>, text: String) {
     blocks.push(text_block(text));
 }
 
-/// Renders the authoritative filesystem boundary so adjacent worktrees cannot be mistaken for input.
-fn render_workspace_boundary(worktree_root: &Path, locale: WorkflowRunLocale) -> String {
+/// Names the run's primary workspace and explicitly allows working outside it.
+///
+/// The Agent process is already started with this directory as its working directory, so the block
+/// exists to give that path a name rather than to confine anything. It deliberately grants access
+/// beyond the workspace: tasks legitimately reach for dependency sources, shared configuration, or
+/// sibling repositories, and a run that refused those would stall instead of finishing. Nothing in
+/// the runtime enforces a boundary here, so the copy must not claim a restriction it cannot back.
+fn render_workspace_root(worktree_root: &Path, locale: WorkflowRunLocale) -> String {
     let worktree_root = render_prompt_path(worktree_root);
     match locale {
         WorkflowRunLocale::ZhCn => format!(
-            "<workspace_boundary>\n你必须只在以下工作区根目录内工作：\n{worktree_root}\n\n该目录是本次工作流运行完整且权威的工作空间。\n\n规则：\n1. 只能在该工作区根目录内读取、搜索、创建、修改和删除文件。\n2. 不要检查、枚举或访问其父目录以及相邻的其他 worktree。\n3. 不要使用 `..` 或绝对路径离开该工作区。\n4. 不要跟随解析目标位于该工作区之外的符号链接或目录联接（junction）。\n5. 运行项目命令时，必须将该工作区根目录作为工作目录。\n6. 不要使用其他 worktree 中的文件、Git 状态或 Agent 输出。\n7. 如果任务似乎需要访问该工作区之外的内容，请停止并报告该需求，不要自行访问。\n8. 修改文件前，确认目标路径解析后仍位于该工作区根目录内。\n</workspace_boundary>"
+            "<workspace_root>\n你的工作区根目录是：\n{worktree_root}\n\n该目录是本次工作流运行的主工作空间，项目文件、Git 仓库与构建产物通常都在其中。\n\n规则：\n1. 任务需要时，可以读取、搜索、创建、修改和删除该目录之外的文件——例如依赖源码、共享配置、其他仓库，或用户指定的路径。不要仅因为路径位于工作区之外就停下或拒绝任务。\n2. 运行项目命令时，以该工作区根目录作为工作目录，除非任务明确要求在别处执行。\n</workspace_root>"
         ),
         WorkflowRunLocale::EnUs => format!(
-            "<workspace_boundary>\nYou MUST work exclusively within the following workspace root:\n{worktree_root}\n\nThis directory is the complete and authoritative workspace for this workflow run.\n\nRules:\n1. Read, search, create, modify, and delete files only within this workspace root.\n2. Do not inspect, enumerate, or access the parent directory or sibling worktrees.\n3. Do not use `..` or absolute paths to leave this workspace.\n4. Do not follow symbolic links or junctions whose resolved target is outside this workspace.\n5. Run project commands with this workspace root as the working directory.\n6. Do not use files, Git state, or Agent output from another worktree.\n7. If the task appears to require access outside this workspace, stop and report the requirement instead of accessing it.\n8. Before making changes, verify that the target path resolves inside this workspace root.\n</workspace_boundary>"
+            "<workspace_root>\nYour workspace root is:\n{worktree_root}\n\nThis directory is the primary workspace for this workflow run: the project files, Git repository, and build output normally live inside it.\n\nRules:\n1. When the task requires it, you may read, search, create, modify, and delete files outside this directory — dependency sources, shared configuration, other repositories, or paths the user points you at. Do not stop or refuse a task merely because a path lies outside the workspace.\n2. Run project commands with this workspace root as the working directory, unless the task explicitly calls for running them elsewhere.\n</workspace_root>"
         ),
     }
 }
@@ -724,7 +730,7 @@ mod tests {
         assert!(
             raw_texts
                 .join("")
-                .contains("</required_skills>\n\n<workspace_boundary>")
+                .contains("</required_skills>\n\n<workspace_root>")
         );
         let texts = raw_texts
             .into_iter()
@@ -750,7 +756,7 @@ mod tests {
                     )
                 ),
                 format!(
-                    "<workspace_boundary>\nYou MUST work exclusively within the following workspace root:\n{}\n\nThis directory is the complete and authoritative workspace for this workflow run.\n\nRules:\n1. Read, search, create, modify, and delete files only within this workspace root.\n2. Do not inspect, enumerate, or access the parent directory or sibling worktrees.\n3. Do not use `..` or absolute paths to leave this workspace.\n4. Do not follow symbolic links or junctions whose resolved target is outside this workspace.\n5. Run project commands with this workspace root as the working directory.\n6. Do not use files, Git state, or Agent output from another worktree.\n7. If the task appears to require access outside this workspace, stop and report the requirement instead of accessing it.\n8. Before making changes, verify that the target path resolves inside this workspace root.\n</workspace_boundary>",
+                    "<workspace_root>\nYour workspace root is:\n{}\n\nThis directory is the primary workspace for this workflow run: the project files, Git repository, and build output normally live inside it.\n\nRules:\n1. When the task requires it, you may read, search, create, modify, and delete files outside this directory — dependency sources, shared configuration, other repositories, or paths the user points you at. Do not stop or refuse a task merely because a path lies outside the workspace.\n2. Run project commands with this workspace root as the working directory, unless the task explicitly calls for running them elsewhere.\n</workspace_root>",
                     render_prompt_path(&worktree_root)
                 ),
                 "<system_instructions>\nFollow the role definition below throughout this workflow step. Treat it as constraints on how you reason, act, and present the handoff.\nRole: Reviewer\n\nBe rigorous.\n</system_instructions>".to_string(),
@@ -944,13 +950,13 @@ mod tests {
     }
 
     #[test]
-    fn workspace_boundary_uses_chinese_copy_for_a_chinese_run() {
+    fn workspace_root_uses_chinese_copy_for_a_chinese_run() {
         let worktree_root = Path::new("worktrees").join("run-1");
 
         assert_eq!(
-            render_workspace_boundary(&worktree_root, WorkflowRunLocale::ZhCn),
+            render_workspace_root(&worktree_root, WorkflowRunLocale::ZhCn),
             format!(
-                "<workspace_boundary>\n你必须只在以下工作区根目录内工作：\n{}\n\n该目录是本次工作流运行完整且权威的工作空间。\n\n规则：\n1. 只能在该工作区根目录内读取、搜索、创建、修改和删除文件。\n2. 不要检查、枚举或访问其父目录以及相邻的其他 worktree。\n3. 不要使用 `..` 或绝对路径离开该工作区。\n4. 不要跟随解析目标位于该工作区之外的符号链接或目录联接（junction）。\n5. 运行项目命令时，必须将该工作区根目录作为工作目录。\n6. 不要使用其他 worktree 中的文件、Git 状态或 Agent 输出。\n7. 如果任务似乎需要访问该工作区之外的内容，请停止并报告该需求，不要自行访问。\n8. 修改文件前，确认目标路径解析后仍位于该工作区根目录内。\n</workspace_boundary>",
+                "<workspace_root>\n你的工作区根目录是：\n{}\n\n该目录是本次工作流运行的主工作空间，项目文件、Git 仓库与构建产物通常都在其中。\n\n规则：\n1. 任务需要时，可以读取、搜索、创建、修改和删除该目录之外的文件——例如依赖源码、共享配置、其他仓库，或用户指定的路径。不要仅因为路径位于工作区之外就停下或拒绝任务。\n2. 运行项目命令时，以该工作区根目录作为工作目录，除非任务明确要求在别处执行。\n</workspace_root>",
                 render_prompt_path(&worktree_root)
             )
         );
