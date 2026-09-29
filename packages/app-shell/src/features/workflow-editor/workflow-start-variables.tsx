@@ -16,8 +16,8 @@ import {
 } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import {
-  Checkbox,
   Button,
+  Checkbox,
   Dialog,
   DialogContent,
   DialogFooter,
@@ -34,13 +34,17 @@ import {
 } from "@ora/ui";
 import {
   formatWorkflowVariableValue,
+  isWorkflowJsonFieldValueType,
   parseWorkflowVariableValueText,
   resolveWorkflowInputFieldType,
-  workflowInputFieldValueType,
-  workflowVariableValueExample,
+  resolveWorkflowInputVariableValueType,
   WORKFLOW_INPUT_FIELD_TYPES,
+  WORKFLOW_JSON_FIELD_VALUE_TYPES,
   type WorkflowInputFieldType,
+  workflowInputFieldValueType,
   type WorkflowInputVariable,
+  workflowVariableValueExample,
+  type WorkflowVariableValueType,
 } from "@ora/workflow-mock";
 
 interface WorkflowStartVariablesProps {
@@ -80,7 +84,7 @@ export function WorkflowStartVariables({
     } else {
       onChange(
         variables.map((candidate, index) =>
-          index === dialog.index ? variable : candidate,
+          index === dialog.index ? variable : candidate
         ),
       );
     }
@@ -104,89 +108,94 @@ export function WorkflowStartVariables({
             <IconPlus className="size-4" />
           </Button>
         </div>
-        {variables.length === 0 ? (
-          <button
-            type="button"
-            className="w-full rounded-lg border border-dashed border-border px-3 py-4 text-center text-[11px] text-muted-foreground transition-colors hover:bg-muted/30"
-            onClick={openNewVariable}
-          >
-            {t("settings.workflow.start.emptyVariables")}
-          </button>
-        ) : (
-          <div className="space-y-1.5">
-            {variables.map((variable, index) => (
-              <div
-                key={`${variable.name}:${index}`}
-                className="group flex min-w-0 items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-2 shadow-sm"
-              >
-                <IconGripVertical className="size-3.5 shrink-0 text-muted-foreground/60" />
-                <IconVariable className="size-4 shrink-0 text-blue-600" />
-                <div className="min-w-0 flex-1">
-                  <div className="flex min-w-0 items-baseline gap-1">
-                    <code className="truncate text-xs font-semibold text-foreground">
-                      {variable.name}
-                    </code>
-                    {variable.displayName && (
-                      <span className="truncate text-[11px] text-muted-foreground">
-                        · {variable.displayName}
-                      </span>
-                    )}
-                  </div>
-                  <p className="truncate text-[10px] text-muted-foreground">
-                    {t(
-                      `settings.workflow.start.fieldTypes.${resolveWorkflowInputFieldType(variable)}`,
-                    )}
-                    {variable.maxLength !== undefined &&
-                      ` · ${t("settings.workflow.start.maxLengthSummary", {
-                        count: variable.maxLength,
-                      })}`}
-                    {" · "}
-                    {variable.value === undefined
-                      ? t("settings.workflow.start.configureAfterDeploy")
-                      : formatWorkflowVariableValue(
+        {variables.length === 0
+          ? (
+            <button
+              type="button"
+              className="w-full rounded-lg border border-dashed border-border px-3 py-4 text-center text-[11px] text-muted-foreground transition-colors hover:bg-muted/30"
+              onClick={openNewVariable}
+            >
+              {t("settings.workflow.start.emptyVariables")}
+            </button>
+          )
+          : (
+            <div className="space-y-1.5">
+              {variables.map((variable, index) => (
+                <div
+                  key={`${variable.name}:${index}`}
+                  className="group flex min-w-0 items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-2 shadow-sm"
+                >
+                  <IconGripVertical className="size-3.5 shrink-0 text-muted-foreground/60" />
+                  <IconVariable className="size-4 shrink-0 text-blue-600" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-baseline gap-1">
+                      <code className="truncate text-xs font-semibold text-foreground">
+                        {variable.name}
+                      </code>
+                      {variable.displayName && (
+                        <span className="truncate text-[11px] text-muted-foreground">
+                          · {variable.displayName}
+                        </span>
+                      )}
+                    </div>
+                    <p className="truncate text-[10px] text-muted-foreground">
+                      {t(
+                        `settings.workflow.start.fieldTypes.${
+                          resolveWorkflowInputFieldType(variable)
+                        }`,
+                      )}
+                      {variable.maxLength !== undefined &&
+                        ` · ${
+                          t("settings.workflow.start.maxLengthSummary", {
+                            count: variable.maxLength,
+                          })
+                        }`}
+                      {" · "}
+                      {variable.value === undefined
+                        ? t("settings.workflow.start.configureAfterDeploy")
+                        : formatWorkflowVariableValue(
                           variable.value,
                           variable.valueType,
                         )}
-                  </p>
+                    </p>
+                  </div>
+                  <StartFieldTypeIcon
+                    fieldType={resolveWorkflowInputFieldType(variable)}
+                    className="size-3.5 shrink-0 text-muted-foreground"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="shrink-0 text-muted-foreground"
+                    aria-label={t("settings.workflow.start.editVariable", {
+                      name: variable.name,
+                    })}
+                    onClick={() => setDialog({ index, variable })}
+                  >
+                    <IconEdit className="size-3.5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                    aria-label={t("settings.workflow.start.deleteVariable", {
+                      name: variable.name,
+                    })}
+                    onClick={() =>
+                      onChange(
+                        variables.filter(
+                          (_, candidateIndex) => candidateIndex !== index,
+                        ),
+                      )}
+                  >
+                    <IconTrash className="size-3.5" />
+                  </Button>
                 </div>
-                <StartFieldTypeIcon
-                  fieldType={resolveWorkflowInputFieldType(variable)}
-                  className="size-3.5 shrink-0 text-muted-foreground"
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="shrink-0 text-muted-foreground"
-                  aria-label={t("settings.workflow.start.editVariable", {
-                    name: variable.name,
-                  })}
-                  onClick={() => setDialog({ index, variable })}
-                >
-                  <IconEdit className="size-3.5" />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                  aria-label={t("settings.workflow.start.deleteVariable", {
-                    name: variable.name,
-                  })}
-                  onClick={() =>
-                    onChange(
-                      variables.filter(
-                        (_, candidateIndex) => candidateIndex !== index,
-                      ),
-                    )
-                  }
-                >
-                  <IconTrash className="size-3.5" />
-                </Button>
-              </div>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          )}
       </section>
 
       {dialog !== null && (
@@ -222,9 +231,14 @@ function WorkflowStartVariableDialog({
     state.variable.displayName ?? "",
   );
   const [fieldType, setFieldType] = useState<WorkflowInputFieldType>(() =>
-    resolveWorkflowInputFieldType(state.variable),
+    resolveWorkflowInputFieldType(state.variable)
   );
-  const valueType = workflowInputFieldValueType(fieldType);
+  // The declared pool type is dialog state, not a derived value: reopening a variable must
+  // keep compatible declarations (for example a legacy `array[string]` Start input) instead
+  // of collapsing them to the control default.
+  const [valueType, setValueType] = useState<WorkflowVariableValueType>(() =>
+    resolveWorkflowInputVariableValueType(state.variable)
+  );
   const [required, setRequired] = useState(state.variable.required ?? false);
   const [options, setOptions] = useState<string[]>(
     state.variable.options ?? [],
@@ -233,46 +247,42 @@ function WorkflowStartVariableDialog({
     state.variable.maxLength?.toString() ?? "",
   );
   const [valueText, setValueText] = useState(
-    formatWorkflowVariableValue(state.variable.value, state.variable.valueType),
+    formatWorkflowVariableValue(
+      state.variable.value,
+      resolveWorkflowInputVariableValueType(state.variable),
+    ),
   );
   const [attemptedSave, setAttemptedSave] = useState(false);
   const trimmedName = name.trim();
   const parsedValue = parseWorkflowVariableValueText(valueText, valueType);
-  const supportsMaxLength =
-    fieldType === "text-input" || fieldType === "paragraph";
-  const usesMultilineValue =
-    fieldType === "paragraph" ||
+  const supportsMaxLength = fieldType === "text-input" ||
+    fieldType === "paragraph";
+  const usesMultilineValue = fieldType === "paragraph" ||
     fieldType === "file-list" ||
     fieldType === "json";
   const selectOptions = options.map((option) => option.trim());
-  const optionsInvalid =
-    fieldType === "select" &&
+  const optionsInvalid = fieldType === "select" &&
     (selectOptions.length === 0 ||
       selectOptions.some((option) => option === "") ||
       new Set(selectOptions).size !== selectOptions.length);
-  const selectedValueInvalid =
-    fieldType === "select" &&
+  const selectedValueInvalid = fieldType === "select" &&
     parsedValue.valid &&
     parsedValue.value !== undefined &&
     !selectOptions.includes(String(parsedValue.value));
   const parsedMaxLength = Number(maxLengthText);
-  const maxLengthInvalid =
-    supportsMaxLength &&
+  const maxLengthInvalid = supportsMaxLength &&
     maxLengthText !== "" &&
     (!/^\d+$/.test(maxLengthText) || parsedMaxLength < 1);
-  const valueExceedsMaxLength =
-    supportsMaxLength &&
+  const valueExceedsMaxLength = supportsMaxLength &&
     !maxLengthInvalid &&
     maxLengthText !== "" &&
     parsedValue.valid &&
     typeof parsedValue.value === "string" &&
     Array.from(parsedValue.value).length > parsedMaxLength;
-  const nameInvalid =
-    trimmedName === "" ||
+  const nameInvalid = trimmedName === "" ||
     trimmedName.includes(".") ||
     existingNames.includes(trimmedName);
-  const canSave =
-    !nameInvalid &&
+  const canSave = !nameInvalid &&
     parsedValue.valid &&
     !maxLengthInvalid &&
     !valueExceedsMaxLength &&
@@ -297,10 +307,16 @@ function WorkflowStartVariableDialog({
             <Select
               value={fieldType}
               onValueChange={(candidate) => {
-                if (candidate === null || !isWorkflowInputFieldType(candidate))
+                if (
+                  candidate === null || !isWorkflowInputFieldType(candidate)
+                ) {
                   return;
+                }
                 setFieldType(candidate);
                 setValueText("");
+                // Switching controls re-declares the pool type because the new control may not
+                // produce the previous declaration.
+                setValueType(workflowInputFieldValueType(candidate));
                 if (candidate !== "select") setOptions([]);
               }}
             >
@@ -330,6 +346,41 @@ function WorkflowStartVariableDialog({
               </SelectContent>
             </Select>
           </div>
+          {fieldType === "json" && (
+            <div className="space-y-1.5">
+              <Label htmlFor="workflow-start-variable-value-type">
+                {t("settings.workflow.start.valueType")}
+              </Label>
+              <Select
+                value={valueType}
+                onValueChange={(candidate) => {
+                  if (
+                    candidate !== null &&
+                    isWorkflowJsonFieldValueType(candidate)
+                  ) {
+                    setValueType(candidate);
+                  }
+                }}
+              >
+                <SelectTrigger
+                  id="workflow-start-variable-value-type"
+                  className="w-full bg-muted/45"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {WORKFLOW_JSON_FIELD_VALUE_TYPES.map((candidate) => (
+                    <SelectItem key={candidate} value={candidate}>
+                      <code className="text-[10px]">{candidate}</code>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] leading-4 text-muted-foreground">
+                {t("settings.workflow.start.valueTypeHint")}
+              </p>
+            </div>
+          )}
           <div className="space-y-1.5">
             <Label htmlFor="workflow-start-variable-name">
               {t("settings.workflow.start.variableName")}
@@ -407,10 +458,9 @@ function WorkflowStartVariableDialog({
                         current.map((candidate, candidateIndex) =>
                           candidateIndex === index
                             ? event.target.value
-                            : candidate,
-                        ),
-                      )
-                    }
+                            : candidate
+                        )
+                      )}
                   />
                   <Button
                     type="button"
@@ -422,10 +472,10 @@ function WorkflowStartVariableDialog({
                     onClick={() =>
                       setOptions((current) =>
                         current.filter(
-                          (_, candidateIndex) => candidateIndex !== index,
-                        ),
-                      )
-                    }
+                          (_, candidateIndex) =>
+                            candidateIndex !== index,
+                        )
+                      )}
                   >
                     <IconTrash className="size-3.5" />
                   </Button>
@@ -454,63 +504,66 @@ function WorkflowStartVariableDialog({
                 {t("settings.workflow.start.optional")}
               </span>
             </Label>
-            {fieldType === "checkbox" ? (
-              <label className="flex h-10 items-center gap-2 rounded-md bg-muted/45 px-3 text-sm">
-                <Checkbox
-                  checked={valueText === "true"}
-                  onCheckedChange={(checked) =>
-                    setValueText(checked === true ? "true" : "false")
-                  }
-                />
-                {valueText === "true"
-                  ? t("settings.workflow.start.checked")
-                  : t("settings.workflow.start.unchecked")}
-              </label>
-            ) : usesMultilineValue ? (
-              <Textarea
-                id="workflow-start-variable-value"
-                className="min-h-20 bg-muted/45"
-                value={valueText}
-                aria-invalid={
-                  attemptedSave && (!parsedValue.valid || valueExceedsMaxLength)
-                }
-                placeholder={workflowVariableValueExample(valueType)}
-                onChange={(event) => setValueText(event.target.value)}
-              />
-            ) : fieldType === "select" ? (
-              <Select
-                value={valueText || null}
-                onValueChange={(value) => setValueText(value ?? "")}
-              >
-                <SelectTrigger
-                  id="workflow-start-variable-value"
-                  className="w-full bg-muted/45"
-                >
-                  <SelectValue
-                    placeholder={t("settings.workflow.start.noInitialValue")}
+            {fieldType === "checkbox"
+              ? (
+                <label className="flex h-10 items-center gap-2 rounded-md bg-muted/45 px-3 text-sm">
+                  <Checkbox
+                    checked={valueText === "true"}
+                    onCheckedChange={(checked) =>
+                      setValueText(checked === true ? "true" : "false")}
                   />
-                </SelectTrigger>
-                <SelectContent>
-                  {selectOptions.filter(Boolean).map((option) => (
-                    <SelectItem key={option} value={option}>
-                      {option}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : (
-              <Input
-                id="workflow-start-variable-value"
-                className="bg-muted/45"
-                type={fieldType === "number" ? "number" : "text"}
-                value={valueText}
-                aria-invalid={
-                  attemptedSave && (!parsedValue.valid || valueExceedsMaxLength)
-                }
-                placeholder={workflowVariableValueExample(valueType)}
-                onChange={(event) => setValueText(event.target.value)}
-              />
-            )}
+                  {valueText === "true"
+                    ? t("settings.workflow.start.checked")
+                    : t("settings.workflow.start.unchecked")}
+                </label>
+              )
+              : usesMultilineValue
+              ? (
+                <Textarea
+                  id="workflow-start-variable-value"
+                  className="min-h-20 bg-muted/45"
+                  value={valueText}
+                  aria-invalid={attemptedSave &&
+                    (!parsedValue.valid || valueExceedsMaxLength)}
+                  placeholder={workflowVariableValueExample(valueType)}
+                  onChange={(event) => setValueText(event.target.value)}
+                />
+              )
+              : fieldType === "select"
+              ? (
+                <Select
+                  value={valueText || null}
+                  onValueChange={(value) => setValueText(value ?? "")}
+                >
+                  <SelectTrigger
+                    id="workflow-start-variable-value"
+                    className="w-full bg-muted/45"
+                  >
+                    <SelectValue
+                      placeholder={t("settings.workflow.start.noInitialValue")}
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {selectOptions.filter(Boolean).map((option) => (
+                      <SelectItem key={option} value={option}>
+                        {option}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )
+              : (
+                <Input
+                  id="workflow-start-variable-value"
+                  className="bg-muted/45"
+                  type={fieldType === "number" ? "number" : "text"}
+                  value={valueText}
+                  aria-invalid={attemptedSave &&
+                    (!parsedValue.valid || valueExceedsMaxLength)}
+                  placeholder={workflowVariableValueExample(valueType)}
+                  onChange={(event) => setValueText(event.target.value)}
+                />
+              )}
             {attemptedSave && !parsedValue.valid && (
               <p className="text-[11px] text-destructive" role="status">
                 {t("settings.workflow.variableValueInvalid", {

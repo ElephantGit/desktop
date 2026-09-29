@@ -230,14 +230,73 @@ pub enum BindWorkflowNodeSessionResult {
 }
 
 /// Outcome of updating a run's kickoff input.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdateWorkflowRunInputResult {
     Updated,
     /// The run is executing (`Running`, or a `Pending` pause with in-flight nodes), so its
     /// input is frozen. A not-started `Pending` run or any terminal run is editable.
     NotEditable,
     NotFound,
+    /// One supplied value was rejected before entering the pool; the run keeps its previously
+    /// stored input. Carries which Start variable was rejected and why, so the run-input screen
+    /// can point the user at the exact field instead of a generic failure.
+    ///
+    /// Single-rejection contract: a submission reports at most one rejection — the first
+    /// refused value in the payload's alphabetical fold order — and no value from that
+    /// submission is applied.
+    Rejected(RunInputRejection),
 }
+
+/// One Start variable the run-input boundary refused, with the rejection's cause.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunInputRejection {
+    /// The Start variable's declared name, the identifier the run-input payload keys values by.
+    /// The run-input screen may label the field with a configured display name instead, so
+    /// clients highlighting the rejected field must match on this name, not the screen label.
+    pub variable: String,
+    pub reason: RunInputRejectionReason,
+}
+
+/// Why a supplied Start value cannot enter the run's variable pool.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunInputRejectionReason {
+    /// The run's Start node declares no variable with this name.
+    Undeclared,
+    /// The declared variable is owned by a writer other than the run's Start node, so the
+    /// run-input screen cannot set it.
+    NotStartOwned,
+    /// The value does not satisfy the variable's declared pool type.
+    TypeMismatch { expected_type: String },
+    /// The value is longer than the variable's declared maximum length.
+    LengthExceeded { max_length: usize },
+}
+
+impl RunInputRejectionReason {
+    /// Renders the stable English detail carried to the public error contract. The UI may show
+    /// it verbatim next to a localized title, like plugin package rejection reasons.
+    pub fn detail(&self) -> String {
+        match self {
+            Self::Undeclared => "no declared Start variable has this name".to_string(),
+            Self::NotStartOwned => "variable is not owned by the run's Start node".to_string(),
+            Self::TypeMismatch { expected_type } => {
+                format!("value does not match the declared type {expected_type}")
+            }
+            Self::LengthExceeded { max_length } => {
+                format!("value exceeds the maximum length {max_length}")
+            }
+        }
+    }
+}
+
+/// Stable public detail for a Start variable whose required value is missing at start time.
+///
+/// Start-time validation failures reuse the run-input rejection's public error, so their
+/// user-facing details belong beside the other stable reason strings instead of living as
+/// inline literals in adapter mapping layers.
+pub const MISSING_REQUIRED_START_DETAIL: &str = "required value is missing";
+
+/// Stable public detail for a Start value outside its select options at start time.
+pub const INVALID_START_OPTION_DETAIL: &str = "value is not one of the configured options";
 
 /// Persistence operations for the workflow run execution engine.
 ///

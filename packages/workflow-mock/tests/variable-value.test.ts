@@ -88,6 +88,33 @@ describe("workflow variable values", () => {
     });
   });
 
+  it("keeps a JSON array valid only under array-shaped or unconstrained declarations", () => {
+    // The reported defect: an agent-authored Start value was a JSON array while the JSON
+    // control declared `object`, so saving failed with a type mismatch.
+    const requirementsText =
+      '["需求一：为 /health 接口补充单元测试。","需求二：为文件上传接口增加大小上限校验。"]';
+    expect(parseWorkflowVariableValueText(requirementsText, "object")).toEqual({
+      valid: false,
+      issue: "invalid_type",
+    });
+    expect(
+      parseWorkflowVariableValueText(requirementsText, "array[string]"),
+    ).toEqual({
+      valid: true,
+      value: [
+        "需求一：为 /health 接口补充单元测试。",
+        "需求二：为文件上传接口增加大小上限校验。",
+      ],
+    });
+    expect(parseWorkflowVariableValueText(requirementsText, "any")).toEqual({
+      valid: true,
+      value: [
+        "需求一：为 /health 接口补充单元测试。",
+        "需求二：为文件上传接口增加大小上限校验。",
+      ],
+    });
+  });
+
   it("provides a parseable example for every declared type", () => {
     for (const valueType of WORKFLOW_VARIABLE_VALUE_TYPES) {
       expect(

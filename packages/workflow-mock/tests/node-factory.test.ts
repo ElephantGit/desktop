@@ -186,17 +186,17 @@ describe("createMockWorkflowNode", () => {
           supportedScopes: ["workflow", "iteration"],
         },
         {
-          kind: "loop",
-          label: "循环",
-          description: "重复执行直到满足条件",
-          configFields: ["maxIterations", "loopInitialValue"],
-          supportedScopes: ["workflow"],
-        },
-        {
           kind: "iteration",
           label: "迭代",
           description: "对数组逐项执行区域内节点",
           configFields: ["iteration"],
+          supportedScopes: ["workflow"],
+        },
+        {
+          kind: "loop",
+          label: "循环",
+          description: "重复执行直到满足条件",
+          configFields: ["maxIterations", "loopInitialValue"],
           supportedScopes: ["workflow"],
         },
         {

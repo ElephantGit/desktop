@@ -28,6 +28,31 @@ const ACP_JOURNAL: &str = "acp_calls.txt";
 /// environment of its own, and a test must not mutate its own.
 const LOAD_REFUSAL_MARKER: &str = "refuse_session_load";
 
+/// Journal of every rendered prompt served, appended as one JSON line per call so scenario
+/// tests can assert prompt-level content (injected skill blocks, workspace boundaries) while
+/// node outputs stay production-realistic final answers.
+const PROMPT_JOURNAL: &str = "acp_prompts.jsonl";
+
+/// Prefix a workflow task's deterministic answer carries so tests can tell the fake's replies
+/// from user-authored template text.
+const REPLY_PREFIX: &str = "Fake agent received: ";
+
+/// Directive a scenario embeds in the task instructions to make the fake answer with exact
+/// text (including JSON for structured-output nodes): `FAKE_REPLY: <text>`.
+const REPLY_DIRECTIVE: &str = "FAKE_REPLY: ";
+
+/// Marker line the workflow prompt assembler emits before the node's task instructions.
+const TASK_INSTRUCTIONS_MARKER: &str = "Task instructions:\n";
+/// Same marker for the zh-CN prompt copy. The assembler appends the half-width colon itself
+/// (`writeln!(text, "{}:\n{prompt}", copy.task_instructions)`), so this must not use the
+/// full-width `：` or Chinese runs never match and fall back to the whole-prompt echo.
+const TASK_INSTRUCTIONS_MARKER_ZH: &str = "任务要求:\n";
+
+/// Boundary every assembled workflow step block ends with. The host appends its injected
+/// context (workflow overview, previous-failure summaries, structured-output contracts) only
+/// after this boundary, so text beyond it is never user-authored task content.
+const STEP_BLOCK_END: &str = "\n</current_workflow_step>";
+
 /// One fake session retained for the life of the plugin process.
 #[derive(Debug, Clone)]
 struct FakeSession {
@@ -276,6 +301,12 @@ impl FakeAcpAgent {
     }
 
     /// Streams one deterministic assistant message before completing the prompt turn.
+    ///
+    /// A real agent answers the task, not the prompt: the reply is the task-instruction text
+    /// (with variables already rendered), so node outputs, collected values, and loop feedback
+    /// stay production-realistic instead of embedding the injected workflow-context blocks.
+    /// Prompts without a workflow step block (direct sessions, held fixtures) keep the legacy
+    /// whole-prompt echo.
     fn prompt(&mut self, method: &str, params: Value) -> Result<AcpCallResult, AcpError> {
         let request: PromptRequest = parse_params(method, params)?;
         let session_id = request.session_id.to_string();
@@ -300,14 +331,8 @@ impl FakeAcpAgent {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        let response = if prompt.contains("## Previous attempt") || prompt.contains("## 上一次尝试")
-        {
-            r#"{"ok":true}"#.to_string()
-        } else if prompt.trim().is_empty() {
-            "Fake agent completed the prompt.".to_string()
-        } else {
-            format!("Fake agent received: {prompt}")
-        };
+        record_prompt(&session_id, &prompt);
+        let response = fake_reply(&prompt);
         if session.title.is_none() {
             let title = prompt
                 .lines()
@@ -378,9 +403,84 @@ fn record_acp_call(method: &str, session_id: &str) {
     }
 }
 
+/// Records one served prompt so tests can assert prompt-level content that never belongs in a
+/// node's output (injected context blocks, required-skill invocations).
+fn record_prompt(session_id: &str, prompt: &str) {
+    let result = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(PROMPT_JOURNAL)
+        .and_then(|mut file| {
+            writeln!(
+                file,
+                "{}",
+                json!({"sessionId": session_id, "prompt": prompt})
+            )
+        });
+    if let Err(error) = result {
+        eprintln!("fake-agent could not record the prompt for session `{session_id}`: {error}");
+    }
+}
+
 /// Returns the one model marked as the discovery default.
 fn default_model_id() -> &'static str {
     "anthropic/claude-sonnet-4"
+}
+
+/// Builds the fake's deterministic answer for one rendered prompt.
+///
+/// Precedence: a retry (previous-failure block after the step block) always answers
+/// `"{\"ok\":true}"` so structured-output resume flows converge; an explicit `FAKE_REPLY:`
+/// directive in the task instructions answers with exactly that text (exact equals-conditions,
+/// JSON answers); a workflow task answers with the task-instruction text so outputs stay
+/// production-realistic; anything else keeps the legacy whole-prompt echo (direct sessions,
+/// held fixtures).
+fn fake_reply(prompt: &str) -> String {
+    // Only text after the step block counts as a retry signal: the assembler appends the
+    // previous-failure summary after `</current_workflow_step>`, while a task template that
+    // merely quotes the failure heading must not trigger the retry answer.
+    if prompt_after_step_block(prompt)
+        .is_some_and(|tail| tail.contains("## Previous attempt") || tail.contains("## 上一次尝试"))
+    {
+        return r#"{"ok":true}"#.to_string();
+    }
+    if prompt.trim().is_empty() {
+        return "Fake agent completed the prompt.".to_string();
+    }
+    let Some(task) = task_instructions(prompt) else {
+        return format!("{REPLY_PREFIX}{prompt}");
+    };
+    if let Some(rest) = task.strip_prefix(REPLY_DIRECTIVE) {
+        return rest.to_string();
+    }
+    format!("{REPLY_PREFIX}{task}")
+}
+
+/// Extracts the workflow step's task instructions (the user-authored prompt template with
+/// variables already rendered) from an assembled workflow prompt.
+///
+/// A missing end boundary returns `None` on purpose: falling back to the legacy whole-prompt
+/// echo makes exact-equality scenarios fail loudly when the assembler wording drifts, instead
+/// of silently swallowing the injected context blocks that follow the step block.
+fn task_instructions(prompt: &str) -> Option<&str> {
+    let marker = if prompt.contains(TASK_INSTRUCTIONS_MARKER) {
+        TASK_INSTRUCTIONS_MARKER
+    } else if prompt.contains(TASK_INSTRUCTIONS_MARKER_ZH) {
+        TASK_INSTRUCTIONS_MARKER_ZH
+    } else {
+        return None;
+    };
+    let start = prompt.rfind(marker)? + marker.len();
+    let end = prompt[start..]
+        .find(STEP_BLOCK_END)
+        .map(|offset| start + offset)?;
+    Some(&prompt[start..end])
+}
+
+/// Returns the host-injected text after the workflow step block, if the prompt carries one.
+fn prompt_after_step_block(prompt: &str) -> Option<&str> {
+    let end = prompt.rfind(STEP_BLOCK_END)? + STEP_BLOCK_END.len();
+    Some(&prompt[end..])
 }
 
 /// Deserializes method parameters while preserving the method in diagnostics.

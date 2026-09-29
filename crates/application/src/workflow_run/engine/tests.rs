@@ -84,6 +84,99 @@ fn rejects_mismatched_start_field_value_type() {
     );
 }
 
+/// The JSON control accepts any structured JSON declaration, so Start sources can feed
+/// iterations with typed arrays instead of being locked to `object`.
+#[test]
+fn parses_json_start_field_with_structured_value_types() {
+    let graph = parse(json!({
+        "nodes": [{
+            "id": "start",
+            "data": {
+                "kind": "start",
+                "inputVariables": [
+                    {
+                        "name": "requirements",
+                        "displayName": "需求清单",
+                        "fieldType": "json",
+                        "valueType": "array[string]",
+                        "value": ["需求一：为 /health 接口补充单元测试。", "需求二：补充本地启动步骤。"]
+                    },
+                    {
+                        "name": "rows",
+                        "fieldType": "json",
+                        "valueType": "array[object]",
+                        "value": [{ "key": "value" }]
+                    },
+                    {
+                        "name": "anything",
+                        "fieldType": "json",
+                        "valueType": "any",
+                        "value": [1, "two", true]
+                    },
+                    {
+                        "name": "metadata",
+                        "fieldType": "json",
+                        "valueType": "object",
+                        "value": { "key": "value" }
+                    }
+                ]
+            }
+        }],
+        "edges": []
+    }))
+    .unwrap();
+    assert_eq!(
+        graph
+            .start_node()
+            .unwrap()
+            .input_variables
+            .iter()
+            .map(|variable| (
+                variable.name.as_str(),
+                variable.value_type.as_str(),
+                variable.field_type,
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("requirements", "array[string]", StartInputFieldType::Json),
+            ("rows", "array[object]", StartInputFieldType::Json),
+            ("anything", "any", StartInputFieldType::Json),
+            ("metadata", "object", StartInputFieldType::Json),
+        ]
+    );
+}
+
+/// The JSON control still cannot claim scalar or file pool types owned by dedicated controls.
+#[test]
+fn rejects_json_start_field_with_non_structured_value_type() {
+    for value_type in ["string", "number", "boolean", "file", "array[file]"] {
+        assert_eq!(
+            parse(json!({
+                "nodes": [{
+                    "id": "start",
+                    "data": {
+                        "kind": "start",
+                        "inputVariables": [{
+                            "name": "title",
+                            "fieldType": "json",
+                            "valueType": value_type
+                        }]
+                    }
+                }],
+                "edges": []
+            }))
+            .unwrap_err(),
+            GraphError::InvalidStartVariables {
+                node_id: "start".to_string(),
+                reason: format!(
+                    "variable title field type does not produce declared type {value_type}"
+                ),
+            },
+            "json field type must not produce {value_type}"
+        );
+    }
+}
+
 /// A linear chain matching the demo shape: start → agent a → agent b → output-1.
 fn linear_chain() -> Value {
     json!({

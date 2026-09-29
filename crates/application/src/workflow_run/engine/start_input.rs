@@ -57,15 +57,19 @@ impl StartInputFieldType {
                 "boolean" => Some(Self::Checkbox),
                 "file" => Some(Self::File),
                 "array[file]" => Some(Self::FileList),
-                "object" | "any" | "array" | "array[string]" | "array[number]"
-                | "array[object]" | "array[boolean]" | "array[any]" => Some(Self::Json),
                 "string" | "secret" => Some(Self::TextInput),
-                _ => None,
+                // Legacy structured declarations derive the JSON control through `produces`,
+                // keeping the accepted set in one place: a type round-trips to the JSON control
+                // if and only if the control produces it.
+                _ => Self::Json.produces(value_type).then_some(Self::Json),
             },
         }
     }
 
-    /// Returns the exact variable-pool type emitted by current Start field controls.
+    /// Returns the default variable-pool type emitted by one Start field control.
+    ///
+    /// The JSON control emits `any` because arbitrary JSON has no single shape; declarations
+    /// may narrow it to any type accepted by [`Self::produces`].
     pub(crate) fn value_type(self) -> &'static str {
         match self {
             Self::TextInput | Self::Paragraph | Self::Select => "string",
@@ -73,7 +77,29 @@ impl StartInputFieldType {
             Self::Checkbox => "boolean",
             Self::File => "file",
             Self::FileList => "array[file]",
-            Self::Json => "object",
+            Self::Json => "any",
+        }
+    }
+
+    /// Returns whether a Start control can produce the declared pool type.
+    ///
+    /// Single-shape controls accept exactly the type they emit. The JSON control accepts every
+    /// structured type instead of only `object`, so Start sources can declare typed arrays (for
+    /// example `array[string]`) and still hold array initial values that feed iterations.
+    pub(crate) fn produces(self, value_type: &str) -> bool {
+        match self {
+            Self::Json => matches!(
+                value_type,
+                "object"
+                    | "any"
+                    | "array"
+                    | "array[string]"
+                    | "array[number]"
+                    | "array[object]"
+                    | "array[boolean]"
+                    | "array[any]"
+            ),
+            _ => self.value_type() == value_type,
         }
     }
 }
@@ -121,7 +147,7 @@ pub(crate) fn into_start_input_variables(
         let field_type =
             StartInputFieldType::from_wire(variable.field_type.as_deref(), &value_type)
                 .ok_or_else(|| format!("variable {name} has unsupported Start field type"))?;
-        if variable.field_type.is_some() && field_type.value_type() != value_type {
+        if variable.field_type.is_some() && !field_type.produces(&value_type) {
             return Err(format!(
                 "variable {name} field type does not produce declared type {value_type}"
             ));

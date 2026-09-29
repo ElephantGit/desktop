@@ -27,8 +27,8 @@ describe("workflow node scopes", () => {
       "agent",
       "condition",
       "aggregator",
-      "loop",
       "iteration",
+      "loop",
       "output",
     ]);
     expect(

@@ -6,6 +6,7 @@ import { serializeWorkflowGraph } from "@ora/workflow-runtime";
 import { isTerminalRunStatus } from "@ora/workflow-runtime";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -78,6 +79,7 @@ interface WorkflowRunWorkspaceProps {
  */
 export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   const { t } = useTranslation();
+  const showContractError = useContractErrorToast();
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const setSidebarCollapsed = useUiStore((s) => s.setSidebarCollapsed);
   const selectWorkflowRun = useWorkspaceSelectionStore(
@@ -520,8 +522,11 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
         enterTheater();
       }
       setStartOpen(false);
-    } catch {
-      toast.error(
+    } catch (error) {
+      // The localized contract error names the exact Start variable (e.g. a required value
+      // that is missing or a mistyped value), so surface it instead of a generic failure.
+      showContractError(
+        error,
         canRunAgain
           ? t("workflowRun.rerunFailed")
           : t("workflowRun.startFailed"),

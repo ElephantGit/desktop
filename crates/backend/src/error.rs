@@ -1,8 +1,11 @@
 use ora_agent_runtime::{ErrorClassification as RuntimeErrorClassification, RuntimeError};
-use ora_application::{ApplicationError, SkillImportError};
+use ora_application::{
+    ApplicationError, INVALID_START_OPTION_DETAIL, MISSING_REQUIRED_START_DETAIL, SkillImportError,
+    WorkflowValidationError,
+};
 use ora_contracts::{
     ContractError, EmptyErrorParams, PublicError, RequestId, SkillFolderConflictParams,
-    WorkflowSnapshotIncompatibleWithResumeParams,
+    WorkflowRunInputInvalidParams, WorkflowSnapshotIncompatibleWithResumeParams,
 };
 use ora_plugin_lifecycle::PluginLifecycleError;
 use std::error::Error;
@@ -636,10 +639,38 @@ impl From<ApplicationError> for BackendError {
                 PublicError::WorkflowRunGraphParse(EmptyErrorParams {}),
                 "workflow graph is invalid",
             ),
+            ApplicationError::WorkflowRunValidation(
+                WorkflowValidationError::MissingRequiredStartVariable { name },
+            ) => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowRunInputInvalid(WorkflowRunInputInvalidParams {
+                    variable: name.clone(),
+                    reason: MISSING_REQUIRED_START_DETAIL.to_string(),
+                }),
+                "workflow run input value was rejected",
+            ),
+            ApplicationError::WorkflowRunValidation(
+                WorkflowValidationError::InvalidStartVariableOption { name },
+            ) => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowRunInputInvalid(WorkflowRunInputInvalidParams {
+                    variable: name.clone(),
+                    reason: INVALID_START_OPTION_DETAIL.to_string(),
+                }),
+                "workflow run input value was rejected",
+            ),
             ApplicationError::WorkflowRunValidation(_) => (
                 ErrorClassification::InvalidRequest,
                 PublicError::WorkflowRunValidation(EmptyErrorParams {}),
                 "workflow run is not executable",
+            ),
+            ApplicationError::WorkflowRunInputInvalid { variable, reason } => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowRunInputInvalid(WorkflowRunInputInvalidParams {
+                    variable: variable.clone(),
+                    reason: reason.clone(),
+                }),
+                "workflow run input value was rejected",
             ),
             ApplicationError::WorkflowSkillNotFound { .. } => (
                 ErrorClassification::InvalidRequest,
@@ -694,9 +725,12 @@ impl From<ApplicationError> for BackendError {
 #[cfg(test)]
 mod tests {
     use super::{BackendError, ErrorClassification};
-    use ora_application::{ApplicationError, RepositoryError, SkillImportError};
+    use ora_application::{
+        ApplicationError, INVALID_START_OPTION_DETAIL, MISSING_REQUIRED_START_DETAIL,
+        RepositoryError, SkillImportError, WorkflowValidationError,
+    };
     use ora_contracts::{
-        EmptyErrorParams, PublicError, SkillFolderConflictParams,
+        EmptyErrorParams, PublicError, SkillFolderConflictParams, WorkflowRunInputInvalidParams,
         WorkflowSnapshotIncompatibleWithResumeParams,
     };
     use pretty_assertions::assert_eq;
@@ -746,6 +780,64 @@ mod tests {
         assert_eq!(
             error.source().map(ToString::to_string),
             Some("worktree mode requires a Git repository".to_string())
+        );
+    }
+
+    /// Verifies run-input rejections stay user-actionable and name the exact variable.
+    #[test]
+    fn maps_run_input_rejections_with_the_variable_and_reason() {
+        let error = BackendError::from(ApplicationError::WorkflowRunInputInvalid {
+            variable: "count".to_string(),
+            reason: "value does not match the declared type number".to_string(),
+        });
+
+        assert_eq!(error.classification(), ErrorClassification::InvalidRequest);
+        assert_eq!(
+            error.public_error().clone(),
+            PublicError::WorkflowRunInputInvalid(WorkflowRunInputInvalidParams {
+                variable: "count".to_string(),
+                reason: "value does not match the declared type number".to_string(),
+            })
+        );
+    }
+
+    /// Verifies starting without a required Start value names the missing variable instead of a
+    /// generic validation failure.
+    #[test]
+    fn maps_a_missing_required_start_variable_with_its_name() {
+        let error = BackendError::from(ApplicationError::WorkflowRunValidation(
+            WorkflowValidationError::MissingRequiredStartVariable {
+                name: "brief".to_string(),
+            },
+        ));
+
+        assert_eq!(error.classification(), ErrorClassification::InvalidRequest);
+        assert_eq!(
+            error.public_error().clone(),
+            PublicError::WorkflowRunInputInvalid(WorkflowRunInputInvalidParams {
+                variable: "brief".to_string(),
+                reason: MISSING_REQUIRED_START_DETAIL.to_string(),
+            })
+        );
+    }
+
+    /// Verifies an out-of-option Start value names the variable instead of a generic failure,
+    /// pinning the third start-validation branch of the same public contract.
+    #[test]
+    fn maps_an_invalid_start_variable_option_with_its_name() {
+        let error = BackendError::from(ApplicationError::WorkflowRunValidation(
+            WorkflowValidationError::InvalidStartVariableOption {
+                name: "mode".to_string(),
+            },
+        ));
+
+        assert_eq!(error.classification(), ErrorClassification::InvalidRequest);
+        assert_eq!(
+            error.public_error().clone(),
+            PublicError::WorkflowRunInputInvalid(WorkflowRunInputInvalidParams {
+                variable: "mode".to_string(),
+                reason: INVALID_START_OPTION_DETAIL.to_string(),
+            })
         );
     }
 

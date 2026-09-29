@@ -140,8 +140,8 @@ export function createMockWorkflowCapabilities(
     createMockWorkflowNodeType("agent", locale),
     createMockWorkflowNodeType("condition", locale),
     createMockWorkflowNodeType("aggregator", locale),
-    createMockWorkflowNodeType("loop", locale),
     createMockWorkflowNodeType("iteration", locale),
+    createMockWorkflowNodeType("loop", locale),
     createMockWorkflowNodeType("output", locale),
     createMockWorkflowNodeType("loopExit", locale),
   ];

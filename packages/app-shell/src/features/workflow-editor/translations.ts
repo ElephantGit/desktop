@@ -224,6 +224,9 @@ export const workflowEditorTranslations = {
     "settings.workflow.start.createVariableTitle": "新增变量",
     "settings.workflow.start.editVariableTitle": "编辑变量",
     "settings.workflow.start.fieldType": "字段类型",
+    "settings.workflow.start.valueType": "值类型",
+    "settings.workflow.start.valueTypeHint":
+      "JSON 字段可声明任意结构化类型，初始值与运行输入需匹配该类型。",
     "settings.workflow.start.fieldTypes.text-input": "文本",
     "settings.workflow.start.fieldTypes.paragraph": "段落",
     "settings.workflow.start.fieldTypes.select": "下拉选项",
@@ -752,6 +755,9 @@ export const workflowEditorTranslations = {
     "settings.workflow.start.createVariableTitle": "Add variable",
     "settings.workflow.start.editVariableTitle": "Edit variable",
     "settings.workflow.start.fieldType": "Field type",
+    "settings.workflow.start.valueType": "Value type",
+    "settings.workflow.start.valueTypeHint":
+      "JSON fields can declare any structured type; the initial value and run inputs must match it.",
     "settings.workflow.start.fieldTypes.text-input": "Text",
     "settings.workflow.start.fieldTypes.paragraph": "Paragraph",
     "settings.workflow.start.fieldTypes.select": "Select",

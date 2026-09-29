@@ -5,6 +5,7 @@ mod tests {
     mod lifecycle;
     mod workflow_mcp;
     mod workflow_resume;
+    mod workflow_scenarios;
 
     use crate::setup::DesktopTestSetup;
     use agent_client_protocol_schema::v1::{
@@ -17,6 +18,7 @@ mod tests {
         PromptSessionEvent, PromptSessionRequest, StartSessionRequest, WorkspaceKind,
     };
     use pretty_assertions::assert_eq;
+    use serde_json::json;
     use std::fs;
     use std::future::Future;
     use std::io;
@@ -459,6 +461,67 @@ mod tests {
             Ok(journal) => journal.lines().map(str::to_string).collect(),
             Err(_) => Vec::new(),
         }
+    }
+
+    /// Installs a declarative OpenCode-compatible MCP plugin; the fake agent records the
+    /// session's server selection without launching the command.
+    fn install_mcp_plugin(home: &Path, name: &str) -> io::Result<PathBuf> {
+        let root = home
+            .join("plugins")
+            .join("installed")
+            .join("official")
+            .join(name)
+            .join("1.0.0");
+        fs::create_dir_all(root.join("assets"))?;
+        fs::write(
+            root.join("orax.toml"),
+            format!(
+                "resolver = 1\nidentifier = \"{name}\"\nkind = \"mcp\"\nversion = \"1.0.0\"\ndescription = \"MCP fixture\"\n"
+            ),
+        )?;
+        let command = root.join("assets").join("server");
+        fs::write(&command, "#!/bin/sh\n")?;
+        // Unix discovery refuses a stdio command without an executable mode bit, and CI runs there.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&command, fs::Permissions::from_mode(0o755))?;
+        }
+        fs::write(
+            root.join("assets").join("config.json"),
+            json!({"schemaVersion": 1, "transport": {"type": "stdio", "command": "assets/server", "args": [], "env": {}}}).to_string(),
+        )?;
+        Ok(root)
+    }
+
+    /// Installs a Skill plugin contributing one skill package, projected into the catalog at the
+    /// next backend open.
+    fn install_skill_plugin(
+        home: &Path,
+        plugin_name: &str,
+        skill_name: &str,
+    ) -> io::Result<PathBuf> {
+        let root = home
+            .join("plugins")
+            .join("installed")
+            .join("official")
+            .join(plugin_name)
+            .join("1.0.0");
+        let skill_root = root.join("assets").join(skill_name);
+        fs::create_dir_all(&skill_root)?;
+        fs::write(
+            root.join("orax.toml"),
+            format!(
+                "resolver = 1\nidentifier = \"{plugin_name}\"\nkind = \"skill\"\nversion = \"1.0.0\"\ndescription = \"Skill fixture\"\n"
+            ),
+        )?;
+        fs::write(
+            skill_root.join("SKILL.md"),
+            format!(
+                "---\nname: {skill_name}\ndescription: fixture skill\n---\n\nFollow the review checklist.\n"
+            ),
+        )?;
+        Ok(root)
     }
 
     /// Resolves the main Workspace the project checkout created.
