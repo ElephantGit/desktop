@@ -9,10 +9,15 @@ mod repository;
 mod repository_model;
 mod runtime_control;
 mod schema;
+mod session;
 pub use execution::owns;
 pub use model::*;
 pub use process::{ProcessAttempt, ProcessJournal};
 pub use repository_model::{CloneExecution, ClonePhase, CloneProgress, CloneTarget};
+pub use session::{
+    CommandAdmission, SessionCommandInput, SessionCommandSettlement, SessionCommandState,
+    SessionExecution, SessionJournal,
+};
 
 use ora_node_protocol::NodeId;
 use ora_utils::fs::{ExclusiveFileLock, ExclusiveLockError};

@@ -5,6 +5,7 @@ mod plugin;
 mod process;
 mod repository;
 mod repository_migration;
+mod session;
 
 /// Reopening preserves identity, while one live owner excludes all other connections.
 #[test]
@@ -342,6 +343,7 @@ fn definitive_create_failure_retires_its_reservation() {
 
 /// Reconstructs the exact pre-plugin identity schema for legacy migration fixtures.
 fn remove_plugin_schema(path: &std::path::Path) {
+    remove_session_schema(path);
     let connection = Connection::open(path).unwrap();
     connection.execute_batch("PRAGMA foreign_keys=OFF; DROP TRIGGER bind_new_plugin; DROP TABLE plugin_outbox; DROP TABLE plugin_executions; CREATE TEMP TABLE old_ids AS SELECT * FROM execution_identities; DROP TABLE execution_identities;").unwrap();
     connection
@@ -357,4 +359,22 @@ fn remove_plugin_schema(path: &std::path::Path) {
             "INSERT INTO execution_identities SELECT * FROM old_ids; DROP TABLE old_ids;",
         )
         .unwrap();
+}
+
+/// Reconstructs v7 exactly so migrations exercise the old identity constraint and data.
+fn remove_session_schema(path: &std::path::Path) {
+    let connection = Connection::open(path).unwrap();
+    connection.execute_batch("PRAGMA foreign_keys=OFF; DROP TRIGGER bind_new_session; DROP TABLE session_commands; DROP TABLE execution_events; DROP TABLE node_executions; CREATE TEMP TABLE old_ids AS SELECT * FROM execution_identities; DROP TABLE execution_identities;").unwrap();
+    let sql = include_str!("plugin.sql");
+    let definition = sql
+        .split("CREATE TABLE execution_identities")
+        .nth(1)
+        .unwrap()
+        .split("INSERT INTO execution_identities")
+        .next()
+        .unwrap();
+    connection
+        .execute_batch(&format!("CREATE TABLE execution_identities{definition}"))
+        .unwrap();
+    connection.execute_batch("INSERT INTO execution_identities SELECT * FROM old_ids; DROP TABLE old_ids; PRAGMA user_version=7;").unwrap();
 }

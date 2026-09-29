@@ -41,7 +41,7 @@ pub(super) fn initialize(
         "user_version",
         |row| row.get(/*idx*/ 0),
     )?;
-    if app != APPLICATION_ID || !matches!(version, 1..=7) {
+    if app != APPLICATION_ID || !matches!(version, 1..=8) {
         return Err(Error::InvalidSchema);
     }
     let check: String = connection.pragma_query_value(
@@ -72,6 +72,9 @@ pub(super) fn initialize(
     }
     if version >= 7 {
         expected.execute_batch(include_str!("plugin.sql"))?;
+    }
+    if version >= 8 {
+        expected.execute_batch(include_str!("session.sql"))?;
     }
     if schema_objects(connection)? != schema_objects(&expected)? {
         return Err(Error::InvalidSchema);
@@ -137,6 +140,26 @@ pub(super) fn initialize(
             /*schema_name*/ None,
             "user_version",
             /*pragma_value*/ 7,
+        )?;
+        tx.commit()?;
+    }
+    if version < 8 {
+        // SQLite builds may enable foreign keys by default. Rebuilding the referenced identity
+        // table requires disabling enforcement outside the transaction; validate it before commit.
+        connection.pragma_update(/*schema_name*/ None, "foreign_keys", "OFF")?;
+        let tx = connection.transaction()?;
+        tx.execute_batch(include_str!("session.sql"))?;
+        let violations: i64 =
+            tx.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })?;
+        if violations != 0 {
+            return Err(Error::InvalidSchema);
+        }
+        tx.pragma_update(
+            /*schema_name*/ None,
+            "user_version",
+            /*pragma_value*/ 8,
         )?;
         tx.commit()?;
     }

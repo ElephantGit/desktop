@@ -315,6 +315,9 @@ impl<G: WriteGuard> NodeDatabase<G> {
             Some("plugin") => Ok(self
                 .find_plugins(operation, execution)?
                 .map_or(ExecutionState::Unknown, |r| r.state)),
+            Some("agent_session") => Ok(self
+                .find_session(operation, execution)?
+                .map_or(ExecutionState::Unknown, |r| r.state)),
             None => Ok(ExecutionState::Unknown),
             Some(_) => Err(Error::InvalidSchema),
         }

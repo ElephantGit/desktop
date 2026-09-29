@@ -4,7 +4,10 @@ use ora_process_protocol::*;
 use pretty_assertions::assert_eq;
 
 /// Supplies a clone without requiring a Main Workspace or performing filesystem mutations.
-fn clone_fixture(node: &NodeId, root: &std::path::Path) -> (CloneRepositoryMessage, CloneTarget) {
+pub(super) fn clone_fixture(
+    node: &NodeId,
+    root: &std::path::Path,
+) -> (CloneRepositoryMessage, CloneTarget) {
     (
         CloneRepositoryMessage {
             protocol_version: CURRENT_PROTOCOL_VERSION,
@@ -168,7 +171,7 @@ fn historical_unbound_responsibility_prevents_new_runtime_binding() {
 }
 
 /// Establishes only local dispatch intent; neither this helper nor the store starts a process.
-fn dispatch<G: WriteGuard>(
+pub(super) fn dispatch<G: WriteGuard>(
     db: &mut NodeDatabase<G>,
     record: &CloneExecution,
 ) -> (CloneExecution, ProcessAttempt) {
@@ -206,7 +209,7 @@ fn dispatch<G: WriteGuard>(
 }
 
 /// Uses full observed facts and original input, not a branch tip fetched during replay.
-fn clone_ready(record: &CloneExecution) -> CloneExecutionResult {
+pub(super) fn clone_ready(record: &CloneExecution) -> CloneExecutionResult {
     CloneExecutionResult::CloneReady(CloneReady {
         node: NodeRuntimeIdentity {
             node_id: record.command.payload.spec.node_id.clone(),
@@ -629,7 +632,7 @@ fn version_four_upgrade_adds_termination_evidence_without_rewriting_clones() {
             |r| r.get(/*idx*/ 0),
         )
         .unwrap();
-    assert_eq!(version, 7);
+    assert_eq!(version, 8);
     let journal = db.process_journal().unwrap();
     journal
         .record_termination(attempt.intent.run, /*signal*/ 9)

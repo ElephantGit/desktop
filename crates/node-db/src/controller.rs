@@ -66,7 +66,7 @@ impl<G: WriteGuard> NodeDatabase<G> {
         controller: &ControllerId,
     ) -> Result<Vec<ora_node_protocol::NodeToControllerMessage>, Error> {
         let mut statement = self.connection.prepare(
-            "SELECT event FROM (SELECT execution,event FROM clone_outbox UNION ALL SELECT execution,event FROM plugin_outbox) JOIN execution_controllers USING(execution) WHERE controller=?1 LIMIT 16",
+            "SELECT event FROM (SELECT execution,1 AS sequence,event FROM clone_outbox UNION ALL SELECT execution,1 AS sequence,event FROM plugin_outbox UNION ALL SELECT execution,sequence,event FROM execution_events) JOIN execution_controllers USING(execution) WHERE controller=?1 ORDER BY execution,sequence LIMIT 16",
         )?;
         statement
             .query_map([controller.as_str()], |row| {

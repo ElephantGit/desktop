@@ -15,7 +15,7 @@ SQLite 会在数据库文件上加自己的锁，整文件租约在 macOS（`flo
 Windows（`LockFileEx` 为强制锁）上会与之冲突，表现为 "database is locked" 或磁盘 I/O 错误。
 sidecar 是数据库旁的 inode，同一 home 的任何拼写都解析到同一租约。SQLite 使用默认 rollback journal
 和 FULL 同步写入。
-新库的 application ID 为 `0x4f52414e`，schema version 为 7。精确 v1／v2／v3／v4／v5／v6 结构在身份与完整性校验后事务迁移，
+新库的 application ID 为 `0x4f52414e`，schema version 为 8。精确 v1／v2／v3／v4／v5／v6／v7 结构在身份与完整性校验后事务迁移，
 保留执行、结果与待确认事件。已有空文件、其他数据库、不支持的版本、
 目录和损坏数据库均拒绝打开，不自动重建。重开保留 NodeId，每个 Node 运行实例生成新的
 NodeIncarnationId；显式配置身份不匹配时初始化失败。
@@ -45,7 +45,7 @@ operation／execution 唯一约束阻止身份改绑。Git 开始前预留 activ
 的 Accepted 执行可以开始托管。数据库锁本身永远不能授权清理。RunSpec 环境值属于私有数据，不是日志。
 
 带前置检查的转换保存 Accepted、Running、Unknown 和 Completed 证据。完成事务一起提交资源事实、
-终态结果和原始事件。状态读取不确认事件。确认必须精确匹配 Node、operation、execution 和 sequence 1，
+终态结果和原始事件。状态读取不确认事件。单事件执行的确认必须精确匹配 Node、operation、execution 和 sequence 1，
 只删除投递记录；结果和执行去重在确认后仍保留。
 
 `WriteGuard` 提供真实 SQLite 事务的故障注入点。`ora-node-db` 单元测试覆盖独占归属、文件保护、去重、
@@ -57,3 +57,8 @@ operation／execution 唯一约束阻止身份改绑。Git 开始前预留 activ
 v6 新增运行绑定、执行许可与持久化运行控制标记。v7 在共享身份表中加入 plugin 族，增加
 `plugin_executions` 与 `plugin_outbox`。迁移保留旧身份并在提交重建表前检查外键。插件终态与单个事件
 原子提交，准确 ACK 只删除事件。派发与重启行为见[插件安装](../plugin-installation.zh.md)。
+
+版本 8 在共享身份表增加 Agent 会话，并新增 `node_executions`、`execution_events` 和
+`session_commands`。已有执行族沿用自己的表。operation 身份仍由 `execution_identities`
+持有，会话表通过 execution 键引用；命令以 `(execution, command_id)` 保持唯一，并持久记录受理顺序。
+事务规则、actor 句柄与恢复边界见[会话账本](../session-ledger.zh.md)。
