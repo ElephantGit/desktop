@@ -1,6 +1,8 @@
 import { useTranslation } from "react-i18next";
 import { useMemo, type RefObject } from "react";
 import { cn } from "@ora/ui";
+import { RunRetryWaitLabel } from "./run-retry-wait-label";
+import { retryWaitAttemptText } from "./retry-countdown";
 import { RunStatusMark } from "./run-status-mark";
 import { runStatusTone } from "./run-status-style";
 import {
@@ -167,6 +169,8 @@ export function RunTheaterPathRail({
                 !showResultAct &&
                 (stage.nodeId === primaryId || containsPrimary);
               const waiting = state.status === "awaiting_input";
+              const retryWait =
+                state.status === "retry_waiting" ? state.retryWait : undefined;
               const active = activeIdSet.has(stage.nodeId);
               const nodeArtifactCount = artifactCountByNode[stage.nodeId] ?? 0;
               const roundCount =
@@ -178,6 +182,9 @@ export function RunTheaterPathRail({
                     data-path-node={stage.nodeId}
                     data-contains-current={containsPrimary ? "" : undefined}
                     data-waiting={waiting ? "" : undefined}
+                    data-retry-waiting={
+                      state.status === "retry_waiting" ? "" : undefined
+                    }
                     onClick={() => {
                       const gate = hitlByNodeId.get(stage.nodeId);
                       if (gate !== undefined) {
@@ -193,21 +200,36 @@ export function RunTheaterPathRail({
                         : "max-w-[12rem]",
                       selected && waiting
                         ? "theater-chip-pop border-amber-500/55 bg-amber-500/15 text-amber-950 shadow-sm dark:text-amber-50"
-                        : selected
-                          ? "theater-chip-pop border-foreground/35 bg-background shadow-sm"
-                          : waiting
-                            ? "border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-100"
-                            : active
-                              ? "border-sky-500/40 bg-sky-500/10"
-                              : "border-transparent bg-background/60 hover:border-border hover:bg-background",
+                        : selected && state.status === "retry_waiting"
+                          ? "theater-chip-pop border-orange-500/55 bg-background shadow-sm"
+                          : selected
+                            ? "theater-chip-pop border-foreground/35 bg-background shadow-sm"
+                            : waiting
+                              ? "border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-100"
+                              : state.status === "retry_waiting"
+                                ? "border-orange-500/40 bg-orange-500/10 text-orange-950 dark:text-orange-100"
+                                : active
+                                  ? "border-sky-500/40 bg-sky-500/10"
+                                  : "border-transparent bg-background/60 hover:border-border hover:bg-background",
                     )}
                     aria-current={selected ? "step" : undefined}
-                    aria-label={`${node.data.title}: ${t(tone.labelKey)}`}
+                    aria-label={`${node.data.title}: ${
+                      retryWait !== undefined
+                        ? retryWaitAttemptText(t, retryWait)
+                        : t(tone.labelKey)
+                    }`}
                   >
                     <RunStatusMark status={state.status} quiet />
                     <span className="truncate font-sans text-xs font-medium leading-snug">
                       {node.data.title}
                     </span>
+                    {retryWait !== undefined && (
+                      <RunRetryWaitLabel
+                        wait={retryWait}
+                        variant="compact"
+                        className="shrink-0 text-[9px] tabular-nums text-orange-800 dark:text-orange-200"
+                      />
+                    )}
                     {stage.type === "region" && (
                       <span className="shrink-0 text-[11px] font-medium tabular-nums text-muted-foreground">
                         {roundCount > 0

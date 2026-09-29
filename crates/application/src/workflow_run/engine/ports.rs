@@ -1,5 +1,6 @@
 use super::failure::NodeFailure;
 use super::iteration::RoundOutcome;
+use super::retry::WorkflowRetryRepository;
 use super::skill_delivery::SkillMaterializationReceipt;
 use crate::RepositoryError;
 use crate::workflow_run::engine::graph::WorkflowGraph;
@@ -304,7 +305,9 @@ pub const INVALID_START_OPTION_DETAIL: &str = "value is not one of the configure
 /// the engine owns node-run writes and the run state machine, and every state transition must be
 /// a single immediate transaction that maintains `state.current_nodes`. No generic overwrite of
 /// the full run state is exposed to callers.
-pub trait WorkflowRunEngineRepository {
+///
+/// Automatic retries persist through the [`WorkflowRetryRepository`] supertrait.
+pub trait WorkflowRunEngineRepository: WorkflowRetryRepository {
     /// Loads the run, its workspace, and the frozen snapshot graph in one read.
     fn find_execution_context(
         &self,

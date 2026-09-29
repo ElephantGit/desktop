@@ -5,6 +5,8 @@ mod tests {
     mod lifecycle;
     mod workflow_mcp;
     mod workflow_resume;
+    mod workflow_retry;
+    mod workflow_retry_edges;
     mod workflow_scenarios;
 
     use crate::setup::DesktopTestSetup;

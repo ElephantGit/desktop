@@ -50,17 +50,15 @@ describe("Start input field types", () => {
       expect(isWorkflowJsonFieldValueType(valueType)).toBe(true);
     }
     // Scalar and file pool types belong to their dedicated controls.
-    for (
-      const valueType of [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "secret",
-        "file",
-        "array[file]",
-      ] as const
-    ) {
+    for (const valueType of [
+      "string",
+      "number",
+      "integer",
+      "boolean",
+      "secret",
+      "file",
+      "array[file]",
+    ] as const) {
       expect(workflowInputFieldProducesValueType("json", valueType)).toBe(
         false,
       );

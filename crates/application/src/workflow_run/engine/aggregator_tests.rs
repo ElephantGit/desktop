@@ -262,6 +262,29 @@ impl Harness {
 
 /// Mirrors the repository's completion semantics: node status, output, and the per-type pool
 /// write commit against one payload update.
+///
+/// Aggregator graphs never schedule an automatic retry: their failures are definition-shaped
+/// (no matching output), which the retry policy skips by kind.
+impl crate::workflow_run::engine::WorkflowRetryRepository for Harness {
+    fn schedule_node_retry(
+        &self,
+        _failed_node_run_id: &WorkflowNodeRunId,
+        _failure: &crate::workflow_run::engine::NodeFailure,
+        _retry: &crate::workflow_run::engine::NodeRetryToSchedule,
+        _now: i64,
+    ) -> Result<crate::workflow_run::engine::ScheduleNodeRetryResult, RepositoryError> {
+        unreachable!("no automatic retry is scheduled in these tests")
+    }
+
+    fn begin_node_retry(
+        &self,
+        _node_run_id: &WorkflowNodeRunId,
+        _now: i64,
+    ) -> Result<crate::workflow_run::engine::BeginNodeRetryResult, RepositoryError> {
+        unreachable!("no automatic retry is scheduled in these tests")
+    }
+}
+
 impl WorkflowRunEngineRepository for Harness {
     fn find_active_loop_round(
         &self,
