@@ -39,6 +39,8 @@ Snapshot versions are strings. The draft is identified by the reserved string `"
 
 The `graph` column stores the complete React Flow JSON document. Workflow definition CRUD treats it as an opaque string; the [workflow run engine](../crates/application/src/workflow_run/engine/README.md) parses and validates the frozen snapshot when a run starts.
 
+Every editor load path — draft hydration, version preview, and the run view — parses through one shared boundary that drops what this version cannot draw: a node that is not a usable record, or whose `data.kind` is outside the kinds the canvas registers, is removed together with the edges that referenced it, and the editor reports how many nodes and which kinds it skipped. Dropping happens on read and never rewrites the stored bytes, so a published snapshot keeps the original document and a rollback or re-import restores the skipped nodes; what does change is the draft, because the next autosave writes the normalized graph. See [Workflow Editor Load Path](workflow-editor-load-path-fix.md).
+
 ## Nodes excluded from execution
 
 Authors can retain spare nodes and connected groups outside the execution path. Drafts, published snapshots, rollback, and import/export preserve the complete canvas; execution derives an entry-reachable subgraph from the frozen snapshot without rewriting it.

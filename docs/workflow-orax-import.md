@@ -68,6 +68,11 @@ in between.
   definition layer, the run engine ignores every field but `nodes` and `edges`, and the editor
   drops the runtime fields the first time the workflow is saved. Keeping the document intact is
   what makes an exported file round-trip unchanged.
+- Every `data.kind` must be one the target Ora version can render. Import does not screen kinds,
+  because the package is stored verbatim; the editor screens them when it loads the workflow, so a
+  node the canvas has no component for is dropped along with its edges, reported to the user, and
+  then left out of the draft by the next autosave. Write documents against the node catalog of the
+  version you are targeting rather than a newer one.
 
 ## Import flow
 

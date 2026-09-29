@@ -1,17 +1,21 @@
+/** Node variants understood by the graph workflow execution contract, in canonical order. */
+export const WORKFLOW_NODE_KINDS = [
+  "start",
+  "agent",
+  "condition",
+  "aggregator",
+  "tool",
+  "junction",
+  "human",
+  "loop",
+  "loopExit",
+  "iteration",
+  "subflow",
+  "output",
+] as const;
+
 /** Node variants understood by the graph workflow execution contract. */
-export type WorkflowNodeKind =
-  | "start"
-  | "agent"
-  | "condition"
-  | "aggregator"
-  | "tool"
-  | "junction"
-  | "human"
-  | "loop"
-  | "loopExit"
-  | "iteration"
-  | "subflow"
-  | "output";
+export type WorkflowNodeKind = (typeof WORKFLOW_NODE_KINDS)[number];
 
 /** One Skill binding within an executable Agent node. */
 export interface WorkflowAgentSkillConfig {

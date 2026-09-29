@@ -40,7 +40,11 @@ export type {
   WorkflowVariableValueType,
   WorkflowGlobalVariable,
 } from "./types";
-export { findOpenHitlForNode, listOpenHitls } from "./types";
+export {
+  findOpenHitlForNode,
+  listOpenHitls,
+  WORKFLOW_NODE_KINDS,
+} from "./types";
 export {
   normalizeWorkflowDefinition,
   normalizeWorkflowDocument,
@@ -53,10 +57,12 @@ export {
 export {
   isoToWorkflowTimestamp,
   parseWorkflowGraph,
+  parseWorkflowGraphWithReport,
   serializeWorkflowGraph,
   workflowTimestampToIso,
   type WorkflowGraphAnnotation,
   type WorkflowGraphEnvelope,
+  type WorkflowGraphParseResult,
 } from "./graph-codec";
 export {
   isTerminalRunStatus,
