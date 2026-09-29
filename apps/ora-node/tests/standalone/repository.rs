@@ -45,6 +45,8 @@ mod busy_reading;
 
 #[path = "repository_admission.rs"]
 mod admission;
+#[path = "repository_plugins.rs"]
+mod plugins;
 
 /// Provides explicit trusted TLS configuration without modifying process environment or user Git config.
 fn configuration(fixture: &Fixture, server: &HttpsRepository) -> CloneConfig {

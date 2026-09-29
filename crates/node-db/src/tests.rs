@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used)]
 use super::*;
 use pretty_assertions::assert_eq;
+mod plugin;
 mod process;
 mod repository;
 mod repository_migration;
@@ -337,4 +338,23 @@ fn definitive_create_failure_retires_its_reservation() {
         db.existing(&command).unwrap().unwrap().progress,
         Progress::Completed { result }
     );
+}
+
+/// Reconstructs the exact pre-plugin identity schema for legacy migration fixtures.
+fn remove_plugin_schema(path: &std::path::Path) {
+    let connection = Connection::open(path).unwrap();
+    connection.execute_batch("PRAGMA foreign_keys=OFF; DROP TRIGGER bind_new_plugin; DROP TABLE plugin_outbox; DROP TABLE plugin_executions; CREATE TEMP TABLE old_ids AS SELECT * FROM execution_identities; DROP TABLE execution_identities;").unwrap();
+    connection
+        .execute_batch(
+            include_str!("repository.sql")
+                .split("INSERT INTO execution_identities")
+                .next()
+                .unwrap(),
+        )
+        .unwrap();
+    connection
+        .execute_batch(
+            "INSERT INTO execution_identities SELECT * FROM old_ids; DROP TABLE old_ids;",
+        )
+        .unwrap();
 }

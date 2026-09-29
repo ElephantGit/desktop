@@ -138,7 +138,7 @@ impl Round<'_> {
 
     /// The target of the Workspace's live sandbox once its Node is registered and connected, or
     /// `None` after parking the operation because the Node did not come up in time.
-    async fn ready_node(&mut self) -> Result<Option<Arc<Sandbox>>, Error> {
+    pub(super) async fn ready_node(&mut self) -> Result<Option<Arc<Sandbox>>, Error> {
         let workspace = self.workspace()?.id.clone();
         let target = self
             .live_sandbox(&workspace)
@@ -339,7 +339,8 @@ impl Round<'_> {
                 .store
                 .pending_dispatches(&sandbox.binding.node_id)
                 .await?;
-            let idle = pending.is_empty() && !sandbox.any_unresolved();
+            let plugin_pending = self.store.pending_plugins(&sandbox.binding.node_id).await?;
+            let idle = pending.is_empty() && plugin_pending.is_empty() && !sandbox.any_unresolved();
             let accepted = reports::idle(
                 self.store,
                 &sandbox,
@@ -385,21 +386,6 @@ impl Round<'_> {
             if let Carried::Parked = self.carry(effect).await? {
                 return Ok(());
             }
-        }
-        self.advance().await
-    }
-
-    /// plugin: carries the plugin effect the operation's intent names. Whether the Substrate
-    /// supports it is the Substrate's answer; a refusal blocks the operation.
-    pub(super) async fn plugin(&mut self) -> Result<(), Error> {
-        let kind = match self.operation.kind() {
-            proto::OperationKind::RemovePlugin => proto::EffectKind::PluginDelete,
-            _ => proto::EffectKind::PluginEnsure,
-        };
-        let workspace = self.workspace()?.id.clone();
-        let effect = self.plan(kind, &workspace).await?;
-        if let Carried::Parked = self.carry(effect).await? {
-            return Ok(());
         }
         self.advance().await
     }

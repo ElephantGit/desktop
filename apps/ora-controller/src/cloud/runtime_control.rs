@@ -83,17 +83,57 @@ impl CloudStore {
         }
     }
 
+    /// Wraps a clone only after obtaining fresh authority for its registered identity.
     pub(super) async fn controlled_dispatch(
         &self,
         command: CloneRepositoryMessage,
     ) -> Result<Option<ControllerToNodeMessage>, Error> {
-        let epoch = self.epoch()?;
-        let record = self
-            .record(&command.execution_id)
+        let Some(permit) = self
+            .execution_permit(&command.execution_id, &command.payload.spec.node_id)
             .await?
-            .ok_or(Error::Conflict)?;
+        else {
+            return Ok(None);
+        };
+        let message = ControllerToNodeMessage::ControlledClone(ControlledClone {
+            binding: permit,
+            command,
+        });
+        message.validate()?;
+        Ok(Some(message))
+    }
+
+    /// Plugin installation has the same runtime fencing boundary as clone filesystem changes.
+    pub(super) async fn controlled_plugins(
+        &self,
+        command: PluginCommand,
+    ) -> Result<Option<ControllerToNodeMessage>, Error> {
+        let Some(permit) = self
+            .execution_permit(command.execution_id(), command.node_id())
+            .await?
+        else {
+            return Ok(None);
+        };
+        let message = ControllerToNodeMessage::ControlledPlugins(ControlledPlugins {
+            binding: permit,
+            command,
+        });
+        message.validate()?;
+        Ok(Some(message))
+    }
+
+    /// Registration proves historical responsibility, not current permission to start work.
+    async fn execution_permit(
+        &self,
+        execution: &ExecutionId,
+        node: &NodeId,
+    ) -> Result<Option<RuntimeBinding>, Error> {
+        let epoch = self.epoch()?;
+        let record = self.record(execution).await?.ok_or(Error::Conflict)?;
+        if record.result.is_some() {
+            return Ok(None);
+        }
         let Some(scope) = self
-            .control_bindings(&command.payload.spec.node_id)
+            .control_bindings(node)
             .await?
             .into_iter()
             .find(|v| v.operation_id == record.operation_id && !v.input_closed)
@@ -107,7 +147,7 @@ impl CloudStore {
                     workspace_id: scope.workspace_id,
                     node_instance_id: scope.node_instance_id,
                     control_epoch: scope.control_epoch,
-                    execution_id: command.execution_id.as_str().into(),
+                    execution_id: execution.as_str().into(),
                 }))
                 .await
         })
@@ -117,12 +157,6 @@ impl CloudStore {
             Err(fault::Verdict::Conflict | fault::Verdict::StaleRuntimeBinding) => return Ok(None),
             Err(v) => return Err(self.settle(v)),
         };
-        let permit = binding(response.binding.ok_or(Error::Conflict)?);
-        let message = ControllerToNodeMessage::ControlledClone(ControlledClone {
-            binding: permit,
-            command,
-        });
-        message.validate()?;
-        Ok(Some(message))
+        Ok(Some(binding(response.binding.ok_or(Error::Conflict)?)))
     }
 }

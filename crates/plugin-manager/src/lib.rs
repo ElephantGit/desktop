@@ -7,6 +7,7 @@ mod install;
 mod issue;
 mod limits;
 mod mcp;
+mod planned;
 mod skill;
 mod validation;
 mod webview;
@@ -27,6 +28,7 @@ pub use install::{
 pub use issue::{PluginDiscoveryIssue, PluginDiscoveryIssueKind};
 pub use mcp::{InstalledMcpDescriptor, MCP_CONFIGURATION_FILE};
 pub use ora_plugin_manifest::HookTarget;
+pub use planned::{PreparedPlugin, inspect_planned_package};
 pub use skill::{
     InstalledSkill, InstalledSkillDescriptor, SKILL_ASSET_DIRECTORY, SKILL_MANIFEST_FILE_NAME,
 };

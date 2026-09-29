@@ -126,6 +126,7 @@ pub(super) struct Sandbox {
     /// committed before quiesce lists unfinished work or never happens.
     pub(super) gate: sync::Mutex<Gate>,
     unresolved: Mutex<HashMap<ExecutionId, Instant>>,
+    capabilities: Mutex<Vec<NodeCapability>>,
     /// Cloud's Node records of this sandbox, from the latest snapshot.
     known: Mutex<Vec<proto::NodeRecord>>,
 }
@@ -134,6 +135,16 @@ impl Sandbox {
     /// The incarnation of the live session, or `None` between sessions.
     pub(super) fn identity(&self) -> Option<NodeRuntimeIdentity> {
         self.identity.borrow().clone()
+    }
+
+    /// Only negotiated capabilities authorize new plugin registration.
+    pub(super) fn plugin_capable(&self) -> bool {
+        self.connected()
+            && self
+                .capabilities
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .contains(&NodeCapability::PluginInstall)
     }
 
     /// Whether a session is established right now.
@@ -184,6 +195,12 @@ impl Sandbox {
 }
 
 impl SessionObserver for Sandbox {
+    fn capabilities(&self, capabilities: &[NodeCapability]) {
+        *self
+            .capabilities
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = capabilities.to_vec();
+    }
     fn established(&self, node: &NodeRuntimeIdentity) {
         self.identity.send_replace(Some(node.clone()));
     }
@@ -278,6 +295,7 @@ impl Fleet {
             report: sync::Mutex::default(),
             gate: sync::Mutex::new(Gate::Open),
             unresolved: Mutex::default(),
+            capabilities: Mutex::default(),
             known: Mutex::new(records),
         });
         let (stop, stopping) = watch::channel(false);

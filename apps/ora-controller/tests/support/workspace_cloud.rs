@@ -4,6 +4,8 @@
 //! (a succeeded effect, a registered and connected Node, a ready clone, accepted idle evidence),
 //! writes are fenced by epoch and version, and every decision the Controller made is appended to a
 //! timeline the fake Substrate and fake Node share, so tests can assert ordering across all three.
+#[path = "workspace_cloud/plugins.rs"]
+mod plugins;
 #[path = "workspace_cloud/runtime_control.rs"]
 mod runtime_control;
 use futures::{Stream, stream};
@@ -134,6 +136,7 @@ struct State {
     nodes: Vec<proto::NodeRecord>,
     effects: Vec<(String, proto::Effect)>,
     clones: Vec<proto::ExecutionRecord>,
+    plugin_input: Option<proto::ExecutionInput>,
     subscriber: Option<mpsc::Sender<Result<proto::WatchResponse, Status>>>,
     next_id: u64,
 }
@@ -209,6 +212,7 @@ impl WorkspaceCloud {
                 nodes: Vec::new(),
                 effects: Vec::new(),
                 clones: Vec::new(),
+                plugin_input: None,
                 subscriber: None,
                 next_id: 100,
             })),
@@ -251,6 +255,9 @@ impl WorkspaceCloud {
     pub fn queue(&self, kind: proto::OperationKind) -> String {
         use proto::OperationStep as S;
         let steps: &'static [S] = match kind {
+            proto::OperationKind::CreateWorkspace if self.lock().plugin_input.is_some() => {
+                &[S::Sandbox, S::Node, S::Clone, S::Plugin, S::Done]
+            }
             proto::OperationKind::CreateWorkspace => &[S::Sandbox, S::Node, S::Clone, S::Done],
             proto::OperationKind::Start => &[S::Sandbox, S::Node, S::Done],
             proto::OperationKind::Stop => &[S::Quiesce, S::Terminate, S::Done],
@@ -367,12 +374,16 @@ impl WorkspaceCloud {
             clones: state
                 .clones
                 .iter()
-                .filter(|record| &record.operation_id == id)
+                .filter(|record| &record.operation_id == id && !plugins::is_plugin(record))
                 .cloned()
                 .collect(),
-            // The plugin step is not driven through Node executions by this Controller yet.
-            plugin_executions: Vec::new(),
-            plugin_input: None,
+            plugin_executions: state
+                .clones
+                .iter()
+                .filter(|r| &r.operation_id == id && plugins::is_plugin(r))
+                .cloned()
+                .collect(),
+            plugin_input: state.plugin_input.clone(),
         }
     }
 
@@ -441,9 +452,12 @@ impl WorkspaceCloud {
                     })
                     .ok_or_else(|| conflict("clone_incomplete"))?;
                 state.workspace.base_commit_id = Some(commit);
-                state.workspace.observed_state = "ready".into();
-                state.workspace.admission_open = true;
+                if state.plugin_input.is_none() {
+                    state.workspace.observed_state = "ready".into();
+                    state.workspace.admission_open = true;
+                }
             }
+            proto::OperationStep::Plugin => plugins::advance(state, &id)?,
             proto::OperationStep::Quiesce => {
                 let epoch = state.workspace.admission_epoch;
                 if Self::live_sandbox(state).is_some()
@@ -1021,14 +1035,18 @@ impl ExecutionService for WorkspaceCloud {
                 .iter()
                 .find(|op| op.operation.id == message.operation_id)
                 .ok_or_else(|| Status::not_found("not_found"))?;
-            if op.operation.step() != proto::OperationStep::Clone {
-                return Err(conflict("dispatch_conflict"));
-            }
-            let expected = proto::ExecutionInput {
-                spec: Some(proto::execution_input::Spec::Clone(proto::CloneSpec {
-                    repository: REPOSITORY.into(),
-                    branch: state.workspace.requested_ref.clone(),
-                })),
+            let expected = match op.operation.step() {
+                proto::OperationStep::Clone => proto::ExecutionInput {
+                    spec: Some(proto::execution_input::Spec::Clone(proto::CloneSpec {
+                        repository: REPOSITORY.into(),
+                        branch: state.workspace.requested_ref.clone(),
+                    })),
+                },
+                proto::OperationStep::Plugin => state
+                    .plugin_input
+                    .clone()
+                    .ok_or_else(|| conflict("missing_plugin_input"))?,
+                _ => return Err(conflict("dispatch_conflict")),
             };
             if message.input.as_ref() != Some(&expected) {
                 return Err(conflict("dispatch_conflict"));

@@ -312,6 +312,9 @@ impl<G: WriteGuard> NodeDatabase<G> {
             Some("clone") => Ok(self
                 .find_clone(operation, execution)?
                 .map_or(ExecutionState::Unknown, |r| r.progress.state())),
+            Some("plugin") => Ok(self
+                .find_plugins(operation, execution)?
+                .map_or(ExecutionState::Unknown, |r| r.state)),
             None => Ok(ExecutionState::Unknown),
             Some(_) => Err(Error::InvalidSchema),
         }

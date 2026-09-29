@@ -111,6 +111,7 @@ fn exact_version_one_upgrade_preserves_execution_and_event_history() {
     db.complete(&accepted, ready(&command, &target)).unwrap();
     let events = db.pending_events().unwrap();
     drop(db);
+    remove_plugin_schema(&path);
     let connection = Connection::open(&path).unwrap();
     connection
         .execute_batch(

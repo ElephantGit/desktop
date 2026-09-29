@@ -31,7 +31,7 @@ impl<G: WriteGuard> NodeDatabase<G> {
         Ok(())
     }
 
-    /// Allows new identities or this owner's existing clone, but refuses legacy or foreign responsibility.
+    /// Allows new identities or this owner's existing execution, but refuses legacy or foreign responsibility.
     pub fn check_controller_execution(
         &self,
         controller: &ControllerId,
@@ -66,7 +66,7 @@ impl<G: WriteGuard> NodeDatabase<G> {
         controller: &ControllerId,
     ) -> Result<Vec<ora_node_protocol::NodeToControllerMessage>, Error> {
         let mut statement = self.connection.prepare(
-            "SELECT event FROM clone_outbox JOIN execution_controllers USING(execution) WHERE controller=?1 ORDER BY clone_outbox.rowid LIMIT 16",
+            "SELECT event FROM (SELECT execution,event FROM clone_outbox UNION ALL SELECT execution,event FROM plugin_outbox) JOIN execution_controllers USING(execution) WHERE controller=?1 LIMIT 16",
         )?;
         statement
             .query_map([controller.as_str()], |row| {

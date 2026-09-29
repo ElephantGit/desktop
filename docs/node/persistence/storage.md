@@ -17,7 +17,7 @@ and a whole-file lease there collides with them on macOS (`flock` and `fcntl` sh
 and on Windows (mandatory `LockFileEx` regions), which surfaces as "database is locked" or a disk I/O
 error. The sidecar is an inode beside the database, so every spelling of the same home resolves to
 the same lease. SQLite uses its default rollback journal and FULL synchronous writes. A new database receives application ID `0x4f52414e`
-and schema version 5. Exact version 1/2/3/4 schemas migrate transactionally after identity and integrity
+and schema version 7. Exact version 1/2/3/4/5/6 schemas migrate transactionally after identity and integrity
 validation, preserving executions, results and pending events. Existing empty files, foreign databases, unsupported versions, directories
 and corrupt databases are rejected without rebuilding them. The persistent NodeId survives
 reopening; each Node runtime generates a fresh NodeIncarnationId. An explicit identity mismatch
@@ -68,3 +68,9 @@ Opening also checks table/index definitions and foreign-key integrity; the schem
 cannot authorize an unknown structure. A definitive no-effect Worktree creation failure retires reservations
 and releases active uniqueness while retaining execution deduplication and the failed result.
 Inconclusive executions continue to hold their reservations.
+
+Version 6 adds runtime bindings, enforcement and execution permits. Version 7 expands the shared
+identity table with the plugin family and adds `plugin_executions` and `plugin_outbox`. Migration
+retains all prior identities and checks foreign keys before committing the rebuilt table. Plugin
+terminal evidence and its single event commit atomically; an exact ACK removes only the event.
+See [plugin installation](../plugin-installation.md) for dispatch and restart behavior.
