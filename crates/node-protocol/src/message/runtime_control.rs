@@ -67,6 +67,30 @@ pub struct ControlledClone {
     pub command: CloneRepositoryMessage,
 }
 
+/// Plugin execution with the same fresh, exact runtime authority required by clones.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ControlledPlugins {
+    pub binding: RuntimeBinding,
+    pub command: super::PluginCommand,
+}
+
+impl ValidateMessage for ControlledPlugins {
+    /// Refuses a permit for another execution, operation or target before admission.
+    fn validate(&self) -> Result<(), MessageValidationError> {
+        self.binding.validate()?;
+        self.command.validate()?;
+        if self.binding.input_closed
+            || self.binding.execution_id != self.command.execution_id().as_str()
+            || self.binding.node_operation_id != self.command.operation_id().as_str()
+            || self.binding.node_id != self.command.node_id().as_str()
+        {
+            return Err(MessageValidationError::InvalidRuntimeBinding);
+        }
+        Ok(())
+    }
+}
+
 impl ValidateMessage for ControlledClone {
     fn validate(&self) -> Result<(), MessageValidationError> {
         self.binding.validate()?;

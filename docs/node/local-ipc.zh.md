@@ -50,9 +50,10 @@ socket 关闭；Controller 无法区分“会话占用”和因 ControllerId 不
 Controller 不会让下一个连接被判为占用；只有正常停止会等待握手，上限为 `frame_timeout_ms`。IPC
 不携带 code，只结束字节流。无论哪个 code，关闭都只表示“连接不可用”。
 
-Hello 协商现有版本、Node 身份／运行实例及
-clone 能力；会话接收 clone、状态查询和精确确认，冲突或不支持的消息会关闭连接。
-心跳独立于 clone 的 Git 执行；Node 主动按有界分页重放未确认 clone 事件，查询回复不确认事件。
+Hello 协商现有版本、Node 身份／运行实例及 clone、插件安装和运行控制能力。会话接收 clone、
+插件安装／移除、状态查询和精确确认，冲突或不支持的消息会关闭连接。云端写入使用带运行许可的封装，
+见[插件安装](plugin-installation.zh.md)。心跳独立于 Git 和插件下载；Node 按有界分页重放未确认的
+clone 与插件事件，查询回复不确认事件。
 
 受理使用有界队列和可撤销会话门禁。门禁只覆盖持久受理，随后才运行 Git；断连或会话撤销丢弃尚未受理
 的排队工作，不取消已经受理的 clone。读帧、写帧及命令受理回复均使用有限的 `frame_timeout_ms` 期限；

@@ -1,11 +1,11 @@
-use super::{clones::Clones, *};
+use super::{clones::Clones, plugins::Plugins, *};
 use crate::{ManagedNode, Node};
 use ora_node_db::Error as StorageError;
 use ora_node_transport::CloseReason;
 use std::time::Instant;
 
-/// Owns the only mutable Node and its database; Git runs on the clone executor, never here, so
-/// admission replies wait only for SQLite and local directory work.
+/// Owns the only mutable Node and database. Clone Git and plugin downloads run on separate
+/// executors so admission waits only for SQLite and local directory work.
 pub(super) fn run(
     config: ServiceConfig,
     receiver: mpsc::Receiver<Work>,
@@ -60,9 +60,10 @@ pub(super) fn run(
                 .map_err(|e| e.to_string())?;
         }
         let clones = Clones::start(&node).map_err(|e| e.to_string())?;
-        Ok::<_, String>((node, controller, clones))
+        let plugins = Plugins::start(&node).map_err(|e| e.to_string())?;
+        Ok::<_, String>((node, controller, clones, plugins))
     })();
-    let (mut node, controller, mut clones) = match initialized {
+    let (mut node, controller, mut clones, mut plugins) = match initialized {
         Ok(value) => value,
         Err(error) => {
             let _ = ready.send(Err(error.clone()));
@@ -74,10 +75,12 @@ pub(super) fn run(
         controller: controller.clone(),
         capabilities: vec![
             NodeCapability::RepositoryClone,
+            NodeCapability::PluginInstall,
             NodeCapability::RuntimeControl,
         ],
     };
     if ready.send(Ok(info)).is_err() {
+        plugins.finish(&mut node).map_err(|e| e.to_string())?;
         clones.drain(&mut node, Duration::ZERO)?;
         return node.shutdown().map_err(|e| e.to_string());
     }
@@ -124,12 +127,14 @@ pub(super) fn run(
                 next = Instant::now() + Duration::from_millis(config.recovery_interval_ms);
             }
             clones.advance(&mut node)?;
+            plugins.advance(&mut node).map_err(|e| e.to_string())?;
         }
         Ok(())
     })();
+    let plugins_finished = plugins.finish(&mut node).map_err(|e| e.to_string());
     let drained = clones.drain(&mut node, drain);
     node.shutdown().map_err(|e| e.to_string())?;
-    result.and(drained)
+    result.and(drained).and(plugins_finished)
 }
 
 /// How a refused request closes the session: what the Controller got wrong is its protocol or
@@ -191,6 +196,28 @@ fn handle(
                     payload: status,
                 },
             )])
+        }
+        Request::Message(ControllerToNodeMessage::InstallPlugins(command)) => accept_plugins(
+            node,
+            controller,
+            controlled,
+            PluginCommand::Install(command),
+        ),
+        Request::Message(ControllerToNodeMessage::RemovePlugins(command)) => {
+            accept_plugins(node, controller, controlled, PluginCommand::Remove(command))
+        }
+        Request::Message(ControllerToNodeMessage::ControlledPlugins(envelope)) => {
+            envelope.validate()?;
+            if envelope.binding.node_incarnation_id != node.identity().incarnation_id.as_str() {
+                return Err(StorageError::NodeMismatch.into());
+            }
+            node.database.check_controller_execution(
+                controller,
+                envelope.command.operation_id(),
+                envelope.command.execution_id(),
+            )?;
+            let record = node.database.accept_controlled_plugins(&envelope)?;
+            Ok(plugin_status(node, record))
         }
         Request::Message(ControllerToNodeMessage::BindRuntime(binding)) => {
             if target.is_some_and(|scope| !scope.permits(&binding)) {
@@ -258,8 +285,6 @@ fn handle(
             | ControllerToNodeMessage::Heartbeat(_)
             | ControllerToNodeMessage::EnsureWorktree(_)
             | ControllerToNodeMessage::RemoveWorktree(_)
-            | ControllerToNodeMessage::InstallPlugins(_)
-            | ControllerToNodeMessage::RemovePlugins(_)
             | ControllerToNodeMessage::StartAgentSession(_)
             | ControllerToNodeMessage::SubmitUserTurn(_)
             | ControllerToNodeMessage::EndSession(_)
@@ -267,4 +292,41 @@ fn handle(
             | ControllerToNodeMessage::UploadGrant(_),
         ) => Err(crate::Error::UnsupportedMessage),
     }
+}
+
+/// Private IPC can accept bare commands; persisted runtime enforcement still refuses bypasses.
+fn accept_plugins(
+    node: &mut ManagedNode,
+    controller: &ControllerId,
+    controlled: bool,
+    command: PluginCommand,
+) -> Result<Vec<NodeToControllerMessage>, crate::Error> {
+    if controlled {
+        return Err(crate::Error::UnsupportedMessage);
+    }
+    node.database.check_controller_execution(
+        controller,
+        command.operation_id(),
+        command.execution_id(),
+    )?;
+    let record = node.database.accept_plugins(&command)?;
+    Ok(plugin_status(node, record))
+}
+
+/// Admission only reports durable state and never waits for the downloader.
+fn plugin_status(
+    node: &ManagedNode,
+    record: ora_node_db::PluginExecution,
+) -> Vec<NodeToControllerMessage> {
+    vec![NodeToControllerMessage::ExecutionStatus(
+        ExecutionStatusMessage {
+            protocol_version: CURRENT_PROTOCOL_VERSION,
+            operation_id: record.command.operation_id().clone(),
+            execution_id: record.command.execution_id().clone(),
+            payload: ExecutionStatus {
+                node: node.identity().clone(),
+                state: record.state,
+            },
+        },
+    )]
 }

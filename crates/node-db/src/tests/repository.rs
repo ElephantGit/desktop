@@ -27,7 +27,7 @@ fn clone_fixture(node: &NodeId, root: &std::path::Path) -> (CloneRepositoryMessa
     )
 }
 
-fn runtime_scope(node: &NodeId) -> RuntimeBinding {
+pub(super) fn runtime_scope(node: &NodeId) -> RuntimeBinding {
     let now = i64::try_from(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -464,6 +464,7 @@ fn controller_binding_preserves_unclaimed_history_and_survives_restart() {
     let (old, target) = clone_fixture(db.node_id(), dir.path());
     let original = db.accept_clone(&old, &target).unwrap();
     drop(db);
+    remove_plugin_schema(&path);
     Connection::open(&path).unwrap().execute_batch("DROP TABLE execution_control; DROP TABLE runtime_binding; DROP TABLE runtime_enforcement; DROP TRIGGER outcome_excludes_termination; DROP TABLE process_terminations; DROP TRIGGER bind_new_clone; DROP TABLE execution_controllers; DROP TABLE controller_binding; PRAGMA user_version=3;").unwrap();
     let mut db = NodeDatabase::open(&path, NodeIdentity::Discover).unwrap();
     let owner = ControllerId::new("owner");
@@ -613,6 +614,7 @@ fn version_four_upgrade_adds_termination_evidence_without_rewriting_clones() {
     let accepted = db.accept_clone(&command, &target).unwrap();
     let (record, attempt) = dispatch(&mut db, &accepted);
     drop(db);
+    remove_plugin_schema(&path);
     Connection::open(&path)
         .unwrap()
         .execute_batch("DROP TABLE execution_control; DROP TABLE runtime_binding; DROP TABLE runtime_enforcement; DROP TRIGGER outcome_excludes_termination; DROP TABLE process_terminations; PRAGMA user_version=4;")
@@ -627,7 +629,7 @@ fn version_four_upgrade_adds_termination_evidence_without_rewriting_clones() {
             |r| r.get(/*idx*/ 0),
         )
         .unwrap();
-    assert_eq!(version, 6);
+    assert_eq!(version, 7);
     let journal = db.process_journal().unwrap();
     journal
         .record_termination(attempt.intent.run, /*signal*/ 9)

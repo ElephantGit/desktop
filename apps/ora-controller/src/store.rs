@@ -19,6 +19,52 @@ pub trait CoordinationStore: Clone + Send + Sync + 'static {
     /// The persistent coordinator identity presented to Nodes; never a process or connection identity.
     fn id(&self) -> &ControllerId;
 
+    /// Local clone-only stores have no plugin responsibility; Cloud overrides these operations.
+    fn pending_plugins(
+        &self,
+        _node: &NodeId,
+    ) -> impl Future<Output = Result<Vec<PluginCommand>, Error>> + Send {
+        async { Ok(Vec::new()) }
+    }
+
+    /// Returns a plugin command only when the exact dispatch belongs to this result family.
+    fn original_plugin_dispatch(
+        &self,
+        _session: &NodeRuntimeIdentity,
+        _operation: &OperationId,
+        _execution: &ExecutionId,
+    ) -> impl Future<Output = Result<Option<PluginCommand>, Error>> + Send {
+        async { Ok(None) }
+    }
+
+    /// Rechecks runtime permission immediately before sending the original plugin input.
+    fn dispatch_plugins(
+        &self,
+        _command: PluginCommand,
+    ) -> impl Future<Output = Result<Option<ControllerToNodeMessage>, Error>> + Send {
+        async { Err(Error::Conflict) }
+    }
+
+    /// Durably takes over an actual plugin event and its receipt before an acknowledgement.
+    fn take_over_plugins(
+        &self,
+        _session: &NodeRuntimeIdentity,
+        _event: &PluginsResultMessage,
+    ) -> impl Future<Output = Result<(), Error>> + Send {
+        async { Err(Error::Conflict) }
+    }
+
+    /// Persists a queried plugin result without inventing an event receipt.
+    fn record_queried_plugins(
+        &self,
+        _session: &NodeRuntimeIdentity,
+        _operation: &OperationId,
+        _execution: &ExecutionId,
+        _result: &PluginExecutionResult,
+    ) -> impl Future<Output = Result<(), Error>> + Send {
+        async { Err(Error::Conflict) }
+    }
+
     /// Cloud requires a negotiated runtime binding; local private IPC keeps its existing intake.
     fn requires_runtime_control(&self) -> bool {
         false

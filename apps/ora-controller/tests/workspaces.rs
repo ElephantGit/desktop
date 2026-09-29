@@ -7,6 +7,8 @@
 #![cfg(target_os = "linux")]
 #![allow(clippy::unwrap_used)]
 
+#[path = "workspaces/plugins.rs"]
+mod plugins;
 #[path = "support/workspace_cloud.rs"]
 mod workspace_cloud;
 
@@ -106,6 +108,8 @@ fn kind(request: &Value) -> &'static str {
 #[derive(Clone)]
 struct Node {
     completes: Arc<AtomicBool>,
+    plugin_capable: Arc<AtomicBool>,
+    plugin_outcome: Arc<Mutex<plugins::Outcome>>,
     timeline: Timeline,
 }
 
@@ -134,7 +138,7 @@ impl Node {
             node_id: node_id(),
             incarnation_id: NodeIncarnationId::new("incarnation-1"),
         };
-        let mut results: HashMap<ExecutionId, CloneExecutionResult> = HashMap::new();
+        let mut results: HashMap<ExecutionId, ExecutionResult> = HashMap::new();
         let mut sequence = 0;
         let mut beat = tokio::time::interval(Duration::from_millis(/*millis*/ 50));
         loop {
@@ -148,7 +152,7 @@ impl Node {
                             payload: HelloAccepted {
                                 selected_version: CURRENT_PROTOCOL_VERSION,
                                 node: identity.clone(),
-                                capabilities: vec![NodeCapability::RepositoryClone, NodeCapability::RuntimeControl],
+                                capabilities: plugins::capabilities(self),
                             },
                         })),
                         ControllerToNodeMessage::BindRuntime(binding) => Some(NodeToControllerMessage::RuntimeControlState(RuntimeControlState { binding, unfinished_execution_ids:vec![] })),
@@ -158,7 +162,7 @@ impl Node {
                             execution_id: query.execution_id.clone(),
                             payload: ExecutionStatus {
                                 node: identity.clone(),
-                                state: results.get(&query.execution_id).map_or(ExecutionState::Unknown, |result| ExecutionState::Completed(ExecutionResult::Clone(result.clone()))),
+                                state: results.get(&query.execution_id).map_or(ExecutionState::Unknown, |result| ExecutionState::Completed(result.clone())),
                             },
                         })),
                         ControllerToNodeMessage::ControlledClone(ControlledClone { command, .. }) if self.completes.load(Ordering::SeqCst) => {
@@ -169,7 +173,7 @@ impl Node {
                                 path: NodePath::new("/var/lib/ora/repositories/repo"),
                                 commit: CommitId::new(COMMIT),
                             });
-                            results.insert(command.execution_id.clone(), result.clone());
+                            results.insert(command.execution_id.clone(), ExecutionResult::Clone(result.clone()));
                             sequence += 1;
                             Some(NodeToControllerMessage::CloneResult(CloneResultMessage {
                                 protocol_version: CURRENT_PROTOCOL_VERSION,
@@ -179,6 +183,11 @@ impl Node {
                                 sequence: Sequence::new(sequence),
                                 payload: result,
                             }))
+                        }
+                        ControllerToNodeMessage::ControlledPlugins(envelope) => {
+                            let event = plugins::complete(self, &envelope, &identity);
+                            results.insert(event.execution_id.clone(), ExecutionResult::Plugin(event.payload.clone()));
+                            Some(NodeToControllerMessage::PluginsResult(event))
                         }
                         _ => None,
                     }
@@ -283,6 +292,8 @@ fn scenario<Fut: Future<Output = ()>>(requested_ref: &str, test: impl FnOnce(Wor
                 tokio::spawn(async move { axum::serve(listener, app).await });
                 let node = Node {
                     completes: Arc::new(AtomicBool::new(true)),
+                    plugin_capable: Arc::new(AtomicBool::new(true)),
+                    plugin_outcome: Arc::new(Mutex::new(plugins::Outcome::Installed)),
                     timeline: timeline.clone(),
                 };
                 let router_url = node.clone().serve().await;

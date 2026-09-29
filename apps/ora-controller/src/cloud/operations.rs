@@ -8,6 +8,7 @@
 //! the next round claims again and starts from Cloud's fresh snapshot. The task that runs the
 //! rounds belongs to the lease it was started under and is stopped when that lease is lost.
 mod live;
+mod plugin;
 mod steps;
 
 use super::{CloudStore, fault, fleet::Fleet, substrate::Observation};

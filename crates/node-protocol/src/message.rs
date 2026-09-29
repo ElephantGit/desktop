@@ -20,7 +20,7 @@ pub use execution::{
     GetExecutionStatus, GetExecutionStatusMessage,
 };
 pub use plugin::{
-    InstallPlugins, InstallPluginsMessage, PluginsResultMessage, RemovePlugins,
+    InstallPlugins, InstallPluginsMessage, PluginCommand, PluginsResultMessage, RemovePlugins,
     RemovePluginsMessage,
 };
 pub use repository::{CloneRepository, CloneRepositoryMessage, CloneResultMessage};
@@ -28,7 +28,9 @@ pub use revision::{
     DeliverRevision, DeliverRevisionMessage, RevisionResultMessage, UploadGrant,
     UploadGrantMessage, UploadGrantNeeded, UploadGrantNeededMessage,
 };
-pub use runtime_control::{ControlledClone, RuntimeBinding, RuntimeControlState};
+pub use runtime_control::{
+    ControlledClone, ControlledPlugins, RuntimeBinding, RuntimeControlState,
+};
 use serde::{Deserialize, Serialize};
 pub use session::{
     ControllerHeartbeat, ControllerHeartbeatMessage, Heartbeat, HeartbeatMessage, Hello,
@@ -53,6 +55,7 @@ pub enum ControllerToNodeMessage {
     CloneRepository(CloneRepositoryMessage),
     BindRuntime(RuntimeBinding),
     ControlledClone(ControlledClone),
+    ControlledPlugins(ControlledPlugins),
     EnsureWorktree(EnsureWorktreeMessage),
     RemoveWorktree(RemoveWorktreeMessage),
     GetExecutionStatus(GetExecutionStatusMessage),
@@ -76,6 +79,7 @@ impl ValidateMessage for ControllerToNodeMessage {
             Self::CloneRepository(message) => message.validate(),
             Self::BindRuntime(message) => message.validate(),
             Self::ControlledClone(message) => message.validate(),
+            Self::ControlledPlugins(message) => message.validate(),
             Self::EnsureWorktree(message) => message.validate(),
             Self::RemoveWorktree(message) => message.validate(),
             Self::GetExecutionStatus(message) => message.validate(),

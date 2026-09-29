@@ -112,6 +112,8 @@ impl From<TransportError> for SessionError {
 pub(crate) trait SessionObserver: Send + Sync {
     /// The handshake completed with this Node incarnation; the session is live from here on.
     fn established(&self, node: &NodeRuntimeIdentity);
+    /// Records the negotiated capabilities before publishing the connected identity.
+    fn capabilities(&self, _capabilities: &[NodeCapability]) {}
     /// The Node still answers `Unknown` for an execution after this connection retransmitted its
     /// original command once. It may be a retained uncertain attempt or a command the Node has not
     /// admitted yet; the owner decides how long that may last.
@@ -314,9 +316,16 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
             "Node lacks mandatory runtime_control capability".into(),
         ));
     }
+    let plugin_capable = hello
+        .payload
+        .capabilities
+        .contains(&NodeCapability::PluginInstall);
+    observer.capabilities(&hello.payload.capabilities);
     let identity = hello.payload.node;
     observer.established(&identity);
     let mut tick = interval(Duration::from_millis(config.query_interval_ms));
+    // Slow authority reads must not accumulate catch-up queries ahead of terminal evidence.
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut cursor = 0usize;
     // Unknown can also be a retained uncertain attempt. Repeated Unknown replies must not form
     // an immediate query/command feedback loop; one exact retransmission per connection is enough.
@@ -327,19 +336,21 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
         tokio::pin!(read);
         let message = loop {
             tokio::select! {
+                biased;
                 message = &mut read => break message?.ok_or_else(|| SessionError::Disconnected("Node closed the connection".into()))?,
                 _ = tick.tick() => {
                     for binding in store.runtime_bindings(node_id).await? {
                         bounded(deadline,transmit(writer,&ControllerToNodeMessage::BindRuntime(binding))).await?;
                     }
                     let command = {
-                        let commands = store.pending_dispatches(node_id).await?;
+                        let mut commands: Vec<_> = store.pending_dispatches(node_id).await?.into_iter().map(|c| (c.operation_id, c.execution_id)).collect();
+                        commands.extend(store.pending_plugins(node_id).await?.into_iter().map(|c| (c.operation_id().clone(), c.execution_id().clone())));
                         if commands.is_empty() { None } else { let command = commands[cursor % commands.len()].clone(); cursor = cursor.wrapping_add(1); Some(command) }
                     };
                     // Every tick sends exactly one uplink frame: the Node treats its per-frame read
                     // deadline as Controller liveness, so an idle session must still send something.
                     let uplink = match command {
-                        Some(command) => ControllerToNodeMessage::GetExecutionStatus(GetExecutionStatusMessage { protocol_version: CURRENT_PROTOCOL_VERSION, operation_id: command.operation_id, execution_id: command.execution_id, payload: GetExecutionStatus { node_id: node_id.clone() } }),
+                        Some(command) => ControllerToNodeMessage::GetExecutionStatus(GetExecutionStatusMessage { protocol_version: CURRENT_PROTOCOL_VERSION, operation_id: command.0, execution_id: command.1, payload: GetExecutionStatus { node_id: node_id.clone() } }),
                         None => ControllerToNodeMessage::Heartbeat(ControllerHeartbeatMessage { protocol_version: CURRENT_PROTOCOL_VERSION, payload: ControllerHeartbeat { controller_id: id.clone() } }),
                     };
                     bounded(deadline, transmit(writer, &uplink)).await?;
@@ -347,6 +358,9 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
             }
         };
         let ack = take_over(store, &identity, &message).await?;
+        if let NodeToControllerMessage::PluginsResult(event) = &message {
+            observer.answered(&event.execution_id);
+        }
         if let NodeToControllerMessage::CloneResult(event) = &message {
             // Cloud has durably accepted the terminal fact; a prior Unknown is now resolved.
             observer.answered(&event.execution_id);
@@ -360,20 +374,32 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
             Some(ControllerToNodeMessage::EventAck(ack))
         } else if let NodeToControllerMessage::ExecutionStatus(status) = &message
             && status.payload.state == ExecutionState::Unknown
-            && store.result(&status.execution_id).await?.is_none()
         {
             if !retransmitted.contains(&status.execution_id) {
-                let command = store
-                    .dispatch_message(
-                        store
-                            .original_dispatch(
-                                &identity,
-                                &status.operation_id,
-                                &status.execution_id,
-                            )
-                            .await?,
-                    )
-                    .await?;
+                let command = if let Some(plugin) = store
+                    .original_plugin_dispatch(&identity, &status.operation_id, &status.execution_id)
+                    .await?
+                {
+                    if plugin_capable {
+                        store.dispatch_plugins(plugin).await?
+                    } else {
+                        None
+                    }
+                } else if store.result(&status.execution_id).await?.is_none() {
+                    store
+                        .dispatch_message(
+                            store
+                                .original_dispatch(
+                                    &identity,
+                                    &status.operation_id,
+                                    &status.execution_id,
+                                )
+                                .await?,
+                        )
+                        .await?
+                } else {
+                    None
+                };
                 if command.is_some() {
                     retransmitted.insert(status.execution_id.clone());
                 }

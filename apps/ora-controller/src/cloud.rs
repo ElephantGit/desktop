@@ -10,6 +10,7 @@ mod force_stop;
 mod lease;
 mod mapping;
 mod operations;
+mod plugins;
 mod reports;
 mod runtime_control;
 mod signals;
@@ -282,6 +283,41 @@ impl CoordinationStore for CloudStore {
     fn requires_runtime_control(&self) -> bool {
         true
     }
+    async fn pending_plugins(&self, node: &NodeId) -> Result<Vec<PluginCommand>, Error> {
+        self.pending_plugin_commands(node).await
+    }
+    async fn original_plugin_dispatch(
+        &self,
+        session: &NodeRuntimeIdentity,
+        operation: &OperationId,
+        execution: &ExecutionId,
+    ) -> Result<Option<PluginCommand>, Error> {
+        self.plugin_command(session, operation, execution).await
+    }
+    async fn dispatch_plugins(
+        &self,
+        command: PluginCommand,
+    ) -> Result<Option<ControllerToNodeMessage>, Error> {
+        self.controlled_plugins(command).await
+    }
+    async fn take_over_plugins(
+        &self,
+        session: &NodeRuntimeIdentity,
+        event: &PluginsResultMessage,
+    ) -> Result<(), Error> {
+        self.plugin_event(session, event).await
+    }
+    async fn record_queried_plugins(
+        &self,
+        session: &NodeRuntimeIdentity,
+        operation: &OperationId,
+        execution: &ExecutionId,
+        result: &PluginExecutionResult,
+    ) -> Result<(), Error> {
+        self.plugin_query(session, operation, execution, result)
+            .await
+    }
+
     async fn runtime_bindings(&self, node: &NodeId) -> Result<Vec<RuntimeBinding>, Error> {
         self.control_bindings(node).await
     }
@@ -409,6 +445,7 @@ impl CoordinationStore for CloudStore {
         response
             .records
             .iter()
+            .filter(|record| !plugins::mapping::is_plugin(record))
             .map(|record| mapping::command(record, node))
             .collect()
     }

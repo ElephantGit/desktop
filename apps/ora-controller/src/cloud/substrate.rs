@@ -6,7 +6,7 @@
 use crate::{Error, SubstrateConfig};
 use ora_controller_proto::v1::{self as proto, effect_evidence::Evidence, effect_request::Request};
 use serde::Deserialize;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use std::time::Duration;
 
 /// What the Substrate reported for one effect, in the contract's terms.
@@ -231,40 +231,11 @@ fn request(effect: &proto::Effect) -> Result<Value, SubstrateError> {
             "projectId": delete.project_id,
             "workspaceId": delete.workspace_id,
         }),
-        Request::PluginEnsure(ensure) => {
-            let artifact = |artifact: &proto::PluginArtifact| {
-                let mut object = Map::new();
-                if let Some(target) = &artifact.target {
-                    object.insert("target".into(), target.clone().into());
-                }
-                object.insert("url".into(), artifact.url.clone().into());
-                object.insert("sha256".into(), artifact.sha256.clone().into());
-                Value::Object(object)
-            };
-            let mut object = Map::new();
-            object.insert("kind".into(), "plugin_ensure".into());
-            object.insert("projectId".into(), ensure.project_id.clone().into());
-            object.insert("workspaceId".into(), ensure.workspace_id.clone().into());
-            object.insert("pluginId".into(), ensure.plugin_id.clone().into());
-            object.insert("version".into(), ensure.version.clone().into());
-            if let Some(universal) = &ensure.universal {
-                object.insert("universal".into(), artifact(universal));
-            }
-            if !ensure.targets.is_empty() {
-                object.insert(
-                    "targets".into(),
-                    ensure.targets.iter().map(artifact).collect(),
-                );
-            }
-            Value::Object(object)
+        Request::PluginEnsure(_) | Request::PluginDelete(_) => {
+            return Err(SubstrateError::Rejected(
+                "plugin effects are read-only historical records".into(),
+            ));
         }
-        Request::PluginDelete(delete) => json!({
-            "kind": "plugin_delete",
-            "projectId": delete.project_id,
-            "workspaceId": delete.workspace_id,
-            "pluginId": delete.plugin_id,
-            "version": delete.version,
-        }),
     })
 }
 
@@ -298,7 +269,7 @@ fn observation(kind: proto::EffectKind, entry: Entry) -> Result<Observation, Sub
     }
 }
 
-/// The success evidence the contract names for each kind, taken from the Substrate's result.
+/// Reads historical evidence, including legacy plugin effects. Plugin requests cannot be sent.
 fn evidence(kind: proto::EffectKind, result: &Value) -> Option<Evidence> {
     let text = |key: &str| result.get(key).and_then(Value::as_str).map(str::to_owned);
     let flag = |key: &str| result.get(key).and_then(Value::as_bool) == Some(true);

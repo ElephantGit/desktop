@@ -310,7 +310,7 @@ impl<G: WriteGuard> NodeDatabase<G> {
     pub fn pending_events(&self) -> Result<Vec<NodeToControllerMessage>, Error> {
         let mut statement = self
             .connection
-            .prepare("SELECT event FROM outbox UNION ALL SELECT event FROM clone_outbox")?;
+            .prepare("SELECT event FROM outbox UNION ALL SELECT event FROM clone_outbox UNION ALL SELECT event FROM plugin_outbox")?;
         let rows = statement.query_map([], |row| row.get::<_, String>(/*idx*/ 0))?;
         rows.map(|data| Ok(serde_json::from_str(&data?)?)).collect()
     }
@@ -320,6 +320,13 @@ impl<G: WriteGuard> NodeDatabase<G> {
         ack.validate()?;
         if ack.payload.node_id != self.node_id {
             return Err(Error::NodeMismatch);
+        }
+        if self
+            .identity_kind(&ack.operation_id, &ack.execution_id)?
+            .as_deref()
+            == Some("plugin")
+        {
+            return self.acknowledge_plugins(ack);
         }
         if self
             .identity_kind(&ack.operation_id, &ack.execution_id)?

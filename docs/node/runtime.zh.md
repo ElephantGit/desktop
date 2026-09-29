@@ -9,6 +9,8 @@ Linux `ora-node` 可执行程序持有显式配置的 Node 数据库，恢复待
 可选[本机 Controller IPC](local-ipc.zh.md)接受新 clone 命令；stdin 和配置文件不是命令通道，也不切换既有 Backend 写入入口。
 进程内调用方使用 `Node::open(config, process_config, shutdown)` 及原有类型化 Node 方法。
 
+Workspace 插件执行见 [Node 插件安装](plugin-installation.zh.md)。
+
 ## 部署
 
 构建 `cargo build -p ora-node -p ora-process-host -p ora-process-guardian`，先部署并启动

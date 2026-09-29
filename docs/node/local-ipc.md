@@ -60,10 +60,12 @@ path, so a Controller that lingers after a close cannot make the next connection
 stop waits for it, bounded by `frame_timeout_ms`. IPC carries no code and only ends the stream.
 Every close, whatever its code, still only means "connection unavailable".
 
-Hello negotiates the existing version, Node identity/incarnation and clone capability. The session
-accepts clone, status and exact acknowledgement messages; unsupported/conflicting messages close it.
-The Node sends heartbeats independently of clone Git and actively replays bounded pages
-of unacknowledged clone events. Status replies do not acknowledge events.
+Hello negotiates the existing version, Node identity/incarnation and clone, plugin installation and
+runtime-control capabilities. The session accepts clone, plugin install/remove, status and exact
+acknowledgement messages; unsupported/conflicting messages close it. Cloud mutations require their
+controlled envelope. See [plugin installation](plugin-installation.md). Heartbeats remain independent
+of Git and plugin downloads; bounded replay pages include unacknowledged clone and plugin events.
+Status replies do not acknowledge events.
 
 Admission uses a bounded queue and a revocable session guard. Only durable admission happens under
 that guard; Git runs afterwards. Disconnect or session revocation discards unaccepted queued work,

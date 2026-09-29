@@ -2,6 +2,7 @@
 //! responsive, bounded control session.
 mod clones;
 mod executor;
+mod plugins;
 mod session;
 mod worker;
 use crate::{CloneConfig, NodeConfig, ProcessConfig, Shutdown};

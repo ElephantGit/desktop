@@ -302,3 +302,8 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(target_os = "linux")]
+mod plugins;
+#[cfg(target_os = "linux")]
+pub use plugins::{DirectoryPluginCatalog, PluginInstaller, PluginUseLease};
