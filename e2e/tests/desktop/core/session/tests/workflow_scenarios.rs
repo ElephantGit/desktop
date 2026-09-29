@@ -1271,7 +1271,7 @@ fn conditions_route_on_the_exact_agent_output_without_injected_context() -> Test
             );
             let echo_output = run.variable("echo", "output").cloned().unwrap_or_default();
             assert_eq!(echo_output, json!("Fake agent received: review the code"));
-            for marker in ["<workspace_boundary>", "<current_workflow_step>", "<workflow_context>"] {
+            for marker in ["<workspace_root>", "<current_workflow_step>", "<workflow_context>"] {
                 assert!(
                     !run.node_outputs("echo").join("").contains(marker),
                     "injected block {marker} leaked into the output"
