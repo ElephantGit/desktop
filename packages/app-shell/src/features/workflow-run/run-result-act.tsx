@@ -3,6 +3,7 @@ import { Button, cn } from "@ora/ui";
 import { IconBan, IconCheck, IconMap, IconX } from "@tabler/icons-react";
 import { RunStatusBadge } from "./run-status-mark";
 import { runStatusTone } from "./run-status-style";
+import { formatWorkflowNodeOutput } from "./format-node-output";
 import type {
   GraphWorkflowRun,
   GraphWorkflowRunStatus,
@@ -70,6 +71,16 @@ export function RunResultAct({
           </div>
         </div>
 
+        {run.status === "succeeded" && run.finalOutput !== undefined && (
+          <div className="mt-5">
+            <h3 className="text-sm font-medium">
+              {t("workflowRun.inspector.output")}
+            </h3>
+            <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/30 p-3 text-xs">
+              {formatWorkflowNodeOutput(run.finalOutput)}
+            </pre>
+          </div>
+        )}
         <dl className="mt-5 flex flex-wrap gap-2">
           <div className="rounded-lg border border-border/70 bg-muted/20 px-3 py-2.5">
             <dt className="text-[10px] text-muted-foreground">

@@ -1,0 +1,126 @@
+# Node Agent Session Execution
+
+English | [中文](agent-session.zh.md)
+
+A Node runs Agent session executions with
+[`ora-agent-runtime`](../agent-runtime.md#runtime-crate-and-hosts): in the
+checkout a clone execution left, it starts only the agent plugin the execution
+names, at its exact version, writes every settled record to the session JSONL
+before handing it to the Node ledger as a Thread event, and runs session
+commands in acceptance order. The decisions behind it are the
+[agent-runtime root decision](../../specs/decisions/node/agent-runtime/0-shared-agent-runtime-crate-hosted-by-node.md)
+and the
+[protocol follow-up decision](../../specs/decisions/node/protocol/20260928-streamed-thread-events-and-session-commands.md).
+
+The code lives in `apps/ora-node/src/session` and builds on Linux only. Ledger
+tables, protocol message wiring, and plugin installation are not here; they meet
+session execution only through the interfaces below.
+
+## Interfaces
+
+| Trait              | Provided by       | What session execution uses it for                                                                                        |
+| ------------------ | ----------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `SessionLedger`    | Node ledger       | Append Thread events, write the terminal result, read queued commands (all of them, in acceptance order), settle commands |
+| `CheckoutResolver` | Clone bookkeeping | Resolve a clone execution ID to its checkout; a session never composes the path itself                                    |
+| `PluginCatalog`    | Plugin installer  | Take a use lease; look up the directory of an exact installed version                                                     |
+| `SessionHost`      | Session execution | Implemented by `AgentSessions`: `start`, `command_arrived`, `recover_interrupted`, `sealed_history`                       |
+
+`queued_commands` returns the whole queue rather than its head: while a turn
+runs, an `EndSession` accepted behind queued user turns must be visible so the
+turn can be cancelled at once and the turns ahead of the end discarded.
+
+## One Runtime Per Execution
+
+Each session execution composes its own plugin lifecycle and agent runtime. The
+plugin root is still `plugins/` in the Node data directory, and session
+histories live under `sessions/` beside it, but this lifecycle reports and
+starts only the execution's agent plugin, launching it with the execution's Git
+identity. "Only the named plugin" and "the identity reaches only this
+execution's process tree" therefore hold by construction rather than by
+filtering a shared instance.
+
+| Runtime interface    | Node implementation                                                                                   |
+| -------------------- | ----------------------------------------------------------------------------------------------------- |
+| `SessionStore`       | `MemorySessionStore`: a Node never resumes a session after restarting, so rows need not outlive it    |
+| `AgentAttach`        | The execution's own plugin lifecycle, with one plugin; no Effect consumer (a Node projects no Skills) |
+| `SessionSetup`       | `NoSessionMcp`: MCP configuration and secrets have no delivery path yet                               |
+| `RuntimeEvents`      | Every history line becomes a Thread event; title and model catalog events are dropped                 |
+| `WorkspaceDirectory` | The checkout                                                                                          |
+
+The Git identity is exported as `GIT_AUTHOR_*`/`GIT_COMMITTER_*` both on the
+plugin process, which the processes it spawns directly inherit, and on every
+process the host spawns for the plugin through `ora/childprocess/spawn`, which
+inherits the Node's environment instead. The Node writes no Git configuration.
+
+## How an Execution Runs
+
+1. `start` returns at once; the session resolves the checkout in the background
+   and ends as `agent_failed{checkout_unavailable}` without one.
+2. It takes the plugin lease before looking up the version. When the catalog
+   lacks that version, or the package the plugin root holds is not in that
+   version's directory or is not an agent, the session ends as
+   `agent_failed{agent_plugin_unavailable}` with no plugin process ever started.
+   The lease is held until the plugin's whole process tree has exited.
+3. It waits for the agent connection to be ready (bounded; a timeout or a
+   supervisor that gives up ends as `agent_failed{agent_unavailable}`), creates
+   the session with the execution ID as its Ora Session ID
+   (`agent_failed{agent_start_failed}` on failure), and sends `initial_turn`.
+4. Every history line settled while a turn runs becomes a Thread event carrying
+   that turn's `turn_id`; the user message also carries the same identity in the
+   JSONL as its ACP `messageId`. A record over 256 KiB keeps only `at`, `seq`,
+   and `type` in the Thread and is marked `truncated`; the JSONL keeps the
+   original.
+5. `command_arrived` wakes the session to read its queue. A `SubmitUserTurn`
+   runs after the current turn, in acceptance order, and is settled `executed`
+   when it starts; repeated wakes never run it twice. An `EndSession` settles
+   the user turns accepted before it as `discarded`, stops the session
+   (cancelling a running turn and recording `TurnEnded{cancelled}`, with
+   `session/close` when supported), then settles itself `executed`.
+6. At the end the session stops, releases its runtime (whose connection
+   supervisor then stops reconnecting), stops the plugin and waits for its whole
+   tree to exit, releases the lease, settles any still-queued command as
+   `discarded`, forgets the live session, and writes the terminal result last —
+   so delivery never sees an ended session whose history is still being written.
+
+A failed or timed-out agent turn only records `TurnEnded` and the session
+continues. A turn that cannot be admitted at all, because the agent cannot be
+reached, ends the session as `agent_failed{agent_unavailable}`.
+
+## Record Order and Crashes
+
+The runtime writes the history one line at a time and calls `record_settled`
+synchronously after a line is in the file and before the next is written; the
+Node does `append_thread_event` there. Every Thread record is therefore in the
+JSONL, in the same order, and a crash between the two writes leaves the JSONL at
+most one line ahead of the Thread.
+
+Once `append_thread_event` fails, the mirror stops for good — later lines never
+reach the Thread, which would otherwise have a hole nothing explains — and the
+session ends as `agent_failed{thread_unavailable}`.
+
+After a Node restart, `recover_interrupted` ends every session execution without
+a terminal result as `interrupted`: the history's only writer ended with the old
+process, so the file is final. `sealed_history` answers `history_unavailable`
+while the session is still running in this process and otherwise returns the
+JSONL at the path `ora-history` defines.
+
+## Known Gap
+
+The plugin process and the agent CLI are started by the Node directly, as
+Desktop does (process group, whole-tree termination), and the tree is cleaned up
+when the session ends or the Node stops normally. They are not yet inside the
+host/guardian execution process scope, because the guardian does not yet provide
+the stdin and protocol streams a plugin needs. When the Node crashes, the plugin
+exits on its closed stdio, but a descendant that ignores that is not reclaimed
+until a new process I/O decision covers plugins.
+
+## Tests
+
+`apps/ora-node/tests/agent_session.rs` drives a real echo agent plugin process
+(`ora-node-echo-agent`, standing in for `deno` the way the E2E `fake-agent`
+does) through `SessionHost`, with an in-memory ledger, a fixed checkout, and a
+plugin catalog that counts its leases. It covers record order and turn
+attribution, command queueing, cancellation and discard on end, the crash window
+and interrupted recovery, a mismatched plugin version, the Git identity, and
+oversized records. The fixture exists for tests only; the Node image copies
+`ora-node` alone.

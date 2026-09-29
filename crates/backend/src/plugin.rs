@@ -43,8 +43,8 @@ use ora_effect::{ConsumerDeclaration, ConsumerIdentity, ConsumerKind, Digest};
 use ora_logging::{ora_debug, ora_info, ora_warn};
 use ora_plugin_config::ConfigurationService;
 use ora_plugin_lifecycle::{
-    ConnectionError, DenoPluginRuntime, DenoPluginRuntimeLauncher, InboundNotification,
-    PluginGenerationKey, PluginGenerationLease, PluginLifecycle, PluginLifecycleConfig,
+    ConnectionError, DenoPluginRuntime, DenoPluginRuntimeLauncher, GenerationTaps,
+    InboundNotification, PluginGenerationLease, PluginLifecycle, PluginLifecycleConfig,
     PluginLifecycleError, PluginNotificationSink, PluginRuntimeTimeouts,
 };
 use ora_plugin_manager::{Installer, PluginContribution, PluginManager};
@@ -78,21 +78,12 @@ const AGENT_ATTACH_WAIT: Duration = Duration::from_secs(15);
 ///
 /// Subscribers are attached after the backend is built (the desktop surface host is one), which
 /// is why the sink owns a broadcast sender instead of a fixed consumer. Consumers that cannot
-/// tolerate a dropped frame, such as an agent connection reading ACP, tap one process generation
-/// through an unbounded channel: the process runtime already buffers unboundedly, so the tap adds
-/// no new loss point, and the pump never waits on either path.
+/// tolerate a dropped frame, such as an agent connection reading ACP, open a [`GenerationTaps`]
+/// tap instead; the pump never waits on either path.
 #[derive(Clone, Debug)]
 pub(crate) struct BroadcastNotificationSink {
     sender: broadcast::Sender<InboundNotification>,
-    taps: Arc<Mutex<Vec<NotificationTap>>>,
-}
-
-/// One lossless subscription to the notifications of a single process generation.
-#[derive(Debug)]
-struct NotificationTap {
-    plugin_id: PluginId,
-    generation: PluginGenerationKey,
-    sender: mpsc::UnboundedSender<InboundNotification>,
+    taps: GenerationTaps,
 }
 
 impl BroadcastNotificationSink {
@@ -100,7 +91,7 @@ impl BroadcastNotificationSink {
         let (sender, _) = broadcast::channel(NOTIFICATION_CHANNEL_CAPACITY);
         Self {
             sender,
-            taps: Arc::new(Mutex::new(Vec::new())),
+            taps: GenerationTaps::default(),
         }
     }
 
@@ -108,33 +99,13 @@ impl BroadcastNotificationSink {
     pub(crate) fn subscribe(&self) -> broadcast::Receiver<InboundNotification> {
         self.sender.subscribe()
     }
-
-    /// Opens a lossless receiver of every notification `generation` of `plugin_id` emits from now
-    /// on. The tap is released when its receiver is dropped.
-    fn tap(
-        &self,
-        plugin_id: &PluginId,
-        generation: PluginGenerationKey,
-    ) -> mpsc::UnboundedReceiver<InboundNotification> {
-        let (sender, receiver) = mpsc::unbounded_channel();
-        self.taps
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(NotificationTap {
-                plugin_id: plugin_id.clone(),
-                generation,
-                sender,
-            });
-        receiver
-    }
 }
 
 impl PluginNotificationSink for BroadcastNotificationSink {
     /// Publishes the notification to the broadcast subscribers and to the taps of its generation.
     ///
     /// With no broadcast subscriber it is dropped there, which is logged at debug level so an
-    /// unexpectedly silent plugin stays diagnosable; taps whose receiver went away are pruned as
-    /// they are encountered.
+    /// unexpectedly silent plugin stays diagnosable.
     fn on_notification(&self, notification: InboundNotification) {
         if self.sender.send(notification.clone()).is_err() {
             ora_debug!(
@@ -144,17 +115,7 @@ impl PluginNotificationSink for BroadcastNotificationSink {
                 method = %notification.method,
             );
         }
-        self.taps
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .retain(|tap| {
-                if tap.plugin_id != notification.plugin_id
-                    || tap.generation != notification.generation
-                {
-                    return !tap.sender.is_closed();
-                }
-                tap.sender.send(notification.clone()).is_ok()
-            });
+        self.taps.deliver(&notification);
     }
 }
 
@@ -583,7 +544,7 @@ impl PluginApi {
             .lifecycle
             .ensure_running(plugin_id, AGENT_ATTACH_WAIT)
             .await?;
-        let notifications = self.notifications.tap(plugin_id, connection.key());
+        let notifications = self.notifications.taps.tap(plugin_id, connection.key());
         Ok(AgentPluginAttachment {
             connection,
             notifications,
@@ -834,42 +795,6 @@ mod tests {
     use ora_plugin_lifecycle::{InboundNotification, PluginGenerationKey, PluginNotificationSink};
     use pretty_assertions::assert_eq;
     use serde_json::json;
-
-    /// Verifies a tap sees only its own plugin generation, in order, and that dropping the
-    /// receiver releases the tap instead of failing later publications.
-    #[tokio::test]
-    async fn taps_receive_only_their_generation_and_release_on_drop() {
-        let sink = BroadcastNotificationSink::new();
-        let plugin_id = PluginId::new("official", "ora-space.agent").expect("plugin id");
-        let notification = |generation: u64, method: &str| InboundNotification {
-            plugin_id: plugin_id.clone(),
-            generation: PluginGenerationKey(generation),
-            method: method.to_owned(),
-            params: json!({}),
-        };
-        let mut tap = sink.tap(&plugin_id, PluginGenerationKey(2));
-        sink.on_notification(notification(1, "agent/acp"));
-        sink.on_notification(notification(2, "agent/acp"));
-        sink.on_notification(notification(2, "agent/modelsChanged"));
-
-        let received = (
-            tap.recv().await.expect("first"),
-            tap.recv().await.expect("second"),
-        );
-        drop(tap);
-        sink.on_notification(notification(2, "agent/acp"));
-
-        assert_eq!(
-            (received, sink.taps.lock().expect("lock taps").len(),),
-            (
-                (
-                    notification(2, "agent/acp"),
-                    notification(2, "agent/modelsChanged"),
-                ),
-                0,
-            )
-        );
-    }
 
     /// Verifies a subscriber attached after construction receives notifications in order and a
     /// notification without any subscriber is dropped without panicking.

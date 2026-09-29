@@ -11,6 +11,7 @@ mod scan;
 mod state;
 mod storage;
 mod surface_closer;
+mod taps;
 mod uninstall;
 
 pub use childprocess::{
@@ -43,6 +44,7 @@ pub use storage::{
     StorageErrorKind,
 };
 pub use surface_closer::SurfaceCloser;
+pub use taps::GenerationTaps;
 
 use launch::{complete_launch, transition_to_stopped};
 use state::{

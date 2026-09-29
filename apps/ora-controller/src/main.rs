@@ -23,8 +23,7 @@ fn main() -> ExitCode {
 }
 
 /// Validates flags and configuration before opening state; stops only this composition on shutdown.
-/// The persistence kind selects the composition: SQLite serves the JSON surface on the requested
-/// listener, cloud persistence serves none and refuses listener flags instead of ignoring them.
+/// The persistence kind selects the adapter; neither composition opens a listener.
 #[cfg(target_os = "linux")]
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     use clap::Parser;
@@ -35,6 +34,28 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let hosting = cli.hosting();
     let config: DeploymentConfig = serde_json::from_slice(&std::fs::read(&cli.config)?)?;
+    if let Persistence::Cloud {
+        endpoint,
+        substrate,
+        ..
+    } = &config.controller.persistence
+    {
+        if config.controller.management_tls.is_none() || !endpoint.starts_with("https://") {
+            return Err(
+                "Cloud management requires mutual TLS certificate files and https:// endpoint"
+                    .into(),
+            );
+        }
+        if substrate
+            .as_ref()
+            .is_some_and(|s| s.direct_node_port.is_none() || !s.effects_url.starts_with("https://"))
+        {
+            return Err(
+                "Cloud sandboxes require authenticated HTTPS effects and direct Node TLS endpoints"
+                    .into(),
+            );
+        }
+    }
     let _logging = ora_logging::init_logging(ora_logging::LoggingConfig::new(
         ora_logging::LogLevel::Info,
         ora_logging::LogOutput::Stdout,
@@ -45,22 +66,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
     match &config.controller.persistence {
         Persistence::Sqlite => {
-            let transport = cli.transport()?;
+            let home = config.controller.home_directory.clone();
             runtime.block_on(async {
-                let service = Service::<SqliteStore>::start(config, transport, hosting).await?;
+                let service = Service::<SqliteStore>::start(config, hosting).await?;
                 // Through the logger rather than println!, so the line keeps its place among the
                 // events written by the logger's own thread; launchers and tests read it there.
-                ora_logging::ora_info!(endpoint = %service.endpoint()?, "ora-controller listening");
+                ora_logging::ora_info!(home = %home.display(), "ora-controller coordinating locally");
                 serve(service).await
             })
         }
         Persistence::Cloud { endpoint, .. } => {
-            if cli.listener_requested() {
-                return Err(
-                    "cloud persistence serves no JSON surface; drop --transport/--host/--port/--socket"
-                        .into(),
-                );
-            }
             let endpoint = endpoint.clone();
             runtime.block_on(async {
                 let service = Service::<CloudStore>::start(config, hosting).await?;

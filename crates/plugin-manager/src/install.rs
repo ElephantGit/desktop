@@ -1,7 +1,7 @@
 //! Installs and updates plugin releases by downloading and safely extracting their package.
 
 mod cache;
-mod package;
+pub(crate) mod package;
 
 use crate::discovery::installed_root;
 use crate::limits::package_extract_limits;
@@ -89,7 +89,7 @@ impl From<ora_utils::http::DownloadError> for InstallError {
 }
 
 impl InstallError {
-    fn invalid_package(source: crate::validation::ManifestValidationError) -> Self {
+    pub(crate) fn invalid_package(source: crate::validation::ManifestValidationError) -> Self {
         Self::invalid_field(source.field_path(), source.to_string())
     }
 
@@ -98,7 +98,7 @@ impl InstallError {
     /// A manifest source that cannot be read and an identity that contradicts the listing are the
     /// same kind of user-facing problem as a failed host-side check — "this package is wrong at
     /// field X" — so they carry that shape instead of growing one variant per detection site.
-    fn invalid_field(field_path: impl Into<String>, message: impl Into<String>) -> Self {
+    pub(crate) fn invalid_field(field_path: impl Into<String>, message: impl Into<String>) -> Self {
         Self::InvalidPackage {
             field_path: field_path.into(),
             message: message.into(),
@@ -268,7 +268,7 @@ pub struct InstalledPackage {
 /// wiring supplies a network downloader while tests (and offline installs) use the local one.
 #[derive(Clone)]
 pub struct Installer<D> {
-    downloader: D,
+    pub(crate) downloader: D,
 }
 
 impl<D> Installer<D>

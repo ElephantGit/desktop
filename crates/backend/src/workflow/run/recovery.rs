@@ -81,9 +81,12 @@ fn decide_sweep(
     run_id: &WorkflowRunId,
 ) -> Result<SweepDecision, RepositoryError> {
     let node_runs = repository.list_node_runs(run_id)?;
+    let exiting_loops = pending_loop_exits(repository, &node_runs)?;
     let running: Vec<&WorkflowNodeRun> = node_runs
         .iter()
-        .filter(|node_run| node_run.status == WorkflowNodeStatus::Running)
+        .filter(|node_run| {
+            node_run.status == WorkflowNodeStatus::Running && !exiting_loops.contains(&node_run.id)
+        })
         .collect();
     // No `Running` row means the run was parked awaiting input (or already terminal): the
     // human-owned pause survives the restart untouched.
@@ -126,6 +129,26 @@ fn decide_sweep(
         interrupted.push(node_run.id.clone());
     }
     Ok(SweepDecision::AbsorbIntoComposite(interrupted))
+}
+
+/// Pending breaks contain no runnable child work; recovery must resume their cleanup instead of failing the parent.
+pub(super) fn pending_loop_exits(
+    repository: &SqliteWorkflowRunEngineRepository,
+    nodes: &[WorkflowNodeRun],
+) -> Result<std::collections::HashSet<WorkflowNodeRunId>, RepositoryError> {
+    let mut ids = std::collections::HashSet::new();
+    for node in nodes
+        .iter()
+        .filter(|node| node.node_type == "loop" && node.status == WorkflowNodeStatus::Running)
+    {
+        if let Some(scope) = repository.find_active_loop_round(&node.id)?
+            && serde_json::from_str::<ora_application::LoopRoundExecutionState>(&scope.state)
+                .is_ok_and(|state| state.exit.is_some())
+        {
+            ids.insert(node.id.clone());
+        }
+    }
+    Ok(ids)
 }
 
 /// Whether one row belongs to a composite runtime (the row's node resolves to a composite kind).

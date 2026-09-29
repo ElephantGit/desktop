@@ -61,6 +61,7 @@ function createMockNodeExecutionData(
   | "tool"
   | "condition"
   | "cases"
+  | "aggregatorConfig"
   | "waitStrategy"
   | "failureStrategy"
   | "maxAttempts"
@@ -71,6 +72,7 @@ function createMockNodeExecutionData(
   switch (kind) {
     case "start":
       return { input: "" };
+    case "loopExit":
     case "output":
       return {};
     case "iteration":
@@ -99,6 +101,10 @@ function createMockNodeExecutionData(
         // Keeping the first IF branch explicit makes its output handle stable before rules exist.
         cases: [{ id: "case-1", logic: "and", conditions: [] }],
       };
+    case "aggregator":
+      // Selectors start empty; the inspector requires at least one typed candidate before the
+      // graph becomes executable.
+      return { aggregatorConfig: { variables: [] } };
     case "tool":
       return { tool: capabilities.defaultTool };
     case "junction":

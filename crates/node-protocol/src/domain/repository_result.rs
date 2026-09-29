@@ -1,3 +1,4 @@
+use super::validate_commit;
 use crate::{
     CloneExecutionSpec, CommitId, MessageValidationError, NodePath, NodeRuntimeIdentity,
     RepositoryId,
@@ -23,6 +24,9 @@ pub enum CloneFailureCode {
     BranchNotFound,
     DestinationConflict,
     OperationFailed,
+    /// Terminated before Git reached its own verdict, with cleanup confirmed; a new execution may
+    /// simply retry, unlike `OperationFailed`, which usually needs investigation first.
+    Interrupted,
 }
 
 /// Describes retained responsibility, never permission to delete or reuse a directory.
@@ -70,13 +74,8 @@ impl CloneExecutionResult {
         match self {
             Self::CloneReady(result) => {
                 validate_destination(&result.repository_id, &result.path)?;
-                let commit = result.commit.as_str();
-                if !matches!(commit.len(), 40 | 64)
-                    || !commit.bytes().all(|b| b.is_ascii_hexdigit())
-                {
-                    return Err(MessageValidationError::InvalidCloneCommit);
-                }
-                Ok(())
+                validate_commit(&result.commit)
+                    .map_err(|_| MessageValidationError::InvalidCloneCommit)
             }
             Self::CloneFailed(result) => match &result.residual {
                 CloneResidual::NoDirectory {} => Ok(()),

@@ -37,9 +37,16 @@ mod managed;
 #[cfg(target_os = "linux")]
 mod service;
 #[cfg(target_os = "linux")]
+mod session;
+#[cfg(target_os = "linux")]
 pub use managed::{ManagedGitRunner, ProcessConfig, Shutdown};
 #[cfg(target_os = "linux")]
-pub use service::{IpcConfig, ServiceConfig, serve};
+pub use service::{ControlConfig, ControlListen, RuntimeScope, ServiceConfig, serve};
+#[cfg(target_os = "linux")]
+pub use session::{
+    AgentSessions, CheckoutResolver, CommandSettlement, HistoryUnavailable, PluginCatalog,
+    QueuedCommand, SessionCommand, SessionConfig, SessionHost, SessionLedger,
+};
 #[cfg(target_os = "linux")]
 pub type ManagedNode = Node<gitlancer::Git<ManagedGitRunner>>;
 pub use ora_node_db::{Command, DurableWrites, WriteGuard, WritePoint};
@@ -77,6 +84,9 @@ pub enum Error {
     Shutdown(String),
     #[error("invalid Node configuration: {0}")]
     Configuration(String),
+    /// The Controller sent a message this session does not handle.
+    #[error("message is not supported in this session")]
+    UnsupportedMessage,
 }
 
 /// Exclusive mutable execution access serializes commands and recovery for the leased database.
@@ -292,3 +302,8 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(target_os = "linux")]
+mod plugins;
+#[cfg(target_os = "linux")]
+pub use plugins::{DirectoryPluginCatalog, PluginInstaller, PluginUseLease};

@@ -17,7 +17,7 @@ and a whole-file lease there collides with them on macOS (`flock` and `fcntl` sh
 and on Windows (mandatory `LockFileEx` regions), which surfaces as "database is locked" or a disk I/O
 error. The sidecar is an inode beside the database, so every spelling of the same home resolves to
 the same lease. SQLite uses its default rollback journal and FULL synchronous writes. A new database receives application ID `0x4f52414e`
-and schema version 4. Exact version 1/2/3 schemas migrate transactionally after identity and integrity
+and schema version 7. Exact version 1/2/3/4/5/6 schemas migrate transactionally after identity and integrity
 validation, preserving executions, results and pending events. Existing empty files, foreign databases, unsupported versions, directories
 and corrupt databases are rejected without rebuilding them. The persistent NodeId survives
 reopening; each Node runtime generates a fresh NodeIncarnationId. An explicit identity mismatch
@@ -34,6 +34,11 @@ immutable across restart; a different Controller is rejected. A trigger attribut
 clones in the acceptance transaction. Migration and retransmission never adopt unclaimed historical
 executions. Controller-scoped replay excludes those records without deleting their original outbox.
 Old version-3 binaries refuse version 4 rather than interpreting it as their own schema.
+
+Version 5 adds `process_terminations`, recording Runs a signal ended once cleanup was confirmed; triggers
+keep each Run to either an exit code or a termination. Migration only creates the table and rewrites no
+attempt or result; old version-4 binaries refuse version 5 rather than reading a Run without an exit code
+as missing evidence.
 Clone persistence is described in [repository acquisition](repository-acquisition.md).
 The complete command is stored separately from the resolved target, which freezes the canonical
 binding, authorized roots, task path, branch and base commit. Unique operation/execution identities
@@ -63,3 +68,9 @@ Opening also checks table/index definitions and foreign-key integrity; the schem
 cannot authorize an unknown structure. A definitive no-effect Worktree creation failure retires reservations
 and releases active uniqueness while retaining execution deduplication and the failed result.
 Inconclusive executions continue to hold their reservations.
+
+Version 6 adds runtime bindings, enforcement and execution permits. Version 7 expands the shared
+identity table with the plugin family and adds `plugin_executions` and `plugin_outbox`. Migration
+retains all prior identities and checks foreign keys before committing the rebuilt table. Plugin
+terminal evidence and its single event commit atomically; an exact ACK removes only the event.
+See [plugin installation](../plugin-installation.md) for dispatch and restart behavior.

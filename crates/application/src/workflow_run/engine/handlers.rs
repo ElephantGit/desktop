@@ -145,6 +145,12 @@ where
                     run_id: request.run_id,
                 });
             }
+            UpdateWorkflowRunInputResult::Rejected(rejection) => {
+                return Err(ApplicationError::WorkflowRunInputInvalid {
+                    variable: rejection.variable,
+                    reason: rejection.reason.detail(),
+                });
+            }
         }
         let run = self.find_run(&run_id)?;
         Ok(UpdateWorkflowRunInputResponse { run: map_run(run) })

@@ -6,6 +6,12 @@ edition.workspace = true
 [lints]
 workspace = true
 
+[[bin]]
+name = "ora-node-echo-agent"
+path = "fixtures/echo-agent/main.rs"
+test = false
+bench = false
+
 [dependencies]
 gitlancer.workspace = true
 ora-utils = { workspace = true, features = ["local-ipc"] }
@@ -20,9 +26,26 @@ shlex.workspace = true
 tracing.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
+ora-utils = { workspace = true, features = ["http-reqwest"] }
+agent-client-protocol-schema.workspace = true
+chrono-tz.workspace = true
+ora-agent-runtime.workspace = true
+ora-contracts.workspace = true
+ora-domain.workspace = true
+ora-effect.workspace = true
+ora-history.workspace = true
+ora-plugin-lifecycle.workspace = true
+ora-plugin-manager.workspace = true
+ora-plugin-registry.workspace = true
+semver.workspace = true
+url.workspace = true
+tempfile.workspace = true
+ora-plugin-protocol.workspace = true
+ora-scheduler.workspace = true
 ora-process-client.workspace = true
 ora-process-protocol.workspace = true
-tokio = { workspace = true, features = ["rt", "net", "time", "signal", "macros", "sync"] }
+ora-node-transport = { workspace = true, features = ["websocket"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net", "time", "signal", "macros", "sync", "io-std", "io-util"] }
 libc.workspace = true
 
 [dev-dependencies]
@@ -32,8 +55,9 @@ rustls.workspace = true
 rcgen.workspace = true
 tracing-subscriber.workspace = true
 pretty_assertions.workspace = true
+zip.workspace = true
 tempfile.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
-ora-contracts.workspace = true
-reqwest = { workspace = true, features = ["json"] }
+futures-util.workspace = true
+tokio-tungstenite = "0.29"

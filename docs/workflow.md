@@ -39,6 +39,8 @@ Snapshot versions are strings. The draft is identified by the reserved string `"
 
 The `graph` column stores the complete React Flow JSON document. Workflow definition CRUD treats it as an opaque string; the [workflow run engine](../crates/application/src/workflow_run/engine/README.md) parses and validates the frozen snapshot when a run starts.
 
+Every editor load path — draft hydration, version preview, and the run view — parses through one shared boundary that drops what this version cannot draw: a node that is not a usable record, or whose `data.kind` is outside the kinds the canvas registers, is removed together with the edges that referenced it, and the editor reports how many nodes and which kinds it skipped. Dropping happens on read and never rewrites the stored bytes, so a published snapshot keeps the original document and a rollback or re-import restores the skipped nodes; what does change is the draft, because the next autosave writes the normalized graph. See [Workflow Editor Load Path](workflow-editor-load-path-fix.md).
+
 ## Nodes excluded from execution
 
 Authors can retain spare nodes and connected groups outside the execution path. Drafts, published snapshots, rollback, and import/export preserve the complete canvas; execution derives an entry-reachable subgraph from the frozen snapshot without rewriting it.
@@ -66,7 +68,7 @@ a typed `until` condition, and named exports. Each Loop body is a separate DAG w
 reachable Start. Nested Loops, ownership mismatches, cross-scope edges and selectors, invalid
 types on active nodes are rejected before sessions start. Spare children unreachable from the child Start remain in the snapshot and do not execute. The default editor group feeds
 the child Agent output into the next round's `value`, stops on a non-empty output, and exports it as
-`result`; authors can set the initial value and maximum rounds.
+`result`; authors can set the initial value and maximum rounds. The Loop panel also edits end conditions using child outputs (including structured fields), carried variables, and visible outer variables, comparison operators, and target values. Multiple rules combine with AND/OR; at least one rule is retained. Conditions are checked after each round: a match succeeds, otherwise execution continues, and reaching the limit without a match fails. Emptiness and existence checks support unset variables; other comparisons fail rather than reusing a previous round value. Following the [Dify termination editor reference](dify-loop-termination-reference.md), operators are filtered by variable type, booleans use a picker, and unary conditions hide the comparison value. Ora retains its post-round evaluation and failure-at-limit semantics.
 
 Each iteration has a durable `WorkflowExecutionScope`. Child NodeRuns and Sessions belong to that
 scope, so repeated definition node IDs do not overwrite another round. Completion resolves feedback
@@ -96,6 +98,25 @@ with an explicit error; it is never silently skipped. Unselected plugins cannot 
 Ordinary chats keep automatic discovery. Package and configuration updates for selected plugins
 still use the existing safe refresh boundary; no credentials are persisted in the graph. See
 [Session MCP](session-mcp.md) for runtime delivery and refresh behavior.
+
+## Variable Aggregator
+
+The aggregator is a swift control node that collapses mutually exclusive branch outputs into one
+variable. Its `data.aggregatorConfig.variables` holds an ordered list of Dify-style root selectors
+`["nodeId", "root"]`; the array order is the priority contract, so the first **assigned** candidate
+in declaration order passes its pool value through unchanged as `{agg}.output`. Assigned means the
+selector's key exists in the pool — never a truthiness check, so `null`, `false`, `0`, `""`, `[]`,
+and `{}` all hit. When every candidate is unassigned the node fails the run with the stable
+`aggregator_no_match` failure kind.
+
+Parse-time validation keeps the output type static: every candidate must be declared, must be
+produced by the aggregator's static transitive predecessor or a global variable (producers on
+mutually exclusive sibling branches qualify, because their edges feed the aggregator), and all
+candidates must share one declared type — `{agg}.output` is declared with that common type. The
+node never reads Condition decisions and the scheduling core stays type-agnostic: branch selection
+is expressed entirely by the existing branch projection (inactive Condition edges never gate
+readiness) plus pool facts. Groups, nested-path selectors, and type coercion are out of scope for
+V1.
 
 ## Handlers
 
@@ -131,7 +152,7 @@ The session history is the sole source of a node's complete conversation. `workf
 
 Workflow value types are enforced at graph parsing, editor entry, and variable-pool writes. `array` and `array[any]` both accept heterogeneous JSON arrays; the first is the concise unconstrained declaration and the second explicitly documents an unconstrained element type. Typed arrays validate every element. `file` is a durable Workspace-relative reference shaped as `{ "kind": "workspace_file", "path": "relative/path" }`, and `array[file]` is an array of those references. Editor path strings and legacy saved path strings are normalized into that object, while absolute paths, parent traversal, empty paths, and platform-reserved paths are rejected. Global-value placeholders are generated from this vocabulary, so changing a declaration's type immediately shows a parseable example. Structured Agent schemas use the same types, are validated recursively before execution, and generate a schema-derived valid JSON example in the Agent prompt. Agent-produced file fields must use the canonical object representation shown in that example.
 
-Start inputs keep their form control separate from their variable-pool type. The editor supports text, paragraph, select, number, checkbox, single-file, file-list, and JSON controls, which emit `string`, `string`, `string`, `number`, `boolean`, `file`, `array[file]`, and `object` values respectively. Select choices, required state, and text length limits are frozen into the deployed snapshot and validated again at the execution boundary. Snapshots created before form controls were introduced continue to derive a compatible control from their declared value type.
+Start inputs keep their form control separate from their variable-pool type. The editor supports text, paragraph, select, number, checkbox, single-file, file-list, and JSON controls, which emit `string`, `string`, `string`, `number`, `boolean`, `file`, `array[file]`, and `any` values respectively. A JSON control may declare any structured pool type (`object`, `any`, `array`, or a typed `array[...]`) so a Start source can hold the JSON arrays that feed iterations; its initial value and run inputs must match the declared type, and graph parsing rejects the pairing only when a control cannot produce the declared type. Select choices, required state, and text length limits are frozen into the deployed snapshot and validated again at the execution boundary. Run-input rejections stay user-actionable: a value that fails its declared type (including unsafe file paths), an unknown variable name, a select value outside its options, or a missing required Start value at start time surfaces as the `workflow_run_input_invalid` public error naming the variable (by its declared name, not the optional display label) and the reason, not an internal failure. One submission reports at most one rejection — the first refused value in alphabetical order — and applies no value from that submission, so each save points at exactly one field to fix. Snapshots created before form controls were introduced continue to derive a compatible control from their declared value type.
 
 ### Iteration nodes (foreach composite runtime)
 

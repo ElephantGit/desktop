@@ -1,7 +1,7 @@
 //! Node-owned Git execution association; process facts remain owned by host and guardian.
 mod repository;
 mod transport;
-pub(crate) use repository::CloneRecovery;
+pub(crate) use repository::{AttemptSettlement, CloneHost};
 
 use crate::git::ExecutionGitRunner;
 use gitlancer::{GitCommand, GitExecError, GitIntent, GitOutput, GitRunner};
@@ -23,6 +23,9 @@ use std::{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProcessConfig {
+    /// Cloud's workload identity; management retains its protected OS identity.
+    #[serde(default)]
+    pub workload_uid: Option<u32>,
     pub host_directory: PathBuf,
     pub expected_uid: u32,
     pub git_program: PathBuf,
@@ -30,6 +33,25 @@ pub struct ProcessConfig {
     pub command_timeout_ms: u64,
     pub cleanup_timeout_ms: u64,
     pub shutdown_grace_ms: u64,
+}
+
+impl ProcessConfig {
+    fn isolate_workload(&self, spec: &mut RunSpec) {
+        if let Some(uid) = self.workload_uid {
+            let program = spec.program.clone();
+            let args = std::mem::take(&mut spec.args);
+            spec.program = "/usr/bin/setpriv".into();
+            spec.args = vec![
+                format!("--reuid={uid}").into(),
+                format!("--regid={uid}").into(),
+                "--clear-groups".into(),
+                "--no-new-privs".into(),
+                "--".into(),
+                program,
+            ];
+            spec.args.extend(args);
+        }
+    }
 }
 
 /// Shutdown stops admission immediately while allowing the current command a bounded grace period.
@@ -68,6 +90,7 @@ pub struct ManagedGitRunner<W: WriteGuard = DurableWrites> {
     shutdown: Shutdown,
     owner: RunLifetime,
     reads: RefCell<Option<(ScopeId, usize)>>,
+    clone_host: CloneHost,
 }
 
 impl<W: WriteGuard> ManagedGitRunner<W> {
@@ -87,7 +110,26 @@ impl<W: WriteGuard> ManagedGitRunner<W> {
             ));
         }
         let stat = ora_utils::process::linux_process(std::process::id())?;
+        if let Some(uid) = config.workload_uid {
+            // SAFETY: reading the management identity changes no process credentials.
+            if unsafe { libc::geteuid() } != 0 || uid == 0 || !config.environment.is_empty() {
+                return Err(std::io::Error::other(
+                    "isolated workloads require root management, a non-root workload identity and an empty base environment",
+                ));
+            }
+            ora_utils::path::open_trusted_path(
+                std::path::Path::new("/usr/bin/setpriv"),
+                0,
+                ora_utils::path::TrustedPathKind::File,
+            )
+            .map_err(std::io::Error::other)?;
+        }
+        let owner = RunLifetime::TerminateOnOwnerExit {
+            pid: stat.pid,
+            start_ticks: stat.start_ticks,
+        };
         Ok(Self {
+            clone_host: CloneHost::new(config.clone(), shutdown.clone(), owner)?,
             journal,
             config,
             shutdown,
@@ -95,10 +137,7 @@ impl<W: WriteGuard> ManagedGitRunner<W> {
             runtime: tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?,
-            owner: RunLifetime::TerminateOnOwnerExit {
-                pid: stat.pid,
-                start_ticks: stat.start_ticks,
-            },
+            owner,
             reads: RefCell::new(None),
         })
     }
@@ -215,6 +254,7 @@ impl<W: WriteGuard> GitRunner for ManagedGitRunner<W> {
             },
         );
         spec.args = command.args.iter().map(OsString::from).collect();
+        self.config.isolate_workload(&mut spec);
         spec.env = self
             .config
             .environment

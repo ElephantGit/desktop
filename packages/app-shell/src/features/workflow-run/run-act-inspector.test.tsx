@@ -145,6 +145,28 @@ function renderInspector(
 }
 
 describe("RunActInspector agent config", () => {
+  it("shows completed Agent output alongside file changes instead of the empty outcome placeholder", async () => {
+    await appI18n.changeLanguage("zh-CN");
+    renderInspector({
+      status: "succeeded",
+      output: { summary: "DRAFT_1|previous=EMPTY" },
+      fileChanges: [{ path: "result.txt", additions: 1, deletions: 0 }],
+    });
+    expect(screen.getByText("DRAFT_1|previous=EMPTY")).toBeInTheDocument();
+    expect(screen.getByText("result.txt")).toBeInTheDocument();
+    expect(
+      screen.queryByText("该步骤产出后会显示在这里。"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not display unfinished Agent output in the outcomes sidebar", async () => {
+    await appI18n.changeLanguage("zh-CN");
+    renderInspector({
+      status: "running",
+      output: { summary: "partial stream" },
+    });
+    expect(screen.queryByText("partial stream")).not.toBeInTheDocument();
+  });
   it("shows read-only agent fields and skill briefs for enabled skills only", async () => {
     await appI18n.changeLanguage("zh-CN");
     const { user } = renderInspector();

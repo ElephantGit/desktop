@@ -14,7 +14,7 @@ use crate::workflow_run::engine::node_type::NodeType;
 use crate::workflow_run::engine::ports::ExecutionContext;
 use crate::workflow_run::engine::retry::AgentRetryPolicy;
 use crate::workflow_run::engine::variable_pool::WorkflowVariablePool;
-use control::{ConditionRuntime, OutputRuntime, StartRuntime};
+use control::{AggregatorRuntime, ConditionRuntime, LoopExitRuntime, OutputRuntime, StartRuntime};
 use iteration::IterationRuntime;
 use ora_domain::{WorkflowNodeRun, WorkflowNodeRunId, WorkflowNodeStatus};
 use std::cmp::Reverse;
@@ -52,6 +52,11 @@ pub trait NodeRuntime: Send + Sync {
 /// `node_runtime_module_performs_no_io_or_waiting` (see `engine/tests.rs`) rejects IO and
 /// waiting primitives anywhere in the runtime module.
 pub trait SwiftNodeRuntime: NodeRuntime {
+    /// Requests a durable break of the enclosing Loop instead of ordinary completion.
+    fn requests_loop_exit(&self) -> bool {
+        false
+    }
+
     /// Computes the terminal output of one running node, or the failure message that fails it.
     fn complete_running(
         &self,
@@ -292,6 +297,10 @@ where
         RegisteredNodeRuntime::Swift(Arc::new(ConditionRuntime)),
     );
     runtimes.register(
+        NodeType::Aggregator,
+        RegisteredNodeRuntime::Swift(Arc::new(AggregatorRuntime)),
+    );
+    runtimes.register(
         NodeType::Output,
         RegisteredNodeRuntime::Swift(Arc::new(OutputRuntime)),
     );
@@ -304,6 +313,10 @@ where
         RegisteredNodeRuntime::Composite(Arc::new(IterationRuntime)),
     );
     runtimes.register(NodeType::Loop, RegisteredNodeRuntime::ScopedLoop);
+    runtimes.register(
+        NodeType::LoopExit,
+        RegisteredNodeRuntime::Swift(Arc::new(LoopExitRuntime)),
+    );
     runtimes
 }
 

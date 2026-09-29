@@ -56,7 +56,6 @@ jobs:
               - 'Cargo.lock'
             frontend:
               - *shared
-              - 'apps/minicloud/client/**'
               - 'packages/**'
               - 'crates/contracts/**'
               - 'xtask/**'

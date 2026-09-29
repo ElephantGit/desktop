@@ -52,6 +52,31 @@ impl<G: WriteGuard> NodeDatabase<G> {
         command: &CloneRepositoryMessage,
         target: &CloneTarget,
     ) -> Result<CloneExecution, Error> {
+        self.accept_clone_with_control(command, target, None)
+    }
+
+    /// Control responsibility and clone reservation commit together; neither can survive alone.
+    pub fn accept_controlled_clone(
+        &mut self,
+        command: &CloneRepositoryMessage,
+        target: &CloneTarget,
+        permit: &RuntimeBinding,
+    ) -> Result<CloneExecution, Error> {
+        self.validate_runtime_permit(permit)?;
+        if permit.execution_id != command.execution_id.as_str()
+            || permit.node_operation_id != command.operation_id.as_str()
+        {
+            return Err(Error::IdentityConflict);
+        }
+        self.accept_clone_with_control(command, target, Some(permit))
+    }
+
+    fn accept_clone_with_control(
+        &mut self,
+        command: &CloneRepositoryMessage,
+        target: &CloneTarget,
+        permit: Option<&RuntimeBinding>,
+    ) -> Result<CloneExecution, Error> {
         command.validate()?;
         if command.payload.spec.node_id != self.node_id {
             return Err(Error::NodeMismatch);
@@ -62,6 +87,9 @@ impl<G: WriteGuard> NodeDatabase<G> {
             } else {
                 Err(Error::IdentityConflict)
             };
+        }
+        if permit.is_some() && !self.unfinished_runtime_executions()?.is_empty() {
+            return Err(Error::ResourceConflict);
         }
         if target.repository_id.as_str().trim().is_empty()
             || !target.root.is_absolute()
@@ -100,6 +128,15 @@ impl<G: WriteGuard> NodeDatabase<G> {
                 serde_json::to_string(&progress)?,
             ],
         )?;
+        if let Some(permit) = permit {
+            tx.execute(
+                "INSERT INTO execution_control(execution,permit) VALUES(?1,?2)",
+                params![
+                    command.execution_id.as_str(),
+                    serde_json::to_string(permit)?
+                ],
+            )?;
+        }
         tx.commit()?;
         Ok(CloneExecution {
             command: command.clone(),
@@ -206,15 +243,31 @@ impl<G: WriteGuard> NodeDatabase<G> {
         if pending {
             return Err(Error::InvalidTransition);
         }
+        let interrupted = matches!(
+            &result,
+            CloneExecutionResult::CloneFailed(failed) if failed.failure == CloneFailureCode::Interrupted
+        );
         if matches!(phase, ClonePhase::Dispatched { .. }) {
             let codes: Vec<i32> = self.connection.prepare(
                 "SELECT exit_code FROM process_outcomes JOIN process_attempts USING(run) WHERE execution=?1",
             )?.query_map([record.command.execution_id.as_str()], |r| r.get(/*idx*/ 0))?.collect::<Result<_, _>>()?;
+            let terminations: i64 = self.connection.query_row(
+                "SELECT count(*) FROM process_terminations JOIN process_attempts USING(run) WHERE execution=?1",
+                [record.command.execution_id.as_str()], |r| r.get(/*idx*/ 0),
+            )?;
             let success = matches!(result, CloneExecutionResult::CloneReady(_));
-            if codes.len() != 1 || (success && codes[0] != 0) {
+            // The single Run's one recorded ending decides which results are attributable: an
+            // exit code backs success or a Git failure, a signal termination backs only Interrupted.
+            let attributable = match (codes.as_slice(), terminations) {
+                ([code], 0) => !interrupted && (!success || *code == 0),
+                ([], 1) => interrupted,
+                _ => false,
+            };
+            if !attributable {
                 return Err(Error::InvalidTransition);
             }
-        } else if matches!(result, CloneExecutionResult::CloneReady(_)) {
+        } else if matches!(result, CloneExecutionResult::CloneReady(_)) || interrupted {
+            // Nothing was dispatched, so there is neither a success nor a terminated attempt.
             return Err(Error::InvalidTransition);
         }
         self.guard.before_write(WritePoint::Complete)?;
@@ -259,6 +312,9 @@ impl<G: WriteGuard> NodeDatabase<G> {
             Some("clone") => Ok(self
                 .find_clone(operation, execution)?
                 .map_or(ExecutionState::Unknown, |r| r.progress.state())),
+            Some("plugin") => Ok(self
+                .find_plugins(operation, execution)?
+                .map_or(ExecutionState::Unknown, |r| r.state)),
             None => Ok(ExecutionState::Unknown),
             Some(_) => Err(Error::InvalidSchema),
         }

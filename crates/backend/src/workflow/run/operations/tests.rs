@@ -467,3 +467,55 @@ fn concurrent_resume_from_failure_reruns_the_failed_node_once() {
         );
     });
 }
+
+/// The full startup composition drains an interrupted break and resumes only the outer graph.
+#[test]
+fn loop_exit_recovery_finishes_bound_session_cleanup() {
+    run_test(async {
+        let temporary = TempDir::new().unwrap();
+        let backend = Backend::open(backend_paths(temporary.path(), temporary.path())).unwrap();
+        let runs = backend.workflow_runs();
+        let graph = crate::workflow::run::loop_exit_tests::graph(/*parallel*/ true);
+        let (id, nodes, engine) = started_run_with(
+            &temporary,
+            &runs.pool,
+            &graph,
+            crate::workflow::run::loop_exit_tests::PendingCleanup,
+        );
+        let writer = nodes.iter().find(|node| node.node_id == "writer").unwrap();
+        let slow = nodes.iter().find(|node| node.node_id == "slow").unwrap();
+        let _ = bind_and_park(&runs.pool, slow);
+        engine
+            .complete_node(
+                &id,
+                &writer.id,
+                Some("done".into()),
+                /*structured_output*/ None,
+                /*stop_reason*/ None,
+                vec![],
+            )
+            .unwrap();
+        drop(engine);
+        drop(runs);
+        drop(backend);
+        let reopened = Backend::open(backend_paths(temporary.path(), temporary.path())).unwrap();
+        let runs = reopened.workflow_runs();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let detail = runs
+                    .get(GetWorkflowRunRequest {
+                        run_id: id.to_string(),
+                    })
+                    .unwrap();
+                if detail.run.status == ora_contracts::WorkflowRunStatus::Succeeded {
+                    assert_eq!(detail.run.output, Some(r#"{"result":"done"}"#.into()));
+                    break;
+                }
+                assert_ne!(detail.run.status, ora_contracts::WorkflowRunStatus::Failed);
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("exit acknowledgement resumes the outer graph");
+    });
+}

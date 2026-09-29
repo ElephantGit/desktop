@@ -17,6 +17,9 @@ export const workflowEditorTranslations = {
     "errors.workflow_snapshot_in_use": "该工作流快照正在使用中。",
     "settings.workflow.nodes": "节点",
     "settings.workflow.nodesHint": "点击添加到画布，再连接执行顺序。",
+    "settings.workflow.unsupportedNodesSkipped":
+      "已跳过 {{count}} 个本版本无法渲染的节点（{{kinds}}）",
+    "settings.workflow.unsupportedNodesUnknownKind": "未知类型",
     "settings.workflow.add": "添加",
     "settings.workflow.addNode": "添加工作流节点",
     "settings.workflow.startAlreadyPresent": "工作流已包含开始节点",
@@ -224,6 +227,9 @@ export const workflowEditorTranslations = {
     "settings.workflow.start.createVariableTitle": "新增变量",
     "settings.workflow.start.editVariableTitle": "编辑变量",
     "settings.workflow.start.fieldType": "字段类型",
+    "settings.workflow.start.valueType": "值类型",
+    "settings.workflow.start.valueTypeHint":
+      "JSON 字段可声明任意结构化类型，初始值与运行输入需匹配该类型。",
     "settings.workflow.start.fieldTypes.text-input": "文本",
     "settings.workflow.start.fieldTypes.paragraph": "段落",
     "settings.workflow.start.fieldTypes.select": "下拉选项",
@@ -282,6 +288,20 @@ export const workflowEditorTranslations = {
     "settings.workflow.condition.variablePlaceholder": "如 工具1.exit_code",
     "settings.workflow.condition.operatorPlaceholder": "选择条件",
     "settings.workflow.condition.valuePlaceholder": "如 0",
+    "settings.workflow.aggregation.description":
+      "按声明顺序取第一个已产出的候选变量，原值透传为输出。声明顺序即优先级。",
+    "settings.workflow.aggregation.selectorLabel": "候选变量 {{index}}",
+    "settings.workflow.aggregation.variablePlaceholder": "选择候选变量",
+    "settings.workflow.aggregation.moveUp": "上移候选变量",
+    "settings.workflow.aggregation.moveDown": "下移候选变量",
+    "settings.workflow.aggregation.removeSelector": "移除候选变量",
+    "settings.workflow.aggregation.addSelector": "添加候选变量",
+    "settings.workflow.aggregation.emptyHint":
+      "尚无候选变量。请先从各分支连入本节点，再在此添加分支产出的变量。",
+    "settings.workflow.aggregation.typeMismatch":
+      "候选变量类型不一致，运行前需要统一为相同类型。",
+    "settings.workflow.aggregation.outputHint":
+      "下游节点通过“输出”引用聚合结果；全部候选都未产出时节点会失败。",
     "settings.workflow.tool.addParameter": "添加参数",
     "settings.workflow.tool.removeParameter": "移除参数",
     "settings.workflow.tool.noOperations": "该工具暂无可选操作",
@@ -337,8 +357,10 @@ export const workflowEditorTranslations = {
     "settings.workflow.junction.collectResults": "收集结果继续",
     "settings.workflow.loop.exitConditionPlaceholder":
       "如 verification.status == passed",
+    "settings.workflow.loop.until": "结束条件",
+    "settings.workflow.loop.untilLogic": "结束条件组合方式",
     "settings.workflow.loop.defaultBehavior":
-      "每轮将 Agent 输出反馈为下一轮的 value；输出非空时结束，并导出为 result。",
+      "执行到退出循环节点时提前结束；否则每轮完成后检查结束条件。可删除所有条件，仅使用退出节点。达到最大轮次仍未结束时，循环失败。输出引用的值必须已生成。",
     "settings.workflow.loop.legacyUnsupported":
       "此旧循环节点缺少可执行配置，请删除后重新添加。",
     "settings.workflow.subflow.hint":
@@ -391,6 +413,7 @@ export const workflowEditorTranslations = {
     "settings.workflow.field.model": "模型",
     "settings.workflow.field.tool": "工具",
     "settings.workflow.field.condition": "分支条件",
+    "settings.workflow.field.aggregation": "聚合候选",
     "settings.workflow.field.instruction": "执行指令",
     "settings.workflow.field.agentModel": "Agent 模型",
     "settings.workflow.field.role": "角色",
@@ -524,6 +547,9 @@ export const workflowEditorTranslations = {
     "settings.workflow.nodes": "Nodes",
     "settings.workflow.nodesHint":
       "Click to add a node, then connect the execution order.",
+    "settings.workflow.unsupportedNodesSkipped":
+      "Skipped {{count}} nodes this version cannot render ({{kinds}})",
+    "settings.workflow.unsupportedNodesUnknownKind": "unknown kind",
     "settings.workflow.add": "Add",
     "settings.workflow.addNode": "Add workflow node",
     "settings.workflow.startAlreadyPresent":
@@ -751,6 +777,9 @@ export const workflowEditorTranslations = {
     "settings.workflow.start.createVariableTitle": "Add variable",
     "settings.workflow.start.editVariableTitle": "Edit variable",
     "settings.workflow.start.fieldType": "Field type",
+    "settings.workflow.start.valueType": "Value type",
+    "settings.workflow.start.valueTypeHint":
+      "JSON fields can declare any structured type; the initial value and run inputs must match it.",
     "settings.workflow.start.fieldTypes.text-input": "Text",
     "settings.workflow.start.fieldTypes.paragraph": "Paragraph",
     "settings.workflow.start.fieldTypes.select": "Select",
@@ -814,6 +843,22 @@ export const workflowEditorTranslations = {
     "settings.workflow.condition.variablePlaceholder": "e.g. tool1.exit_code",
     "settings.workflow.condition.operatorPlaceholder": "Select condition",
     "settings.workflow.condition.valuePlaceholder": "e.g. 0",
+    "settings.workflow.aggregation.description":
+      "Passes the first produced candidate variable through in declaration order. Declaration order is the priority.",
+    "settings.workflow.aggregation.selectorLabel":
+      "Candidate variable {{index}}",
+    "settings.workflow.aggregation.variablePlaceholder":
+      "Select a candidate variable",
+    "settings.workflow.aggregation.moveUp": "Move candidate up",
+    "settings.workflow.aggregation.moveDown": "Move candidate down",
+    "settings.workflow.aggregation.removeSelector": "Remove candidate variable",
+    "settings.workflow.aggregation.addSelector": "Add candidate variable",
+    "settings.workflow.aggregation.emptyHint":
+      "No candidates yet. Connect the branches into this node first, then add the variables they produce.",
+    "settings.workflow.aggregation.typeMismatch":
+      "Candidate types are inconsistent; unify them to one type before running.",
+    "settings.workflow.aggregation.outputHint":
+      "Downstream nodes reference the aggregated value through “output”; the node fails when no candidate was produced.",
     "settings.workflow.tool.addParameter": "Add parameter",
     "settings.workflow.tool.removeParameter": "Remove parameter",
     "settings.workflow.tool.noOperations":
@@ -881,8 +926,10 @@ export const workflowEditorTranslations = {
     "settings.workflow.junction.collectResults": "Collect results and continue",
     "settings.workflow.loop.exitConditionPlaceholder":
       "e.g. verification.status == passed",
+    "settings.workflow.loop.until": "End conditions",
+    "settings.workflow.loop.untilLogic": "End condition logic",
     "settings.workflow.loop.defaultBehavior":
-      "Each Agent output feeds the next round as value; a non-empty output stops the Loop and is exported as result.",
+      "Exit loop nodes stop the loop early; otherwise conditions are checked after each round. Remove all conditions to use only exit nodes. Reaching the limit without an exit fails the loop. Output bindings must already have values.",
     "settings.workflow.loop.legacyUnsupported":
       "This legacy Loop lacks executable configuration. Delete it and add a new Loop.",
     "settings.workflow.subflow.hint":
@@ -937,6 +984,7 @@ export const workflowEditorTranslations = {
     "settings.workflow.field.model": "Model",
     "settings.workflow.field.tool": "Tool",
     "settings.workflow.field.condition": "Branch condition",
+    "settings.workflow.field.aggregation": "Aggregation candidates",
     "settings.workflow.field.instruction": "Instructions",
     "settings.workflow.field.agentModel": "Agent model",
     "settings.workflow.field.role": "Role",

@@ -85,6 +85,14 @@ pub(super) fn outcome(result: proto::ExecutionResult) -> Result<ExecutionOutcome
             failure: failure(failed.reason)?,
             retained_path: failed.retained_path.map(NodePath::new),
         },
+        // This Controller registers clones only, so no record it reads back can hold another
+        // execution family.
+        proto::execution_result::Outcome::PluginsResult(_)
+        | proto::execution_result::Outcome::PluginsFailed(_)
+        | proto::execution_result::Outcome::AgentSessionEnded(_)
+        | proto::execution_result::Outcome::RevisionDelivered(_)
+        | proto::execution_result::Outcome::RevisionUnchanged(_)
+        | proto::execution_result::Outcome::RevisionFailed(_) => return Err(Error::Conflict),
     })
 }
 
@@ -100,7 +108,7 @@ pub(super) fn command(
     let command = CloneRepositoryMessage {
         protocol_version: CURRENT_PROTOCOL_VERSION,
         request_id: None,
-        operation_id: OperationId::new(record.operation_id.clone()),
+        operation_id: OperationId::new(record.node_operation_id.clone()),
         execution_id: ExecutionId::new(record.execution_id.clone()),
         payload: CloneRepository {
             spec: spec(record.input.clone(), node)?,
@@ -116,6 +124,7 @@ fn reason(failure: CloneFailureCode) -> proto::CloneFailureReason {
         CloneFailureCode::BranchNotFound => proto::CloneFailureReason::BranchNotFound,
         CloneFailureCode::DestinationConflict => proto::CloneFailureReason::DestinationConflict,
         CloneFailureCode::OperationFailed => proto::CloneFailureReason::OperationFailed,
+        CloneFailureCode::Interrupted => proto::CloneFailureReason::Interrupted,
     }
 }
 
@@ -125,6 +134,7 @@ fn failure(reason: i32) -> Result<CloneFailureCode, Error> {
         proto::CloneFailureReason::BranchNotFound => Ok(CloneFailureCode::BranchNotFound),
         proto::CloneFailureReason::DestinationConflict => Ok(CloneFailureCode::DestinationConflict),
         proto::CloneFailureReason::OperationFailed => Ok(CloneFailureCode::OperationFailed),
+        proto::CloneFailureReason::Interrupted => Ok(CloneFailureCode::Interrupted),
         proto::CloneFailureReason::Unspecified => Err(Error::Conflict),
     }
 }
@@ -154,6 +164,7 @@ mod tests {
     #[test]
     fn records_rebuild_the_original_command() {
         let record = proto::ExecutionRecord {
+            node_operation_id: "operation".into(),
             operation_id: "operation".into(),
             execution_id: "execution".into(),
             node_id: "node".into(),
@@ -221,6 +232,17 @@ mod tests {
             outcome(result(&failed)).unwrap(),
             ExecutionOutcome::from(&failed)
         );
+        // Every failure category survives the contract round trip, so no reason Cloud stores
+        // decays into another category or a conflict when read back.
+        for code in [
+            CloneFailureCode::SourceUnavailable,
+            CloneFailureCode::BranchNotFound,
+            CloneFailureCode::DestinationConflict,
+            CloneFailureCode::OperationFailed,
+            CloneFailureCode::Interrupted,
+        ] {
+            assert_eq!(failure(reason(code) as i32).unwrap(), code);
+        }
         let mut unspecified = result(&failed);
         unspecified.outcome = Some(proto::execution_result::Outcome::CloneFailed(
             proto::CloneFailed {

@@ -222,6 +222,18 @@ function configuredParameters(
     );
     return parameters;
   }
+  if (data.kind === "aggregator") {
+    const selectors = (data.aggregatorConfig?.variables ?? []).map((selector) =>
+      selector.join("."),
+    );
+    if (selectors.length > 0) {
+      parameters.push({
+        label: t("settings.workflow.field.aggregation"),
+        values: selectors,
+      });
+    }
+    return parameters;
+  }
   if (data.kind === "output" || data.kind === "subflow") {
     return parameters;
   }

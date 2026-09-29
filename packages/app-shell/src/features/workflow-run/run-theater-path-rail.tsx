@@ -5,7 +5,11 @@ import { RunRetryWaitLabel } from "./run-retry-wait-label";
 import { retryWaitAttemptText } from "./retry-countdown";
 import { RunStatusMark } from "./run-status-mark";
 import { runStatusTone } from "./run-status-style";
-import { type GraphWorkflowRun, type HitlRequest } from "@ora/workflow-runtime";
+import {
+  type GraphWorkflowRun,
+  type GraphWorkflowRound,
+  type HitlRequest,
+} from "@ora/workflow-runtime";
 import {
   projectRunPathStructure,
   type RunPathRegionStage,
@@ -28,6 +32,11 @@ interface RunTheaterPathRailProps {
   onExpandHitl: (requestId: string) => void;
   /** Terminal path review → back to the result act. */
   onShowResultAct?: () => void;
+  loopRound?: GraphWorkflowRound;
+  onLoopRoundChange?: (roundId: string) => void;
+  onLoopOverview?: () => void;
+  onLoopResult?: () => void;
+  loopResultSelected?: boolean;
 }
 
 /**
@@ -47,6 +56,11 @@ export function RunTheaterPathRail({
   onFocusNode,
   onExpandHitl,
   onShowResultAct,
+  loopRound,
+  onLoopRoundChange,
+  onLoopOverview,
+  onLoopResult,
+  loopResultSelected,
 }: RunTheaterPathRailProps) {
   const { t } = useTranslation();
   const nodeById = useMemo(
@@ -135,7 +149,7 @@ export function RunTheaterPathRail({
         </div>
         <div className="overflow-x-auto" data-slot="theater-path-rail">
           <ol
-            className="flex w-max gap-2 pb-0.5"
+            className="flex w-max items-center gap-2 pb-0.5"
             aria-label={t("workflowRun.theater.topLevelPath")}
             data-slot="theater-top-level-path"
           >
@@ -162,7 +176,7 @@ export function RunTheaterPathRail({
               const roundCount =
                 stage.type === "region" ? countRegionRounds(run, stage) : 0;
               return (
-                <li key={stage.nodeId}>
+                <li key={stage.nodeId} className="flex items-center">
                   <button
                     type="button"
                     data-path-node={stage.nodeId}
@@ -180,7 +194,10 @@ export function RunTheaterPathRail({
                       onFocusNode(stage.nodeId);
                     }}
                     className={cn(
-                      "inline-flex max-w-[11rem] cursor-pointer items-center gap-2 rounded-full border px-2.5 py-1.5 text-left transition-[transform,colors,box-shadow] duration-200",
+                      "inline-flex cursor-pointer items-center gap-2 rounded-full border px-2.5 py-1.5 text-left transition-[transform,colors,box-shadow] duration-200",
+                      stage.type === "region"
+                        ? "min-w-48 max-w-[24rem] rounded-xl py-3"
+                        : "max-w-[12rem]",
                       selected && waiting
                         ? "theater-chip-pop border-amber-500/55 bg-amber-500/15 text-amber-950 shadow-sm dark:text-amber-50"
                         : selected && state.status === "retry_waiting"
@@ -203,7 +220,7 @@ export function RunTheaterPathRail({
                     }`}
                   >
                     <RunStatusMark status={state.status} quiet />
-                    <span className="truncate font-sans text-[11px] font-medium">
+                    <span className="truncate font-sans text-xs font-medium leading-snug">
                       {node.data.title}
                     </span>
                     {retryWait !== undefined && (
@@ -214,7 +231,7 @@ export function RunTheaterPathRail({
                       />
                     )}
                     {stage.type === "region" && (
-                      <span className="shrink-0 text-[9px] tabular-nums text-muted-foreground">
+                      <span className="shrink-0 text-[11px] font-medium tabular-nums text-muted-foreground">
                         {roundCount > 0
                           ? t("workflowRun.theater.iterationChipSummary", {
                               members: stage.memberCount,
@@ -227,7 +244,7 @@ export function RunTheaterPathRail({
                     )}
                     {nodeArtifactCount > 0 && (
                       <span
-                        className="shrink-0 tabular-nums text-[9px] text-muted-foreground"
+                        className="shrink-0 text-[11px] tabular-nums text-muted-foreground"
                         aria-label={t("workflowRun.artifacts.countBadge", {
                           count: nodeArtifactCount,
                         })}
@@ -240,13 +257,13 @@ export function RunTheaterPathRail({
               );
             })}
             {terminal && (
-              <li>
+              <li className="flex items-center">
                 <button
                   type="button"
                   data-path-result=""
                   onClick={onShowResultAct}
                   className={cn(
-                    "inline-flex max-w-[11rem] cursor-pointer items-center gap-2 rounded-full border px-2.5 py-1.5 text-left transition-[transform,colors,box-shadow] duration-200",
+                    "inline-flex max-w-[12rem] cursor-pointer items-center gap-2 rounded-full border px-2.5 py-1.5 text-left transition-[transform,colors,box-shadow] duration-200",
                     showResultAct
                       ? cn(
                           "theater-chip-pop bg-background shadow-sm",
@@ -268,7 +285,7 @@ export function RunTheaterPathRail({
                   aria-label={`${t("workflowRun.result.pathChip")}: ${t(runStatusTone(run.status).labelKey)}`}
                 >
                   <RunStatusMark status={run.status} quiet />
-                  <span className="truncate font-sans text-[11px] font-medium">
+                  <span className="truncate font-sans text-xs font-medium leading-snug">
                     {t("workflowRun.result.pathChip")}
                   </span>
                 </button>
@@ -285,6 +302,11 @@ export function RunTheaterPathRail({
             artifactCountByNode={artifactCountByNode}
             onRoundChange={onRoundChange}
             onFocusNode={onFocusNode}
+            loopRound={loopRound}
+            onLoopRoundChange={onLoopRoundChange}
+            onLoopOverview={onLoopOverview}
+            onLoopResult={onLoopResult}
+            loopResultSelected={loopResultSelected}
           />
         )}
       </div>
@@ -297,6 +319,14 @@ function countRegionRounds(
   run: GraphWorkflowRun,
   region: RunPathRegionStage,
 ): number {
+  if (
+    run.definitionSnapshot.nodes.find((node) => node.id === region.nodeId)?.data
+      .kind === "loop"
+  ) {
+    return (run.rounds ?? []).filter(
+      (round) => round.parentLoopNodeId === region.nodeId,
+    ).length;
+  }
   const rounds = new Set<number>();
   for (const nodeId of region.phases.flatMap((phase) => phase.nodeIds)) {
     for (const state of run.roundStates?.[nodeId] ?? []) {

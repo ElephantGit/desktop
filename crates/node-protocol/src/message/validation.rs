@@ -4,6 +4,8 @@ use thiserror::Error;
 /// Explains why a decoded or outbound typed message violates protocol invariants.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum MessageValidationError {
+    #[error("invalid or unscoped runtime control binding")]
+    InvalidRuntimeBinding,
     #[error("clone result must belong to its requested Node")]
     CloneTargetMismatch,
     #[error("clone commit must be a full hexadecimal Git object ID")]
@@ -28,6 +30,40 @@ pub enum MessageValidationError {
     DuplicateCapability,
     #[error("completed result Node {result} differs from reporting Node {reporter}")]
     CompletedNodeMismatch { reporter: NodeId, result: NodeId },
+    #[error("plugin ID must be a canonical `<namespace>/<identifier>`")]
+    InvalidPluginId,
+    #[error("SHA-256 digest must be 64 lowercase hexadecimal characters")]
+    InvalidSha256,
+    #[error("plugin execution must name at least one plugin")]
+    EmptyPluginSet,
+    #[error("plugin execution names a plugin more than once")]
+    DuplicatePlugin,
+    #[error(
+        "plugin release must be one HTTP(S) universal download or distinct per-target downloads"
+    )]
+    InvalidPluginRelease,
+    #[error(
+        "git identity must be a single-line name and an address without spaces or angle brackets"
+    )]
+    InvalidGitIdentity,
+    #[error("user turn must carry non-empty text within the size limit")]
+    InvalidUserTurn,
+    #[error("session end detail must be a short snake_case code")]
+    InvalidDetailCode,
+    #[error("thread record exceeds the encoded size limit")]
+    ThreadRecordTooLarge,
+    #[error("commit must be a full hexadecimal Git object ID")]
+    InvalidCommit,
+    #[error("revision ref must be a valid ref under refs/ora/revisions/")]
+    InvalidRevisionRef,
+    #[error("object key must be a relative, normalized key distinct from the delivery's other key")]
+    InvalidObjectKey,
+    #[error("revision result commits contradict whether the Workspace changed")]
+    RevisionCommitMismatch,
+    #[error("upload grant must carry an absolute HTTP(S) URL")]
+    InvalidUploadGrant,
+    #[error("upload grant must carry at least one object")]
+    EmptyUploadGrant,
 }
 
 /// Centralizes wire invariants used identically for outbound and decoded messages.

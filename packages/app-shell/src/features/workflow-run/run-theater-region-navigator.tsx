@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { cn, Popover, PopoverContent, PopoverTrigger } from "@ora/ui";
 import type {
   GraphWorkflowNodeState,
+  GraphWorkflowRound,
   GraphWorkflowRun,
 } from "@ora/workflow-runtime";
 import { RunRetryWaitLabel } from "./run-retry-wait-label";
@@ -12,6 +13,8 @@ import { RunStatusMark } from "./run-status-mark";
 import { runStatusTone } from "./run-status-style";
 import type { RunPathRegionStage } from "./run-path-structure";
 import { formatElapsedDuration } from "../../lib/format";
+import { loopRoundOutcome } from "./loop-round-state";
+import { RunLoopMemberPath } from "./run-loop-member-path";
 
 interface RunTheaterRegionNavigatorProps {
   run: GraphWorkflowRun;
@@ -21,6 +24,11 @@ interface RunTheaterRegionNavigatorProps {
   artifactCountByNode: Readonly<Record<string, number>>;
   onRoundChange?: (round: number) => void;
   onFocusNode: (nodeId: string) => void;
+  loopRound?: GraphWorkflowRound;
+  onLoopRoundChange?: (roundId: string) => void;
+  onLoopOverview?: () => void;
+  onLoopResult?: () => void;
+  loopResultSelected?: boolean;
 }
 
 /** Persistent iteration hierarchy shown below the outer Theater path. */
@@ -32,6 +40,11 @@ export function RunTheaterRegionNavigator({
   artifactCountByNode,
   onRoundChange,
   onFocusNode,
+  loopRound,
+  onLoopRoundChange,
+  onLoopOverview,
+  onLoopResult,
+  loopResultSelected,
 }: RunTheaterRegionNavigatorProps) {
   const { t } = useTranslation();
   const [roundMenuOpen, setRoundMenuOpen] = useState(false);
@@ -39,6 +52,10 @@ export function RunTheaterRegionNavigator({
     run.definitionSnapshot.nodes.map((node) => [node.id, node]),
   );
   const regionNode = nodeById.get(region.nodeId);
+  const isLoop = regionNode?.data.kind === "loop";
+  const loopRounds = (run.rounds ?? [])
+    .filter((round) => round.parentLoopNodeId === region.nodeId)
+    .sort((a, b) => a.roundIndex - b.roundIndex);
   const memberIds = region.phases.flatMap((phase) => phase.nodeIds);
   const rounds = availableRounds(run, memberIds);
   const effectiveRound =
@@ -70,28 +87,34 @@ export function RunTheaterRegionNavigator({
 
   return (
     <section
-      className="rounded-xl border border-violet-500/20 bg-violet-500/[0.035] p-2.5"
+      className="rounded-xl border border-violet-500/20 bg-violet-500/[0.035] px-3 py-2.5"
       role="region"
       aria-label={regionLabel}
-      data-iteration-region={region.nodeId}
+      data-iteration-region={isLoop ? undefined : region.nodeId}
+      data-loop-region={isLoop ? region.nodeId : undefined}
     >
-      <div className="mb-2 flex items-center justify-between gap-3">
+      <div className="mb-2.5 flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-[11px] font-semibold text-foreground">
+          <p className="truncate text-[13px] font-semibold leading-snug text-foreground">
             {regionTitle}
           </p>
-          <div className="flex items-center gap-1.5 text-[9px] text-muted-foreground">
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs leading-snug text-muted-foreground">
             <span>
-              {rounds.length > 0
-                ? t("workflowRun.theater.iterationSummary", {
-                    members: region.memberCount,
-                    rounds: rounds.length,
+              {isLoop
+                ? t("workflowRun.loopView.progress", {
+                    count: loopRounds.length,
+                    max: regionNode?.data.loopConfig?.maxIterations ?? "—",
                   })
-                : t("workflowRun.theater.iterationMembers", {
-                    members: region.memberCount,
-                  })}
+                : rounds.length > 0
+                  ? t("workflowRun.theater.iterationSummary", {
+                      members: region.memberCount,
+                      rounds: rounds.length,
+                    })
+                  : t("workflowRun.theater.iterationMembers", {
+                      members: region.memberCount,
+                    })}
             </span>
-            {effectiveRound !== null && (
+            {!isLoop && effectiveRound !== null && (
               <span>
                 {t("workflowRun.theater.iterationRoundProgress", {
                   done: completedMembers,
@@ -101,15 +124,25 @@ export function RunTheaterRegionNavigator({
             )}
           </div>
         </div>
-        {effectiveRound !== null && rounds.length > 1 && (
+        {isLoop && (
+          <button
+            type="button"
+            className="rounded-md border px-2.5 py-1.5 text-xs"
+            aria-pressed={loopResultSelected}
+            onClick={onLoopResult}
+          >
+            {t("workflowRun.loopView.result")}
+          </button>
+        )}
+        {!isLoop && effectiveRound !== null && rounds.length > 1 && (
           <div
-            className="flex shrink-0 items-center gap-1"
+            className="flex shrink-0 items-center gap-0.5"
             role="group"
             aria-label={t("workflowRun.inspector.rounds")}
           >
             <button
               type="button"
-              className="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-35"
+              className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-35"
               aria-label={t("workflowRun.theater.previousRound")}
               disabled={roundPosition <= 0}
               onClick={() => {
@@ -117,14 +150,14 @@ export function RunTheaterRegionNavigator({
                 if (previous !== undefined) onRoundChange?.(previous);
               }}
             >
-              <IconChevronLeft className="size-3.5" />
+              <IconChevronLeft className="size-4" />
             </button>
             <Popover open={roundMenuOpen} onOpenChange={setRoundMenuOpen}>
               <PopoverTrigger
                 render={
                   <button
                     type="button"
-                    className="min-w-16 rounded-md px-1.5 py-1 text-center text-[10px] font-medium tabular-nums text-violet-700 hover:bg-background dark:text-violet-300"
+                    className="min-w-[4.5rem] rounded-md px-2 py-1 text-center text-xs font-semibold tabular-nums text-violet-700 hover:bg-background dark:text-violet-300"
                     aria-label={t("workflowRun.theater.selectRound")}
                   />
                 }
@@ -134,7 +167,7 @@ export function RunTheaterRegionNavigator({
                   total: rounds.length,
                 })}
               </PopoverTrigger>
-              <PopoverContent align="end" className="w-36 p-1.5">
+              <PopoverContent align="end" className="w-40 p-1.5">
                 <div
                   className="flex max-h-56 flex-col gap-0.5 overflow-y-auto"
                   role="listbox"
@@ -147,9 +180,9 @@ export function RunTheaterRegionNavigator({
                       role="option"
                       aria-selected={round === effectiveRound}
                       className={cn(
-                        "rounded-md px-2 py-1.5 text-left text-[10px] tabular-nums hover:bg-muted",
+                        "rounded-md px-2.5 py-1.5 text-left text-xs tabular-nums hover:bg-muted",
                         round === effectiveRound &&
-                          "bg-violet-500/10 text-violet-700 dark:text-violet-300",
+                          "bg-violet-500/10 font-medium text-violet-700 dark:text-violet-300",
                       )}
                       onClick={() => {
                         onRoundChange?.(round);
@@ -166,7 +199,7 @@ export function RunTheaterRegionNavigator({
             </Popover>
             <button
               type="button"
-              className="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-35"
+              className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-35"
               aria-label={t("workflowRun.theater.nextRound")}
               disabled={roundPosition >= rounds.length - 1}
               onClick={() => {
@@ -174,112 +207,180 @@ export function RunTheaterRegionNavigator({
                 if (next !== undefined) onRoundChange?.(next);
               }}
             >
-              <IconChevronRight className="size-3.5" />
+              <IconChevronRight className="size-4" />
             </button>
           </div>
         )}
       </div>
 
-      <div className="overflow-x-auto pb-0.5">
-        <ol className="flex w-max items-stretch gap-2" aria-label={regionLabel}>
-          {region.phases.map((phase, phaseIndex) => (
-            <li key={phase.id} className="flex items-center gap-2">
-              {phaseIndex > 0 && (
-                <span className="text-xs text-muted-foreground/55" aria-hidden>
-                  →
-                </span>
+      {isLoop && (
+        <div
+          className="mb-3 flex max-h-32 flex-wrap gap-1.5 overflow-y-auto"
+          role="group"
+          aria-label={t("workflowRun.inspector.rounds")}
+        >
+          {loopRounds.length === 0 && (
+            <p className="text-xs text-muted-foreground">
+              {t("workflowRun.loopView.empty")}
+            </p>
+          )}
+          {loopRounds.map((round) => (
+            <button
+              key={round.id}
+              type="button"
+              aria-pressed={!loopResultSelected && loopRound?.id === round.id}
+              aria-label={`${t("workflowRun.loopRounds.round", { round: round.roundIndex })} · ${t(loopRoundOutcome(run, round))}`}
+              title={t(loopRoundOutcome(run, round))}
+              onClick={() => onLoopRoundChange?.(round.id)}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs",
+                !loopResultSelected &&
+                  loopRound?.id === round.id &&
+                  "border-violet-500/45 bg-violet-500/10",
               )}
-              <div
-                className={cn(
-                  "relative flex gap-1.5 rounded-lg border px-1.5 pb-1.5 pt-5",
-                  phase.kind === "parallel"
-                    ? "border-sky-500/25 bg-sky-500/[0.035]"
-                    : phase.kind === "conditional"
-                      ? "border-amber-500/25 bg-amber-500/[0.035]"
-                      : "border-transparent p-0",
-                )}
-                role="group"
-                aria-label={phaseLabel(t, phase.kind, phase.nodeIds.length)}
-                data-region-phase-kind={phase.kind}
-              >
-                {phase.kind !== "single" && (
-                  <span className="absolute left-2 top-1 text-[9px] font-medium text-muted-foreground">
-                    {phaseLabel(t, phase.kind, phase.nodeIds.length)}
+            >
+              <RunStatusMark status={round.status} quiet />
+              {t("workflowRun.loopRounds.round", { round: round.roundIndex })}
+            </button>
+          ))}
+        </div>
+      )}
+      {isLoop && loopRound !== undefined && !loopResultSelected && (
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <span className="text-xs text-muted-foreground">
+            {t(loopRoundOutcome(run, loopRound))}
+          </span>
+          <button
+            type="button"
+            className="mb-2 rounded-md border px-2 py-1 text-xs"
+            onClick={onLoopOverview}
+          >
+            {t("workflowRun.loopView.overview")}
+          </button>
+        </div>
+      )}
+      {isLoop && loopRound !== undefined && !loopResultSelected && (
+        <RunLoopMemberPath
+          run={run}
+          round={loopRound}
+          memberIds={memberIds}
+          primaryId={primaryId}
+          onFocusNode={onFocusNode}
+        />
+      )}
+      {!isLoop && (
+        <div className="overflow-x-auto pb-0.5">
+          <ol
+            className="flex w-max items-stretch gap-2"
+            aria-label={regionLabel}
+          >
+            {region.phases.map((phase, phaseIndex) => (
+              <li key={phase.id} className="flex items-center gap-2">
+                {phaseIndex > 0 && (
+                  <span
+                    className="text-sm text-muted-foreground/55"
+                    aria-hidden
+                  >
+                    →
                   </span>
                 )}
-                {phase.nodeIds.map((nodeId) => {
-                  const node = nodeById.get(nodeId);
-                  if (node === undefined) return null;
-                  const state = stateForRound(run, nodeId, effectiveRound);
-                  const notRun = state === null;
-                  const tone = runStatusTone(
-                    state?.status ?? ("inactive" as const),
-                  );
-                  const selected = primaryId === nodeId;
-                  const artifactCount = artifactCountByNode[nodeId] ?? 0;
-                  const duration = stateDuration(state);
-                  const retryWait =
-                    state?.status === "retry_waiting"
-                      ? state.retryWait
-                      : undefined;
-                  const stateLabel = notRun
-                    ? t("workflowRun.theater.notRunThisRound")
-                    : retryWait !== undefined
-                      ? retryWaitAttemptText(t, retryWait)
-                      : t(tone.labelKey);
-                  return (
-                    <button
-                      key={nodeId}
-                      type="button"
-                      data-path-node={nodeId}
-                      aria-current={selected ? "step" : undefined}
-                      aria-label={`${node.data.title}: ${stateLabel}`}
-                      onClick={() => onFocusNode(nodeId)}
-                      className={cn(
-                        "flex min-w-32 max-w-44 items-center gap-2 rounded-md border bg-background/80 px-2 py-1.5 text-left transition-colors",
-                        selected
-                          ? "border-violet-500/45 shadow-sm"
-                          : retryWait !== undefined
-                            ? "border-orange-500/40 hover:border-orange-500/55"
-                            : "border-border/65 hover:border-violet-500/30",
-                        notRun && "opacity-60",
-                      )}
-                    >
-                      <RunStatusMark
-                        status={state?.status ?? "inactive"}
-                        quiet
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[10px] font-medium">
-                          {node.data.title}
-                        </span>
-                        {retryWait !== undefined ? (
-                          <RunRetryWaitLabel
-                            wait={retryWait}
-                            variant="compact"
-                            className="block text-[9px] tabular-nums text-orange-700 dark:text-orange-300"
-                          />
-                        ) : (
-                          duration !== null && (
-                            <span className="block text-[9px] tabular-nums text-muted-foreground">
-                              {duration}
-                            </span>
-                          )
+                <div
+                  className={cn(
+                    "relative flex gap-1.5 rounded-lg border px-1.5 pb-1.5 pt-5",
+                    phase.kind === "parallel"
+                      ? "border-sky-500/25 bg-sky-500/[0.035]"
+                      : phase.kind === "conditional"
+                        ? "border-amber-500/25 bg-amber-500/[0.035]"
+                        : "border-transparent p-0",
+                  )}
+                  role="group"
+                  aria-label={phaseLabel(t, phase.kind, phase.nodeIds.length)}
+                  data-region-phase-kind={phase.kind}
+                >
+                  {phase.kind !== "single" && (
+                    <span className="absolute left-2 top-1 text-[10px] font-medium text-muted-foreground">
+                      {phaseLabel(t, phase.kind, phase.nodeIds.length)}
+                    </span>
+                  )}
+                  {phase.nodeIds.map((nodeId) => {
+                    const node = nodeById.get(nodeId);
+                    if (node === undefined) return null;
+                    const state = isLoop
+                      ? (loopRound?.nodeStates[nodeId] ?? null)
+                      : stateForRound(run, nodeId, effectiveRound);
+                    const notRun = state === null;
+                    const tone = runStatusTone(
+                      state?.status ?? ("inactive" as const),
+                    );
+                    const selected = primaryId === nodeId;
+                    // Artifacts are keyed by definition node, not execution scope.
+                    const artifactCount = isLoop
+                      ? 0
+                      : (artifactCountByNode[nodeId] ?? 0);
+                    const duration = stateDuration(state);
+                    const retryWait =
+                      state?.status === "retry_waiting"
+                        ? state.retryWait
+                        : undefined;
+                    const stateLabel = notRun
+                      ? t("workflowRun.theater.notRunThisRound")
+                      : retryWait !== undefined
+                        ? retryWaitAttemptText(t, retryWait)
+                        : t(tone.labelKey);
+                    return (
+                      <button
+                        key={nodeId}
+                        type="button"
+                        data-path-node={nodeId}
+                        aria-current={selected ? "step" : undefined}
+                        aria-label={`${node.data.title}: ${stateLabel}`}
+                        onClick={() => onFocusNode(nodeId)}
+                        className={cn(
+                          "flex min-w-36 max-w-48 items-center gap-2 rounded-lg border bg-background/80 px-2.5 py-2 text-left transition-colors",
+                          selected
+                            ? "border-violet-500/45 shadow-sm"
+                            : retryWait !== undefined
+                              ? "border-orange-500/40 hover:border-orange-500/55"
+                              : "border-border/65 hover:border-violet-500/30",
+                          notRun && "opacity-60",
                         )}
-                      </span>
-                      {artifactCount > 0 && (
-                        <span className="text-[9px] tabular-nums text-muted-foreground">
-                          {artifactCount}
+                      >
+                        <RunStatusMark
+                          status={state?.status ?? "inactive"}
+                          quiet
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-xs font-medium leading-snug">
+                            {node.data.title}
+                          </span>
+                          {retryWait !== undefined ? (
+                            <RunRetryWaitLabel
+                              wait={retryWait}
+                              variant="compact"
+                              className="mt-0.5 block text-[11px] tabular-nums text-orange-700 dark:text-orange-300"
+                            />
+                          ) : (
+                            duration !== null && (
+                              <span className="mt-0.5 block text-[11px] tabular-nums text-muted-foreground">
+                                {duration}
+                              </span>
+                            )
+                          )}
                         </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </li>
-          ))}
-        </ol>
-      </div>
+                        {artifactCount > 0 && (
+                          <span className="text-[11px] tabular-nums text-muted-foreground">
+                            {artifactCount}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
     </section>
   );
 }

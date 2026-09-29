@@ -33,6 +33,11 @@ export const skillFolderConflictParamsSchema = z.object({
     name: z.string()
 });
 
+export const workflowRunInputInvalidParamsSchema = z.object({
+    variable: z.string(),
+    reason: z.string()
+});
+
 export const workflowSnapshotIncompatibleWithResumeParamsSchema = z.object({
     reason: z.string()
 });
@@ -378,6 +383,9 @@ export const contractErrorSchema = z.object({
     }), z.object({
         "code": z.literal("workflow_run_validation"),
         "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_run_input_invalid"),
+        "params": workflowRunInputInvalidParamsSchema
     }), z.object({
         "code": z.literal("workflow_skill_not_found"),
         "params": emptyErrorParamsSchema
@@ -734,6 +742,9 @@ export const publicErrorSchema = z.union([z.object({
     }), z.object({
         "code": z.literal("workflow_run_validation"),
         "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("workflow_run_input_invalid"),
+        "params": workflowRunInputInvalidParamsSchema
     }), z.object({
         "code": z.literal("workflow_skill_not_found"),
         "params": emptyErrorParamsSchema

@@ -2,7 +2,7 @@
 
 [English](agent-runtime.md) | 中文
 
-Backend 启动时，会为每个已安装的 [Agent 插件](../crates/backend/src/agent_runtime/plugin_agent/README.md)建立一条独立监管的 ACP 连接。每个 Ora Session 拥有一个串行 actor；指向同一 Agent 的 actor 共享应用级连接，并通过私有 provider session id 路由事件。同一 Session 同时只能有一个 prompt owner，但 load 可以跟随正在进行的 prompt，不同 Session 则可以并发运行。取消只作用于目标 Session 的 prompt owner，不会把 load follower 变成 owner，也不会卸载可复用 Session。
+Backend 启动时，会为每个已安装的 [Agent 插件](../crates/agent-runtime/src/plugin_agent/README.md)建立一条独立监管的 ACP 连接。每个 Ora Session 拥有一个串行 actor；指向同一 Agent 的 actor 共享应用级连接，并通过私有 provider session id 路由事件。同一 Session 同时只能有一个 prompt owner，但 load 可以跟随正在进行的 prompt，不同 Session 则可以并发运行。取消只作用于目标 Session 的 prompt owner，不会把 load follower 变成 owner，也不会卸载可复用 Session。
 
 ## 进程与 Session 生命周期
 
@@ -54,7 +54,7 @@ Ora 在 sessions root 下为每个 Session 保存一份 append-only JSONL。这�
 - live 前端从 optimistic prompt 创建时间开始，在 operation 结束时冻结 turn duration。后端只发送时间锚点与最终 duration；renderer 使用一个共享的本地 1 秒 ticker 刷新可见标签，不轮询后端，也不产生每秒协议流量。页面切换不会丢失存放在 conversation store 中的时间，不同 Session 不能重置彼此计时。
 - Agent 正常结束 turn 时，可把仍未报告终态的工具推断为 completed；其他结束原因保留未完成状态。断连、prompt 失败、队列溢出和客户端断开都以 cancelled 记录，因此不会虚构工具成功。
 - 有序 session event 使 response 成为 turn fence。取消会在 grace 期内继续消费直到匹配 response；若 provider 不收敛，actor 记录已接受快照后隔离 route。
-- 写入按 settled item 批量 flush 但不 fsync。完整但无法解析的 JSONL 行会作为 `unreadable_records` 提示，既有 `Gap` 会成为 `unrecorded_content`，而不是静默显示不完整会话。
+- 每个 settled item 逐行追加并 flush，但不 fsync；每行写入后先交给宿主的 `RuntimeEvents::record_settled`，再写下一行。完整但无法解析的 JSONL 行会作为 `unreadable_records` 提示，既有 `Gap` 会成为 `unrecorded_content`，而不是静默显示不完整会话。
 
 ### 切换 Agent
 
@@ -127,7 +127,34 @@ Prompt 以有序 ACP `ContentBlock` 传递，包括文本、图片、音频、re
 
 Ora 删除自身数据库记录和 session history，并异步注册 Git 清理任务以移除 task worktree 与 `ora/*` branch；provider history 不随 Ora 侧删除。`session/delete` 只用于回滚从未暴露的 provider session，用户可见 Session 始终 close 而非 delete。Session 删除与 actor 新操作串行，先卸载 route，再软删除数据库行并移除 history 文件。
 
-Ora 拥有 transcript，Agent 拥有模型上下文。transcript 可跨 Agent 携带，模型上下文不可，这也是切换时采用注入而非 provider replay 的原因。最后一个 Backend owner 释放时，所有 supervisor 停止接收新工作，取消 routed operation，并有界终止 CLI 进程树。
+Ora 拥有 transcript，Agent 拥有模型上下文。transcript 可跨 Agent 携带，模型上下文不可，这也是切换时采用注入而非 provider replay 的原因。最后一个运行时 owner（Desktop 上即最后一个 Backend owner）释放时，所有 supervisor 停止接收新工作，取消 routed operation，并有界终止 CLI 进程树。
+
+## 运行时 crate 与宿主
+
+运行时位于 `ora-agent-runtime`（`crates/agent-runtime`），拥有上文全部会话语义：连接监管、路由与背压、会话 actor、prompt 无活动重试、记录、切换与 handoff。它不知道自己运行在哪里。宿主通过 `AgentRuntimeHost` 组合它，其关联类型提供五个接口；它们以泛型参数而非 trait object 注入，每个宿主得到各自单态化的运行时。
+
+| 接口                 | 运行时需要的能力                                                                                | Desktop 实现                       | Node 实现                                  |
+| -------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------- | ------------------------------------------ |
+| `SessionStore`       | 创建、读取、列出会话行；更新状态、binding、标题与 history 状态；软删除                          | `SqliteSessionRepository`          | `MemorySessionStore`                       |
+| `AgentAttach`        | 列出已安装的 agent 插件、附着插件进程及其 notification tap、停止插件、登记 Effect consumer 声明 | `PluginApi`                        | 该会话执行自己的插件生命周期，只含一个插件 |
+| `SessionSetup`       | 会话级 MCP 视图；Desired 修订与完整快照；每个投递边界的健康观察；按 agent 找到屏障所属插件      | Session MCP 解析器与 Host MCP 健康 | `NoSessionMcp`                             |
+| `RuntimeEvents`      | 发布 `SessionTitleUpdated`、`AgentModelsInvalidated`；接收每一行已写入的 history                | `AppEventPublisher`                | 把每一行写成 Thread 事件                   |
+| `WorkspaceDirectory` | 把 Workspace 解析为会话 `cwd`                                                                   | Workspace 仓储 + 启动路径基准      | 会话执行的 checkout                        |
+
+crate 拥有 Session MCP Snapshot 的定义（servers 加不含 secret 的修订）以及活跃会话如何收敛到它（`LiveMcpState`、Agent Session Barrier）；快照的来源——已安装包、Settings、健康探测——留在宿主。写入会话行的时间戳来自 crate 自身的 Unix 毫秒时钟，它与时区无关，宿主无需替换。
+
+失败以 `RuntimeError` 离开 crate：分类、类型化 `PublicError`、上下文与 source 链。Desktop 在它与 `BackendError` 之间双向无损转换，因此 Workspace 不可用这类宿主失败穿过运行时后原样回到客户端；分类因而保留 Desktop 区分的全部类别，而不只是运行时自己产生的那些。插件无法停止时以宿主自己的错误类型报告，运行时只记录日志。`SessionEventStream` 的生命周期（取消、清理回执、drop 时尽力取消）留在运行时；Desktop 只包装它以在边界转换错误。
+
+`RuntimeEvents::record_settled` 在会话 actor 内同步调用：一行进入 history 文件之后、下一行写入之前。镜像 history 的宿主因此按文件顺序、恰好一次地看到每一行，不会拿到文件中不存在的行，崩溃后最多落后文件一行。Desktop 直接读取 history 文件，不需要镜像。
+
+没有用户在场的宿主（如 Node 会话执行）用下列入口代替用户操作：
+
+- `wait_for_agent` 等待 agent 连接可以开启会话，穿过监管自身的启动与重试，直到 `Ready` 或监管放弃（`Failing`、监管退出）；等待没有上限，由调用方限时。
+- `start_session_with_id` 以宿主已有的持久标识作为 Ora Session ID，history 路径因此只由该标识决定；标识已被占用时拒绝，不会接到已有会话上。
+- `prompt_session_as_message` 把宿主给出的用户消息标识写入该消息每个记录块的 ACP `messageId`，history schema 不变。
+- 不跨进程保存会话、也不提供 MCP 的宿主直接使用 `MemorySessionStore` 与 `NoSessionMcp`。
+
+crate 不得依赖 `ora-backend`、SQLite 或 Tauri，这正是沙盒 Node 能以自己的宿主运行同一套会话语义的前提。Node 一侧见 [Node Agent 会话执行](node/agent-session.zh.md)。
 
 ## 开放 Agent 身份的兼容注意事项
 

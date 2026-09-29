@@ -11,7 +11,7 @@ const rounds: GraphWorkflowRound[] = [
     id: "round-1",
     parentLoopNodeRunId: "loop-run",
     parentLoopNodeId: "loop",
-    roundIndex: 0,
+    roundIndex: 1,
     status: "succeeded",
     nodeStates: {
       writer: { status: "succeeded", sessionId: "session-first" },
@@ -23,7 +23,7 @@ const rounds: GraphWorkflowRound[] = [
     id: "round-2",
     parentLoopNodeRunId: "loop-run",
     parentLoopNodeId: "loop",
-    roundIndex: 1,
+    roundIndex: 2,
     status: "running",
     nodeStates: { reviewer: { status: "running" } },
     createdAt: "2026-09-16T08:02:00.000Z",
@@ -32,7 +32,7 @@ const rounds: GraphWorkflowRound[] = [
 ];
 
 describe("RunLoopRoundHistory", () => {
-  it("defaults to the latest round and keeps repeated states isolated when selecting history", async () => {
+  it("defaults to the first round and keeps repeated states isolated when selecting history", async () => {
     await appI18n.changeLanguage("en-US");
     const user = userEvent.setup();
     render(
@@ -44,13 +44,13 @@ describe("RunLoopRoundHistory", () => {
       </AppI18nProvider>,
     );
 
-    expect(screen.getByText("Reviewer")).toBeInTheDocument();
-    expect(screen.queryByText("Writer")).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("tab", { name: "Round 1" }));
-
     expect(screen.getByText("Writer")).toBeInTheDocument();
-    expect(screen.getByTitle("session-first")).toBeInTheDocument();
     expect(screen.queryByText("Reviewer")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Round 2" }));
+
+    expect(screen.getByText("Reviewer")).toBeInTheDocument();
+    expect(screen.queryByTitle("session-first")).not.toBeInTheDocument();
+    expect(screen.queryByText("Writer")).not.toBeInTheDocument();
   });
 });

@@ -1,13 +1,16 @@
 use super::*;
-use crate::support::until;
-use ora_contracts::controller_api::*;
+use crate::support::{ChildGuard, block_on, until};
 use ora_controller::{
-    ApiConfig, DeploymentConfig, NodeEndpoint, NodeHosting, Persistence, RuntimeConfig,
-    SessionConfig, SingleNodeConfig,
+    CloneIntake, DeploymentConfig, NodeEndpoint, NodeTarget, Persistence, RuntimeConfig,
+    SessionConfig, SingleNodeConfig, SqliteStore,
 };
 use ora_utils::process::{LinuxPidFd, ProcessSignal, linux_process_snapshot};
 use pretty_assertions::assert_eq;
-use std::time::Duration;
+use std::{
+    os::unix::process::CommandExt,
+    process::{Command, Stdio},
+    time::Duration,
+};
 
 /// Pins the Node the Controller started; test failure must not leave it listening in a deleted root.
 struct HostedNode(LinuxPidFd, u32);
@@ -77,7 +80,7 @@ fn live_git(fixture: &Fixture) -> LinuxPidFd {
 }
 
 /// The composed executable hosts its Node: Controller death leaves Node and Git running, a live
-/// endpoint refuses a second hosting Controller, and normal stop retires the API, sessions and Node in order.
+/// endpoint refuses a second hosting Controller, and normal stop retires sessions and Node in order.
 #[test]
 fn single_node_composition_hosts_and_retires_its_node() {
     ora_logging::with_trace_logging(|| {
@@ -89,10 +92,8 @@ fn single_node_composition_hosts_and_retires_its_node() {
         let clone = configuration(&fixture, &source);
         let node_config = ipc::write_config(&fixture, &clone, /*frame_timeout_ms*/ 40_000);
         let endpoint = fixture.config().home_directory.join("control.sock");
+        let home = fixture.path().join("controller");
         let config = DeploymentConfig {
-            api: Some(ApiConfig {
-                node_id: NodeId::new("test-node"),
-            }),
             single_node: Some(SingleNodeConfig {
                 node_executable: env!("CARGO_BIN_EXE_ora-node").into(),
                 node_config: node_config.clone(),
@@ -100,16 +101,19 @@ fn single_node_composition_hosts_and_retires_its_node() {
                 stop_timeout_ms: 15_000,
             }),
             controller: RuntimeConfig {
-                home_directory: fixture.path().join("controller"),
+                management_tls: None,
+                home_directory: home.clone(),
                 persistence: Persistence::Sqlite,
                 protected_state_directories: vec![
                     fixture.config().home_directory,
                     fixture.process().host_directory,
                 ],
                 controller_id: ControllerId::new("owner"),
-                nodes: vec![NodeEndpoint {
+                nodes: vec![NodeTarget {
                     node_id: NodeId::new("test-node"),
-                    endpoint: endpoint.clone(),
+                    endpoint: NodeEndpoint::Ipc {
+                        path: endpoint.clone(),
+                    },
                 }],
                 session: SessionConfig {
                     io_timeout_ms: 5000,
@@ -122,189 +126,133 @@ fn single_node_composition_hosts_and_retires_its_node() {
         // A hosting Controller refuses to start when Node configuration binds another owner.
         let mut foreign: serde_json::Value =
             serde_json::from_slice(&fs::read(&node_config).unwrap()).unwrap();
-        foreign["ipc"]["controller_id"] = "someone-else".into();
+        foreign["control"]["controller_id"] = "someone-else".into();
         let foreign_path = fixture.path().join("foreign-node.json");
         fs::write(&foreign_path, serde_json::to_vec(&foreign).unwrap()).unwrap();
         let mut misbound = config.clone();
         misbound.single_node.as_mut().unwrap().node_config = foreign_path;
         let (mut rejected, _) = launch_expecting_exit(&fixture, &misbound);
         assert!(!rejected.0.wait().unwrap().success());
-        assert!(!fixture.path().join("controller").exists());
+        assert!(!home.exists());
 
+        // The executable has no intake of its own: work is accepted durably by the same owner
+        // before the composition starts, and the Controller dispatches it as pending work.
+        let hosted = accept(&home, &source, "hosted");
         let node_config_bytes = fs::read(&node_config).unwrap();
-        let (mut controller, address) =
-            minicloud::launch(&fixture, &config, /*port*/ 0, NodeHosting::Managed);
-        let port: u16 = address.rsplit(':').next().unwrap().parse().unwrap();
+        let mut controller = launch(&fixture, &config);
         let first = hosted_node(&node_config);
         // The hosted Node shares the Controller's process group without a new session of its own.
         let group = controller.0.id();
         assert_eq!(process_group(first.1), group);
-        let execution = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async {
-                let client = reqwest::Client::builder()
-                    .pool_max_idle_per_host(/*max*/ 0)
-                    .build()
-                    .unwrap();
-                let clones = format!("http://{address}/api/clones");
-                let input = MiniCloneRequest {
-                    request_id: "hosted".into(),
-                    repository: source.address.clone(),
-                    branch: "main".into(),
-                };
-                let receipt: MiniCloneAccepted = client
-                    .post(&clones)
-                    .json(&input)
-                    .send()
-                    .await
-                    .unwrap()
-                    .json()
-                    .await
-                    .unwrap();
-                until(|| {
-                    fs::read_dir(&clone.repository_root)
-                        .unwrap()
-                        .flatten()
-                        .any(|entry| entry.path().join(".git").is_dir())
+        until(|| {
+            fs::read_dir(&clone.repository_root)
+                .unwrap()
+                .flatten()
+                .any(|entry| entry.path().join(".git").is_dir())
+        });
+        // Killing only the Controller must not signal the Node it started or the Git it accepted.
+        controller.kill();
+        assert!(!first.0.has_exited().unwrap());
+        let (mut refused, _) = launch_expecting_exit(&fixture, &config);
+        assert!(!refused.0.wait().unwrap().success());
+        assert!(!first.0.has_exited().unwrap());
+        source.paused.store(false, Ordering::SeqCst);
+        // The surviving Node finishes the clone on its own and replays the unacknowledged result
+        // to whoever holds the owner session; observing it without an Ack leaves the event for the
+        // replacement Controller to take over durably.
+        // The timer must be created inside the runtime that drives it.
+        block_on(async {
+            tokio::time::timeout(Duration::from_secs(/*secs*/ 40), async {
+                let hello = ControllerToNodeMessage::Hello(HelloMessage {
+                    protocol_version: CURRENT_PROTOCOL_VERSION,
+                    payload: Hello {
+                        controller_id: ControllerId::new("owner"),
+                        supported_versions: vec![CURRENT_PROTOCOL_VERSION],
+                    },
                 });
-                // Killing only the Controller must not signal the Node it started or the Git it accepted.
-                controller.kill();
-                assert!(!first.0.has_exited().unwrap());
-                let (mut refused, _) = launch_expecting_exit(&fixture, &config);
-                assert!(!refused.0.wait().unwrap().success());
-                assert!(!first.0.has_exited().unwrap());
-                source.paused.store(false, Ordering::SeqCst);
-                // The surviving Node finishes the clone on its own and replays the unacknowledged
-                // result to whoever holds the owner session; observing it without an Ack leaves the
-                // event for the replacement Controller to take over durably.
-                tokio::time::timeout(Duration::from_secs(/*secs*/ 40), async {
-                    let hello = ControllerToNodeMessage::Hello(HelloMessage {
-                        protocol_version: CURRENT_PROTOCOL_VERSION,
-                        payload: Hello {
-                            controller_id: ControllerId::new("owner"),
-                            supported_versions: vec![CURRENT_PROTOCOL_VERSION],
-                        },
-                    });
-                    loop {
-                        // The dead Controller's session is revoked asynchronously; until then the
-                        // Node closes extra connections, which surfaces as a failed write or EOF.
-                        tokio::time::sleep(Duration::from_millis(/*millis*/ 50)).await;
-                        let Ok(mut stream) = tokio::net::UnixStream::connect(&endpoint).await
-                        else {
-                            continue;
-                        };
-                        if write_controller_message(&mut stream, &hello).await.is_err() {
-                            continue;
-                        }
-                        let Ok(Some(NodeToControllerMessage::HelloAccepted(_))) =
-                            read_node_message(&mut stream).await
-                        else {
-                            continue;
-                        };
-                        while let Ok(Some(message)) = read_node_message(&mut stream).await {
-                            if let NodeToControllerMessage::CloneResult(result) = message
-                                && result.execution_id.as_str() == receipt.execution_id
-                            {
-                                return;
-                            }
+                loop {
+                    // The dead Controller's session is revoked asynchronously; until then the Node
+                    // closes extra connections, which surfaces as a failed write or EOF.
+                    tokio::time::sleep(Duration::from_millis(/*millis*/ 50)).await;
+                    let Ok(mut stream) = tokio::net::UnixStream::connect(&endpoint).await else {
+                        continue;
+                    };
+                    if write_controller_message(&mut stream, &hello).await.is_err() {
+                        continue;
+                    }
+                    let Ok(Some(NodeToControllerMessage::HelloAccepted(_))) =
+                        read_node_message(&mut stream).await
+                    else {
+                        continue;
+                    };
+                    while let Ok(Some(message)) = read_node_message(&mut stream).await {
+                        if let NodeToControllerMessage::CloneResult(result) = message
+                            && result.execution_id == hosted.execution_id
+                        {
+                            return;
                         }
                     }
-                })
-                .await
-                .unwrap();
-                // With the Controller gone, a group-level stop still reaches the Node it started.
-                // SAFETY: signals only the process group this test created and observed.
-                assert_eq!(
-                    unsafe { libc::kill(-(group as libc::pid_t), libc::SIGTERM) },
-                    0
-                );
-                until(|| first.0.has_exited().unwrap());
-                // A replacement composition starts a fresh Node, which replays the original result.
-                let (replacement, _) =
-                    minicloud::launch(&fixture, &config, port, NodeHosting::Managed);
-                controller = replacement;
-                let second = hosted_node(&node_config);
-                let record = tokio::time::timeout(Duration::from_secs(/*secs*/ 40), async {
-                    loop {
-                        let records: Vec<MiniCloneOperation> = client
-                            .get(&clones)
-                            .send()
-                            .await
-                            .unwrap()
-                            .json()
-                            .await
-                            .unwrap();
-                        assert_eq!(records.len(), 1);
-                        if !matches!(records[0].state, MiniCloneState::Pending) {
-                            break records[0].clone();
-                        }
-                        tokio::time::sleep(Duration::from_millis(/*millis*/ 50)).await;
-                    }
-                })
-                .await
-                .unwrap();
-                let MiniCloneState::Succeeded { ref commit, .. } = record.state else {
-                    panic!("{record:?}");
-                };
-                assert_eq!(commit, &expected_commit);
-                assert_eq!(record.execution_id, receipt.execution_id);
-                // Normal stop during a live clone: the hosted Node finishes its managed-Git cleanup
-                // and exits before the Controller does; the accepted record is neither lost nor
-                // turned into a fresh execution when the composition comes back.
-                source.paused.store(true, Ordering::SeqCst);
-                let interrupted: MiniCloneAccepted = client
-                    .post(&clones)
-                    .json(&MiniCloneRequest {
-                        request_id: "hosted-interrupted".into(),
-                        repository: source.address.clone(),
-                        branch: "main".into(),
-                    })
-                    .send()
-                    .await
-                    .unwrap()
-                    .json()
-                    .await
-                    .unwrap();
-                let git = live_git(&fixture);
-                controller.terminate();
-                assert!(controller.0.try_wait().unwrap().unwrap().success());
-                assert!(second.0.has_exited().unwrap());
-                assert!(git.has_exited().unwrap());
-                let (replacement, _) =
-                    minicloud::launch(&fixture, &config, port, NodeHosting::Managed);
-                controller = replacement;
-                let third = hosted_node(&node_config);
-                let mut records: Vec<MiniCloneOperation> = client
-                    .get(&clones)
-                    .send()
-                    .await
-                    .unwrap()
-                    .json()
-                    .await
-                    .unwrap();
-                records.sort_by(|a, b| a.execution_id.cmp(&b.execution_id));
-                let mut expected_ids = vec![receipt.execution_id.clone(), interrupted.execution_id];
-                expected_ids.sort();
-                assert_eq!(
-                    records
-                        .iter()
-                        .map(|r| r.execution_id.clone())
-                        .collect::<Vec<_>>(),
-                    expected_ids
-                );
-                assert!(
-                    records
-                        .iter()
-                        .any(|r| r.execution_id == receipt.execution_id && r.state == record.state)
-                );
-                source.paused.store(false, Ordering::SeqCst);
-                controller.terminate();
-                assert!(controller.0.try_wait().unwrap().unwrap().success());
-                assert!(third.0.has_exited().unwrap());
-                ExecutionId::new(receipt.execution_id)
-            });
+                }
+            })
+            .await
+        })
+        .unwrap();
+        // With the Controller gone, a group-level stop still reaches the Node it started.
+        // SAFETY: signals only the process group this test created and observed.
+        assert_eq!(
+            unsafe { libc::kill(-(group as libc::pid_t), libc::SIGTERM) },
+            0
+        );
+        until(|| first.0.has_exited().unwrap());
+        // A replacement composition starts a fresh Node, which replays the original result; the
+        // Node retires it from its outbox only after the Controller committed and acknowledged it.
+        controller = launch(&fixture, &config);
+        let second = hosted_node(&node_config);
+        until(|| outbox_len(&fixture) == 0);
+        // Normal stop retires the hosted Node before the process exits.
+        controller.terminate();
+        assert!(controller.0.try_wait().unwrap().unwrap().success());
+        assert!(second.0.has_exited().unwrap());
+        let succeeded = operations(&home);
+        let [ref record] = succeeded[..] else {
+            panic!("{succeeded:?}");
+        };
+        assert_eq!(record.command, hosted);
+        let Some(CloneExecutionResult::CloneReady(ready)) = &record.result else {
+            panic!("{record:?}");
+        };
+        assert_eq!(ready.commit, CommitId::new(&expected_commit));
+
+        // Normal stop during a live clone: the hosted Node finishes its managed-Git cleanup and
+        // exits before the Controller does; the accepted record is neither lost nor turned into a
+        // fresh execution when the composition comes back.
+        source.paused.store(true, Ordering::SeqCst);
+        let interrupted = accept(&home, &source, "hosted-interrupted");
+        controller = launch(&fixture, &config);
+        let third = hosted_node(&node_config);
+        let git = live_git(&fixture);
+        controller.terminate();
+        assert!(controller.0.try_wait().unwrap().unwrap().success());
+        assert!(third.0.has_exited().unwrap());
+        assert!(git.has_exited().unwrap());
+        source.paused.store(false, Ordering::SeqCst);
+        controller = launch(&fixture, &config);
+        let fourth = hosted_node(&node_config);
+        controller.terminate();
+        assert!(controller.0.try_wait().unwrap().unwrap().success());
+        assert!(fourth.0.has_exited().unwrap());
+        let mut records = operations(&home);
+        records.sort_by(|a, b| a.command.execution_id.cmp(&b.command.execution_id));
+        let mut expected = vec![hosted.clone(), interrupted];
+        expected.sort_by(|a, b| a.execution_id.cmp(&b.execution_id));
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| record.command.clone())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert!(records.contains(record));
         assert_eq!(fs::read(&node_config).unwrap(), node_config_bytes);
         let database = ora_node_db::NodeDatabase::open(
             &fixture.config().home_directory.join("ora-node.sqlite3"),
@@ -315,7 +263,7 @@ fn single_node_composition_hosts_and_retires_its_node() {
             database
                 .process_journal()
                 .unwrap()
-                .attempts(&execution)
+                .attempts(&hosted.execution_id)
                 .unwrap()
                 .len(),
             1
@@ -323,20 +271,50 @@ fn single_node_composition_hosts_and_retires_its_node() {
     });
 }
 
+/// Accepts one clone through the durable local owner while no Controller process holds it.
+fn accept(
+    home: &std::path::Path,
+    source: &HttpsRepository,
+    request_id: &str,
+) -> CloneRepositoryMessage {
+    let owner = SqliteStore::open(home, ControllerId::new("owner")).unwrap();
+    block_on(owner.accept_request(
+        RequestId::new(request_id),
+        request(source, request_id, "main").payload.spec,
+    ))
+    .unwrap()
+}
+
+/// Reads every accepted operation once the Controller process has released the owner.
+fn operations(home: &std::path::Path) -> Vec<ora_controller::CloneOperation> {
+    let owner = SqliteStore::open(home, ControllerId::new("owner")).unwrap();
+    block_on(owner.operations()).unwrap()
+}
+
+/// Counts the Node's unacknowledged result events.
+fn outbox_len(fixture: &Fixture) -> i64 {
+    rusqlite::Connection::open(fixture.config().home_directory.join("ora-node.sqlite3"))
+        .unwrap()
+        .query_row("SELECT count(*) FROM clone_outbox", [], |row| {
+            row.get(/*idx*/ 0)
+        })
+        .unwrap()
+}
+
 /// Starts a hosting Controller that is expected to refuse composition; callers reap its exit status.
 fn launch_expecting_exit(
     fixture: &Fixture,
     config: &DeploymentConfig,
-) -> (crate::support::ChildGuard, std::path::PathBuf) {
+) -> (ChildGuard, std::path::PathBuf) {
     let path = fixture.path().join("refused-controller.json");
     fs::write(&path, serde_json::to_vec(config).unwrap()).unwrap();
-    let child = crate::support::ChildGuard(
+    let child = ChildGuard(
         std::process::Command::new(
             std::path::Path::new(env!("CARGO_BIN_EXE_ora-node")).with_file_name("ora-controller"),
         )
         .arg("--config")
         .arg(&path)
-        .args(["--single-node", "--port", "0"])
+        .arg("--single-node")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::inherit())
@@ -344,4 +322,36 @@ fn launch_expecting_exit(
         .unwrap(),
     );
     (child, path)
+}
+
+/// Starts the production hosting Controller executable and waits until it has composed.
+fn launch(fixture: &Fixture, config: &DeploymentConfig) -> ChildGuard {
+    let path = fixture.path().join("controller.json");
+    fs::write(&path, serde_json::to_vec(config).unwrap()).unwrap();
+    let log = fixture.path().join("controller.log");
+    // Lead a fresh process group so the test can address the Controller and its Node together
+    // without signaling the test runner's own group.
+    let child = ChildGuard(
+        Command::new(
+            std::path::Path::new(env!("CARGO_BIN_EXE_ora-node")).with_file_name("ora-controller"),
+        )
+        .arg("--config")
+        .arg(path)
+        .arg("--single-node")
+        .process_group(/*pgroup*/ 0)
+        .stdin(Stdio::null())
+        .stdout(fs::File::create(&log).unwrap())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .expect("build ora-controller before standalone acceptance"),
+    );
+    // Composition is complete once this structured event is in the log, after the Node is ready.
+    until(|| {
+        fs::read_to_string(&log)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .any(|event| event["message"] == "ora-controller coordinating locally")
+    });
+    child
 }

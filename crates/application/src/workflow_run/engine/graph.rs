@@ -2,6 +2,7 @@ use super::agent_config::WireAgentConfig;
 pub use super::agent_config::{
     AgentConfig, AgentExecutor, AgentOutputContract, AgentSkill, StructuredTextExposure,
 };
+use super::aggregator::{AggregatorConfig, AggregatorError, WireAggregatorConfig};
 use super::condition::{ConditionConfig, WireConditionCase};
 use super::iteration::{CompositeRegion, IterationConfig, derive_regions, parse_iteration_config};
 use super::start_input::{StartInputVariable, WireStartInputVariable, into_start_input_variables};
@@ -68,6 +69,8 @@ pub struct WorkflowGraphNode {
     pub agent_config: Option<AgentConfig>,
     /// Executable cases of a `condition` node; absent for non-condition nodes.
     pub condition_config: Option<ConditionConfig>,
+    /// Ordered selector list of an `aggregator` node; absent for non-aggregator nodes.
+    pub aggregator_config: Option<AggregatorConfig>,
     /// Declared result bindings of an `output` node; absent for non-output nodes.
     pub output_config: Option<OutputConfig>,
     /// Composite configuration of an `iteration` node; absent for non-iteration nodes.
@@ -110,6 +113,8 @@ pub enum GraphError {
     UnknownNodeType { node_id: String, value: String },
     #[error("node {node_id} has an invalid condition config: {reason}")]
     InvalidCondition { node_id: String, reason: String },
+    #[error("node {node_id} has an invalid aggregator config: {reason}")]
+    InvalidAggregator { node_id: String, reason: String },
     #[error("node {node_id} has an invalid iteration config: {reason}")]
     InvalidIteration { node_id: String, reason: String },
     #[error("node {node_id} has an invalid retry config: {reason}")]
@@ -191,6 +196,8 @@ struct WireNodeData {
     agent_config: Option<WireAgentConfig>,
     #[serde(default)]
     cases: Vec<WireConditionCase>,
+    #[serde(default)]
+    aggregator_config: Option<WireAggregatorConfig>,
     #[serde(default)]
     outputs: Vec<WireOutputBinding>,
     #[serde(default)]
@@ -356,6 +363,17 @@ impl WorkflowGraph {
                         }
                         _ => None,
                     },
+                    aggregator_config: match node_type {
+                        NodeType::Aggregator => {
+                            Some(AggregatorConfig::from_wire(data.aggregator_config).map_err(
+                                |error: AggregatorError| GraphError::InvalidAggregator {
+                                    node_id: id.clone(),
+                                    reason: error.to_string(),
+                                },
+                            )?)
+                        }
+                        _ => None,
+                    },
                     output_config: match node_type {
                         NodeType::Output => into_output_config(data.outputs),
                         _ => None,
@@ -449,7 +467,7 @@ impl WorkflowGraph {
             region_by_member: HashMap::new(),
         };
         graph.derive_and_validate_regions(containment, &edges)?;
-        variable_pool::validate_iteration_declarations(&graph)?;
+        variable_pool::validate_derived_declarations(&graph)?;
         Ok(graph)
     }
 

@@ -33,8 +33,11 @@ import type {
   WorkflowNodeData,
 } from "@ora/workflow-runtime";
 import "./theater-motion.css";
+import { RunConditionStage } from "./run-condition-stage";
 
 interface RunTheaterActCardProps {
+  /** Loop history displays only committed output; token streams remain inside the session dock. */
+  showCompletedOutput?: boolean;
   data: WorkflowNodeData;
   state: GraphWorkflowNodeState;
   /** Run identifier used by an interactive node's explicit completion action. */
@@ -92,6 +95,7 @@ export function RunTheaterActCard({
   conversationOpen: conversationOpenProp,
   onConversationOpenChange,
   onNodeCompleted,
+  showCompletedOutput = false,
 }: RunTheaterActCardProps) {
   const { i18n, t } = useTranslation();
   const locale =
@@ -267,7 +271,9 @@ export function RunTheaterActCard({
           />
           {state.stopReason != null && (
             <span className="text-[10px] text-muted-foreground">
-              {state.stopReason}
+              {state.stopReason === "loop_exit"
+                ? t("workflowRun.loopExit.completed")
+                : state.stopReason}
             </span>
           )}
         </div>
@@ -315,6 +321,8 @@ export function RunTheaterActCard({
           <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-muted-foreground">
             {data.description}
           </p>
+        ) : data.kind === "condition" ? (
+          <RunConditionStage data={data} state={state} />
         ) : data.kind === "output" ? (
           <div className="mt-5 rounded-xl border border-border/80 bg-muted/30 px-4 py-3">
             <p className="text-[11px] font-medium uppercase tracking-[0.04em] text-muted-foreground">
@@ -367,6 +375,32 @@ export function RunTheaterActCard({
                 </p>
               )}
             </div>
+            {showCompletedOutput && (
+              <div className="mt-3 rounded-xl border border-border/80 bg-muted/30 px-4 py-3">
+                <p className="text-xs text-muted-foreground">
+                  {t("workflowRun.inspector.output")}
+                </p>
+                {state.status === "succeeded" &&
+                state.output?.summary !== undefined ? (
+                  <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs">
+                    {formatWorkflowNodeOutput(state.output.summary)}
+                  </pre>
+                ) : (
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    {t(
+                      state.status === "inactive"
+                        ? "workflowRun.theater.notRunThisRound"
+                        : "workflowRun.loopView.outputPending",
+                    )}
+                  </p>
+                )}
+                {state.errorMessage && (
+                  <p className="mt-2 text-sm text-destructive">
+                    {state.errorMessage}
+                  </p>
+                )}
+              </div>
+            )}
           </>
         )
       }

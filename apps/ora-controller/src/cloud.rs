@@ -2,14 +2,26 @@
 //! internal control contract, committed by Cloud in PostgreSQL. The adapter holds no authoritative
 //! state. Its channel and lease epoch are runtime state a replacement instance rebuilds from Cloud,
 //! and it never opens a local database or takes a file lease.
+mod claim;
+mod coordinate;
 mod fault;
+mod fleet;
+mod force_stop;
 mod lease;
 mod mapping;
+mod operations;
+mod plugins;
+mod reports;
+mod runtime_control;
+mod signals;
+mod substrate;
 
 use crate::*;
 use fault::Verdict;
+use fleet::SandboxDeployment;
 use ora_controller_proto::v1::{
-    self as proto, controller_lease_service_client::ControllerLeaseServiceClient,
+    self as proto, control_signal_service_client::ControlSignalServiceClient,
+    controller_lease_service_client::ControllerLeaseServiceClient,
     execution_service_client::ExecutionServiceClient,
 };
 use std::{
@@ -17,6 +29,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
+use tokio::sync::watch;
 use tonic::{
     metadata::{AsciiMetadataValue, MetadataValue},
     transport::Channel,
@@ -25,8 +38,18 @@ use tonic::{
 /// The metadata key carrying `controller_id`; the contract names no other identity for Controllers.
 const HOLDER_METADATA: &str = "x-ora-controller-id";
 
+/// HTTP/2 PING cadence on the Cloud connection. `Watch` can stay silent for long stretches, and a
+/// connection dropped silently by NAT or a middlebox would otherwise leave the stream looking live
+/// and every call waiting out its deadline until the kernel gives up on TCP. PINGs are answered by
+/// the gRPC peer itself, so they prove Cloud is serving even through a TCP-terminating proxy. Cloud
+/// accepts PINGs every 5 seconds or more, also without active streams; its default policy would
+/// answer this cadence with GOAWAY.
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(/*secs*/ 30);
+/// How long a PING may go unanswered before the connection is closed and the stream breaks.
+const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 10);
+
 /// Coordination through Cloud's contract. Cheap to clone: every clone shares the channel and the
-/// lease epoch, so the runtime, the Node session and the claim loop all
+/// lease epoch, so the runtime, the Node session and the coordination loop all
 /// write under the same fencing token.
 pub struct CloudStore {
     inner: Arc<Inner>,
@@ -42,13 +65,22 @@ impl Clone for CloudStore {
 
 struct Inner {
     id: ControllerId,
-    /// The one Node this deployment dispatches to; the contract keeps the target beside the input.
-    node: NodeId,
+    /// The one static Node tenant clones are dispatched to; the contract keeps the target beside
+    /// the input. A deployment that only drives Workspace sandboxes may have none.
+    node: Option<NodeId>,
+    /// Whether a handshake in this process proved that `node` is the Node behind its endpoint.
+    /// It only ever turns true: the configuration cannot change without a restart, and a Node that
+    /// disconnected later is still the right target for work that waits for it to return.
+    node_verified: watch::Sender<bool>,
+    /// How Workspace sandboxes are created and reached; `None` leaves Workspace operations to
+    /// another Controller deployment.
+    sandboxes: Option<Arc<SandboxDeployment>>,
     channel: Channel,
     /// `controller_id` as request metadata: Cloud records it as the lease and submission holder.
     holder: AsciiMetadataValue,
     /// The epoch of the lease currently held, or `None` while ineligible to write.
     lease: Mutex<Option<i64>>,
+    /// How often to claim while no `Watch` stream is live.
     claim_interval: Duration,
 }
 
@@ -60,17 +92,29 @@ impl CloudStore {
         let Persistence::Cloud {
             endpoint,
             claim_interval_ms,
+            substrate,
         } = &config.persistence
         else {
             return Err(Error::Configuration(
                 "cloud adapter requires persistence.kind = cloud".into(),
             ));
         };
-        let [node] = config.nodes.as_slice() else {
-            return Err(Error::Configuration(
-                "cloud persistence dispatches to exactly one configured Node".into(),
-            ));
+        // Tenant clones need their one static Node; sandbox Nodes are found at run time, so a
+        // deployment with a Substrate may leave `nodes` empty.
+        let node = match (config.nodes.as_slice(), substrate) {
+            ([node], _) => Some(node.node_id.clone()),
+            ([], Some(_)) => None,
+            _ => {
+                return Err(Error::Configuration(
+                    "cloud persistence dispatches tenant clones to exactly one configured Node, or to none when substrate is configured".into(),
+                ));
+            }
         };
+        let sandboxes = substrate
+            .as_ref()
+            .map(|substrate| SandboxDeployment::new(substrate, config))
+            .transpose()?
+            .map(Arc::new);
         if *claim_interval_ms == 0 || config.controller_id.as_str().trim().is_empty() {
             return Err(Error::Configuration(
                 "cloud persistence needs a nonzero claim_interval_ms and a controller_id".into(),
@@ -88,14 +132,37 @@ impl CloudStore {
             .ok_or_else(|| {
                 Error::Configuration("controller_id must be printable ASCII to reach Cloud".into())
             })?;
-        let channel = tonic::transport::Endpoint::from_shared(endpoint.clone())
+        let mut connection = tonic::transport::Endpoint::from_shared(endpoint.clone())
             .map_err(|error| Error::Configuration(format!("invalid cloud endpoint: {error}")))?
             .connect_timeout(fault::RPC_TIMEOUT)
-            .connect_lazy();
+            .http2_keep_alive_interval(KEEPALIVE_INTERVAL)
+            .keep_alive_timeout(KEEPALIVE_TIMEOUT)
+            // Also while no call is active: the fallback without a stream needs a live connection.
+            .keep_alive_while_idle(true);
+        if let Some(files) = &config.management_tls {
+            if !endpoint.starts_with("https://") {
+                return Err(Error::Configuration(
+                    "Cloud management TLS requires https://".into(),
+                ));
+            }
+            let ca = std::fs::read(&files.ca_file)?;
+            let certificate = std::fs::read(&files.certificate_file)?;
+            let key = std::fs::read(&files.private_key_file)?;
+            connection = connection
+                .tls_config(
+                    tonic::transport::ClientTlsConfig::new()
+                        .ca_certificate(tonic::transport::Certificate::from_pem(ca))
+                        .identity(tonic::transport::Identity::from_pem(certificate, key)),
+                )
+                .map_err(|e| Error::Configuration(e.to_string()))?;
+        }
+        let channel = connection.connect_lazy();
         Ok(Self {
             inner: Arc::new(Inner {
                 id: config.controller_id.clone(),
-                node: node.node_id.clone(),
+                node,
+                node_verified: watch::Sender::new(false),
+                sandboxes,
                 channel,
                 holder,
                 lease: Mutex::new(None),
@@ -120,6 +187,10 @@ impl CloudStore {
 
     fn leases(&self) -> ControllerLeaseServiceClient<Channel> {
         ControllerLeaseServiceClient::new(self.inner.channel.clone())
+    }
+
+    fn signals(&self) -> ControlSignalServiceClient<Channel> {
+        ControlSignalServiceClient::new(self.inner.channel.clone())
     }
 
     /// The fencing token every write carries; without a held lease nothing may be written.
@@ -149,7 +220,7 @@ impl CloudStore {
     /// fact was required, which the interface defines as a conflict.
     fn settle(&self, verdict: Verdict) -> Error {
         match verdict {
-            Verdict::NotFound | Verdict::Conflict => Error::Conflict,
+            Verdict::NotFound | Verdict::Conflict | Verdict::StaleRuntimeBinding => Error::Conflict,
             Verdict::Stale(detail) => {
                 ora_logging::ora_warn!(detail = %detail, "Cloud lease is no longer current");
                 self.set_lease(None);
@@ -209,6 +280,56 @@ impl CoordinationStore for CloudStore {
     fn id(&self) -> &ControllerId {
         &self.inner.id
     }
+    fn requires_runtime_control(&self) -> bool {
+        true
+    }
+    async fn pending_plugins(&self, node: &NodeId) -> Result<Vec<PluginCommand>, Error> {
+        self.pending_plugin_commands(node).await
+    }
+    async fn original_plugin_dispatch(
+        &self,
+        session: &NodeRuntimeIdentity,
+        operation: &OperationId,
+        execution: &ExecutionId,
+    ) -> Result<Option<PluginCommand>, Error> {
+        self.plugin_command(session, operation, execution).await
+    }
+    async fn dispatch_plugins(
+        &self,
+        command: PluginCommand,
+    ) -> Result<Option<ControllerToNodeMessage>, Error> {
+        self.controlled_plugins(command).await
+    }
+    async fn take_over_plugins(
+        &self,
+        session: &NodeRuntimeIdentity,
+        event: &PluginsResultMessage,
+    ) -> Result<(), Error> {
+        self.plugin_event(session, event).await
+    }
+    async fn record_queried_plugins(
+        &self,
+        session: &NodeRuntimeIdentity,
+        operation: &OperationId,
+        execution: &ExecutionId,
+        result: &PluginExecutionResult,
+    ) -> Result<(), Error> {
+        self.plugin_query(session, operation, execution, result)
+            .await
+    }
+
+    async fn runtime_bindings(&self, node: &NodeId) -> Result<Vec<RuntimeBinding>, Error> {
+        self.control_bindings(node).await
+    }
+    async fn acknowledge_runtime_binding(&self, state: &RuntimeControlState) -> Result<(), Error> {
+        self.control_ack(state).await
+    }
+    async fn dispatch_message(
+        &self,
+        command: CloneRepositoryMessage,
+    ) -> Result<Option<ControllerToNodeMessage>, Error> {
+        self.controlled_dispatch(command).await
+    }
 
     async fn take_over_node_event(
         &self,
@@ -226,16 +347,22 @@ impl CoordinationStore for CloudStore {
             .await?;
         let epoch = self.epoch()?;
         let result = mapping::result(&event.payload);
+        let business_operation = self
+            .record(&command.execution_id)
+            .await?
+            .ok_or(Error::Conflict)?
+            .operation_id;
         // The exact event travels verbatim so a replay with the same sequence but different
         // content is detected by the authority as a conflict, as the local receipt table does.
         let encoded = serde_json::to_vec(event)?;
         let write = fault::write(|submission_id| {
+            let business_operation = business_operation.clone();
             let (result, encoded, command) = (result.clone(), encoded.clone(), &command);
             async move {
                 let request = self.request(proto::TakeOverNodeEventRequest {
                     submission_id,
                     epoch,
-                    operation_id: command.operation_id.as_str().into(),
+                    operation_id: business_operation.clone(),
                     execution_id: command.execution_id.as_str().into(),
                     sequence: event.sequence.value(),
                     result: Some(result),
@@ -262,13 +389,19 @@ impl CoordinationStore for CloudStore {
             .await?;
         let epoch = self.epoch()?;
         let result = mapping::result(result);
+        let business_operation = self
+            .record(&command.execution_id)
+            .await?
+            .ok_or(Error::Conflict)?
+            .operation_id;
         let write = fault::write(|submission_id| {
+            let business_operation = business_operation.clone();
             let (result, command) = (result.clone(), &command);
             async move {
                 let request = self.request(proto::RecordQueriedResultRequest {
                     submission_id,
                     epoch,
-                    operation_id: command.operation_id.as_str().into(),
+                    operation_id: business_operation.clone(),
                     execution_id: command.execution_id.as_str().into(),
                     result: Some(result),
                 });
@@ -288,10 +421,12 @@ impl CoordinationStore for CloudStore {
         execution: &ExecutionId,
     ) -> Result<CloneRepositoryMessage, Error> {
         let record = self.record(execution).await?.ok_or(Error::Conflict)?;
-        if record.operation_id != operation.as_str() || record.node_id != session.node_id.as_str() {
+        if record.node_operation_id != operation.as_str()
+            || record.node_id != session.node_id.as_str()
+        {
             return Err(Error::Conflict);
         }
-        mapping::command(&record, &self.inner.node)
+        mapping::command(&record, &session.node_id)
     }
 
     async fn pending_dispatches(
@@ -310,6 +445,7 @@ impl CoordinationStore for CloudStore {
         response
             .records
             .iter()
+            .filter(|record| !plugins::mapping::is_plugin(record))
             .map(|record| mapping::command(record, node))
             .collect()
     }
@@ -322,11 +458,21 @@ impl CoordinationStore for CloudStore {
             .transpose()
     }
 
+    fn static_node_established(&self, node: &NodeRuntimeIdentity) {
+        if self.inner.node.as_ref() == Some(&node.node_id) {
+            self.inner.node_verified.send_if_modified(|verified| {
+                let first = !*verified;
+                *verified = true;
+                first
+            });
+        }
+    }
+
     fn serve(
         &self,
         shutdown: impl Future<Output = ()> + Send + 'static,
     ) -> impl Future<Output = io::Result<()>> + Send {
-        lease::coordinate(self.clone(), shutdown)
+        coordinate::coordinate(self.clone(), shutdown)
     }
 }
 
@@ -338,16 +484,20 @@ mod tests {
 
     fn config(controller_id: &str) -> RuntimeConfig {
         RuntimeConfig {
+            management_tls: None,
             home_directory: "/nonexistent/controller".into(),
             persistence: Persistence::Cloud {
                 endpoint: "http://127.0.0.1:1".into(),
                 claim_interval_ms: 100,
+                substrate: None,
             },
             protected_state_directories: Vec::new(),
             controller_id: ControllerId::new(controller_id),
-            nodes: vec![NodeEndpoint {
+            nodes: vec![NodeTarget {
                 node_id: NodeId::new("node"),
-                endpoint: "/nonexistent/control.sock".into(),
+                endpoint: NodeEndpoint::Ipc {
+                    path: "/nonexistent/control.sock".into(),
+                },
             }],
             session: SessionConfig {
                 io_timeout_ms: 100,

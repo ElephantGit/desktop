@@ -1,10 +1,12 @@
 import { useWorkflowAnalysis } from "../../state/data/workflow-analysis";
 import { executableRun } from "./executable-run";
+import { isLoopHistoryNode } from "./loop-round-state";
 import { WorkflowMembershipProvider } from "../workflow-node-chrome";
 import { serializeWorkflowGraph } from "@ora/workflow-runtime";
 import { isTerminalRunStatus } from "@ora/workflow-runtime";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -77,6 +79,7 @@ interface WorkflowRunWorkspaceProps {
  */
 export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   const { t } = useTranslation();
+  const showContractError = useContractErrorToast();
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const setSidebarCollapsed = useUiStore((s) => s.setSidebarCollapsed);
   const selectWorkflowRun = useWorkspaceSelectionStore(
@@ -228,7 +231,11 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   // An open automatic node has no completion button to create the existing advance intent.
   // Detect the same running -> terminal edge and feed it into that shared successor resolver.
   useEffect(() => {
-    if (run === null || conversationNodeId === null) {
+    if (
+      run === null ||
+      conversationNodeId === null ||
+      isLoopHistoryNode(run, conversationNodeId)
+    ) {
       conversationStatusSampleRef.current = null;
       return;
     }
@@ -282,7 +289,11 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
   // Live pin release: only when the focused act itself just left live -> terminal.
   // History pins stay; an open node session is also sticky.
   useEffect(() => {
-    if (run === null || focusNodeId === null) {
+    if (
+      run === null ||
+      focusNodeId === null ||
+      isLoopHistoryNode(run, focusNodeId)
+    ) {
       focusStatusSampleRef.current = null;
       return;
     }
@@ -331,6 +342,10 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
       return;
     }
     lastFocusedRevealRef.current = artifactsQuery.revealedId;
+    // A new file must not move the reader away from selected loop history.
+    if (focusNodeId !== null && isLoopHistoryNode(run, focusNodeId)) {
+      return;
+    }
     const preferredFocus = resolveStageFocusNodeId(
       conversationNodeIdRef.current,
       focusNodeId,
@@ -507,8 +522,11 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
         enterTheater();
       }
       setStartOpen(false);
-    } catch {
-      toast.error(
+    } catch (error) {
+      // The localized contract error names the exact Start variable (e.g. a required value
+      // that is missing or a mistyped value), so surface it instead of a generic failure.
+      showContractError(
+        error,
         canRunAgain
           ? t("workflowRun.rerunFailed")
           : t("workflowRun.startFailed"),

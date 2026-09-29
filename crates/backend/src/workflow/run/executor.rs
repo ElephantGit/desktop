@@ -11,6 +11,7 @@ use agent_client_protocol_schema::v1::{
     SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
     SessionConfigSelectOptions,
 };
+use ora_agent_runtime::RuntimeError;
 use ora_application::{
     AgentDefinitionRepository, AgentOutputContract, AgentSkill, BindWorkflowNodeSessionResult,
     Clock, ExecutionContext, FileChange, NodeExecutor, NodeFailure, NodeFailureKind,
@@ -34,6 +35,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use thiserror::Error;
 
+mod loop_exit;
 mod output;
 mod payload;
 pub(super) use output::AssistantOutputAccumulator;
@@ -54,6 +56,7 @@ pub struct WorkflowRunNodeExecutor {
     baselines_root: PathBuf,
     /// Commits the interactive park transition with the shared publish-after-commit discipline.
     transitions: Arc<WorkflowRunTransitions>,
+    loop_exit_tasks: Arc<loop_exit::LoopExitTasks>,
 }
 
 impl WorkflowRunNodeExecutor {
@@ -76,6 +79,7 @@ impl WorkflowRunNodeExecutor {
             clock,
             baselines_root,
             transitions,
+            loop_exit_tasks: Arc::default(),
         }
     }
 }
@@ -103,7 +107,9 @@ impl NodeExecutor for WorkflowRunNodeExecutor {
         let context = context.clone();
         let scope_id = scope_id.clone();
         let variable_pool = variable_pool.clone();
+        let driver = self.loop_exit_tasks.register(node_run_id.clone());
         tokio::spawn(async move {
+            let _driver = driver;
             match drive_agent_node(
                 &agent_runtime,
                 &pool,
@@ -147,6 +153,16 @@ impl NodeExecutor for WorkflowRunNodeExecutor {
                 }
             }
         });
+    }
+
+    /// Cancels this scope's sessions asynchronously and acknowledges only after drivers stop.
+    fn cleanup_loop_exit(
+        &self,
+        context: &ExecutionContext,
+        parent_id: &WorkflowNodeRunId,
+        scope_id: &ora_domain::WorkflowScopeId,
+    ) -> ora_application::LoopExitCleanup {
+        loop_exit::dispatch(self, context, parent_id, scope_id)
     }
 
     fn on_composite_node_started(
@@ -242,6 +258,13 @@ pub enum NodeExecutionError {
     Repository(#[from] RepositoryError),
     #[error("session failed: {0}")]
     Session(#[from] BackendError),
+}
+
+impl From<RuntimeError> for NodeExecutionError {
+    /// Runtime failures reach a node exactly as the Desktop session API reports them.
+    fn from(error: RuntimeError) -> Self {
+        Self::Session(error.into())
+    }
 }
 
 impl NodeExecutionError {

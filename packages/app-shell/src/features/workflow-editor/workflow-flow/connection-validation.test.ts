@@ -34,6 +34,29 @@ function valid(connection: Edge, edges: Edge[] = []): boolean {
 }
 
 describe("workflow connection validation", () => {
+  it("accepts an incoming loop exit edge but rejects every outgoing edge", () => {
+    const members = [
+      node("loop", "loop"),
+      ...[node("agent", "agent", "loop"), node("exit", "loopExit", "loop")].map(
+        (member) => ({
+          ...member,
+          data: { ...member.data, containerId: "loop" },
+        }),
+      ),
+    ];
+    const validate = (source: string, target: string) =>
+      isValidWorkflowConnection({
+        nodes: members,
+        edges: [],
+        reconnectingEdgeId: null,
+        connection: { id: "test", source, target },
+      });
+    expect([
+      validate("agent", "exit"),
+      validate("exit", "agent"),
+      validate("exit", "loop"),
+    ]).toEqual([true, false, false]);
+  });
   it.each([
     ["child-a", "child-b", true],
     ["child-a", "outside", false],

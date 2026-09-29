@@ -1,6 +1,35 @@
 // Pure translation data: safe to compose without importing feature implementation.
 export const workflowRunTranslations = {
   "zh-CN": {
+    "workflowRun.loopExit.completed": "通过退出节点结束循环",
+    "workflowRun.loopView.result": "循环结果",
+    "workflowRun.loopView.overview": "本轮概览",
+    "workflowRun.loopView.progress": "已开始 {{count}} 轮 / 最大 {{max}} 轮",
+    "workflowRun.loopView.empty": "等待第一轮开始",
+    "workflowRun.loopView.running": "运行中",
+    "workflowRun.loopView.waiting": "等待人工输入",
+    "workflowRun.loopView.finishing": "正在结束循环",
+    "workflowRun.loopView.continue": "已完成 · 继续循环",
+    "workflowRun.loopView.exit": "已完成 · 通过退出节点结束",
+    "workflowRun.loopView.condition": "已完成 · 满足结束条件",
+    "workflowRun.loopView.completed": "已完成",
+    "workflowRun.loopView.failed": "失败",
+    "workflowRun.loopView.cancelled": "已取消",
+    "workflowRun.loopView.outputPending":
+      "尚未产生最终输出，可通过对话查看执行过程。",
+    "workflowRun.loopView.resultPending": "尚未生成循环导出结果",
+    "workflowRun.conditionView.conditions": "分支条件",
+    "workflowRun.conditionView.matched": "本轮命中",
+    "workflowRun.conditionView.selected": "本轮选择：{{branch}}",
+    "workflowRun.conditionView.result": "判断结果",
+    "workflowRun.conditionView.else": "以上条件均不满足时进入默认分支",
+    "workflowRun.conditionView.unavailable":
+      "条件判断已完成；当前运行记录未提供命中的分支。",
+    "workflowRun.conditionView.pending": "等待条件判断完成",
+    "workflowRun.conditionView.failed": "条件判断失败",
+    "workflowRun.conditionView.cancelled": "条件判断已取消",
+    "workflowRun.loopView.recordedNodes": "本轮执行节点",
+    "workflowRun.loopView.unexecutedNodes": "本轮未执行（{{count}}）",
     "errors.workflow_no_published_snapshot": "该工作流没有已发布的快照。",
     "errors.workflow_run_cannot_use_draft_snapshot":
       "工作流运行不能使用草稿快照。",
@@ -8,6 +37,8 @@ export const workflowRunTranslations = {
     "errors.workflow_run_active": "该工作流运行仍处于活动状态。",
     "errors.workflow_run_graph_parse": "工作流图解析失败。",
     "errors.workflow_run_validation": "工作流运行校验失败。",
+    "errors.workflow_run_input_invalid":
+      "启动变量 {{variable}} 的输入无效：{{reason}}",
     "errors.workflow_skill_not_found": "该工作流需要的技能不可用。",
     "errors.workflow_role_not_found": "未找到该工作流角色。",
     "errors.workflow_run_start_failed": "启动工作流运行失败。",
@@ -372,6 +403,38 @@ export const workflowRunTranslations = {
     "workflowRun.retry.kindNotRetried": "这类失败不会自动重试",
   },
   "en-US": {
+    "workflowRun.loopExit.completed": "Loop ended through an exit node",
+    "workflowRun.loopView.result": "Loop results",
+    "workflowRun.loopView.overview": "Round overview",
+    "workflowRun.loopView.progress":
+      "{{count}} rounds started / maximum {{max}}",
+    "workflowRun.loopView.empty": "Waiting for the first round",
+    "workflowRun.loopView.running": "Running",
+    "workflowRun.loopView.waiting": "Awaiting input",
+    "workflowRun.loopView.finishing": "Finishing loop",
+    "workflowRun.loopView.continue": "Completed · continuing",
+    "workflowRun.loopView.exit": "Completed · exit node reached",
+    "workflowRun.loopView.condition": "Completed · end condition met",
+    "workflowRun.loopView.completed": "Completed",
+    "workflowRun.loopView.failed": "Failed",
+    "workflowRun.loopView.cancelled": "Cancelled",
+    "workflowRun.loopView.outputPending":
+      "No final output yet. Open the conversation to view execution.",
+    "workflowRun.loopView.resultPending": "Loop results are not available yet",
+    "workflowRun.conditionView.conditions": "Branch conditions",
+    "workflowRun.conditionView.matched": "Selected this round",
+    "workflowRun.conditionView.selected": "Selected branch: {{branch}}",
+    "workflowRun.conditionView.result": "Decision result",
+    "workflowRun.conditionView.else":
+      "Take the default branch when none of the conditions match",
+    "workflowRun.conditionView.unavailable":
+      "Evaluation completed; this run record does not expose the selected branch.",
+    "workflowRun.conditionView.pending": "Waiting for condition evaluation",
+    "workflowRun.conditionView.failed": "Condition evaluation failed",
+    "workflowRun.conditionView.cancelled": "Condition evaluation cancelled",
+    "workflowRun.loopView.recordedNodes": "Nodes executed this round",
+    "workflowRun.loopView.unexecutedNodes":
+      "Not executed this round ({{count}})",
     "errors.workflow_no_published_snapshot":
       "The workflow has no published snapshot.",
     "errors.workflow_run_cannot_use_draft_snapshot":
@@ -380,6 +443,8 @@ export const workflowRunTranslations = {
     "errors.workflow_run_active": "The workflow run is still active.",
     "errors.workflow_run_graph_parse": "Failed to parse the workflow graph.",
     "errors.workflow_run_validation": "Workflow run validation failed.",
+    "errors.workflow_run_input_invalid":
+      "Invalid input for start variable '{{variable}}': {{reason}}",
     "errors.workflow_skill_not_found":
       "A skill required by this workflow is unavailable.",
     "errors.workflow_role_not_found": "Workflow role not found.",

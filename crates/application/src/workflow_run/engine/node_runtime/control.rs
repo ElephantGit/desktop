@@ -5,6 +5,7 @@
 //! committed facts and return the terminal decision for the engine to persist.
 
 use super::{NodeRuntime, SwiftCompletion, SwiftNodeRuntime};
+use crate::workflow_run::engine::aggregator::{AggregatorConfig, AggregatorError};
 use crate::workflow_run::engine::condition::{ConditionError, evaluate_condition};
 use crate::workflow_run::engine::graph::WorkflowGraphNode;
 use crate::workflow_run::engine::node_type::NodeType;
@@ -66,6 +67,43 @@ impl SwiftNodeRuntime for ConditionRuntime {
             .as_ref()
             .map(|config| evaluate_condition(config, completion.pool))
             .unwrap_or_else(|| Err(ConditionError::MissingConfig))
+            .map_err(|error| error.to_string())
+    }
+}
+
+/// The variable aggregator runtime: passes the first assigned declared selector through
+/// unchanged (V1 contract). Assigned is key existence, so falsy values still hit; the node
+/// never consults branch decisions.
+pub(super) struct AggregatorRuntime;
+
+impl NodeRuntime for AggregatorRuntime {
+    fn start_input(
+        &self,
+        _node: &WorkflowGraphNode,
+        _context: &ExecutionContext,
+    ) -> Option<String> {
+        None
+    }
+
+    /// A pass-through never contributes the run output.
+    fn run_output_rank(&self) -> Option<u32> {
+        None
+    }
+}
+
+impl SwiftNodeRuntime for AggregatorRuntime {
+    fn complete_running(
+        &self,
+        node: &WorkflowGraphNode,
+        completion: &SwiftCompletion<'_>,
+    ) -> Result<String, String> {
+        // The serialized JSON form round-trips through the output column: the repository
+        // completion branch parses it back before writing the typed pool variable.
+        node.aggregator_config
+            .as_ref()
+            .ok_or(AggregatorError::MissingConfig)
+            .and_then(|config: &AggregatorConfig| config.select_output(completion.pool))
+            .map(|value| value.to_string())
             .map_err(|error| error.to_string())
     }
 }
@@ -396,6 +434,7 @@ mod tests {
             input_variables: Vec::new(),
             agent_config: None,
             condition_config: None,
+            aggregator_config: None,
             output_config: None,
             iteration_config: None,
         };
@@ -409,5 +448,37 @@ mod tests {
                 .unwrap_err(),
             ConditionError::MissingConfig.to_string()
         );
+    }
+}
+
+/// A scoped control marker; the Loop scheduler persists the actual exit transition.
+pub(super) struct LoopExitRuntime;
+impl NodeRuntime for LoopExitRuntime {
+    /// Break nodes have no independent input contract.
+    fn start_input(
+        &self,
+        _node: &WorkflowGraphNode,
+        _context: &ExecutionContext,
+    ) -> Option<String> {
+        None
+    }
+    /// The owning Loop exports results, never the break marker.
+    fn run_output_rank(&self) -> Option<u32> {
+        None
+    }
+}
+impl SwiftNodeRuntime for LoopExitRuntime {
+    /// The enclosing scheduler owns cancellation and public result publication.
+    fn requests_loop_exit(&self) -> bool {
+        true
+    }
+
+    /// Rejects accidental execution outside the scoped scheduler.
+    fn complete_running(
+        &self,
+        _node: &WorkflowGraphNode,
+        _completion: &SwiftCompletion<'_>,
+    ) -> Result<String, String> {
+        Err("loopExit requires the Loop scheduler".into())
     }
 }

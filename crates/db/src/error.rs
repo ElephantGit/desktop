@@ -32,6 +32,8 @@ pub enum DatabaseError {
     CorruptPluginId(#[from] ora_domain::PluginIdError),
     #[error("workflow run state is corrupt: {0}")]
     CorruptWorkflowRunState(#[from] serde_json::Error),
+    #[error("workflow variable pool rejected a value its own declaration pre-check allowed: {0}")]
+    CorruptWorkflowVariablePool(#[from] ora_application::WorkflowVariablePoolError),
     #[error("session MCP selection is corrupt: {0}")]
     CorruptSessionMcpSelection(serde_json::Error),
     #[error("Effect state is corrupt: {0}")]

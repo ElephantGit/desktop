@@ -1,8 +1,9 @@
-import type {
-  WorkflowDefinitionEdge,
-  WorkflowDefinitionNode,
-  WorkflowGlobalVariable,
-  WorkflowViewport,
+import {
+  WORKFLOW_NODE_KINDS,
+  type WorkflowDefinitionEdge,
+  type WorkflowDefinitionNode,
+  type WorkflowGlobalVariable,
+  type WorkflowViewport,
 } from "./types";
 import { workflowContainerNodes } from "./container-layout";
 
@@ -39,6 +40,19 @@ const WORKFLOW_ANNOTATION_THEMES = new Set([
   "pink",
   "gray",
 ]);
+const WORKFLOW_NODE_KIND_SET: ReadonlySet<string> = new Set(
+  WORKFLOW_NODE_KINDS,
+);
+
+/** A parsed graph plus the nodes this version had to drop to render it. */
+export interface WorkflowGraphParseResult {
+  /** The envelope the editor loads, with unrenderable nodes and their edges removed. */
+  envelope: WorkflowGraphEnvelope;
+  /** How many nodes were dropped because this version cannot render them. */
+  droppedNodeCount: number;
+  /** Distinct `data.kind` values among the dropped nodes, in encounter order. */
+  droppedNodeKinds: string[];
+}
 
 /**
  * Serializes the editor graph into the JSON envelope stored in a snapshot's graph column.
@@ -75,41 +89,81 @@ export function serializeWorkflowGraph(input: {
  *
  * Tolerates malformed or partial envelopes: invalid JSON or missing arrays collapse to empty,
  * a missing viewport falls back to the origin, and unknown fields survive the JSON round-trip.
+ *
+ * Nodes this version cannot render are already gone from the returned envelope; callers that
+ * need to report that loss to the user use {@link parseWorkflowGraphWithReport} instead.
  */
 export function parseWorkflowGraph(graph: string): WorkflowGraphEnvelope {
+  return parseWorkflowGraphWithReport(graph).envelope;
+}
+
+/**
+ * Parses a snapshot graph string, reporting the nodes dropped on the way in.
+ *
+ * Every load path shares this boundary, so the editor, the version preview, and the run
+ * projection all see the same sanitized graph. A node is dropped when it is not a usable
+ * record or when its `data.kind` falls outside the kinds this version renders; the edges that
+ * referenced a dropped node go with it, because an edge into a node that is no longer there
+ * cannot render either. Dropping is deliberate: the render catalog is a closed set with no
+ * component for an unknown kind, so keeping such a node would take the whole canvas down
+ * instead of costing the one node nothing could draw.
+ */
+export function parseWorkflowGraphWithReport(
+  graph: string,
+): WorkflowGraphParseResult {
   let value: unknown;
   try {
     value = JSON.parse(graph);
   } catch {
     return {
-      nodes: [],
-      edges: [],
-      viewport: DEFAULT_VIEWPORT,
-      annotations: [],
-      globalVariables: [],
+      envelope: emptyEnvelope(),
+      droppedNodeCount: 0,
+      droppedNodeKinds: [],
     };
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return {
-      nodes: [],
-      edges: [],
-      viewport: DEFAULT_VIEWPORT,
-      annotations: [],
-      globalVariables: [],
+      envelope: emptyEnvelope(),
+      droppedNodeCount: 0,
+      droppedNodeKinds: [],
     };
   }
   const record = value as Record<string, unknown>;
+  const rawNodes: unknown[] = Array.isArray(record.nodes) ? record.nodes : [];
+  const nodes: WorkflowDefinitionNode[] = [];
+  const droppedNodeIds = new Set<string>();
+  const droppedNodeKinds: string[] = [];
+  for (const raw of rawNodes) {
+    // Legacy kinds upgrade before the check so a persisted prompt/model node still lands on
+    // its supported replacement rather than being read as an unknown kind and dropped.
+    const node = isWorkflowNodeRecord(raw) ? upgradeLegacyNodeKind(raw) : null;
+    const kind: unknown = node?.data.kind;
+    if (
+      node !== null &&
+      typeof kind === "string" &&
+      WORKFLOW_NODE_KIND_SET.has(kind)
+    ) {
+      nodes.push(node);
+      continue;
+    }
+    if (isRecordWithId(raw)) {
+      droppedNodeIds.add(raw.id);
+    }
+    if (typeof kind === "string" && !droppedNodeKinds.includes(kind)) {
+      droppedNodeKinds.push(kind);
+    }
+  }
   // Spread the raw record first so unknown fields added by future versions survive a
   // resave; only the geometry the editor understands is normalized underneath them.
   const envelope: WorkflowGraphEnvelope = {
     ...record,
-    nodes: Array.isArray(record.nodes)
-      ? workflowContainerNodes(
-          (record.nodes as WorkflowDefinitionNode[]).map(upgradeLegacyNodeKind),
-        )
-      : [],
+    nodes: workflowContainerNodes(nodes),
     edges: Array.isArray(record.edges)
-      ? (record.edges as WorkflowDefinitionEdge[])
+      ? (record.edges as WorkflowDefinitionEdge[]).filter(
+          (edge) =>
+            !droppedNodeIds.has(edge.source) &&
+            !droppedNodeIds.has(edge.target),
+        )
       : [],
     viewport: isWorkflowViewport(record.viewport)
       ? record.viewport
@@ -124,7 +178,22 @@ export function parseWorkflowGraph(graph: string): WorkflowGraphEnvelope {
   if (typeof record.description === "string") {
     envelope.description = record.description;
   }
-  return envelope;
+  return {
+    envelope,
+    droppedNodeCount: rawNodes.length - nodes.length,
+    droppedNodeKinds,
+  };
+}
+
+/** Builds the envelope an unparseable or malformed graph loads as. */
+function emptyEnvelope(): WorkflowGraphEnvelope {
+  return {
+    nodes: [],
+    edges: [],
+    viewport: DEFAULT_VIEWPORT,
+    annotations: [],
+    globalVariables: [],
+  };
 }
 
 /** Guards workflow-wide variables before exposing persisted data to the editor. */
@@ -164,6 +233,24 @@ function isWorkflowGraphAnnotation(
     typeof data.theme === "string" &&
     WORKFLOW_ANNOTATION_THEMES.has(data.theme)
   );
+}
+
+/** Reads the id off a persisted record so edges into a dropped node can be found again. */
+function isRecordWithId(value: unknown): value is { id: string } {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const id = (value as Record<string, unknown>).id;
+  return typeof id === "string" && id.trim() !== "";
+}
+
+/** Guards a persisted node record before the codec reads its id and `data.kind`. */
+function isWorkflowNodeRecord(value: unknown): value is WorkflowDefinitionNode {
+  if (!isRecordWithId(value)) {
+    return false;
+  }
+  const data = (value as Record<string, unknown>).data;
+  return typeof data === "object" && data !== null && !Array.isArray(data);
 }
 
 /**

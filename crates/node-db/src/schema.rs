@@ -41,7 +41,7 @@ pub(super) fn initialize(
         "user_version",
         |row| row.get(/*idx*/ 0),
     )?;
-    if app != APPLICATION_ID || !matches!(version, 1..=4) {
+    if app != APPLICATION_ID || !matches!(version, 1..=7) {
         return Err(Error::InvalidSchema);
     }
     let check: String = connection.pragma_query_value(
@@ -64,6 +64,15 @@ pub(super) fn initialize(
     if version >= 4 {
         expected.execute_batch(include_str!("controller.sql"))?;
     }
+    if version >= 5 {
+        expected.execute_batch(include_str!("termination.sql"))?;
+    }
+    if version >= 6 {
+        expected.execute_batch(include_str!("runtime_control.sql"))?;
+    }
+    if version >= 7 {
+        expected.execute_batch(include_str!("plugin.sql"))?;
+    }
     if schema_objects(connection)? != schema_objects(&expected)? {
         return Err(Error::InvalidSchema);
     }
@@ -84,7 +93,7 @@ pub(super) fn initialize(
     {
         return Err(Error::NodeMismatch);
     }
-    if version < 4 {
+    if version < 5 {
         let tx = connection.transaction()?;
         if version == 1 {
             tx.execute_batch(include_str!("process.sql"))?;
@@ -92,11 +101,42 @@ pub(super) fn initialize(
         if version < 3 {
             tx.execute_batch(include_str!("repository.sql"))?;
         }
-        tx.execute_batch(include_str!("controller.sql"))?;
+        if version < 4 {
+            tx.execute_batch(include_str!("controller.sql"))?;
+        }
+        // v5 only adds signal-termination evidence; no existing row is rewritten, and older
+        // programs reject a v5 file instead of misreading a run that has no exit code.
+        tx.execute_batch(include_str!("termination.sql"))?;
         tx.pragma_update(
             /*schema_name*/ None,
             "user_version",
-            /*pragma_value*/ 4,
+            /*pragma_value*/ 5,
+        )?;
+        tx.commit()?;
+    }
+    if version < 6 {
+        let tx = connection.transaction()?;
+        tx.execute_batch(include_str!("runtime_control.sql"))?;
+        tx.pragma_update(None, "user_version", 6)?;
+        tx.commit()?;
+    }
+    if version < 7 {
+        // SQLite builds may enable foreign keys by default. Rebuilding the referenced identity
+        // table requires disabling enforcement outside the transaction; validate it before commit.
+        connection.pragma_update(/*schema_name*/ None, "foreign_keys", "OFF")?;
+        let tx = connection.transaction()?;
+        tx.execute_batch(include_str!("plugin.sql"))?;
+        let violations: i64 =
+            tx.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })?;
+        if violations != 0 {
+            return Err(Error::InvalidSchema);
+        }
+        tx.pragma_update(
+            /*schema_name*/ None,
+            "user_version",
+            /*pragma_value*/ 7,
         )?;
         tx.commit()?;
     }

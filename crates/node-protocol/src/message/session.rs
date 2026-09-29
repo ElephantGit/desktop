@@ -11,6 +11,13 @@ use std::collections::HashSet;
 pub enum NodeCapability {
     WorktreeExecution,
     RepositoryClone,
+    RuntimeControl,
+    /// `InstallPlugins` and `RemovePlugins`.
+    PluginInstall,
+    /// `StartAgentSession`, Thread events and session commands.
+    AgentSession,
+    /// `DeliverRevision` and the upload grant exchange.
+    RevisionDelivery,
 }
 
 /// Controller greeting used to negotiate a protocol version for a new session.
@@ -35,6 +42,14 @@ pub struct HelloAccepted {
 #[serde(rename_all = "snake_case")]
 pub struct Heartbeat {
     pub node: NodeRuntimeIdentity,
+}
+
+/// Liveness signal from the owning Controller. It lets the Node keep a per-frame read deadline
+/// as Controller liveness while the session is idle, without routing through execution admission.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ControllerHeartbeat {
+    pub controller_id: ControllerId,
 }
 
 /// Complete Hello envelope, including only metadata valid for this message.
@@ -88,6 +103,13 @@ pub struct HeartbeatMessage {
     pub payload: Heartbeat,
 }
 
+/// Complete Controller heartbeat envelope, including only metadata valid for this message.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ControllerHeartbeatMessage {
+    pub protocol_version: ProtocolVersion,
+    pub payload: ControllerHeartbeat,
+}
+
 impl ValidateMessage for HelloAcceptedMessage {
     /// Enforces this message’s semantic rules on both send and receive.
     fn validate(&self) -> Result<(), MessageValidationError> {
@@ -133,5 +155,18 @@ impl ValidateMessage for HeartbeatMessage {
             .node
             .validate()
             .map_err(|field| MessageValidationError::EmptyField { field })
+    }
+}
+
+impl ValidateMessage for ControllerHeartbeatMessage {
+    /// Enforces this message’s semantic rules on both send and receive.
+    fn validate(&self) -> Result<(), MessageValidationError> {
+        let Self {
+            protocol_version,
+            payload,
+        } = self;
+
+        validate_protocol_version(*protocol_version)?;
+        validate_identity(payload.controller_id.is_empty(), "controller_id")
     }
 }

@@ -294,6 +294,10 @@ function RunActInspectorPanel({
   const Icon = metadata.icon;
   const summaryLabels = createWorkflowSummaryLabels(locale);
   const toolParameters = data.toolParameters ?? [];
+  const completedAgentOutput =
+    data.kind === "agent" && state.status === "succeeded"
+      ? state.output?.summary
+      : undefined;
   // A waiting retry has not started; showing a time range would suggest it is already running.
   const timingRange =
     state.status !== "retry_waiting" &&
@@ -775,19 +779,29 @@ function RunActInspectorPanel({
         )}
 
         <InspectorSection title={t("workflowRun.artifacts.title")}>
-          {fileChanges.length > 0 ? (
-            <RunActFileChanges files={fileChanges} />
-          ) : artifacts.length > 0 ? (
+          {completedAgentOutput !== undefined && (
+            <pre
+              data-selectable
+              className="mb-3 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border/60 bg-muted/20 p-3 text-xs leading-5"
+            >
+              {formatWorkflowNodeOutput(completedAgentOutput)}
+            </pre>
+          )}
+          {fileChanges.length > 0 && <RunActFileChanges files={fileChanges} />}
+          {artifacts.length > 0 && (
             <RunActArtifacts
               artifacts={artifacts}
               revealedId={revealedArtifactId}
               embedded
             />
-          ) : (
-            <p className="text-[11px] leading-5 text-muted-foreground">
-              {t("workflowRun.artifacts.empty")}
-            </p>
           )}
+          {fileChanges.length === 0 &&
+            artifacts.length === 0 &&
+            completedAgentOutput === undefined && (
+              <p className="text-[11px] leading-5 text-muted-foreground">
+                {t("workflowRun.artifacts.empty")}
+              </p>
+            )}
         </InspectorSection>
       </div>
     </aside>

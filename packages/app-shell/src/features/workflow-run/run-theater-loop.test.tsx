@@ -1,0 +1,341 @@
+import { useState } from "react";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { createChatStore, type SessionConversation } from "@ora/chat";
+import type { GraphWorkflowRun } from "@ora/workflow-runtime";
+import { createTestClient } from "../../test/contracts-transport";
+import {
+  createHookWrapper,
+  createTestQueryClient,
+} from "../../test/hook-harness";
+import { createPluginMemory, pluginHandlers } from "../../test/memory/plugins";
+import { createAgentMemory, agentHandlers } from "../../test/memory/agents";
+import { appI18n } from "../../i18n/i18n-instance";
+import { RunTheater } from "./run-theater";
+
+beforeEach(async () => {
+  await appI18n.changeLanguage("en-US");
+  // Exercise history selection without coupling assertions to animation frame timing.
+  const matchMedia = window.matchMedia.bind(window);
+  vi.spyOn(window, "matchMedia").mockImplementation((query) => ({
+    ...matchMedia(query),
+    matches:
+      query === "(prefers-reduced-motion: reduce)" || matchMedia(query).matches,
+  }));
+});
+
+afterEach(() => vi.restoreAllMocks());
+
+function fixture(): GraphWorkflowRun {
+  const now = "2026-09-28T10:00:00+08:00";
+  return {
+    id: "run",
+    projectId: "project",
+    definitionId: "definition",
+    name: "Loop test",
+    status: "running",
+    createdAt: now,
+    updatedAt: now,
+    openHitls: [],
+    definitionSnapshot: {
+      id: "definition",
+      name: "Loop test",
+      description: "",
+      updatedAt: now,
+      viewport: { x: 0, y: 0, zoom: 1 },
+      nodes: [
+        {
+          id: "start",
+          type: "workflow",
+          position: { x: 0, y: 0 },
+          data: { kind: "start", title: "Start", description: "" },
+        },
+        {
+          id: "loop",
+          type: "workflow",
+          position: { x: 300, y: 0 },
+          data: {
+            kind: "loop",
+            title: "Review loop",
+            description: "",
+            loopConfig: {
+              maxIterations: 4,
+              variables: [],
+              until: { logic: "and", conditions: [] },
+              outputs: [],
+            },
+          },
+        },
+        {
+          id: "writer",
+          parentId: "loop",
+          type: "workflow",
+          position: { x: 10, y: 0 },
+          data: {
+            kind: "agent",
+            containerId: "loop",
+            title: "Writer",
+            description: "",
+            instruction: "Write this round",
+          },
+        },
+        {
+          id: "exit",
+          parentId: "loop",
+          type: "workflow",
+          position: { x: 300, y: 0 },
+          data: {
+            kind: "loopExit",
+            containerId: "loop",
+            title: "Exit",
+            description: "",
+          },
+        },
+        {
+          id: "out",
+          type: "workflow",
+          position: { x: 900, y: 0 },
+          data: { kind: "output", title: "Output", description: "" },
+        },
+      ],
+      edges: [
+        { id: "s-l", source: "start", target: "loop" },
+        { id: "l-o", source: "loop", target: "out" },
+        { id: "w-e", source: "writer", target: "exit" },
+      ],
+    },
+    nodeStates: {
+      start: { status: "succeeded" },
+      loop: { status: "running" },
+      out: { status: "idle" },
+    },
+    rounds: [
+      {
+        id: "scope-1",
+        parentLoopNodeId: "loop",
+        parentLoopNodeRunId: "parent-run",
+        roundIndex: 1,
+        status: "succeeded",
+        createdAt: now,
+        updatedAt: now,
+        nodeStates: {
+          writer: {
+            status: "succeeded",
+            sessionId: "session-1",
+            output: { summary: "first draft" },
+          },
+        },
+      },
+      {
+        id: "scope-2",
+        parentLoopNodeId: "loop",
+        parentLoopNodeRunId: "parent-run",
+        roundIndex: 2,
+        status: "running",
+        createdAt: now,
+        updatedAt: now,
+        nodeStates: {
+          writer: {
+            status: "running",
+            sessionId: "session-2",
+            output: { summary: "partial stream must stay hidden" },
+          },
+        },
+      },
+    ],
+  };
+}
+
+function conversation(text: string): SessionConversation {
+  return {
+    configOptions: [],
+    modelChanges: [],
+    historyNotices: [],
+    availableCommands: [],
+    sessionTitle: null,
+    sessionUpdatedAt: null,
+    isLoaded: true,
+    isLoading: false,
+    isResponding: false,
+    pendingPermissions: [],
+    usage: {
+      context: { status: "hidden" },
+      lastTurnTokens: { status: "none" },
+    },
+    error: null,
+    turns: [
+      {
+        id: text,
+        userMessage: {
+          kind: "message",
+          id: `${text}-user`,
+          role: "user",
+          content: "Write",
+          createdAt: 1,
+        },
+        items: [
+          {
+            kind: "message",
+            id: `${text}-reply`,
+            role: "assistant",
+            content: text,
+            createdAt: 2,
+          },
+        ],
+        status: "completed",
+        stopReason: "end_turn",
+        error: null,
+        createdAt: 1,
+      },
+    ],
+  };
+}
+
+function mount(run: GraphWorkflowRun) {
+  const state = { ...createPluginMemory(), ...createAgentMemory() };
+  const client = createTestClient({
+    ...pluginHandlers(state),
+    ...agentHandlers(state),
+  });
+  const chat = createChatStore(client.session);
+  chat.setState({
+    conversations: {
+      "session-1": conversation("FIRST SESSION"),
+      "session-2": conversation("SECOND SESSION"),
+    },
+  });
+  function View({ value }: { value: GraphWorkflowRun }) {
+    const [focus, setFocus] = useState<string | null>("out");
+    const [session, setSession] = useState<string | null>(null);
+    return (
+      <RunTheater
+        run={value}
+        focusNodeId={focus}
+        onFocusNode={(id) => {
+          setFocus(id);
+          if (id !== session) setSession(null);
+        }}
+        onClearFocus={() => setFocus(null)}
+        artifacts={[]}
+        conversationByNodeId={new Map()}
+        revealedArtifactId={null}
+        onShowOverview={() => {}}
+        sessionConversationNodeId={session}
+        onSessionConversationNodeIdChange={setSession}
+      />
+    );
+  }
+  const view = render(<View value={run} />, {
+    wrapper: createHookWrapper(client, createTestQueryClient(), chat),
+  });
+  return {
+    ...view,
+    update: (value: GraphWorkflowRun) => view.rerender(<View value={value} />),
+  };
+}
+
+it("groups the outer path, defaults to round one and keeps scope selection through live updates", async () => {
+  const user = userEvent.setup();
+  const run = fixture();
+  const view = mount(run);
+  const outer = document.querySelector(
+    '[data-slot="theater-top-level-path"]',
+  ) as HTMLElement;
+  expect(
+    within(outer).queryByRole("button", { name: /Writer/ }),
+  ).not.toBeInTheDocument();
+  await user.click(within(outer).getByRole("button", { name: /Review loop/ }));
+  expect(screen.getByRole("button", { name: /Round 1 ·/ })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  expect(
+    screen.getByRole("region", { name: "Round overview" }),
+  ).toHaveTextContent("first draft");
+  await user.click(screen.getByRole("button", { name: /Round 2 ·/ }));
+  expect(
+    screen.queryByText("partial stream must stay hidden"),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /Round 1 ·/ }));
+  const updated = structuredClone(run);
+  updated.rounds!.push({ ...updated.rounds![1], id: "scope-3", roundIndex: 3 });
+  view.update(updated);
+  expect(screen.getByRole("button", { name: /Round 1 ·/ })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  expect(screen.getByRole("button", { name: /Round 3 ·/ })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /Round 2 ·/ }));
+  await user.click(within(outer).getByRole("button", { name: /Output/ }));
+  await user.click(within(outer).getByRole("button", { name: /Review loop/ }));
+  expect(screen.getByRole("button", { name: /Round 1 ·/ })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+});
+
+it("switches the conversation to the selected round and exposes committed loop results", async () => {
+  const user = userEvent.setup();
+  const run = fixture();
+  const view = mount(run);
+  await user.click(screen.getByRole("button", { name: /Review loop:/ }));
+  await user.click(screen.getByRole("button", { name: "Writer: Succeeded" }));
+  await user.click(
+    screen.getByRole("button", { name: "View node conversation" }),
+  );
+  expect(await screen.findByText("FIRST SESSION")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /Round 2 ·/ }));
+  expect(await screen.findByText("SECOND SESSION")).toBeInTheDocument();
+  expect(screen.queryByText("FIRST SESSION")).not.toBeInTheDocument();
+  const finished = structuredClone(run);
+  finished.status = "succeeded";
+  finished.nodeStates.loop = {
+    status: "succeeded",
+    stopReason: "loop_exit",
+    output: { summary: '{"result":"approved"}' },
+  };
+  finished.rounds![1].status = "succeeded";
+  finished.rounds![1].nodeStates.exit = { status: "succeeded" };
+  view.update(finished);
+  await user.click(screen.getByRole("button", { name: "Loop results" }));
+  expect(
+    screen.getByRole("region", { name: "Loop results" }),
+  ).toHaveTextContent('"result": "approved"');
+});
+
+it("keeps unexecuted branch alternatives out of the round path while allowing inspection", async () => {
+  const user = userEvent.setup();
+  mount(fixture());
+  await user.click(screen.getByRole("button", { name: /Review loop:/ }));
+  const path = screen.getByLabelText("Nodes executed this round");
+  expect(
+    within(path).getByRole("button", { name: "Writer: Succeeded" }),
+  ).toBeInTheDocument();
+  expect(
+    within(path).queryByRole("button", { name: /Exit/ }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByText("Not executed this round (1)"));
+  await user.click(screen.getByRole("button", { name: /Exit: Not run/ }));
+  expect(screen.getByRole("button", { name: /Exit: Not run/ })).toHaveAttribute(
+    "aria-current",
+    "step",
+  );
+});
+
+it("shows only the selected round's committed output in the inspector", async () => {
+  const user = userEvent.setup();
+  mount(fixture());
+  await user.click(screen.getByRole("button", { name: /Review loop:/ }));
+  await user.click(screen.getByRole("button", { name: "Writer: Succeeded" }));
+  await user.click(screen.getByRole("button", { name: "Open node details" }));
+  const inspector = await screen.findByRole("complementary", {
+    name: "Act details",
+  });
+  expect(within(inspector).getByText("first draft")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /Round 2 ·/ }));
+  expect(within(inspector).queryByText("first draft")).not.toBeInTheDocument();
+  expect(
+    within(inspector).queryByText("partial stream must stay hidden"),
+  ).not.toBeInTheDocument();
+});

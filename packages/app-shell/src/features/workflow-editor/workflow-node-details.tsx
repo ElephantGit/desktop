@@ -1,6 +1,9 @@
-import { Fragment, useState } from "react";
+import { selectorToText, textToSelector } from "./workflow-selector-text";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  IconArrowDown,
+  IconArrowUp,
   IconLayoutSidebarRightCollapse,
   IconPlus,
   IconTrash,
@@ -9,9 +12,7 @@ import {
   DEFAULT_ITERATION_MAX_ITERATIONS,
   resolveConditionCases,
   type WorkflowCapabilities,
-  type WorkflowChoice,
   type WorkflowConditionCase,
-  type WorkflowConditionComparison,
   type WorkflowInputVariable,
   type WorkflowIterationConfig,
   type WorkflowNodeData,
@@ -31,11 +32,14 @@ import {
   SelectTrigger,
   SelectValue,
   Textarea,
-  cn,
 } from "@ora/ui";
 import type { Node } from "@xyflow/react";
 import { getNodeMetadata } from "./workflow-node-metadata";
 import { WorkflowVariableDisplay } from "./workflow-variable-display";
+import {
+  WorkflowConditionRules,
+  LocalizedSelectValue,
+} from "./workflow-condition-rules";
 import { WorkflowVariableSelectGroups } from "./workflow-variable-list";
 import { WorkflowStartVariables } from "./workflow-start-variables";
 
@@ -91,6 +95,17 @@ export function WorkflowNodeDetailsLayout({
           variableCatalog={variableCatalog}
         />
       );
+    case "aggregator":
+      return (
+        <AggregatorNodeDetails
+          node={node}
+          nodeType={nodeType}
+          capabilities={capabilities}
+          onUpdate={onUpdate}
+          onClose={onClose}
+          variableCatalog={variableCatalog}
+        />
+      );
     case "tool":
       return (
         <ToolNodeDetails
@@ -116,10 +131,29 @@ export function WorkflowNodeDetailsLayout({
           {...{ node, nodeType, onUpdate, onClose, variableCatalog }}
         />
       );
+    case "loopExit":
+      return (
+        <div className="space-y-4 p-4">
+          <WorkflowNodeDetailsHeader
+            {...{ node, nodeType, onUpdate, onClose }}
+          />
+          <p className="text-xs leading-5 text-muted-foreground">
+            {nodeType.description}
+          </p>
+        </div>
+      );
     case "loop":
       return (
         <LoopNodeDetails
-          {...{ node, nodeType, onUpdate, onClose, variableCatalog }}
+          {...{
+            node,
+            nodeType,
+            capabilities,
+            onUpdate,
+            onClose,
+            variableCatalog,
+            graphNodes,
+          }}
         />
       );
     case "iteration":
@@ -338,61 +372,8 @@ function ConditionNodeDetails({
       ),
     );
   };
-  const updateComparison = (
-    caseIndex: number,
-    comparisonIndex: number,
-    patch: Partial<WorkflowConditionComparison>,
-  ): void => {
-    updateCases(
-      cases.map((conditionCase, candidateIndex) =>
-        candidateIndex === caseIndex
-          ? {
-              ...conditionCase,
-              conditions: conditionCase.conditions.map(
-                (comparison, candidateComparisonIndex) =>
-                  candidateComparisonIndex === comparisonIndex
-                    ? { ...comparison, ...patch }
-                    : comparison,
-              ),
-            }
-          : conditionCase,
-      ),
-    );
-  };
   const removeCase = (caseIndex: number): void => {
     updateCases(cases.filter((_, index) => index !== caseIndex));
-  };
-  const addComparison = (caseIndex: number): void => {
-    updateCases(
-      cases.map((conditionCase, candidateIndex) =>
-        candidateIndex === caseIndex
-          ? {
-              ...conditionCase,
-              conditions: [
-                ...conditionCase.conditions,
-                defaultConditionComparison(),
-              ],
-            }
-          : conditionCase,
-      ),
-    );
-  };
-  const removeComparison = (
-    caseIndex: number,
-    comparisonIndex: number,
-  ): void => {
-    updateCases(
-      cases.map((conditionCase, candidateIndex) =>
-        candidateIndex === caseIndex
-          ? {
-              ...conditionCase,
-              conditions: conditionCase.conditions.filter(
-                (_, index) => index !== comparisonIndex,
-              ),
-            }
-          : conditionCase,
-      ),
-    );
   };
   const addCase = (): void => {
     const nextSequence =
@@ -402,10 +383,6 @@ function ConditionNodeDetails({
       }, 0) + 1;
     updateCases([...cases, defaultConditionCase(nextSequence)]);
   };
-  const logicOptions = [
-    { value: "and" as const, label: t("settings.workflow.condition.logicAnd") },
-    { value: "or" as const, label: t("settings.workflow.condition.logicOr") },
-  ];
   return (
     <>
       <WorkflowNodeDetailsHeader
@@ -425,18 +402,6 @@ function ConditionNodeDetails({
                 {caseIndex === 0 ? "IF" : "ELIF"}
               </span>
               <div className="flex items-center gap-1">
-                {conditionCase.conditions.length === 0 && (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-7 bg-background shadow-sm"
-                    onClick={() => addComparison(caseIndex)}
-                  >
-                    <IconPlus />
-                    {t("settings.workflow.condition.addRule")}
-                  </Button>
-                )}
                 {caseIndex > 0 && (
                   <Button
                     type="button"
@@ -451,166 +416,16 @@ function ConditionNodeDetails({
                 )}
               </div>
             </div>
-            <div
-              className={cn(
-                "px-1",
-                conditionCase.conditions.length > 1 &&
-                  "relative ml-2 border-l border-border/80 pl-3",
-              )}
-            >
-              {conditionCase.conditions.map((comparison, comparisonIndex) => (
-                <Fragment key={comparisonIndex}>
-                  {comparisonIndex > 0 && (
-                    <div className="relative h-7">
-                      <Select
-                        value={conditionCase.logic ?? "and"}
-                        onValueChange={(logic) => {
-                          if (logic === "and" || logic === "or") {
-                            updateCase(caseIndex, { logic });
-                          }
-                        }}
-                      >
-                        <SelectTrigger
-                          aria-label={`${t(
-                            "settings.workflow.condition.branchLogic",
-                            { index: caseIndex + 1 },
-                          )} · ${comparisonIndex}`}
-                          className="absolute -left-6 top-1/2 h-6 w-auto min-w-10 -translate-y-1/2 justify-center gap-1 rounded-md border-blue-200 bg-background px-1.5 text-[10px] font-semibold text-blue-600 shadow-sm dark:border-blue-800 dark:text-blue-400"
-                        >
-                          <span>
-                            {(conditionCase.logic ?? "and").toUpperCase()}
-                          </span>
-                        </SelectTrigger>
-                        <SelectContent>
-                          {logicOptions.map((logic) => (
-                            <SelectItem key={logic.value} value={logic.value}>
-                              {logic.value.toUpperCase()} · {logic.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
-                  <div className="flex items-start gap-1.5">
-                    <div className="min-w-0 flex-1 space-y-1.5 rounded-lg bg-muted/70 p-2">
-                      <Select
-                        value={selectorToText(comparison.variableSelector)}
-                        onValueChange={(value) => {
-                          if (value !== null) {
-                            updateComparison(caseIndex, comparisonIndex, {
-                              variableSelector: textToSelector(value),
-                            });
-                          }
-                        }}
-                      >
-                        <SelectTrigger
-                          className="h-8 w-full bg-background"
-                          aria-label={t("settings.workflow.field.variable", {
-                            index: comparisonIndex + 1,
-                          })}
-                        >
-                          <VariableSelectValue
-                            catalog={variableCatalog}
-                            selector={comparison.variableSelector}
-                            placeholder={t(
-                              "settings.workflow.condition.variablePlaceholder",
-                            )}
-                          />
-                        </SelectTrigger>
-                        <SelectContent
-                          alignItemWithTrigger={false}
-                          align="start"
-                          className="w-70 min-w-70 max-w-70"
-                        >
-                          <WorkflowVariableSelectGroups
-                            variables={variableCatalog}
-                            globalVariablesLabel={t(
-                              "settings.workflow.globalVariables",
-                            )}
-                          />
-                        </SelectContent>
-                      </Select>
-                      <div className="flex min-w-0 gap-1.5">
-                        <Select
-                          value={comparison.operator}
-                          onValueChange={(operator) => {
-                            if (operator !== null) {
-                              updateComparison(caseIndex, comparisonIndex, {
-                                operator,
-                              });
-                            }
-                          }}
-                        >
-                          <SelectTrigger
-                            aria-label={t("settings.workflow.field.operator", {
-                              index: comparisonIndex + 1,
-                            })}
-                            className="h-8 w-20 shrink-0 bg-background"
-                          >
-                            <LocalizedSelectValue
-                              options={capabilities.conditionOperators}
-                              value={comparison.operator}
-                              placeholder={t(
-                                "settings.workflow.condition.operatorPlaceholder",
-                              )}
-                            />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {capabilities.conditionOperators.map((operator) => (
-                              <SelectItem
-                                key={operator.value}
-                                value={operator.value}
-                              >
-                                {operator.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Input
-                          value={comparisonValueToText(comparison.value)}
-                          aria-label={t("settings.workflow.field.value", {
-                            index: comparisonIndex + 1,
-                          })}
-                          placeholder={t(
-                            "settings.workflow.condition.valuePlaceholder",
-                          )}
-                          className="h-8 min-w-0 flex-1 bg-background"
-                          onChange={(event) =>
-                            updateComparison(caseIndex, comparisonIndex, {
-                              value: parseComparisonValue(event.target.value),
-                            })
-                          }
-                        />
-                      </div>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      className="mt-1 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                      aria-label={t("settings.workflow.condition.removeRule")}
-                      onClick={() =>
-                        removeComparison(caseIndex, comparisonIndex)
-                      }
-                    >
-                      <IconTrash className="size-3.5" />
-                    </Button>
-                  </div>
-                </Fragment>
-              ))}
-              {conditionCase.conditions.length > 0 && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="mt-3 w-fit justify-start border border-border bg-background shadow-sm"
-                  onClick={() => addComparison(caseIndex)}
-                >
-                  <IconPlus />
-                  {t("settings.workflow.condition.addRule")}
-                </Button>
-              )}
-            </div>
+            <WorkflowConditionRules
+              conditions={conditionCase.conditions}
+              logic={conditionCase.logic ?? "and"}
+              onChange={(group) => updateCase(caseIndex, group)}
+              operators={capabilities.conditionOperators}
+              variableCatalog={variableCatalog}
+              logicLabel={t("settings.workflow.condition.branchLogic", {
+                index: caseIndex + 1,
+              })}
+            />
           </section>
         ))}
         <Button
@@ -627,6 +442,184 @@ function ConditionNodeDetails({
           <span className="text-[11px] font-medium">ELSE</span>
           <p className="text-[11px] leading-5 text-muted-foreground">
             {t("settings.workflow.condition.elseDescription")}
+          </p>
+        </div>
+      </WorkflowNodeBody>
+    </>
+  );
+}
+
+/**
+ * Aggregator panel: an ordered list of candidate variables. Array order is the priority
+ * contract, so the only ordering control is the explicit move buttons and no operation ever
+ * reorders the list implicitly. Candidate types must agree for the graph to parse.
+ */
+function AggregatorNodeDetails({
+  node,
+  nodeType,
+  onUpdate,
+  onClose,
+  variableCatalog,
+}: WorkflowNodeDetailsLayoutProps) {
+  const { t } = useTranslation();
+  const selectors = node.data.aggregatorConfig?.variables ?? [];
+  const updateSelectors = (next: string[][]): void => {
+    onUpdate({
+      ...node,
+      data: { ...node.data, aggregatorConfig: { variables: next } },
+    });
+  };
+  const setSelector = (index: number, selector: string[]): void => {
+    updateSelectors(
+      selectors.map((candidate, candidateIndex) =>
+        candidateIndex === index ? selector : candidate,
+      ),
+    );
+  };
+  const removeSelector = (index: number): void => {
+    updateSelectors(
+      selectors.filter((_, candidateIndex) => candidateIndex !== index),
+    );
+  };
+  const moveSelector = (index: number, offset: -1 | 1): void => {
+    const target = index + offset;
+    if (target < 0 || target >= selectors.length) {
+      return;
+    }
+    const next = [...selectors];
+    const [moved] = next.splice(index, 1);
+    next.splice(target, 0, moved!);
+    updateSelectors(next);
+  };
+  const selectorType = (selector: string[]): string | undefined =>
+    variableCatalog.find(
+      (entry) => selectorToText(entry.selector) === selectorToText(selector),
+    )?.valueType;
+  const assignedTypes = selectors
+    .map(selectorType)
+    .filter((valueType) => valueType !== undefined);
+  const mixedTypes = new Set(assignedTypes).size > 1;
+  return (
+    <>
+      <WorkflowNodeDetailsHeader
+        node={node}
+        nodeType={nodeType}
+        onUpdate={onUpdate}
+        onClose={onClose}
+      />
+      <WorkflowNodeBody>
+        <p className="text-[11px] leading-5 text-muted-foreground">
+          {t("settings.workflow.aggregation.description")}
+        </p>
+        {selectors.map((selector, index) => {
+          const valueType = selectorType(selector);
+          return (
+            <div key={index} className="flex items-start gap-1.5">
+              <div className="min-w-0 flex-1 space-y-1">
+                <Select
+                  value={selectorToText(selector)}
+                  onValueChange={(value) => {
+                    if (value !== null) {
+                      setSelector(index, textToSelector(value));
+                    }
+                  }}
+                >
+                  <SelectTrigger
+                    className="h-8 w-full bg-background"
+                    aria-label={t(
+                      "settings.workflow.aggregation.selectorLabel",
+                      {
+                        index: index + 1,
+                      },
+                    )}
+                  >
+                    <VariableSelectValue
+                      catalog={variableCatalog}
+                      selector={selector}
+                      placeholder={t(
+                        "settings.workflow.aggregation.variablePlaceholder",
+                      )}
+                    />
+                  </SelectTrigger>
+                  <SelectContent
+                    alignItemWithTrigger={false}
+                    align="start"
+                    className="w-70 min-w-70 max-w-70"
+                  >
+                    <WorkflowVariableSelectGroups
+                      variables={variableCatalog}
+                      globalVariablesLabel={t(
+                        "settings.workflow.globalVariables",
+                      )}
+                    />
+                  </SelectContent>
+                </Select>
+                {valueType !== undefined && (
+                  <span className="text-[10px] text-muted-foreground">
+                    {valueType}
+                  </span>
+                )}
+              </div>
+              <div className="mt-0.5 flex shrink-0 flex-col gap-0.5">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="size-6 text-muted-foreground"
+                  aria-label={t("settings.workflow.aggregation.moveUp")}
+                  disabled={index === 0}
+                  onClick={() => moveSelector(index, -1)}
+                >
+                  <IconArrowUp className="size-3" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="size-6 text-muted-foreground"
+                  aria-label={t("settings.workflow.aggregation.moveDown")}
+                  disabled={index === selectors.length - 1}
+                  onClick={() => moveSelector(index, 1)}
+                >
+                  <IconArrowDown className="size-3" />
+                </Button>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="mt-1 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                aria-label={t("settings.workflow.aggregation.removeSelector")}
+                onClick={() => removeSelector(index)}
+              >
+                <IconTrash className="size-3.5" />
+              </Button>
+            </div>
+          );
+        })}
+        {selectors.length === 0 && (
+          <p className="text-[11px] leading-5 text-muted-foreground">
+            {t("settings.workflow.aggregation.emptyHint")}
+          </p>
+        )}
+        {mixedTypes && (
+          <p className="text-[11px] leading-5 text-destructive">
+            {t("settings.workflow.aggregation.typeMismatch")}
+          </p>
+        )}
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="w-full justify-center bg-muted/70 font-semibold"
+          onClick={() => updateSelectors([...selectors, []])}
+        >
+          <IconPlus />
+          {t("settings.workflow.aggregation.addSelector")}
+        </Button>
+        <div className="space-y-1 border-t border-border/70 pt-4">
+          <p className="text-[11px] leading-5 text-muted-foreground">
+            {t("settings.workflow.aggregation.outputHint")}
           </p>
         </div>
       </WorkflowNodeBody>
@@ -671,33 +664,6 @@ function VariableSelectValue({
   );
 }
 
-/**
- * Renders the selected choice's localized label. Base UI's value element shows
- * the raw value, which equals the label for simple catalogs but not for
- * operator/operation choices, so the label must be resolved explicitly.
- */
-function LocalizedSelectValue({
-  options,
-  value,
-  placeholder,
-}: {
-  options: WorkflowChoice[];
-  value: string;
-  placeholder?: string;
-}) {
-  if (value === "" && placeholder !== undefined) {
-    return <SelectValue placeholder={placeholder} />;
-  }
-  return (
-    <SelectValue placeholder={placeholder}>
-      {(selected) =>
-        options.find((option) => option.value === (selected ?? value))?.label ??
-        String(selected ?? value)
-      }
-    </SelectValue>
-  );
-}
-
 /** A fresh ELIF branch starts empty and exposes an explicit Add condition action. */
 function defaultConditionCase(sequence: number): WorkflowConditionCase {
   return {
@@ -705,46 +671,6 @@ function defaultConditionCase(sequence: number): WorkflowConditionCase {
     logic: "and",
     conditions: [],
   };
-}
-
-function defaultConditionComparison(): WorkflowConditionComparison {
-  return { variableSelector: [], operator: "" };
-}
-
-/** Joins a selector array into its dotted text form for the editor input. */
-function selectorToText(selector: string[]): string {
-  return selector.join(".");
-}
-
-/** Splits the dotted selector text into `[nodeId, root, ...nested]` parts. */
-function textToSelector(text: string): string[] {
-  return text
-    .split(".")
-    .map((part) => part.trim())
-    .filter((part) => part !== "");
-}
-
-/** Coerces the comparison value's text form into a JSON-ish value for the backend. */
-function parseComparisonValue(text: string): unknown {
-  const trimmed = text.trim();
-  if (trimmed === "true") {
-    return true;
-  }
-  if (trimmed === "false") {
-    return false;
-  }
-  if (trimmed !== "" && Number.isFinite(Number(trimmed))) {
-    return Number(trimmed);
-  }
-  return text;
-}
-
-/** Renders a comparison value back into its editable text form. */
-function comparisonValueToText(value: unknown): string {
-  if (value === undefined || value === null) {
-    return "";
-  }
-  return typeof value === "string" ? value : JSON.stringify(value);
 }
 
 /** Tool-card panel: tool picker, derived operation, key/value parameters, and advanced settings. */
@@ -1087,13 +1013,44 @@ function HumanNodeDetails({
 
 /** Loop panel: bounded execution and the carried value fed back between rounds. */
 function LoopNodeDetails({
+  capabilities,
+  variableCatalog,
+  graphNodes = [],
   node,
   nodeType,
   onUpdate,
   onClose,
-}: Omit<WorkflowNodeDetailsLayoutProps, "capabilities">) {
+}: WorkflowNodeDetailsLayoutProps) {
   const { t } = useTranslation();
   const loopConfig = node.data.loopConfig;
+  const childNodes = graphNodes.filter(
+    (candidate) => candidate.parentId === node.id,
+  );
+  const conditionCatalog: WorkflowVariableCatalogEntry[] = [
+    ...variableCatalog.filter((entry) => entry.sourceNodeId !== node.id),
+    ...deriveWorkflowVariableCatalog(childNodes, [], undefined, []).map(
+      (entry) => ({
+        ...entry,
+        sourceNodeTitle: childNodes.find(
+          (child) => child.id === entry.sourceNodeId,
+        )?.data.title,
+      }),
+    ),
+    ...(loopConfig?.variables ?? []).map((variable) => ({
+      selector: [node.id, variable.name],
+      sourceNodeId: node.id,
+      sourceNodeTitle: node.data.title,
+      scope: "node" as const,
+      variableName: variable.name,
+      valueType: variable.valueType,
+    })),
+  ].filter(
+    (entry, index, entries) =>
+      entries.findIndex(
+        (candidate) =>
+          candidate.selector.join(".") === entry.selector.join("."),
+      ) === index,
+  );
   const carriedVariable = loopConfig?.variables[0];
   const initialValue =
     carriedVariable?.initial.kind === "constant"
@@ -1108,38 +1065,6 @@ function LoopNodeDetails({
         onClose={onClose}
       />
       <WorkflowNodeBody>
-        <InspectorField
-          label={t("settings.workflow.field.maxIterations")}
-          htmlFor="workflow-node-max-iterations"
-        >
-          <Input
-            id="workflow-node-max-iterations"
-            type="number"
-            min={1}
-            max={100}
-            value={loopConfig?.maxIterations ?? 3}
-            disabled={loopConfig === undefined}
-            onChange={(event) => {
-              const parsed = Number(event.target.value);
-              if (loopConfig === undefined || !Number.isFinite(parsed)) {
-                return;
-              }
-              onUpdate({
-                ...node,
-                data: {
-                  ...node.data,
-                  loopConfig: {
-                    ...loopConfig,
-                    maxIterations: Math.min(
-                      100,
-                      Math.max(1, Math.trunc(parsed)),
-                    ),
-                  },
-                },
-              });
-            }}
-          />
-        </InspectorField>
         <InspectorField
           label={t("settings.workflow.field.loopInitialValue")}
           htmlFor="workflow-node-loop-initial-value"
@@ -1168,6 +1093,62 @@ function LoopNodeDetails({
                       },
                       ...loopConfig.variables.slice(1),
                     ],
+                  },
+                },
+              });
+            }}
+          />
+        </InspectorField>
+        {loopConfig !== undefined && (
+          <section
+            className="space-y-3"
+            aria-label={t("settings.workflow.loop.until")}
+          >
+            <h3 className="text-xs font-semibold">
+              {t("settings.workflow.loop.until")}
+            </h3>
+            <WorkflowConditionRules
+              conditions={loopConfig.until.conditions}
+              logic={loopConfig.until.logic}
+              onChange={(until) =>
+                onUpdate({
+                  ...node,
+                  data: { ...node.data, loopConfig: { ...loopConfig, until } },
+                })
+              }
+              operators={capabilities.conditionOperators}
+              variableCatalog={conditionCatalog}
+              logicLabel={t("settings.workflow.loop.untilLogic")}
+              minimumConditions={0}
+            />
+          </section>
+        )}
+        <InspectorField
+          label={t("settings.workflow.field.maxIterations")}
+          htmlFor="workflow-node-max-iterations"
+        >
+          <Input
+            id="workflow-node-max-iterations"
+            type="number"
+            min={1}
+            max={100}
+            value={loopConfig?.maxIterations ?? 3}
+            disabled={loopConfig === undefined}
+            onChange={(event) => {
+              const parsed = Number(event.target.value);
+              if (loopConfig === undefined || !Number.isFinite(parsed)) {
+                return;
+              }
+              onUpdate({
+                ...node,
+                data: {
+                  ...node.data,
+                  loopConfig: {
+                    ...loopConfig,
+                    maxIterations: Math.min(
+                      100,
+                      Math.max(1, Math.trunc(parsed)),
+                    ),
                   },
                 },
               });

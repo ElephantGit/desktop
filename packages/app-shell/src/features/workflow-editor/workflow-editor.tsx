@@ -1,3 +1,5 @@
+import type { WorkflowContainerInsertion } from "./workflow-container-insertion";
+import { insertLoopMember } from "./workflow-loop-graph";
 import { useWorkflowAnalysis } from "../../state/data/workflow-analysis";
 import { WorkflowMembershipProvider } from "../workflow-node-chrome";
 import {
@@ -9,6 +11,7 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import {
   addEdge,
   applyEdgeChanges,
@@ -71,8 +74,10 @@ import {
 import {
   normalizeWorkflowDocument,
   parseWorkflowGraph,
+  parseWorkflowGraphWithReport,
   serializeWorkflowGraph,
   workflowTimestampToIso,
+  type WorkflowGraphParseResult,
 } from "@ora/workflow-runtime";
 import type { EditorWorkflowVariable } from "./workflow-variable-display";
 import { usePlatform } from "../../platform";
@@ -84,6 +89,7 @@ import { localizeContractError } from "../../i18n/contract-error";
 import { WorkflowCanvas } from "./workflow-canvas";
 import {
   authoredWorkflowNodesEqual,
+  isNodeDragGestureActive,
   isNonAuthoringNodeChanges,
   iterationFrameSizesEqual,
   organizeWorkflowNodes,
@@ -99,7 +105,6 @@ import {
   insertIterationMember,
   repairIterationGraphAfterNodeDeletion,
   resolveIterationDeletionCascade,
-  type IterationInsertion,
 } from "./workflow-iteration-graph";
 import { WorkflowGlobalVariablesDialog } from "./workflow-global-variables-dialog";
 import { workflowMcpChoices } from "./mcp-catalog";
@@ -308,6 +313,25 @@ function workflowSelectionEqual(
   );
 }
 
+/**
+ * Builds the notice shown when a load dropped nodes this version cannot render.
+ *
+ * A node dropped for being malformed has no kind to name, so those report as an unknown kind
+ * rather than an empty parenthesis.
+ */
+function unsupportedNodesMessage(
+  t: TFunction,
+  dropped: WorkflowGraphParseResult,
+): string {
+  return t("settings.workflow.unsupportedNodesSkipped", {
+    count: dropped.droppedNodeCount,
+    kinds:
+      dropped.droppedNodeKinds.length > 0
+        ? dropped.droppedNodeKinds.join(", ")
+        : t("settings.workflow.unsupportedNodesUnknownKind"),
+  });
+}
+
 /** Provides one React Flow store to the canvas and its sibling inspector. */
 export function WorkflowEditor(props: WorkflowEditorProps = {}) {
   return (
@@ -462,6 +486,11 @@ function WorkflowEditorContent({
   const previewedVersionRef = useRef<MockWorkflowVersion | null>(null);
   /** Last name known to be persisted, so autosave skips no-op renames. */
   const persistedNameRef = useRef<string | null>(null);
+  /**
+   * Nodes the last render-phase hydrate had to drop, held until that draft commits. The parse
+   * runs during render, so the notice is raised from an effect rather than in the render pass.
+   */
+  const droppedNodesRef = useRef<WorkflowGraphParseResult | null>(null);
   const libraryActionsRef = useRef<WorkflowEditorLibraryActions | null>(null);
   const initialInspectorWidth = DEFAULT_WORKFLOW_INSPECTOR_WIDTH;
   const inspectorWidthRef = useRef(initialInspectorWidth);
@@ -522,9 +551,14 @@ function WorkflowEditorContent({
   }
 
   // Autosave flush reads these after render; keep them current without render-time writes.
+  // During an open node-drag gesture, authored geometry lives on the ref ahead of React
+  // state — clobbering it here would snap the drop commit (and undo/autosave) back.
   useEffect(() => {
-    workflowRef.current = workflow;
     previewedVersionRef.current = previewedVersion;
+    if (dragStartWorkflowRef.current !== null) {
+      return;
+    }
+    workflowRef.current = workflow;
   });
 
   // Render-phase adjustments (the documented "adjust state when props change"
@@ -536,7 +570,8 @@ function WorkflowEditorContent({
     draftQuery.data.workflow.id === resolvedWorkflowId &&
     hydratedWorkflowId !== resolvedWorkflowId
   ) {
-    const envelope = parseWorkflowGraph(draftQuery.data.draft.graph);
+    const parsed = parseWorkflowGraphWithReport(draftQuery.data.draft.graph);
+    const envelope = parsed.envelope;
     // Persisted drafts may reference a model that is no longer available. Keep the
     // selected CLI stable and only substitute a discovered model for that same CLI.
     // Agent nodes without a contract (legacy prompt/model graphs folded into Agent
@@ -616,6 +651,10 @@ function WorkflowEditorContent({
     // Capture the server name in the same hydrate turn so autosave can skip no-op renames.
     // eslint-disable-next-line react-hooks/refs -- render-phase hydrate pairs this with setState
     persistedNameRef.current = draftQuery.data.workflow.name;
+    // Carry the drop report out of the render pass; the effect below raises the notice once
+    // this hydrate has committed, so a discarded render cannot produce a toast.
+    // eslint-disable-next-line react-hooks/refs -- render-phase hydrate pairs this with setState
+    droppedNodesRef.current = parsed.droppedNodeCount > 0 ? parsed : null;
   }
 
   // History belongs to the mounted draft session, so a workflow switch or
@@ -630,6 +669,23 @@ function WorkflowEditorContent({
       resetWorkflowHistory(workflowRef.current);
     }
   }, [hydratedWorkflowId, resetWorkflowHistory, resolvedWorkflowId]);
+
+  // Explain the nodes the hydrate had to drop, once the draft carrying them has committed.
+  // Staying silent would be worse than the loss itself: the dropped nodes leave the draft on
+  // the next autosave, so the user needs to hear about them while the original graph is still
+  // recoverable from the published snapshot.
+  useEffect(() => {
+    const dropped = droppedNodesRef.current;
+    if (
+      dropped === null ||
+      hydratedWorkflowId === null ||
+      hydratedWorkflowId !== resolvedWorkflowId
+    ) {
+      return;
+    }
+    droppedNodesRef.current = null;
+    toast.message(unsupportedNodesMessage(t, dropped));
+  }, [hydratedWorkflowId, resolvedWorkflowId, t]);
 
   // Write the derived id to the store before paint so the sidebar highlight
   // matches the draft that the first render already started loading.
@@ -1454,7 +1510,11 @@ function WorkflowEditorContent({
         workflowId: resolvedWorkflowId,
         version: version.version,
       });
-      const envelope = parseWorkflowGraph(snapshot.graph);
+      const parsed = parseWorkflowGraphWithReport(snapshot.graph);
+      const envelope = parsed.envelope;
+      if (parsed.droppedNodeCount > 0) {
+        toast.message(unsupportedNodesMessage(t, parsed));
+      }
       setPreviewedVersion({
         id: version.id,
         version: version.version,
@@ -1544,6 +1604,10 @@ function WorkflowEditorContent({
 
   /** Adds a catalog node at a canvas-provided position and selects it for immediate editing. */
   function addNode(kind: WorkflowNodeKind, position: XYPosition): void {
+    const nodeType = capabilities.nodeTypes.find(
+      (candidate) => candidate.kind === kind,
+    );
+    if (!nodeType || !supportsWorkflowNodeScope(nodeType, "workflow")) return;
     const currentWorkflow = workflowRef.current ?? workflow;
     if (
       currentWorkflow === null ||
@@ -1630,10 +1694,10 @@ function WorkflowEditorContent({
     expandInspector();
   }
 
-  /** Adds one capability-approved member through an explicit iteration graph seam. */
-  function insertIterationNode(
+  /** Adds one capability-approved member through an explicit container graph seam. */
+  function insertContainerNode(
     kind: WorkflowNodeKind,
-    insertion: IterationInsertion,
+    insertion: WorkflowContainerInsertion,
   ): void {
     const currentWorkflow = workflowRef.current ?? workflow;
     const nodeType = capabilities.nodeTypes.find(
@@ -1642,7 +1706,10 @@ function WorkflowEditorContent({
     if (
       currentWorkflow === null ||
       nodeType === undefined ||
-      !supportsWorkflowNodeScope(nodeType, "iteration")
+      !supportsWorkflowNodeScope(
+        nodeType,
+        insertion.type === "loop-output" ? "loop" : "iteration",
+      )
     ) {
       return;
     }
@@ -1663,18 +1730,18 @@ function WorkflowEditorContent({
       selected: true,
     };
     updateWorkflow(
-      (current) =>
-        insertIterationMember(
-          {
-            ...current,
-            nodes: current.nodes.map((candidate) => ({
-              ...candidate,
-              selected: false,
-            })),
-          },
-          insertion,
-          node,
-        ),
+      (current) => {
+        const graph = {
+          ...current,
+          nodes: current.nodes.map((candidate) => ({
+            ...candidate,
+            selected: false,
+          })),
+        };
+        return insertion.type === "loop-output"
+          ? insertLoopMember(graph, insertion, node)
+          : insertIterationMember(graph, insertion, node);
+      },
       {
         history: {
           event: "node.add",
@@ -1965,24 +2032,30 @@ function WorkflowEditorContent({
       (candidate): candidate is Node<WorkflowNodeData, "workflow"> =>
         !isWorkflowAnnotationNode(candidate),
     );
+    const beforeDrag = dragStartWorkflowRef.current ?? current;
     const result = applyIterationDragRules(
       current,
-      dragStartWorkflowRef.current ?? current,
+      beforeDrag,
       draggedWorkflowNodes.map((node) => node.id),
     );
     dragStartWorkflowRef.current = null;
-    if (result.workflow !== current) {
-      updateWorkflow(() => result.workflow as typeof current, {
-        persist: true,
-      });
-      workflowHistory.commitTransaction(
-        captureWorkflowHistorySnapshot(result.workflow as typeof current),
-      );
-    } else {
-      workflowHistory.commitTransaction(
-        captureWorkflowHistorySnapshot(current),
-      );
+    // Mid-drag ticks only wrote workflowRef. Force one React publish even when
+    // iteration rules leave the graph object-identical, or the canvas snaps back.
+    const committed = result.workflow as typeof current;
+    workflowRef.current = committed;
+    setWorkflow(committed);
+    const geometryChanged =
+      result.rejectedNodeIds.length > 0 ||
+      !authoredWorkflowNodesEqual(beforeDrag.nodes, committed.nodes) ||
+      JSON.stringify(beforeDrag.annotations ?? []) !==
+        JSON.stringify(committed.annotations ?? []);
+    if (geometryChanged) {
+      editGenerationRef.current += 1;
+      autosave.markDirty();
     }
+    workflowHistory.commitTransaction(
+      captureWorkflowHistorySnapshot(committed),
+    );
     if (result.rejectedNodeIds.length > 0) {
       toast.message(t("settings.workflow.iteration.useInternalAdd"));
     }
@@ -2086,6 +2159,29 @@ function WorkflowEditorContent({
     if (appliedChanges.length === 0) {
       return;
     }
+    // While the pointer is down, React Flow already moves nodes in its store.
+    // Pushing every tick through setWorkflow rebuilds controlled `nodes` and the
+    // whole editor — the main source of top-level drag jitter. Keep authored
+    // geometry on workflowRef only; commit React state on drop / other edits.
+    if (isNodeDragGestureActive(appliedChanges)) {
+      const current = workflowRef.current ?? workflow;
+      if (current === null || previewedVersion !== null) {
+        return;
+      }
+      const nextNodes = applyNodeChanges<WorkflowCanvasNode>(appliedChanges, [
+        ...current.nodes,
+        ...(current.annotations ?? []),
+      ]);
+      workflowRef.current = {
+        ...current,
+        nodes: nextNodes.filter(
+          (node): node is Node<WorkflowNodeData, "workflow"> =>
+            !isWorkflowAnnotationNode(node),
+        ),
+        annotations: nextNodes.filter(isWorkflowAnnotationNode),
+      };
+      return;
+    }
     const persistable = shouldPersistWorkflowNodeChanges(appliedChanges);
     const removedNodeIds = new Set(
       appliedChanges
@@ -2097,6 +2193,10 @@ function WorkflowEditorContent({
     // undershoot a tall member and React Flow's parent extent then clamps that member
     // up over the region's internal affordances. Re-fitting frames whenever plain
     // measurements arrive releases the clamp without persisting a no-edit workflow.
+    // Never expand mid-drag: growing the parent under `extent: "parent"` moves the
+    // clamp bounds while the pointer is still down and members jitter, especially
+    // inside iteration regions. Drag-stop already expands the affected frames.
+    const dragActive = dragStartWorkflowRef.current !== null;
     const measured = appliedChanges.some(
       (change) => change.type === "dimensions" && change.resizing !== true,
     );
@@ -2119,7 +2219,7 @@ function WorkflowEditorContent({
           ),
           annotations: nextNodes.filter(isWorkflowAnnotationNode),
         };
-        if (measured) {
+        if (measured && !dragActive) {
           nextWorkflow = expandIterationFrames(nextWorkflow);
         }
         // Plain size probes (often batched with select bookkeeping) rewrite React
@@ -2475,7 +2575,7 @@ function WorkflowEditorContent({
                   onNodesChange={changeNodes}
                   onEdgesChange={changeEdges}
                   onAddNode={addNode}
-                  onInsertIterationNode={insertIterationNode}
+                  onInsertContainerNode={insertContainerNode}
                   onToggleIterationCollapsed={toggleIterationCollapsed}
                   onAddAnnotation={addAnnotation}
                   onUpdateAnnotation={updateAnnotation}

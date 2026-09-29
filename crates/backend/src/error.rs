@@ -1,7 +1,11 @@
-use ora_application::{ApplicationError, SkillImportError};
+use ora_agent_runtime::{ErrorClassification as RuntimeErrorClassification, RuntimeError};
+use ora_application::{
+    ApplicationError, INVALID_START_OPTION_DETAIL, MISSING_REQUIRED_START_DETAIL, SkillImportError,
+    WorkflowValidationError,
+};
 use ora_contracts::{
     ContractError, EmptyErrorParams, PublicError, RequestId, SkillFolderConflictParams,
-    WorkflowSnapshotIncompatibleWithResumeParams,
+    WorkflowRunInputInvalidParams, WorkflowSnapshotIncompatibleWithResumeParams,
 };
 use ora_plugin_lifecycle::PluginLifecycleError;
 use std::error::Error;
@@ -132,6 +136,55 @@ impl fmt::Display for BackendError {
 impl Error for BackendError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         self.source.as_deref().map(|source| source as &dyn Error)
+    }
+}
+
+impl From<RuntimeError> for BackendError {
+    /// Carries a runtime failure across unchanged: same class, public error, context, and source.
+    fn from(error: RuntimeError) -> Self {
+        let (classification, public_error, context, source) = error.into_parts();
+        Self {
+            classification: match classification {
+                RuntimeErrorClassification::InvalidRequest => ErrorClassification::InvalidRequest,
+                RuntimeErrorClassification::PayloadTooLarge => ErrorClassification::PayloadTooLarge,
+                RuntimeErrorClassification::NotFound => ErrorClassification::NotFound,
+                RuntimeErrorClassification::Forbidden => ErrorClassification::Forbidden,
+                RuntimeErrorClassification::HostUnavailable => ErrorClassification::HostUnavailable,
+                RuntimeErrorClassification::Conflict => ErrorClassification::Conflict,
+                RuntimeErrorClassification::Unprocessable => ErrorClassification::Unprocessable,
+                RuntimeErrorClassification::Internal => ErrorClassification::Internal,
+            },
+            public_error,
+            context,
+            source,
+        }
+    }
+}
+
+impl From<BackendError> for RuntimeError {
+    /// Hands a Desktop host failure to the runtime without losing anything it will report back.
+    fn from(error: BackendError) -> Self {
+        let BackendError {
+            classification,
+            public_error,
+            context,
+            source,
+        } = error;
+        RuntimeError::from_parts(
+            match classification {
+                ErrorClassification::InvalidRequest => RuntimeErrorClassification::InvalidRequest,
+                ErrorClassification::PayloadTooLarge => RuntimeErrorClassification::PayloadTooLarge,
+                ErrorClassification::NotFound => RuntimeErrorClassification::NotFound,
+                ErrorClassification::Forbidden => RuntimeErrorClassification::Forbidden,
+                ErrorClassification::HostUnavailable => RuntimeErrorClassification::HostUnavailable,
+                ErrorClassification::Conflict => RuntimeErrorClassification::Conflict,
+                ErrorClassification::Unprocessable => RuntimeErrorClassification::Unprocessable,
+                ErrorClassification::Internal => RuntimeErrorClassification::Internal,
+            },
+            public_error,
+            context,
+            source,
+        )
     }
 }
 
@@ -586,10 +639,38 @@ impl From<ApplicationError> for BackendError {
                 PublicError::WorkflowRunGraphParse(EmptyErrorParams {}),
                 "workflow graph is invalid",
             ),
+            ApplicationError::WorkflowRunValidation(
+                WorkflowValidationError::MissingRequiredStartVariable { name },
+            ) => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowRunInputInvalid(WorkflowRunInputInvalidParams {
+                    variable: name.clone(),
+                    reason: MISSING_REQUIRED_START_DETAIL.to_string(),
+                }),
+                "workflow run input value was rejected",
+            ),
+            ApplicationError::WorkflowRunValidation(
+                WorkflowValidationError::InvalidStartVariableOption { name },
+            ) => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowRunInputInvalid(WorkflowRunInputInvalidParams {
+                    variable: name.clone(),
+                    reason: INVALID_START_OPTION_DETAIL.to_string(),
+                }),
+                "workflow run input value was rejected",
+            ),
             ApplicationError::WorkflowRunValidation(_) => (
                 ErrorClassification::InvalidRequest,
                 PublicError::WorkflowRunValidation(EmptyErrorParams {}),
                 "workflow run is not executable",
+            ),
+            ApplicationError::WorkflowRunInputInvalid { variable, reason } => (
+                ErrorClassification::InvalidRequest,
+                PublicError::WorkflowRunInputInvalid(WorkflowRunInputInvalidParams {
+                    variable: variable.clone(),
+                    reason: reason.clone(),
+                }),
+                "workflow run input value was rejected",
             ),
             ApplicationError::WorkflowSkillNotFound { .. } => (
                 ErrorClassification::InvalidRequest,
@@ -644,13 +725,47 @@ impl From<ApplicationError> for BackendError {
 #[cfg(test)]
 mod tests {
     use super::{BackendError, ErrorClassification};
-    use ora_application::{ApplicationError, RepositoryError, SkillImportError};
+    use ora_application::{
+        ApplicationError, INVALID_START_OPTION_DETAIL, MISSING_REQUIRED_START_DETAIL,
+        RepositoryError, SkillImportError, WorkflowValidationError,
+    };
     use ora_contracts::{
-        EmptyErrorParams, PublicError, SkillFolderConflictParams,
+        EmptyErrorParams, PublicError, SkillFolderConflictParams, WorkflowRunInputInvalidParams,
         WorkflowSnapshotIncompatibleWithResumeParams,
     };
     use pretty_assertions::assert_eq;
     use std::error::Error;
+
+    /// Verifies a failure crossing the runtime boundary in both directions comes back unchanged.
+    ///
+    /// Desktop hands host failures (an unavailable Workspace) to the shared runtime and receives
+    /// them back as `BackendError`; anything lost on the way would change what the client sees.
+    #[test]
+    fn round_trips_through_the_runtime_error_without_loss() {
+        let original = BackendError::with_source(
+            ErrorClassification::Conflict,
+            PublicError::WorkspaceUnavailable(EmptyErrorParams {}),
+            "workspace is unavailable",
+            RepositoryError::from_message("row was not found"),
+        );
+
+        let returned = BackendError::from(ora_agent_runtime::RuntimeError::from(original.clone()));
+
+        assert_eq!(
+            (
+                returned.classification(),
+                returned.public_error().clone(),
+                returned.to_string(),
+                returned.source().map(ToString::to_string),
+            ),
+            (
+                original.classification(),
+                original.public_error().clone(),
+                original.to_string(),
+                original.source().map(ToString::to_string),
+            ),
+        );
+    }
 
     /// Verifies non-Git roots retain the stable bad-request contract used by runtime adapters.
     #[test]
@@ -665,6 +780,64 @@ mod tests {
         assert_eq!(
             error.source().map(ToString::to_string),
             Some("worktree mode requires a Git repository".to_string())
+        );
+    }
+
+    /// Verifies run-input rejections stay user-actionable and name the exact variable.
+    #[test]
+    fn maps_run_input_rejections_with_the_variable_and_reason() {
+        let error = BackendError::from(ApplicationError::WorkflowRunInputInvalid {
+            variable: "count".to_string(),
+            reason: "value does not match the declared type number".to_string(),
+        });
+
+        assert_eq!(error.classification(), ErrorClassification::InvalidRequest);
+        assert_eq!(
+            error.public_error().clone(),
+            PublicError::WorkflowRunInputInvalid(WorkflowRunInputInvalidParams {
+                variable: "count".to_string(),
+                reason: "value does not match the declared type number".to_string(),
+            })
+        );
+    }
+
+    /// Verifies starting without a required Start value names the missing variable instead of a
+    /// generic validation failure.
+    #[test]
+    fn maps_a_missing_required_start_variable_with_its_name() {
+        let error = BackendError::from(ApplicationError::WorkflowRunValidation(
+            WorkflowValidationError::MissingRequiredStartVariable {
+                name: "brief".to_string(),
+            },
+        ));
+
+        assert_eq!(error.classification(), ErrorClassification::InvalidRequest);
+        assert_eq!(
+            error.public_error().clone(),
+            PublicError::WorkflowRunInputInvalid(WorkflowRunInputInvalidParams {
+                variable: "brief".to_string(),
+                reason: MISSING_REQUIRED_START_DETAIL.to_string(),
+            })
+        );
+    }
+
+    /// Verifies an out-of-option Start value names the variable instead of a generic failure,
+    /// pinning the third start-validation branch of the same public contract.
+    #[test]
+    fn maps_an_invalid_start_variable_option_with_its_name() {
+        let error = BackendError::from(ApplicationError::WorkflowRunValidation(
+            WorkflowValidationError::InvalidStartVariableOption {
+                name: "mode".to_string(),
+            },
+        ));
+
+        assert_eq!(error.classification(), ErrorClassification::InvalidRequest);
+        assert_eq!(
+            error.public_error().clone(),
+            PublicError::WorkflowRunInputInvalid(WorkflowRunInputInvalidParams {
+                variable: "mode".to_string(),
+                reason: INVALID_START_OPTION_DETAIL.to_string(),
+            })
         );
     }
 

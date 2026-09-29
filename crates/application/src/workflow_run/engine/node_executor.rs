@@ -13,6 +13,14 @@ use ora_domain::{WorkflowNodeRunId, WorkflowRunId, WorkflowScopeId};
 use std::sync::Arc;
 use thiserror::Error;
 
+/// Indicates whether asynchronous session cleanup will acknowledge a scoped exit later.
+pub enum LoopExitCleanup {
+    /// The executor has no live work left in the scope.
+    Complete,
+    /// The executor will report completion through the scoped callback.
+    Pending,
+}
+
 /// Executes one agent node through a real session, calling the engine back when done.
 ///
 /// The implementation lives in the backend and drives the session asynchronously; it MUST report
@@ -30,6 +38,16 @@ pub trait NodeExecutor: Send + Sync {
         scope_id: &WorkflowScopeId,
         variable_pool: &WorkflowVariablePool,
     );
+
+    /// Stops only cancelled workers in this scope; never blocks the scheduling gate.
+    fn cleanup_loop_exit(
+        &self,
+        _context: &ExecutionContext,
+        _parent_id: &WorkflowNodeRunId,
+        _scope_id: &WorkflowScopeId,
+    ) -> LoopExitCleanup {
+        LoopExitCleanup::Complete
+    }
 
     /// Records a pre-node git checkpoint when a composite node-run becomes `Running`.
     ///
@@ -77,6 +95,16 @@ impl NodeExecutor for SharedNodeExecutor {
 /// The backend session driver invokes this when an agent node's session finishes; callbacks MUST
 /// be routed through the run's serial executor so state transitions stay serial.
 pub trait WorkflowRunCallback: Send + Sync {
+    /// Acknowledges scoped cleanup after workers have stopped, under the run's serial gate.
+    fn finish_loop_exit(
+        &self,
+        _run_id: &WorkflowRunId,
+        _parent_id: &WorkflowNodeRunId,
+        _scope_id: &WorkflowScopeId,
+        _result: Result<(), String>,
+    ) {
+    }
+
     /// Reports a successful node completion with its final assistant output, stop reason, and
     /// incremental file changes.
     ///

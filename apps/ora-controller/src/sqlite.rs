@@ -20,7 +20,7 @@ const SCHEMA: &str = include_str!("schema.sql");
 
 /// The database lease and transaction owner retain original dispatches, results and event receipts.
 /// Clones share one connection; every operation runs on the blocking pool so SQLite's fsync never
-/// stalls the async runtime that hosts Node sessions and the API.
+/// stalls the async runtime that hosts Node sessions and the embedding caller.
 pub struct SqliteStore<W = DurableWrites> {
     inner: Arc<Mutex<Inner<W>>>,
     id: ControllerId,
@@ -253,6 +253,9 @@ impl<W: WriteGuard> CoordinationStore for SqliteStore<W> {
     }
 
     /// The local authority is this process; there is no lease to keep and no queue to claim.
+    /// Local intake records the dispatch when it accepts a request, so there is nothing to gate.
+    fn static_node_established(&self, _node: &NodeRuntimeIdentity) {}
+
     async fn serve(&self, shutdown: impl Future<Output = ()> + Send + 'static) -> io::Result<()> {
         shutdown.await;
         Ok(())

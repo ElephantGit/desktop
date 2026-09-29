@@ -201,13 +201,13 @@ describe("RunActFailedAttempts", () => {
     renderAttempts(ATTEMPTS);
     expect(within(entry(1)).getByText("第 2 轮")).toBeInTheDocument();
     expect(within(entry(2)).queryByText(/轮$/u)).not.toBeInTheDocument();
-    expect(within(entry(3)).getByText("第 2 轮")).toBeInTheDocument();
+    expect(within(entry(3)).getByText("第 1 轮")).toBeInTheDocument();
   });
 
   it("prefers the region iteration over a Loop round for the badge", () => {
     renderAttempts([{ ...ATTEMPTS[0]!, iteration: 0, loopRoundIndex: 4 }]);
     expect(within(entry(1)).getByText("第 1 轮")).toBeInTheDocument();
-    expect(within(entry(1)).queryByText("第 5 轮")).not.toBeInTheDocument();
+    expect(within(entry(1)).queryByText("第 4 轮")).not.toBeInTheDocument();
   });
 
   it("shows each replacement chip only on the attempt that carries it", () => {
@@ -293,7 +293,7 @@ describe("RunActFailedAttempts", () => {
 
     const third = entry(3);
     expect(within(third).getByText("Attempt 3")).toBeInTheDocument();
-    expect(within(third).getByText("Round 2")).toBeInTheDocument();
+    expect(within(third).getByText("Round 1")).toBeInTheDocument();
     expect(
       within(third).getByText("Before “Run again from start”"),
     ).toBeInTheDocument();

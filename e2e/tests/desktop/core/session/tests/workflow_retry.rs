@@ -181,7 +181,7 @@ pub(super) fn prompted_sessions(package_root: &Path) -> Vec<String> {
 
 /// The text of every prompt the fake agent received, in order.
 pub(super) fn prompt_texts(package_root: &Path) -> Result<Vec<String>, TestError> {
-    fs::read_to_string(package_root.join("prompts.jsonl"))
+    fs::read_to_string(package_root.join("acp_prompts.jsonl"))
         .unwrap_or_default()
         .lines()
         .map(|line| {

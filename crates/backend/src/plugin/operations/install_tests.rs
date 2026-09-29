@@ -1,7 +1,7 @@
 //! Covers Hook and pack install outcomes after the host dropped plugin enablement.
 
 use super::Plugins;
-use crate::agent_runtime::{AgentRuntimeManager, AgentRuntimeSetup};
+use crate::agent_runtime::{AgentRuntimeSetup, open_agent_runtime};
 use crate::app_event::AppEventHub;
 use crate::clock::SystemClock;
 use crate::error::ErrorClassification;
@@ -72,13 +72,12 @@ fn test_plugin_api(root: &Path, pool: &RepositoryPool) -> Plugins {
         .expect("open plugin host"),
     );
     let runtime = Arc::new(
-        AgentRuntimeManager::new(AgentRuntimeSetup {
+        open_agent_runtime(AgentRuntimeSetup {
             plugin_host: host.clone(),
             pool: pool.clone(),
             home_directory: root.to_path_buf(),
             relative_path_base: root.to_path_buf(),
             sessions_root: root.join("sessions"),
-            clock: SystemClock,
             scheduler: Scheduler::new(chrono_tz::Asia::Shanghai),
             app_events: events.publisher(),
         })
@@ -363,13 +362,12 @@ fn pack_test_plugins(root: &Path, pool: &RepositoryPool) -> (Plugins, Arc<Plugin
         .expect("open plugin host"),
     );
     let runtime = Arc::new(
-        AgentRuntimeManager::new(AgentRuntimeSetup {
+        open_agent_runtime(AgentRuntimeSetup {
             plugin_host: host.clone(),
             pool: pool.clone(),
             home_directory: root.to_path_buf(),
             relative_path_base: root.to_path_buf(),
             sessions_root: root.join("sessions"),
-            clock: SystemClock,
             scheduler: Scheduler::new(chrono_tz::Asia::Shanghai),
             app_events: events.publisher(),
         })

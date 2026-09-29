@@ -292,6 +292,10 @@ export type UpdateWorkflowRunInputResponse = { run: WorkflowRun };
  * Public Loop-round identity used to group repeated node definitions in run history.
  */
 export type WorkflowExecutionScope = {
+  /**
+   * Routing decisions committed in this scope, never borrowed from another round.
+   */
+  conditionDecisions?: { [key in string]: string };
   id: string;
   runId: string;
   parentLoopNodeRunId: string;

@@ -20,6 +20,20 @@ async fn accepts_independent_and_combined_execution_capabilities() -> Result<(),
             ],
             json!(["repository_clone", "worktree_execution"]),
         ),
+        (
+            vec![
+                NodeCapability::RepositoryClone,
+                NodeCapability::PluginInstall,
+                NodeCapability::AgentSession,
+                NodeCapability::RevisionDelivery,
+            ],
+            json!([
+                "repository_clone",
+                "plugin_install",
+                "agent_session",
+                "revision_delivery"
+            ]),
+        ),
     ] {
         let mut case = fixtures::hello_accepted();
         let Message::Node(NodeToControllerMessage::HelloAccepted(message)) = &mut case.message
@@ -179,6 +193,17 @@ async fn rejects_missing_and_empty_fields() -> Result<(), TestError> {
                 ("/payload/node/node_id", "node.node_id"),
                 ("/payload/node/incarnation_id", "node.incarnation_id"),
             ],
+        )
+        .await?;
+    fixtures::controller_heartbeat()
+        .assert_fields(
+            &[
+                "/message_type",
+                "/protocol_version",
+                "/payload",
+                "/payload/controller_id",
+            ],
+            &[("/payload/controller_id", "controller_id")],
         )
         .await?;
     Ok(())

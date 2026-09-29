@@ -5,6 +5,9 @@ use prost::Message;
 use std::{fmt, future::Future, time::Duration};
 use tonic::{Code, Status};
 
+/// The fault code Cloud sends as the status message for a stale operation snapshot.
+const STALE_OPERATION: &str = "stale_operation";
+
 /// Each call waits this long for a reply before treating the outcome as lost.
 pub(super) const RPC_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 10);
 /// How many times one submission identity is presented before an unknown outcome is reported.
@@ -19,6 +22,8 @@ pub(super) enum Verdict {
     NotFound,
     /// Identity or content disagrees with the durable record; retrying as-is cannot succeed.
     Conflict,
+    /// A delayed control acknowledgement names a version that has already moved on.
+    StaleRuntimeBinding,
     /// The lease epoch is not current or another holder owns the lease.
     Stale(Detail),
     /// Nothing was committed and the same call may be retried later.
@@ -82,9 +87,17 @@ pub(super) fn classify(status: &Status) -> Verdict {
     };
     match status.code() {
         Code::NotFound => Verdict::NotFound,
+        Code::Aborted if status.message() == "stale_runtime_control" => {
+            Verdict::StaleRuntimeBinding
+        }
         Code::Aborted | Code::InvalidArgument | Code::AlreadyExists | Code::OutOfRange => {
             Verdict::Conflict
         }
+        // Cloud reports an operation that is no longer running under this epoch, or whose version
+        // moved on, with the same status as a stale lease. Only the lease verdict may drop the
+        // epoch; a stale operation snapshot is a conflict the operation driver resolves by
+        // claiming again.
+        Code::FailedPrecondition if status.message() == STALE_OPERATION => Verdict::Conflict,
         Code::FailedPrecondition => Verdict::Stale(detail),
         // Cloud authenticates no Controller at this stage, so a refusal means the deployments
         // disagree; nothing was committed and the call is retried like an outage.
@@ -115,6 +128,39 @@ pub(super) async fn read<T>(call: impl Future<Output = Attempt<T>>) -> Result<T,
             code: Code::DeadlineExceeded,
             refined: None,
             message: "no reply before the read deadline".into(),
+        })),
+    }
+}
+
+/// Why a `Watch` did not open. Opening commits nothing, so like a read it is never unknown; unlike a
+/// read it must tell `UNAVAILABLE` apart from other refusals: a draining or stopped Cloud refuses
+/// with exactly that code, while any other verdict comes from a serving Cloud that declines the
+/// stream, which the signal loop must not mistake for a drain that never ends.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Refusal {
+    /// `UNAVAILABLE` or no response headers before the deadline: no Cloud is serving yet.
+    Unavailable(Detail),
+    /// Any other status, classified as for any call (a stale epoch included).
+    Verdict(Verdict),
+}
+
+/// Waits for a stream to open: the response headers, which Cloud sends only after the
+/// subscription exists, or the status it refused with.
+pub(super) async fn open<T>(call: impl Future<Output = Attempt<T>>) -> Result<T, Refusal> {
+    match tokio::time::timeout(RPC_TIMEOUT, call).await {
+        Ok(Ok(response)) => Ok(response.into_inner()),
+        Ok(Err(status)) if status.code() == Code::Unavailable => {
+            Err(Refusal::Unavailable(Detail {
+                code: Code::Unavailable,
+                refined: None,
+                message: status.message().to_owned(),
+            }))
+        }
+        Ok(Err(status)) => Err(Refusal::Verdict(classify(&status))),
+        Err(_elapsed) => Err(Refusal::Unavailable(Detail {
+            code: Code::DeadlineExceeded,
+            refined: None,
+            message: "no response headers before the open deadline".into(),
         })),
     }
 }
@@ -156,6 +202,19 @@ where
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+    /// Only a versioned runtime snapshot may be discarded; target/identity conflicts stay fatal.
+    #[test]
+    fn delayed_runtime_snapshot_is_distinct_from_target_and_lease_failures() {
+        assert_eq!(
+            classify(&Status::aborted("stale_runtime_control")),
+            Verdict::StaleRuntimeBinding
+        );
+        assert_eq!(classify(&Status::aborted("stale_node")), Verdict::Conflict);
+        assert!(matches!(
+            classify(&Status::failed_precondition("stale_controller")),
+            Verdict::Stale(_)
+        ));
+    }
     use super::*;
     use pretty_assertions::assert_eq;
 
@@ -206,6 +265,15 @@ mod tests {
             detail.to_string(),
             "ERROR_CODE_STALE_CONTROLLER (FailedPrecondition): stale_controller"
         );
+        // A stale operation snapshot shares the lease's status code but never drops the lease.
+        assert_eq!(
+            classify(&cloud_status(
+                Code::FailedPrecondition,
+                "stale_operation",
+                ErrorCode::StaleController,
+            )),
+            Verdict::Conflict
+        );
         assert!(matches!(
             classify(&Status::unavailable("persistence unavailable")),
             Verdict::Unavailable(_)
@@ -228,12 +296,55 @@ mod tests {
         /// Renders the carried detail so tests can pin the message shape without matching structure.
         fn to_string_for_test(&self) -> String {
             match self {
-                Self::NotFound | Self::Conflict => format!("{self:?}"),
+                Self::NotFound | Self::Conflict | Self::StaleRuntimeBinding => format!("{self:?}"),
                 Self::Stale(detail) | Self::Unavailable(detail) | Self::Unknown(detail) => {
                     detail.to_string()
                 }
             }
         }
+    }
+
+    /// Only `UNAVAILABLE` and a missing reply mean no Cloud serves the stream yet; every other
+    /// status is a verdict from a serving Cloud, a stale epoch included.
+    #[tokio::test]
+    async fn opening_separates_unavailable_from_refusals() {
+        let unavailable = open::<()>(async { Err(Status::unavailable("draining")) }).await;
+        assert_eq!(
+            unavailable,
+            Err(Refusal::Unavailable(Detail {
+                code: Code::Unavailable,
+                refined: None,
+                message: "draining".into(),
+            }))
+        );
+        let unimplemented = open::<()>(async { Err(Status::unimplemented("no signals")) }).await;
+        assert!(matches!(
+            unimplemented,
+            Err(Refusal::Verdict(Verdict::Unavailable(_)))
+        ));
+        let stale = open::<()>(async {
+            Err(cloud_status(
+                Code::FailedPrecondition,
+                "stale_controller",
+                ErrorCode::StaleController,
+            ))
+        })
+        .await;
+        assert!(matches!(stale, Err(Refusal::Verdict(Verdict::Stale(_)))));
+        assert_eq!(open(async { Ok(tonic::Response::new(7)) }).await, Ok(7));
+    }
+
+    /// A stream that never answers is unavailable once the deadline passes, never unknown.
+    #[tokio::test(start_paused = true)]
+    async fn opening_without_headers_times_out_as_unavailable() {
+        let pending = open::<()>(std::future::pending()).await;
+        assert!(matches!(
+            pending,
+            Err(Refusal::Unavailable(Detail {
+                code: Code::DeadlineExceeded,
+                ..
+            }))
+        ));
     }
 
     /// Unknown outcomes are retried with the same submission identity; final verdicts are not.

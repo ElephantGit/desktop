@@ -19,6 +19,7 @@ export type WorkflowConfigField =
   | "initialPrompt"
   | "tool"
   | "condition"
+  | "aggregation"
   | "approvalPrompt"
   | "waitStrategy"
   | "failureStrategy"
@@ -61,7 +62,7 @@ export interface WorkflowNodeType {
   supportedScopes: WorkflowNodeScope[];
 }
 
-export type WorkflowNodeScope = "workflow" | "iteration";
+export type WorkflowNodeScope = "workflow" | "iteration" | "loop";
 
 /** Returns whether a capability declaration allows a node in the requested editor scope. */
 export function supportsWorkflowNodeScope(
@@ -138,9 +139,11 @@ export function createMockWorkflowCapabilities(
     createMockWorkflowNodeType("start", locale),
     createMockWorkflowNodeType("agent", locale),
     createMockWorkflowNodeType("condition", locale),
-    createMockWorkflowNodeType("loop", locale),
+    createMockWorkflowNodeType("aggregator", locale),
     createMockWorkflowNodeType("iteration", locale),
+    createMockWorkflowNodeType("loop", locale),
     createMockWorkflowNodeType("output", locale),
+    createMockWorkflowNodeType("loopExit", locale),
   ];
   const models = [
     { value: "GPT-5", label: "GPT-5" },
@@ -167,10 +170,23 @@ export function createMockWorkflowCapabilities(
       label: locale === "zh-CN" ? "不包含" : "Not contains",
     },
     {
+      value: "starts_with",
+      label: locale === "zh-CN" ? "开头是" : "Starts with",
+    },
+    { value: "ends_with", label: locale === "zh-CN" ? "结尾是" : "Ends with" },
+    {
       value: "greater_than",
       label: locale === "zh-CN" ? "大于" : "Greater than",
     },
     { value: "less_than", label: locale === "zh-CN" ? "小于" : "Less than" },
+    {
+      value: "greater_than_or_equal",
+      label: locale === "zh-CN" ? "大于等于" : "Greater than or equal",
+    },
+    {
+      value: "less_than_or_equal",
+      label: locale === "zh-CN" ? "小于等于" : "Less than or equal",
+    },
     { value: "empty", label: locale === "zh-CN" ? "为空" : "Is empty" },
     {
       value: "not_empty",
@@ -257,7 +273,7 @@ export function createMockWorkflowNodeType(
             ? "交给模型自主执行"
             : "Delegate autonomous work to a model",
         configFields: ["agent"],
-        supportedScopes: ["workflow", "iteration"],
+        supportedScopes: ["workflow", "iteration", "loop"],
       };
     case "condition":
       return {
@@ -268,6 +284,17 @@ export function createMockWorkflowNodeType(
             ? "根据规则选择路径"
             : "Route execution based on rules",
         configFields: ["condition"],
+        supportedScopes: ["workflow", "iteration", "loop"],
+      };
+    case "aggregator":
+      return {
+        kind,
+        label: locale === "zh-CN" ? "变量聚合器" : "Variable Aggregator",
+        description:
+          locale === "zh-CN"
+            ? "将多分支变量聚合为一个变量，按声明顺序取第一个已产出的值"
+            : "Collapse multi-branch variables into one, passing through the first produced value in declaration order",
+        configFields: ["aggregation"],
         supportedScopes: ["workflow", "iteration"],
       };
     case "tool":
@@ -300,6 +327,17 @@ export function createMockWorkflowNodeType(
             : "Pause for a human decision",
         configFields: ["approvalPrompt"],
         supportedScopes: ["workflow"],
+      };
+    case "loopExit":
+      return {
+        kind,
+        label: locale === "zh-CN" ? "退出循环" : "Exit loop",
+        description:
+          locale === "zh-CN"
+            ? "结束当前循环并继续外部流程"
+            : "Exit this loop and continue the outer workflow",
+        configFields: [],
+        supportedScopes: ["loop"],
       };
     case "loop":
       return {
@@ -341,7 +379,7 @@ export function createMockWorkflowNodeType(
         description:
           locale === "zh-CN" ? "返回最终结果" : "Return the final result",
         configFields: [],
-        supportedScopes: ["workflow"],
+        supportedScopes: ["workflow", "loop"],
       };
   }
 }

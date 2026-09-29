@@ -93,6 +93,10 @@ pub enum WorkflowExecutionScopeStatus {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "workflow-run.ts")]
 pub struct WorkflowExecutionScope {
+    /// Routing decisions committed in this scope, never borrowed from another round.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub condition_decisions: Option<BTreeMap<String, String>>,
     pub id: String,
     pub run_id: String,
     pub parent_loop_node_run_id: String,
@@ -675,6 +679,7 @@ mod tests {
             updated_at: 31,
         };
         let scope = WorkflowExecutionScope {
+            condition_decisions: None,
             id: "round-1".into(),
             run_id: "run-1".into(),
             parent_loop_node_run_id: "loop-node-run".into(),

@@ -30,6 +30,7 @@ pub use super::node_executor::{
 };
 
 mod composite_scheduler;
+mod loop_exit;
 mod loop_scheduler;
 mod retry_scheduler;
 

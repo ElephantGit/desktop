@@ -86,7 +86,7 @@ pub(super) fn materialize_package(
 /// The byte budget is discovery's manifest budget rather than the extraction budget, which is
 /// sized for bundled CLIs: without it a package could make installation read an arbitrarily large
 /// file into memory even though discovery would refuse the same manifest afterwards.
-fn read_installed_manifest(package_root: &Path) -> Result<PluginManifest, InstallError> {
+pub(crate) fn read_installed_manifest(package_root: &Path) -> Result<PluginManifest, InstallError> {
     let file_name = crate::discovery::MANIFEST_FILE_NAME;
     let manifest_path = package_root.join(file_name);
     let metadata =

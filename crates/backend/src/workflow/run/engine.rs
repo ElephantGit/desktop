@@ -70,6 +70,23 @@ impl WorkflowRunEngineCallback {
 }
 
 impl WorkflowRunCallback for WorkflowRunEngineCallback {
+    /// Serializes cleanup acknowledgement with cancellation, recovery, and ordinary completions.
+    fn finish_loop_exit(
+        &self,
+        run_id: &WorkflowRunId,
+        parent_id: &WorkflowNodeRunId,
+        scope_id: &ora_domain::WorkflowScopeId,
+        result: Result<(), String>,
+    ) {
+        let _gate = self.run_locks.acquire_exclusive(run_id.as_ref());
+        if let Ok(guard) = self.engine.read()
+            && let Some(engine) = guard.as_ref()
+            && let Err(error) = engine.finish_loop_exit(run_id, parent_id, scope_id, result)
+        {
+            ora_error!(run_id = %run_id, error = %error, "loop exit cleanup callback failed");
+        }
+    }
+
     fn complete_node(
         &self,
         run_id: &WorkflowRunId,
@@ -256,8 +273,16 @@ pub(crate) fn reconcile_running_workflow_runs(
 
         let _gate = run_locks.acquire_exclusive(run_id.as_ref());
 
+        let exiting_loops = match super::recovery::pending_loop_exits(&repository, &node_runs) {
+            Ok(ids) => ids,
+            Err(error) => {
+                ora_error!(run_id = %run_id, error = %error, "failed to inspect pending loop exits");
+                continue;
+            }
+        };
         if node_runs.iter().any(|node_run| {
             node_run.status == WorkflowNodeStatus::Running
+                && !exiting_loops.contains(&node_run.id)
                 && NodeType::from_str(&node_run.node_type)
                     .map(|node_type| !node_type.is_composite())
                     .unwrap_or(true)

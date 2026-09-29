@@ -7,6 +7,7 @@
 // The design places the run engine in `engine/engine.rs`, so the nested module name matches the
 // containing directory on purpose.
 mod agent_config;
+mod aggregator;
 mod branch_projection;
 mod condition;
 #[allow(clippy::module_inception)]
@@ -47,14 +48,17 @@ pub use iteration::{
     CompositeRegion, IterationConfig, IterationErrorStrategy, IterationLedger, RoundOutcome,
 };
 pub use loop_config::{LoopConfig, LoopInitialValue, LoopVariable};
-pub use loop_round::{LoopRoundDecision, LoopRoundError, LoopRoundExecutionState};
-pub use node_executor::{EngineError, NodeExecutor, WorkflowRunCallback, WorkflowValidationError};
+pub use loop_round::{LoopExitState, LoopRoundDecision, LoopRoundError, LoopRoundExecutionState};
+pub use node_executor::{
+    EngineError, LoopExitCleanup, NodeExecutor, WorkflowRunCallback, WorkflowValidationError,
+};
 pub use node_type::{NodeType, UnknownNodeType};
 pub use ports::{
     AdvanceWorkflowRunResult, BindWorkflowNodeSessionResult, CancelWorkflowRunResult,
-    ExecutionContext, FailurePropagation, FileChange, IterationRoundContinuation, LoopRoundAdvance,
-    LoopRoundToStart, NoRunInvalidations, NodeRunToStart, RestartWorkflowRunResult,
-    ResumeWorkflowRunResult, StartPrerequisitesError, StartWorkflowRunResult,
+    ExecutionContext, FailurePropagation, FileChange, INVALID_START_OPTION_DETAIL,
+    IterationRoundContinuation, LoopRoundAdvance, LoopRoundToStart, MISSING_REQUIRED_START_DETAIL,
+    NoRunInvalidations, NodeRunToStart, RestartWorkflowRunResult, ResumeWorkflowRunResult,
+    RunInputRejection, RunInputRejectionReason, StartPrerequisitesError, StartWorkflowRunResult,
     UpdateWorkflowRunInputResult, WorkflowNodeRunIdGenerator, WorkflowRunEngineRepository,
     WorkflowRunInvalidationPublisher, WorkflowRunWorkspaceInitializer,
 };
@@ -76,6 +80,8 @@ pub use structured_output::{StructuredOutputError, extract_json_object, validate
 pub use variable_pool::{WorkflowVariablePool, WorkflowVariablePoolError};
 pub use variable_template::{VariableTemplateError, render_variable_template};
 
+#[cfg(test)]
+mod aggregator_tests;
 #[cfg(test)]
 mod d2_tests;
 #[cfg(test)]

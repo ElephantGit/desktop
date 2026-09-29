@@ -419,6 +419,7 @@ export function buildDisplayRun(
       status: string;
       state: string | null;
       input: string | null;
+      output?: string | null;
       snapshotId?: string;
       startedAt: bigint | null;
       finishedAt: bigint | null;
@@ -430,6 +431,7 @@ export function buildDisplayRun(
     variables: Array<{ selector: string[]; value?: unknown }>;
     conditionDecisions: Record<string, string>;
     scopes?: Array<{
+      conditionDecisions?: Record<string, string>;
       id: string;
       parentLoopNodeRunId: string;
       roundIndex: number;
@@ -586,6 +588,7 @@ export function buildDisplayRun(
       currentNodes,
     ),
     kickoffInput: kickoffInput ?? undefined,
+    finalOutput: detail.run.output ?? undefined,
     nodeStates,
     rounds: (detail.scopes ?? []).map((scope) => {
       const parentRun = detail.nodes.find(
@@ -607,22 +610,31 @@ export function buildDisplayRun(
             );
             return [
               nodeRun.nodeId,
-              projectPersistedNodeState(
-                definitionNode?.data.kind,
-                nodeRun,
-                detail.run.id,
-                {
-                  attempts:
-                    attemptGroups.get(
-                      attemptHistoryKey(
-                        nodeRun.nodeId,
-                        nodeRun.iteration,
-                        scope.id,
-                      ),
-                    ) ?? [],
-                  loopRoundIndex: scope.roundIndex,
-                },
-              ),
+              {
+                ...projectPersistedNodeState(
+                  definitionNode?.data.kind,
+                  nodeRun,
+                  detail.run.id,
+                  {
+                    attempts:
+                      attemptGroups.get(
+                        attemptHistoryKey(
+                          nodeRun.nodeId,
+                          nodeRun.iteration,
+                          scope.id,
+                        ),
+                      ) ?? [],
+                    loopRoundIndex: scope.roundIndex,
+                  },
+                ),
+                ...(definitionNode?.data.kind === "condition" &&
+                scope.conditionDecisions?.[nodeRun.nodeId] !== undefined
+                  ? {
+                      selectedBranchId:
+                        scope.conditionDecisions[nodeRun.nodeId],
+                    }
+                  : {}),
+              },
             ];
           }),
         ),

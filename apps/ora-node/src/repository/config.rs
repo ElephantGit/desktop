@@ -23,6 +23,36 @@ pub enum CloneSsh {
 }
 
 impl CloneConfig {
+    /// Cloud currently supports anonymous HTTPS plus a CA reference. Static SSH/helper credentials
+    /// cannot substitute for the controlled credential-resolution capability that is not installed.
+    pub(crate) fn validate_cloud_policy(&self) -> Result<(), Error> {
+        if !matches!(self.ssh, CloneSsh::Disabled) {
+            return Err(Error::Configuration("controlled repository credentials are unavailable; static SSH credentials are forbidden".into()));
+        }
+        let content = std::fs::read_to_string(&self.git_config)
+            .map_err(|e| Error::Configuration(e.to_string()))?;
+        let mut http = false;
+        for line in content
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with(';'))
+        {
+            if line.eq_ignore_ascii_case("[http]") {
+                http = true;
+                continue;
+            }
+            if !http
+                || !line.split_once('=').is_some_and(|(key, value)| {
+                    key.trim().eq_ignore_ascii_case("sslCAInfo") && !value.trim().is_empty()
+                })
+            {
+                return Err(Error::Configuration(
+                    "Cloud Git configuration permits only an HTTPS CA reference".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
     /// Freezes an existing trusted root and rejects overlap with every protected state/checkout root.
     pub(super) fn validate(
         &mut self,

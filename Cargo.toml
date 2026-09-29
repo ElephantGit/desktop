@@ -11,6 +11,7 @@ members = [
     "crates/controller-proto",
     "crates/application",
     "crates/acp",
+    "crates/agent-runtime",
     "crates/backend",
     "crates/contracts",
     "crates/db",
@@ -22,6 +23,7 @@ members = [
     "crates/history",
     "crates/logging",
     "crates/node-protocol",
+    "crates/node-transport",
     "crates/node-db",
     "crates/plugin-asset",
     "crates/plugin-config",
@@ -56,6 +58,7 @@ default-members = [
     "apps/ora-node",
     "crates/application",
     "crates/acp",
+    "crates/agent-runtime",
     "crates/backend",
     "crates/contracts",
     "crates/db",
@@ -67,6 +70,7 @@ default-members = [
     "crates/history",
     "crates/logging",
     "crates/node-protocol",
+    "crates/node-transport",
     "crates/node-db",
     "crates/plugin-asset",
     "crates/plugin-config",
@@ -106,6 +110,7 @@ edition = "2024"
 # Internal
 ora-application = { path = "crates/application" }
 ora-acp = { path = "crates/acp" }
+ora-agent-runtime = { path = "crates/agent-runtime" }
 ora-backend = { path = "crates/backend" }
 ora-contracts = { path = "crates/contracts" }
 ora-db = { path = "crates/db" }
@@ -120,6 +125,7 @@ ora-node-db = { path = "crates/node-db" }
 ora-controller = { path = "apps/ora-controller" }
 ora-controller-proto = { path = "crates/controller-proto" }
 ora-node-protocol = { path = "crates/node-protocol" }
+ora-node-transport = { path = "crates/node-transport" }
 ora-plugin-asset = { path = "crates/plugin-asset" }
 ora-plugin-config = { path = "crates/plugin-config" }
 ora-plugin-manifest = { path = "crates/plugin-manifest" }

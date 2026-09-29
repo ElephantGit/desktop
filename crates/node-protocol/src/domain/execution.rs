@@ -1,5 +1,6 @@
 use crate::{
-    CloneExecutionResult, MessageValidationError, NodeRuntimeIdentity, WorktreeExecutionResult,
+    AgentSessionResult, CloneExecutionResult, MessageValidationError, NodeRuntimeIdentity,
+    PluginExecutionResult, RevisionExecutionResult, WorktreeExecutionResult,
 };
 use serde::{Deserialize, Serialize};
 
@@ -11,6 +12,11 @@ pub enum ExecutionResult {
     // historical Worktree evidence just to introduce a second result family.
     Worktree(WorktreeExecutionResult),
     Clone(CloneExecutionResult),
+    Plugin(PluginExecutionResult),
+    AgentSession(AgentSessionResult),
+    // Boxed because a delivered Revision carries two object descriptions and three commits,
+    // which would otherwise inflate every ExecutionState a status query builds.
+    Revision(Box<RevisionExecutionResult>),
 }
 
 impl ExecutionResult {
@@ -21,6 +27,9 @@ impl ExecutionResult {
                 .validate()
                 .map_err(|field| MessageValidationError::EmptyField { field }),
             Self::Clone(result) => result.validate(),
+            Self::Plugin(result) => result.validate(),
+            Self::AgentSession(result) => result.validate(),
+            Self::Revision(result) => result.validate(),
         }
     }
 
@@ -29,6 +38,9 @@ impl ExecutionResult {
         match self {
             Self::Worktree(result) => result.node(),
             Self::Clone(result) => result.node(),
+            Self::Plugin(result) => result.node(),
+            Self::AgentSession(result) => result.node(),
+            Self::Revision(result) => result.node(),
         }
     }
 }

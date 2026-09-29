@@ -1,5 +1,6 @@
 use crate::agent_runtime::SessionEventStream;
 use crate::{BackendError, ErrorClassification};
+use ora_agent_runtime::RuntimeError;
 use ora_contracts::{AppEvent, EmptyErrorParams, PublicError};
 use ora_domain::PluginId;
 use ora_logging::ora_debug;
@@ -86,7 +87,7 @@ impl PluginStatusPublisher for AppEventPublisher {
 /// Forwards broadcast events through a bounded queue so a slow client cannot block publishers.
 async fn forward_events(
     mut receiver: broadcast::Receiver<AppEvent>,
-    sender: mpsc::Sender<Result<AppEvent, BackendError>>,
+    sender: mpsc::Sender<Result<AppEvent, RuntimeError>>,
     cancellation: CancellationToken,
 ) {
     loop {
@@ -103,11 +104,14 @@ async fn forward_events(
             }
             Err(broadcast::error::RecvError::Lagged(skipped)) => {
                 ora_debug!(skipped, "application event subscriber lagged");
-                let _ = sender.try_send(Err(stream_failure("application event stream lagged")));
+                let _ =
+                    sender.try_send(Err(stream_failure("application event stream lagged").into()));
                 return;
             }
             Err(broadcast::error::RecvError::Closed) => {
-                let _ = sender.try_send(Err(stream_failure("application event hub was closed")));
+                let _ = sender.try_send(Err(
+                    stream_failure("application event hub was closed").into()
+                ));
                 return;
             }
         }

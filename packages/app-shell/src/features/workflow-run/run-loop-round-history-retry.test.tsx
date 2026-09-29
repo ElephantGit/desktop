@@ -26,7 +26,7 @@ const ROUNDS: GraphWorkflowRound[] = [
     id: "round-1",
     parentLoopNodeRunId: "loop-run",
     parentLoopNodeId: "loop",
-    roundIndex: 0,
+    roundIndex: 1,
     status: "succeeded",
     nodeStates: {
       writer: { status: "succeeded", sessionId: "session-w1" },
@@ -39,7 +39,7 @@ const ROUNDS: GraphWorkflowRound[] = [
     id: "round-2",
     parentLoopNodeRunId: "loop-run",
     parentLoopNodeId: "loop",
-    roundIndex: 1,
+    roundIndex: 2,
     status: "running",
     nodeStates: {
       writer: { status: "succeeded", sessionId: "session-w2" },
@@ -87,6 +87,8 @@ describe("RunLoopRoundHistory with a waiting retry", () => {
       </AppI18nProvider>,
     );
 
+    // The history defaults to the first persisted round; step into the waiting one.
+    await user.click(screen.getByRole("tab", { name: "第 2 轮" }));
     expect(screen.getByRole("tab", { name: "第 2 轮" })).toHaveAttribute(
       "aria-selected",
       "true",

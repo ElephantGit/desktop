@@ -59,7 +59,7 @@ function FailedAttemptEntry({
       ? t("workflowRun.theater.roundOption", { round: attempt.iteration + 1 })
       : attempt.loopRoundIndex !== undefined
         ? t("workflowRun.loopRounds.round", {
-            round: attempt.loopRoundIndex + 1,
+            round: attempt.loopRoundIndex,
           })
         : null;
   // Attempts that never started a session carry only the time the failure was recorded.

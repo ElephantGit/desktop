@@ -7,7 +7,7 @@ use std::{future::Future, io};
 /// Every method is one atomic business operation that the implementation commits as a whole; the
 /// trait deliberately exposes no transaction, connection or table so a remote adapter can honor the
 /// same promises with a single request. Implementations are cheap to clone and shared across the
-/// runtime, the Node sessions and the API. The ordering promises are the contract, not a hint:
+/// runtime, the Node sessions and local intake. The ordering promises are the contract, not a hint:
 ///
 /// - `take_over_node_event` returns only after the execution fact and the exact event receipt are
 ///   durable; callers acknowledge that sequence to the Node only after it succeeds.
@@ -18,6 +18,79 @@ use std::{future::Future, io};
 pub trait CoordinationStore: Clone + Send + Sync + 'static {
     /// The persistent coordinator identity presented to Nodes; never a process or connection identity.
     fn id(&self) -> &ControllerId;
+
+    /// Local clone-only stores have no plugin responsibility; Cloud overrides these operations.
+    fn pending_plugins(
+        &self,
+        _node: &NodeId,
+    ) -> impl Future<Output = Result<Vec<PluginCommand>, Error>> + Send {
+        async { Ok(Vec::new()) }
+    }
+
+    /// Returns a plugin command only when the exact dispatch belongs to this result family.
+    fn original_plugin_dispatch(
+        &self,
+        _session: &NodeRuntimeIdentity,
+        _operation: &OperationId,
+        _execution: &ExecutionId,
+    ) -> impl Future<Output = Result<Option<PluginCommand>, Error>> + Send {
+        async { Ok(None) }
+    }
+
+    /// Rechecks runtime permission immediately before sending the original plugin input.
+    fn dispatch_plugins(
+        &self,
+        _command: PluginCommand,
+    ) -> impl Future<Output = Result<Option<ControllerToNodeMessage>, Error>> + Send {
+        async { Err(Error::Conflict) }
+    }
+
+    /// Durably takes over an actual plugin event and its receipt before an acknowledgement.
+    fn take_over_plugins(
+        &self,
+        _session: &NodeRuntimeIdentity,
+        _event: &PluginsResultMessage,
+    ) -> impl Future<Output = Result<(), Error>> + Send {
+        async { Err(Error::Conflict) }
+    }
+
+    /// Persists a queried plugin result without inventing an event receipt.
+    fn record_queried_plugins(
+        &self,
+        _session: &NodeRuntimeIdentity,
+        _operation: &OperationId,
+        _execution: &ExecutionId,
+        _result: &PluginExecutionResult,
+    ) -> impl Future<Output = Result<(), Error>> + Send {
+        async { Err(Error::Conflict) }
+    }
+
+    /// Cloud requires a negotiated runtime binding; local private IPC keeps its existing intake.
+    fn requires_runtime_control(&self) -> bool {
+        false
+    }
+
+    fn runtime_bindings(
+        &self,
+        _node: &NodeId,
+    ) -> impl Future<Output = Result<Vec<RuntimeBinding>, Error>> + Send {
+        async { Ok(Vec::new()) }
+    }
+
+    fn acknowledge_runtime_binding(
+        &self,
+        _state: &RuntimeControlState,
+    ) -> impl Future<Output = Result<(), Error>> + Send {
+        async { Err(Error::Conflict) }
+    }
+
+    /// Registration is historical evidence. This method rechecks current permission before send.
+    fn dispatch_message(
+        &self,
+        command: CloneRepositoryMessage,
+    ) -> impl Future<Output = Result<Option<ControllerToNodeMessage>, Error>> + Send {
+        async move { Ok(Some(ControllerToNodeMessage::CloneRepository(command))) }
+    }
 
     /// Commits the execution fact carried by a Node event together with its exact receipt.
     fn take_over_node_event(
@@ -58,6 +131,13 @@ pub trait CoordinationStore: Clone + Send + Sync + 'static {
         execution: &ExecutionId,
     ) -> impl Future<Output = Result<Option<ExecutionOutcome>, Error>> + Send;
 
+    /// Learns that a session with a statically configured Node completed its handshake, which
+    /// proves that the configured `NodeId` names the Node actually behind the endpoint. The Cloud
+    /// adapter registers tenant work to that Node only after this, so a misconfigured identity
+    /// leaves the work queued with Cloud instead of pending forever on a Node that does not exist.
+    /// The local adapter records dispatches at intake and ignores it.
+    fn static_node_established(&self, node: &NodeRuntimeIdentity);
+
     /// Runs the adapter's own coordination with its authority until `shutdown` resolves, then
     /// releases what it held. A remote authority needs its lease kept and accepted work claimed
     /// and registered; the local adapter, which accepts work itself, has nothing to do. The
@@ -69,9 +149,9 @@ pub trait CoordinationStore: Clone + Send + Sync + 'static {
 }
 
 /// The intake side of an authority that accepts caller requests itself and can catalogue every
-/// accepted operation: the local SQLite adapter behind the transitional JSON surface. A cloud
-/// deployment accepts through Cloud's public API and has no catalogue here, so it does not implement
-/// this trait and the JSON surface is never composed for it instead of answering with errors.
+/// accepted operation: the local SQLite adapter, reached through [`ControllerHandle`] by whatever
+/// embeds a local Controller. A cloud deployment accepts through Cloud's public API and has no
+/// catalogue here, so it does not implement this trait and offers no local intake at all.
 pub trait CloneIntake: CoordinationStore {
     /// Freezes caller intent and the original dispatch identities before any network operation.
     fn accept_request(

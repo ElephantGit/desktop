@@ -2,7 +2,7 @@
 
 use super::{
     agent_ref, current_thread_runtime, drain_prompt, install_fake_opencode_plugin,
-    open_ready_backend, seed_workspace,
+    install_mcp_plugin, open_ready_backend, seed_workspace,
 };
 use crate::setup::DesktopTestSetup;
 use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
@@ -11,37 +11,10 @@ use ora_contracts::*;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
-
-/// Installs a declarative stdio MCP; the fake agent records delivery without launching its command.
-fn install_mcp(home: &Path, name: &str) -> Result<PathBuf, std::io::Error> {
-    let root = home
-        .join("plugins")
-        .join("installed")
-        .join("official")
-        .join(name)
-        .join("1.0.0");
-    fs::create_dir_all(root.join("assets"))?;
-    fs::write(
-        root.join("orax.toml"),
-        format!(
-            "resolver = 1\nidentifier = \"{name}\"\nkind = \"mcp\"\nversion = \"1.0.0\"\ndescription = \"MCP fixture\"\n"
-        ),
-    )?;
-    let command = root.join("assets").join("server");
-    fs::write(&command, "#!/bin/sh\n")?;
-    // Unix discovery refuses a stdio command without an executable mode bit, and CI runs there.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&command, fs::Permissions::from_mode(0o755))?;
-    }
-    fs::write(root.join("assets").join("config.json"), json!({"schemaVersion": 1, "transport": {"type": "stdio", "command": "assets/server", "args": [], "env": {}}}).to_string())?;
-    Ok(root)
-}
 
 /// Produces two independent nodes, one with a mixed allowlist and one with no MCP bindings.
 fn graph() -> String {
@@ -117,8 +90,8 @@ fn workflow_mcp_allowlists_survive_restore_rebuild_and_refresh() -> TestResult {
         let setup = DesktopTestSetup::new()?;
         let home = &setup.backend_paths().home_directory;
         let package_root = install_fake_opencode_plugin(home)?;
-        let first = install_mcp(home, "first")?;
-        install_mcp(home, "second")?;
+        let first = install_mcp_plugin(home, "first")?;
+        install_mcp_plugin(home, "second")?;
         let backend = open_ready_backend(&setup)?;
         let workspace_id = seed_workspace(&setup, &backend)?;
         // Interactive completion snapshots require a committed checkout.

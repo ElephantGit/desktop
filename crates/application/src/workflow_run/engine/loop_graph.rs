@@ -67,6 +67,15 @@ pub(super) fn parse_scoped_graph(source: &str) -> Result<WorkflowGraph, GraphErr
         .into_iter()
         .flatten()
         .any(|node| node["data"]["kind"] == "loop" || node["data"].get("containerId").is_some());
+    if !has_containers
+        && envelope["nodes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|node| node["data"]["kind"] == "loopExit")
+    {
+        return Err(invalid("loopExit must belong to a Loop"));
+    }
     if !has_containers {
         return WorkflowGraph::parse_flat(source);
     }
@@ -97,6 +106,13 @@ pub(super) fn parse_scoped_graph(source: &str) -> Result<WorkflowGraph, GraphErr
                 ));
             }
         };
+        if node["data"]["kind"] == "loopExit"
+            && (owner.is_none() || edges.iter().any(|edge| edge["source"] == id))
+        {
+            return Err(invalid(
+                "loopExit must belong to a Loop and have no outgoing edges",
+            ));
+        }
         if owners.insert(id.to_string(), owner.clone()).is_some() {
             return Err(GraphError::DuplicateNodeId { node_id: id.into() });
         }

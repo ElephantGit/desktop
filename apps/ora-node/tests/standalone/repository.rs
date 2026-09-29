@@ -32,11 +32,21 @@ mod session;
 #[path = "repository_takeover_crash.rs"]
 mod takeover_crash;
 
-#[path = "repository_minicloud.rs"]
-mod minicloud;
-
 #[path = "repository_single_node.rs"]
 mod single_node;
+
+#[path = "repository_runtime_fixture.rs"]
+mod runtime_fixture;
+#[path = "repository_websocket.rs"]
+mod websocket;
+
+#[path = "repository_busy_reading.rs"]
+mod busy_reading;
+
+#[path = "repository_admission.rs"]
+mod admission;
+#[path = "repository_plugins.rs"]
+mod plugins;
 
 /// Provides explicit trusted TLS configuration without modifying process environment or user Git config.
 fn configuration(fixture: &Fixture, server: &HttpsRepository) -> CloneConfig {

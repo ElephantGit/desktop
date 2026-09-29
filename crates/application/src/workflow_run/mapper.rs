@@ -89,6 +89,11 @@ pub(crate) fn map_failed_attempt(node_run: WorkflowNodeRun) -> Option<ContractFa
 /// Converts one internal Loop round identity into its history contract.
 pub(crate) fn map_execution_scope(scope: WorkflowExecutionScope) -> ContractExecutionScope {
     ContractExecutionScope {
+        condition_decisions: serde_json::from_str::<crate::workflow_run::LoopRoundExecutionState>(
+            &scope.state,
+        )
+        .ok()
+        .map(|state| state.condition_decisions),
         id: scope.id.to_string(),
         run_id: scope.run_id.to_string(),
         parent_loop_node_run_id: scope.parent_loop_node_run_id.to_string(),
@@ -166,6 +171,34 @@ mod tests {
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
+
+    /// Round history must retain each scope's committed route independently.
+    #[test]
+    fn scope_mapping_preserves_round_condition_decisions() {
+        for branch in ["else", "pass"] {
+            let state = crate::workflow_run::LoopRoundExecutionState {
+                condition_decisions: std::collections::BTreeMap::from([(
+                    "review".into(),
+                    branch.into(),
+                )]),
+                ..Default::default()
+            };
+            let scope = ora_domain::WorkflowExecutionScope {
+                id: ora_domain::WorkflowScopeId::new(branch),
+                run_id: ora_domain::WorkflowRunId::new("run"),
+                parent_loop_node_run_id: ora_domain::WorkflowNodeRunId::new("loop"),
+                round_index: 1,
+                status: ora_domain::WorkflowScopeStatus::Succeeded,
+                state: serde_json::to_string(&state).unwrap(),
+                created_at: 1,
+                updated_at: 2,
+            };
+            assert_eq!(
+                super::map_execution_scope(scope).condition_decisions,
+                Some(state.condition_decisions)
+            );
+        }
+    }
 
     fn running_run() -> WorkflowRun {
         WorkflowRun::new(

@@ -2,9 +2,12 @@
 mod controller;
 mod execution;
 mod model;
+mod plugin;
 mod process;
+pub use plugin::PluginExecution;
 mod repository;
 mod repository_model;
+mod runtime_control;
 mod schema;
 pub use execution::owns;
 pub use model::*;

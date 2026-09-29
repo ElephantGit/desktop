@@ -10,6 +10,8 @@ Worktree/clone executions and handles normal shutdown. Optional [local Controlle
 accepts clone commands; stdin/configuration files are not command channels. It does not switch existing Backend writers. Embedding callers use
 `Node::open(config, process_config, shutdown)` and the existing typed Node methods.
 
+Workspace plugin executions are described in [Node plugin installation](plugin-installation.md).
+
 ## Deployment
 
 Build `cargo build -p ora-node -p ora-process-host -p ora-process-guardian`. Deploy/start the
