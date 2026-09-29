@@ -4,7 +4,7 @@ use ora_node_protocol::*;
 use pretty_assertions::assert_eq;
 
 /// A removal needs no package server, so it isolates storage from filesystem execution.
-fn command() -> PluginCommand {
+pub(super) fn command() -> PluginCommand {
     PluginCommand::Remove(RemovePluginsMessage {
         protocol_version: CURRENT_PROTOCOL_VERSION,
         operation_id: OperationId::new("plugin-op"),
@@ -22,7 +22,7 @@ fn command() -> PluginCommand {
 }
 
 /// The original incarnation is part of the retained result, even after reopening the database.
-fn result() -> PluginExecutionResult {
+pub(super) fn result() -> PluginExecutionResult {
     PluginExecutionResult::PluginsCompleted(PluginsCompleted {
         node: NodeRuntimeIdentity {
             node_id: NodeId::new("node"),

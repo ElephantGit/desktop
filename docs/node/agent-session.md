@@ -124,3 +124,6 @@ attribution, command queueing, cancellation and discard on end, the crash window
 and interrupted recovery, a mismatched plugin version, the Git identity, and
 oversized records. The fixture exists for tests only; the Node image copies
 `ora-node` alone.
+
+The durable adapter is documented in [session ledger](session-ledger.md). It is available for
+composition; production protocol and startup recovery wiring remain a separate step.

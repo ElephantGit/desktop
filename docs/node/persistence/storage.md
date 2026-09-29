@@ -17,7 +17,7 @@ and a whole-file lease there collides with them on macOS (`flock` and `fcntl` sh
 and on Windows (mandatory `LockFileEx` regions), which surfaces as "database is locked" or a disk I/O
 error. The sidecar is an inode beside the database, so every spelling of the same home resolves to
 the same lease. SQLite uses its default rollback journal and FULL synchronous writes. A new database receives application ID `0x4f52414e`
-and schema version 7. Exact version 1/2/3/4/5/6 schemas migrate transactionally after identity and integrity
+and schema version 8. Exact version 1/2/3/4/5/6/7 schemas migrate transactionally after identity and integrity
 validation, preserving executions, results and pending events. Existing empty files, foreign databases, unsupported versions, directories
 and corrupt databases are rejected without rebuilding them. The persistent NodeId survives
 reopening; each Node runtime generates a fresh NodeIncarnationId. An explicit identity mismatch
@@ -57,7 +57,7 @@ The database lock alone never authorizes cleanup. Environment values in RunSpec 
 
 Guarded transitions preserve Accepted, Running, Unknown and Completed evidence. Completion commits
 resource facts, the terminal result and its original event envelope together. Status reads have no
-acknowledgement effect. An acknowledgement must match Node, operation, execution and sequence 1;
+acknowledgement effect. A single-event execution acknowledgement must match Node, operation, execution and sequence 1;
 it removes only the delivery record. Results and execution deduplication survive acknowledgement.
 
 `WriteGuard` exposes transaction failure points for real SQLite fault tests. Tests in `ora-node-db`
@@ -74,3 +74,9 @@ identity table with the plugin family and adds `plugin_executions` and `plugin_o
 retains all prior identities and checks foreign keys before committing the rebuilt table. Plugin
 terminal evidence and its single event commit atomically; an exact ACK removes only the event.
 See [plugin installation](../plugin-installation.md) for dispatch and restart behavior.
+
+Version 8 adds agent sessions to the common identity table, plus `node_executions`,
+`execution_events` and `session_commands`. Existing execution families keep their tables.
+The operation identity remains owned by `execution_identities`; session rows reference its execution
+key. Commands have unique `(execution, command_id)` identities and a durable acceptance order.
+See [session ledger](../session-ledger.md) for transactions, actor handles and recovery boundaries.
