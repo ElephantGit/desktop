@@ -84,3 +84,5 @@ guardian 丢失后不冲突工作继续执行、正常停止超时及数据目�
 
 Controller 投递／结果接管、Backend 切换、非 Linux 托管 adapter、Strong、持久输出、stdin 及进程历史／
 guardian 退休仍不在本切片内。现有进程历史保留，不表示完整 process ADR 蓝图已经完成。
+
+Agent 会话部署与恢复见 [Agent 会话](agent-session.zh.md)。

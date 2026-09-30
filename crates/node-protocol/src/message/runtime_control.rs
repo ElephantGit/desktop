@@ -127,3 +127,27 @@ impl ValidateMessage for RuntimeControlState {
         Ok(())
     }
 }
+
+/// Session start with the same exact runtime permit required by clone and plugin execution.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ControlledStartAgentSession {
+    pub binding: RuntimeBinding,
+    pub command: super::StartAgentSessionMessage,
+}
+
+impl ValidateMessage for ControlledStartAgentSession {
+    /// Rejects cross-execution or cross-Node authority before durable admission.
+    fn validate(&self) -> Result<(), MessageValidationError> {
+        self.binding.validate()?;
+        self.command.validate()?;
+        if self.binding.input_closed
+            || self.binding.execution_id != self.command.execution_id.as_str()
+            || self.binding.node_operation_id != self.command.operation_id.as_str()
+            || self.binding.node_id != self.command.payload.spec.node_id.as_str()
+        {
+            return Err(MessageValidationError::InvalidRuntimeBinding);
+        }
+        Ok(())
+    }
+}

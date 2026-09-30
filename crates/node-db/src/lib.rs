@@ -1,5 +1,7 @@
 //! Independent Node storage. The open database owns the process-wide execution lease.
 mod controller;
+mod delivery;
+pub use delivery::EventCursor;
 mod execution;
 mod model;
 mod plugin;

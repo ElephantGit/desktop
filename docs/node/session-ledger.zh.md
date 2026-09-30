@@ -22,8 +22,10 @@
   checkout；运行时适配器遇到存储错误也拒绝提供路径，不根据 ID 重建路径。
 
 `recoverable_sessions` 返回待结算为 interrupted 的未终态输入，不用于自动恢复运行。
-生产协议入口、启动时调用 `SessionHost::recover_interrupted`、256 事件窗口和安装器共享插件目录的组合
-属于下一步接线。本次账本变更本身不会在生产协议中声明或启用 Agent 会话能力。
+生产组合位于 `service/agents.rs`，共享账本句柄和安装器的插件目录。配置 `agent` 后，Node 声明
+AgentSession 能力，处理受控启动、持久命令、256 事件窗口与精确 ACK 重放。
+监听入口开放前先将未终态执行结算为 interrupted；即使取消 Agent 配置，也会结算旧会话而不启动插件。
+部署与限制见 [Agent 会话](agent-session.zh.md)。
 
 测试通过数据库 API 和运行时 trait 使用真实 SQLite：
 `cargo test -p ora-node-db` 与 `cargo test -p ora-node --test session_ledger`。

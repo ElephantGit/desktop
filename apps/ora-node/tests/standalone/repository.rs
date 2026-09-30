@@ -45,6 +45,8 @@ mod busy_reading;
 
 #[path = "repository_admission.rs"]
 mod admission;
+#[path = "agent_sessions.rs"]
+mod agent_sessions;
 #[path = "repository_plugins.rs"]
 mod plugins;
 

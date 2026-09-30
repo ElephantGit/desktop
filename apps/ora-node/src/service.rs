@@ -1,6 +1,8 @@
 //! One blocking database owner, a clone executor that waits on Git for it, and an independently
 //! responsive, bounded control session.
+mod agents;
 mod clones;
+mod delivery;
 mod executor;
 mod plugins;
 mod session;
@@ -70,6 +72,9 @@ pub enum ControlListen {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceConfig {
+    /// Enables Agent sessions using the deployment-provided Deno executable.
+    #[serde(default)]
+    pub agent: Option<AgentConfig>,
     pub node: NodeConfig,
     pub process: ProcessConfig,
     #[serde(default)]
@@ -80,6 +85,14 @@ pub struct ServiceConfig {
     pub timezone: String,
 }
 
+/// Agent process configuration belongs to deployment, never to a remote start request.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentConfig {
+    pub deno_path: PathBuf,
+    pub ready_timeout_ms: u64,
+}
+
 /// Requests waiting for the blocking worker, across message handling and the replay pass.
 const ADMISSION_QUEUE_BOUND: usize = 16;
 
@@ -87,7 +100,7 @@ const ADMISSION_QUEUE_BOUND: usize = 16;
 #[allow(clippy::large_enum_variant)]
 enum Request {
     Message(ControllerToNodeMessage),
-    Replay,
+    Replay(Vec<ora_node_db::EventCursor>),
 }
 struct Work {
     active: Arc<Mutex<bool>>,
@@ -101,6 +114,7 @@ struct Rejection {
 }
 #[derive(Clone)]
 struct SessionInfo {
+    agents: Option<agents::SessionHost>,
     identity: NodeRuntimeIdentity,
     controller: ControllerId,
     capabilities: Vec<NodeCapability>,
@@ -137,6 +151,13 @@ pub async fn serve(config: ServiceConfig, shutdown: Shutdown) -> io::Result<()> 
                 "control needs clone configuration, positive bounded timing, and an IPC path directly under Node home or a WebSocket path starting with /",
             ));
         }
+    }
+    if let Some(agent) = &config.agent
+        && (!agent.deno_path.is_absolute() || agent.ready_timeout_ms == 0)
+    {
+        return Err(io::Error::other(
+            "agent needs an absolute Deno path and a positive ready timeout",
+        ));
     }
     let control = config.control.clone();
     let (sender, receiver) = mpsc::sync_channel(ADMISSION_QUEUE_BOUND);

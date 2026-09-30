@@ -97,3 +97,5 @@ for migration and process-association fault tests.
 Controller delivery/result takeover, Backend switching, non-Linux managed adapters, Strong containment,
 persistent output, stdin and process-history/guardian retirement remain outside this slice. Existing
 process history is retained; this is not a claim that the full process ADR blueprint is complete.
+
+Agent session deployment and recovery are described in [Agent sessions](agent-session.md).

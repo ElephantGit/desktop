@@ -36,12 +36,12 @@ pub use identity::{
 };
 pub use message::{
     AgentSessionEndedMessage, CloneRepository, CloneRepositoryMessage, CloneResultMessage,
-    ControlledClone, ControlledPlugins, ControllerHeartbeat, ControllerHeartbeatMessage,
-    ControllerToNodeMessage, DeliverRevision, DeliverRevisionMessage, EndSession,
-    EndSessionMessage, EndSessionReason, EnsureWorktree, EnsureWorktreeMessage, EventAck,
-    EventAckMessage, ExecutionState, ExecutionStatus, ExecutionStatusMessage, GetExecutionStatus,
-    GetExecutionStatusMessage, Heartbeat, HeartbeatMessage, Hello, HelloAccepted,
-    HelloAcceptedMessage, HelloMessage, InstallPlugins, InstallPluginsMessage,
+    ControlledClone, ControlledPlugins, ControlledStartAgentSession, ControllerHeartbeat,
+    ControllerHeartbeatMessage, ControllerToNodeMessage, DeliverRevision, DeliverRevisionMessage,
+    EndSession, EndSessionMessage, EndSessionReason, EnsureWorktree, EnsureWorktreeMessage,
+    EventAck, EventAckMessage, ExecutionState, ExecutionStatus, ExecutionStatusMessage,
+    GetExecutionStatus, GetExecutionStatusMessage, Heartbeat, HeartbeatMessage, Hello,
+    HelloAccepted, HelloAcceptedMessage, HelloMessage, InstallPlugins, InstallPluginsMessage,
     MessageValidationError, NodeCapability, NodeToControllerMessage, PluginCommand,
     PluginsResultMessage, RemovePlugins, RemovePluginsMessage, RemoveWorktree,
     RemoveWorktreeMessage, RevisionResultMessage, RuntimeBinding, RuntimeControlState,

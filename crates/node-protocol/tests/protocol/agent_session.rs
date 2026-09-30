@@ -360,3 +360,49 @@ async fn session_commands_and_replies_round_trip() -> Result<(), TestError> {
     }
     Ok(())
 }
+
+/// Runtime-control dispatch preserves the original session input and rejects authority for another target.
+#[tokio::test]
+async fn controlled_session_start_round_trips_and_binds_exact_identity() -> Result<(), TestError> {
+    let Message::Controller(ControllerToNodeMessage::StartAgentSession(command)) = start().message
+    else {
+        unreachable!()
+    };
+    let binding = RuntimeBinding {
+        tenant_id: "tenant".into(),
+        workspace_id: "workspace".into(),
+        sandbox_id: "sandbox".into(),
+        runtime_generation: 1,
+        node_id: command.payload.spec.node_id.as_str().into(),
+        node_incarnation_id: "incarnation".into(),
+        node_instance_id: "instance".into(),
+        controller_epoch: 1,
+        control_epoch: 1,
+        control_version: 1,
+        session_id: "session".into(),
+        actor_user_id: "actor".into(),
+        operation_id: String::new(),
+        execution_id: command.execution_id.as_str().into(),
+        node_operation_id: command.operation_id.as_str().into(),
+        input_closed: false,
+        issued_at_ms: 1000,
+        expires_at_ms: 31_000,
+    };
+    let envelope = ControlledStartAgentSession { binding, command };
+    let message = ControllerToNodeMessage::ControlledStartAgentSession(Box::new(envelope.clone()));
+    assert!(message.validate().is_ok());
+    pretty_assertions::assert_eq!(round_trip_controller(message.clone()).await?, message);
+    let mut changed = envelope.clone();
+    changed.binding.node_operation_id = "wrong".into();
+    assert!(changed.validate().is_err());
+    changed = envelope.clone();
+    changed.binding.execution_id = "wrong".into();
+    assert!(changed.validate().is_err());
+    changed = envelope.clone();
+    changed.binding.node_id = "wrong".into();
+    assert!(changed.validate().is_err());
+    changed = envelope;
+    changed.binding.input_closed = true;
+    assert!(changed.validate().is_err());
+    Ok(())
+}

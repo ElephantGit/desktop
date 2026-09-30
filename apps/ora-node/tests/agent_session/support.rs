@@ -47,6 +47,7 @@ struct LedgerState {
     ended: Option<AgentSessionEnded>,
     commands: Vec<StoredCommand>,
     gate: Option<AppendGate>,
+    reject_execution: bool,
 }
 
 /// A ledger for one execution that keeps everything in memory.
@@ -58,6 +59,11 @@ pub struct MemoryLedger {
 impl MemoryLedger {
     fn state(&self) -> std::sync::MutexGuard<'_, LedgerState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Injects failure before a command can become durably Executed.
+    pub fn fail_executed_settlements(&self) {
+        self.state().reject_execution = true;
     }
 
     /// Persists one command as the protocol side would before replying that it was accepted.
@@ -166,6 +172,9 @@ impl SessionLedger for MemoryLedger {
         settlement: CommandSettlement,
     ) -> Result<(), LedgerError> {
         let mut state = self.state();
+        if state.reject_execution && matches!(settlement, CommandSettlement::Executed) {
+            return Err(LedgerError("settlement write failed".into()));
+        }
         let command = state
             .commands
             .iter_mut()

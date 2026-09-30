@@ -28,9 +28,11 @@ keeps the lease alive even when the admission connection closes.
   fails closed on storage errors; it never reconstructs paths from IDs.
 
 `recoverable_sessions` exposes unfinished input for interrupted settlement, not automatic resume.
-Production protocol dispatch, startup calls to `SessionHost::recover_interrupted`, the 256-event
-window, and composition with the installer's shared plugin catalog belong to the next integration
-step. This storage change alone does not advertise or enable Agent sessions on the production wire.
+Production composition in `service/agents.rs` shares this journal and the installer's catalog.
+With `agent` deployment configuration, the Node advertises AgentSession and handles controlled
+starts, durable commands, a 256-event window and exact-ACK replay. Startup seals unfinished
+executions as interrupted before the listener opens; disabling Agent configuration still settles
+old sessions without starting a plugin. See [Agent sessions](agent-session.md).
 
 Tests use real SQLite through database APIs and through the runtime traits:
 `cargo test -p ora-node-db` and `cargo test -p ora-node --test session_ledger`.
