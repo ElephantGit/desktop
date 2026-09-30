@@ -61,25 +61,40 @@ pub(super) fn run(
         }
         let clones = Clones::start(&node).map_err(|e| e.to_string())?;
         let plugins = Plugins::start(&node).map_err(|e| e.to_string())?;
-        Ok::<_, String>((node, controller, clones, plugins))
+        let agents = agents::open(
+            &mut node,
+            config.agent.as_ref(),
+            &config.timezone,
+            plugins.catalog.clone(),
+        )
+        .map_err(|e| e.to_string())?;
+        Ok::<_, String>((node, controller, clones, plugins, agents))
     })();
-    let (mut node, controller, mut clones, mut plugins) = match initialized {
+    let (mut node, controller, mut clones, mut plugins, agents) = match initialized {
         Ok(value) => value,
         Err(error) => {
             let _ = ready.send(Err(error.clone()));
             return Err(error);
         }
     };
+    let mut capabilities = vec![
+        NodeCapability::RepositoryClone,
+        NodeCapability::PluginInstall,
+        NodeCapability::RuntimeControl,
+    ];
+    if agents.is_some() {
+        capabilities.push(NodeCapability::AgentSession);
+    }
     let info = SessionInfo {
+        agents: agents.clone(),
         identity: node.identity().clone(),
         controller: controller.clone(),
-        capabilities: vec![
-            NodeCapability::RepositoryClone,
-            NodeCapability::PluginInstall,
-            NodeCapability::RuntimeControl,
-        ],
+        capabilities,
     };
     if ready.send(Ok(info)).is_err() {
+        if let Some(agents) = &agents {
+            tokio::runtime::Handle::current().block_on(agents.shutdown());
+        }
         plugins.finish(&mut node).map_err(|e| e.to_string())?;
         clones.drain(&mut node, Duration::ZERO)?;
         return node.shutdown().map_err(|e| e.to_string());
@@ -88,6 +103,9 @@ pub(super) fn run(
     let mut next = Instant::now();
     let result = (|| {
         while !shutdown.requested() {
+            if agents.as_ref().is_some_and(agents::SessionHost::failed) {
+                return Err("Agent actor stopped without durable terminal evidence".into());
+            }
             match receiver.recv_timeout(Duration::from_millis(/*millis*/ 25)) {
                 Ok(work) => {
                     let active = work
@@ -98,6 +116,7 @@ pub(super) fn run(
                         handle(
                             &mut node,
                             &mut clones,
+                            agents.as_ref(),
                             &controller,
                             controlled,
                             target.as_ref(),
@@ -131,10 +150,21 @@ pub(super) fn run(
         }
         Ok(())
     })();
+    if let Some(agents) = &agents {
+        tokio::runtime::Handle::current().block_on(agents.shutdown());
+    }
     let plugins_finished = plugins.finish(&mut node).map_err(|e| e.to_string());
+    let agents_finished = if agents.as_ref().is_some_and(agents::SessionHost::failed) {
+        Err("Agent terminal persistence failed".to_owned())
+    } else {
+        Ok(())
+    };
     let drained = clones.drain(&mut node, drain);
     node.shutdown().map_err(|e| e.to_string())?;
-    result.and(drained).and(plugins_finished)
+    result
+        .and(drained)
+        .and(plugins_finished)
+        .and(agents_finished)
 }
 
 /// How a refused request closes the session: what the Controller got wrong is its protocol or
@@ -168,13 +198,16 @@ fn close_reason(error: &crate::Error) -> CloseReason {
 fn handle(
     node: &mut ManagedNode,
     clones: &mut Clones,
+    agents: Option<&agents::SessionHost>,
     controller: &ControllerId,
     controlled: bool,
     target: Option<&RuntimeScope>,
     request: Request,
 ) -> Result<Vec<NodeToControllerMessage>, crate::Error> {
     match request {
-        Request::Replay => Ok(node.database.controller_events(controller)?),
+        Request::Replay(cursors) => Ok(node
+            .database
+            .controller_events_after(controller, &cursors)?),
         Request::Message(ControllerToNodeMessage::CloneRepository(command)) => {
             if controlled {
                 return Err(crate::Error::UnsupportedMessage);
@@ -218,6 +251,44 @@ fn handle(
             )?;
             let record = node.database.accept_controlled_plugins(&envelope)?;
             Ok(plugin_status(node, record))
+        }
+        Request::Message(ControllerToNodeMessage::StartAgentSession(input)) => {
+            if controlled {
+                return Err(crate::Error::UnsupportedMessage);
+            }
+            agents::start(
+                node,
+                agents.ok_or(crate::Error::UnsupportedMessage)?,
+                controller,
+                &input,
+                /*permit*/ None,
+            )
+        }
+        Request::Message(ControllerToNodeMessage::ControlledStartAgentSession(envelope)) => {
+            envelope.validate()?;
+            agents::start(
+                node,
+                agents.ok_or(crate::Error::UnsupportedMessage)?,
+                controller,
+                &envelope.command,
+                Some(&envelope.binding),
+            )
+        }
+        Request::Message(ControllerToNodeMessage::SubmitUserTurn(input)) => {
+            agents.ok_or(crate::Error::UnsupportedMessage)?;
+            agents::command(
+                node,
+                controller,
+                ora_node_db::SessionCommandInput::SubmitUserTurn(input),
+            )
+        }
+        Request::Message(ControllerToNodeMessage::EndSession(input)) => {
+            agents.ok_or(crate::Error::UnsupportedMessage)?;
+            agents::command(
+                node,
+                controller,
+                ora_node_db::SessionCommandInput::EndSession(input),
+            )
         }
         Request::Message(ControllerToNodeMessage::BindRuntime(binding)) => {
             if target.is_some_and(|scope| !scope.permits(&binding)) {
@@ -278,16 +349,13 @@ fn handle(
             Ok(vec![])
         }
         // The session read loop consumes Controller heartbeats; they never reach admission.
-        // Plugin, session and delivery executions are refused until this Node implements them;
+        // Worktree and delivery executions are refused until this service implements them;
         // it does not advertise their capabilities, so a conforming Controller never sends them.
         Request::Message(
             ControllerToNodeMessage::Hello(_)
             | ControllerToNodeMessage::Heartbeat(_)
             | ControllerToNodeMessage::EnsureWorktree(_)
             | ControllerToNodeMessage::RemoveWorktree(_)
-            | ControllerToNodeMessage::StartAgentSession(_)
-            | ControllerToNodeMessage::SubmitUserTurn(_)
-            | ControllerToNodeMessage::EndSession(_)
             | ControllerToNodeMessage::DeliverRevision(_)
             | ControllerToNodeMessage::UploadGrant(_),
         ) => Err(crate::Error::UnsupportedMessage),

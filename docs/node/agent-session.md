@@ -79,8 +79,9 @@ inherits the Node's environment instead. The Node writes no Git configuration.
 6. At the end the session stops, releases its runtime (whose connection
    supervisor then stops reconnecting), stops the plugin and waits for its whole
    tree to exit, releases the lease, settles any still-queued command as
-   `discarded`, forgets the live session, and writes the terminal result last —
-   so delivery never sees an ended session whose history is still being written.
+   `discarded`, writes the terminal result, and then forgets the live session.
+   Service shutdown waits for that final write; delivery never sees an ended session
+   whose history is still being written.
 
 A failed or timed-out agent turn only records `TurnEnded` and the session
 continues. A turn that cannot be admitted at all, because the agent cannot be
@@ -125,5 +126,48 @@ and interrupted recovery, a mismatched plugin version, the Git identity, and
 oversized records. The fixture exists for tests only; the Node image copies
 `ora-node` alone.
 
-The durable adapter is documented in [session ledger](session-ledger.md). It is available for
-composition; production protocol and startup recovery wiring remain a separate step.
+The durable adapter is documented in [session ledger](session-ledger.md).
+
+## Production service
+
+Add an `agent` section beside `node`, `process`, `clone` and `control` in the service configuration:
+
+```json
+"agent": { "deno_path": "/usr/local/bin/deno", "ready_timeout_ms": 30000 }
+```
+
+The Deno path must be absolute and the ready timeout positive. With this section the handshake
+advertises `AgentSession`; without it the service rejects new session work but still settles
+unfinished sessions on startup. Deployment supplies Deno and the existing installed plugin package.
+The service composes `AgentSessions` with the persistent journal, checkout resolver and the same
+`PluginInstaller::catalog()` used by plugin execution. Plugin recovery runs before sessions can start.
+
+Cloud-controlled starts use `ControlledStartAgentSession { binding, command }`, requiring both
+RuntimeControl and AgentSession capability. The worker checks Controller ownership, exact execution
+identity and runtime permission before recording input and rechecks before starting. Bare starts
+are limited to unfenced local IPC. Repeated starts report state and do not launch another actor.
+New session commands require a live binding in the original control scope; closing, expiring or
+changing it cannot authorize new input. Completed sessions return `SessionCommandRejected` with
+`session_ended`. Accepted replies leave the socket before `command_arrived` wakes the actor.
+
+A connection reserves at most 256 event slots per execution, including queued socket writes.
+It reads bounded pages after its own last reserved sequence, so a full execution does not prevent
+another execution or control reply from progressing. Only a successful durable exact ACK frees a
+slot. Reconnection drops these cursors and replays the smallest still-unacknowledged sequence from
+disk with unchanged content and identity. Agent recording continues while the send window is full.
+
+Before the control listener opens, every unfinished session is ended as `interrupted`; the Agent
+is never resumed. Graceful shutdown cancels live conversations, waits for plugin cleanup, commits
+terminal evidence and only then releases the Node database lease. Failed Executed settlement stops
+a queued turn before prompt submission; missing terminal persistence or an aborted actor stops
+service admission and leaves durable recovery responsibility.
+
+The approved agent-runtime D2 exception still applies: plugin stdio/process groups provide normal
+shutdown cleanup, but a descendant ignoring closed stdio after SIGKILL is not yet contained by
+host/guardian. The crash test proves echo-plugin exit and interrupted replay, not arbitrary orphan
+reclamation. Process I/O containment remains a separate dependency.
+
+`tests/standalone/agent_sessions.rs` and its submodules run the production Node executable with a
+real clone and echo plugin: command deduplication, history equality, shared installation leases,
+runtime closure, graceful stop, SIGKILL recovery, window saturation and exact replay. Controller
+Cloud work-item relay remains outside this change.

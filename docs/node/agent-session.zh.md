@@ -69,7 +69,7 @@ Git 身份以 `GIT_AUTHOR_*`/`GIT_COMMITTER_*`
    `session/close`），再结算自身为 `executed`。
 6. 结束时：停止会话，释放运行时（连接监管随之停止重连），停止插件并等待整树退出，释放租约；把仍排队的命令结算
    为
-   `discarded`，移除存活记录，最后写入终态。终态最后写入，所以交付看到会话结束时
+   `discarded`，写入终态后再移除存活记录；服务停止会等待该写入。交付看到会话结束时
    history 已不再被写入。
 
 Agent 轮次失败或超时只记录 `TurnEnded`，会话保持。轮次无法被接纳（agent
@@ -108,4 +108,38 @@ Node 重启后，没有终态的会话执行由 `recover_interrupted` 以 `inter
 与轮次归属、命令排队、结束时的取消与丢弃、崩溃窗口与中断恢复、插件版本不符、Git
 身份与超大记录。夹具只用于 测试；Node 镜像只复制 `ora-node`。
 
-持久化适配见[会话账本](session-ledger.zh.md)。该实现已可供组合使用；生产协议入口和启动恢复接线仍属于后续步骤。
+持久化适配见[会话账本](session-ledger.zh.md)。
+
+## 生产服务
+
+在服务配置的 `node`、`process`、`clone`、`control` 旁添加：
+
+```json
+"agent": { "deno_path": "/usr/local/bin/deno", "ready_timeout_ms": 30000 }
+```
+
+Deno 路径必须为绝对路径，等待就绪的超时必须为正数。配置后握手声明 `AgentSession`；未配置时拒绝新会话工作，
+但启动时仍结算已有未终态会话。部署负责提供 Deno 和已安装插件包。服务为 `AgentSessions` 注入持久化账本、
+checkout 解析器以及插件执行所用的同一个 `PluginInstaller::catalog()`。插件恢复先于任何会话启动。
+
+Cloud 受控启动使用 `ControlledStartAgentSession { binding, command }`，需要 RuntimeControl 和 AgentSession
+能力。worker 检查 Controller 归属、精确执行身份与运行许可，持久化后在启动前再次检查。裸启动仅允许未启用
+控制隔离的本地 IPC；重复启动只返回状态，不重建 actor。新命令要求原 control scope 的当前绑定有效，关闭、
+过期或变更 scope 都不能授权新输入。已终态会话返回 `SessionCommandRejected{session_ended}`。
+受理回复发送后才调用 `command_arrived` 唤醒 actor。
+
+每条连接为每个执行最多预留 256 个事件位置，包含已排队等待 socket 写出的事件。按最后预留序号分页读账本，
+一个执行窗口满不会挡住其他执行或控制回复；只有持久化成功的精确 ACK 才释放位置。重连丢弃连接内游标，
+从磁盘中最小未确认序号开始重放，保留原始内容与身份。发送窗口满时 Agent 仍继续记录。
+
+控制监听入口开放前，所有未终态会话先结算为 `interrupted`，不恢复 Agent。正常停止取消活跃对话、等待插件
+清理、提交终态，再释放 Node 数据库租约。命令 Executed 写入失败时不发送该轮 prompt；actor 异常退出或
+终态持久化失败会停止服务受理，保留可恢复的持久责任。
+
+已批准的 agent-runtime D2 落地差异仍适用：插件 stdio／进程组支持正常停止清理，但 SIGKILL 后忽略 stdio
+关闭的后代尚未纳入 host/guardian。崩溃测试证明 echo 插件退出及中断重放，不代表任意孤儿进程均被回收；
+进程 I/O 纳管仍是后续依赖。
+
+`tests/standalone/agent_sessions.rs` 及子模块用生产 Node 可执行程序、真实 clone 和 echo 插件验证命令去重、
+历史记录一致、共享安装租约、runtime 关闭、正常停止、强杀恢复、窗口饱和与精确重放。Cloud 工作项的
+Controller 中继不属于本次变更。

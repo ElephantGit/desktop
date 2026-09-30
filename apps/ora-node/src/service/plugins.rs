@@ -9,6 +9,7 @@ use std::{
 
 /// Owns the executor and its one in-flight input; durable unfinished inputs are the queue.
 pub(super) struct Plugins {
+    pub(super) catalog: crate::DirectoryPluginCatalog,
     requests: tokio::sync::mpsc::Sender<PluginCommand>,
     results: mpsc::Receiver<(PluginCommand, PluginExecutionResult)>,
     stop: tokio::sync::watch::Sender<bool>,
@@ -24,6 +25,8 @@ impl Plugins {
             ReqwestDownloader::new(ProxyConfig::default()),
             ora_plugin_registry::current_host_target(),
         );
+        let catalog = installer.catalog();
+        let recovered = installer.recover().is_ok();
         let identity = node.identity().clone();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -32,7 +35,6 @@ impl Plugins {
         let (send, results) = mpsc::channel();
         let (stop, mut stopping) = tokio::sync::watch::channel(false);
         let thread = thread::Builder::new().name("ora-node-plugins".into()).spawn(move || {
-            let recovered = installer.recover().is_ok();
             runtime.block_on(async move {
                 loop {
                     let command = tokio::select! {
@@ -54,6 +56,7 @@ impl Plugins {
             });
         })?;
         Ok(Self {
+            catalog,
             requests,
             results,
             stop,

@@ -250,3 +250,122 @@ fn checkout_rejects_unknown_and_failed_clone() {
     .unwrap();
     assert_eq!(journal.checkout(&input.execution_id).unwrap(), None);
 }
+
+/// Session commands require the refreshed original scope, never an expired dispatch permit or a new epoch.
+#[test]
+fn session_command_authority_expires_and_closes_without_losing_existing_work() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = NodeDatabase::open(
+        &dir.path().join("db"),
+        NodeIdentity::Require(NodeId::new("node")),
+    )
+    .unwrap();
+    let mut scope = super::super::repository::runtime_scope(db.node_id());
+    db.bind_runtime(&scope).unwrap();
+    let mut permit = scope.clone();
+    permit.execution_id = command().execution_id.as_str().into();
+    permit.node_operation_id = command().operation_id.as_str().into();
+    db.accept_controlled_session(&command(), &permit).unwrap();
+    let incarnation = NodeIncarnationId::new("host-incarnation");
+    db.start_session(&command(), &incarnation).unwrap();
+    db.authorize_session_command(&command().execution_id, &incarnation)
+        .unwrap();
+    assert!(
+        db.authorize_session_command(&command().execution_id, &NodeIncarnationId::new("other"))
+            .is_err()
+    );
+    // Model durable time passing without sleeping or mutating the process clock.
+    let mut expired = scope.clone();
+    expired.issued_at_ms -= 60_000;
+    expired.expires_at_ms -= 60_000;
+    db.connection
+        .execute(
+            "UPDATE runtime_binding SET data=?1",
+            [serde_json::to_string(&expired).unwrap()],
+        )
+        .unwrap();
+    assert!(
+        db.authorize_session_command(&command().execution_id, &incarnation)
+            .is_err()
+    );
+    scope.control_version += 1;
+    db.bind_runtime(&scope).unwrap();
+    db.authorize_session_command(&command().execution_id, &incarnation)
+        .unwrap();
+    scope.input_closed = true;
+    scope.control_version += 1;
+    db.bind_runtime(&scope).unwrap();
+    assert!(
+        db.authorize_session_command(&command().execution_id, &incarnation)
+            .is_err()
+    );
+    assert_eq!(
+        db.execution_state(&command().operation_id, &command().execution_id)
+            .unwrap(),
+        ExecutionState::Running
+    );
+}
+
+/// A full stream cannot hide another execution's events, and cursors never consume durable rows.
+#[test]
+fn bounded_replay_skips_full_streams_without_acknowledging_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = NodeDatabase::open(
+        &dir.path().join("db"),
+        NodeIdentity::Require(NodeId::new("node")),
+    )
+    .unwrap();
+    let owner = ControllerId::new("owner");
+    db.bind_controller(&owner).unwrap();
+    let mut first = command();
+    first.execution_id = ExecutionId::new("a");
+    db.accept_session(&first).unwrap();
+    db.start_session(&first, &NodeIncarnationId::new("first"))
+        .unwrap();
+    let journal = db.session_journal().unwrap();
+    for _ in 0..20 {
+        journal
+            .append_thread_event(&first.execution_id, event())
+            .unwrap();
+    }
+    let mut second = command();
+    second.execution_id = ExecutionId::new("b");
+    second.operation_id = OperationId::new("b-op");
+    db.accept_session(&second).unwrap();
+    journal.end_session(&second.execution_id, ended()).unwrap();
+    let before = db.pending_events().unwrap();
+    assert_eq!(
+        db.controller_events_after(&owner, &[]).unwrap(),
+        before[..16]
+    );
+    assert_eq!(
+        db.controller_events_after(
+            &owner,
+            &[crate::EventCursor {
+                execution: first.execution_id.clone(),
+                after: 16,
+                remaining: 0
+            }]
+        )
+        .unwrap(),
+        before[20..]
+    );
+    assert_eq!(
+        db.controller_events_after(
+            &owner,
+            &[crate::EventCursor {
+                execution: first.execution_id,
+                after: 16,
+                remaining: 240
+            }]
+        )
+        .unwrap(),
+        before[16..]
+    );
+    assert!(
+        db.controller_events_after(&ControllerId::new("other"), &[])
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(db.pending_events().unwrap(), before);
+}

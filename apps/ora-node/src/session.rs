@@ -51,6 +51,9 @@ pub(crate) struct Shared<L, C, P> {
     catalog: P,
     /// Wake handles of the sessions running in this process, by execution.
     live: Mutex<HashMap<ExecutionId, Arc<Notify>>>,
+    stopping: tokio::sync::watch::Sender<bool>,
+    finished: Notify,
+    failed: std::sync::atomic::AtomicBool,
 }
 
 impl<L, C, P> Shared<L, C, P> {
@@ -65,6 +68,7 @@ impl<L, C, P> Shared<L, C, P> {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(execution);
+        self.finished.notify_waiters();
     }
 
     /// Reports whether a session of this execution is running in this process.
@@ -112,7 +116,39 @@ where
                 checkouts,
                 catalog,
                 live: Mutex::new(HashMap::new()),
+                stopping: tokio::sync::watch::channel(/*init*/ false).0,
+                finished: Notify::new(),
+                failed: std::sync::atomic::AtomicBool::new(/*v*/ false),
             }),
+        }
+    }
+}
+
+impl<L, C, P> AgentSessions<L, C, P> {
+    /// A lost actor or failed terminal write stops admission instead of stranding a Running row.
+    pub(crate) fn failed(&self) -> bool {
+        self.shared
+            .failed
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Stops conversations cooperatively and waits for plugin cleanup and terminal persistence.
+    pub async fn shutdown(&self) {
+        self.shared.stopping.send_replace(/*value*/ true);
+        loop {
+            let finished = self.shared.finished.notified();
+            tokio::pin!(finished);
+            finished.as_mut().enable();
+            if self
+                .shared
+                .live
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_empty()
+            {
+                break;
+            }
+            finished.await;
         }
     }
 }
@@ -138,7 +174,16 @@ where
             }
             live.insert(execution.clone(), Arc::clone(&wake));
         }
-        tokio::spawn(driver::run(Arc::clone(&self.shared), execution, spec, wake));
+        let mut completion = Completion {
+            shared: Arc::clone(&self.shared),
+            execution: execution.clone(),
+            committed: false,
+        };
+        tokio::spawn(async move {
+            completion.committed =
+                driver::run(Arc::clone(&completion.shared), execution, spec, wake).await;
+            drop(completion);
+        });
     }
 
     /// A wake that finds no live session is dropped: the session already ended, and the ledger
@@ -178,5 +223,23 @@ where
         } else {
             Err(HistoryUnavailable)
         }
+    }
+}
+
+/// Task cancellation and panic release waiters too; recovery, not a second actor, owns any missing terminal.
+struct Completion<L, C, P> {
+    shared: Arc<Shared<L, C, P>>,
+    execution: ExecutionId,
+    committed: bool,
+}
+impl<L, C, P> Drop for Completion<L, C, P> {
+    /// Runtime teardown must never leave the blocking service waiting for an aborted actor.
+    fn drop(&mut self) {
+        if !self.committed {
+            self.shared
+                .failed
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+        self.shared.release(&self.execution);
     }
 }

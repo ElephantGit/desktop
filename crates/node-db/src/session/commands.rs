@@ -128,3 +128,48 @@ impl<G: WriteGuard> SessionJournal<G> {
         Ok(())
     }
 }
+
+impl<G: WriteGuard> NodeDatabase<G> {
+    /// New input needs a live binding for the execution's original control scope. A new lease
+    /// may refresh the same control epoch, but never adopt another user's unfinished session.
+    pub fn authorize_session_command(
+        &self,
+        execution: &ExecutionId,
+        incarnation: &NodeIncarnationId,
+    ) -> Result<(), Error> {
+        let original: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT permit FROM execution_control WHERE execution=?1",
+                [execution.as_str()],
+                |row| row.get(/*idx*/ 0),
+            )
+            .optional()?;
+        let Some(original) = original else {
+            let enforced: bool = self.connection.query_row("SELECT EXISTS(SELECT 1 FROM runtime_enforcement) OR EXISTS(SELECT 1 FROM runtime_binding)", [], |row| row.get(/*idx*/ 0))?;
+            return if enforced {
+                Err(Error::InvalidTransition)
+            } else {
+                Ok(())
+            };
+        };
+        let original: RuntimeBinding = serde_json::from_str(&original)?;
+        let mut current = self.runtime_binding()?.ok_or(Error::InvalidTransition)?;
+        if current.node_incarnation_id != incarnation.as_str()
+            || current.node_incarnation_id != original.node_incarnation_id
+            || current.tenant_id != original.tenant_id
+            || current.workspace_id != original.workspace_id
+            || current.sandbox_id != original.sandbox_id
+            || current.runtime_generation != original.runtime_generation
+            || current.control_epoch != original.control_epoch
+            || current.session_id != original.session_id
+            || current.actor_user_id != original.actor_user_id
+            || current.operation_id != original.operation_id
+        {
+            return Err(Error::InvalidTransition);
+        }
+        current.execution_id = original.execution_id;
+        current.node_operation_id = original.node_operation_id;
+        self.validate_runtime_permit(&current)
+    }
+}

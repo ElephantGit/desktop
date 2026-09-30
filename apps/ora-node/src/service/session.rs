@@ -1,4 +1,5 @@
 use super::*;
+use crate::SessionHost as _;
 use ora_node_transport::{
     Acceptor, CloseReason, FrameReceiver, FrameSender, TransportError, close_connection,
     ipc::IpcAcceptor, websocket::WsAcceptor,
@@ -277,6 +278,7 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
     sender: &mpsc::SyncSender<Work>,
     active: Arc<Mutex<bool>>,
 ) -> Result<(), Failure> {
+    let delivery = Mutex::new(super::delivery::Delivery::default());
     let deadline = Duration::from_millis(config.frame_timeout_ms);
     let greeting = timeout(deadline, receive(receiver))
         .await
@@ -351,9 +353,13 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
                 ));
             };
             // Enqueueing in read order keeps the worker's FIFO equal to the Controller's order.
+            let ack = match &message {
+                ControllerToNodeMessage::EventAck(ack) => Some(ack.clone()),
+                _ => None,
+            };
             let response = enqueue(sender, &active, Request::Message(message))?;
             answer_later
-                .send((Instant::now() + deadline, response, permit))
+                .send((Instant::now() + deadline, response, permit, ack))
                 .map_err(|_| {
                     Failure::local(CloseReason::InternalError, "session answers closed")
                 })?;
@@ -363,10 +369,18 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
     // independently of heartbeats, so revocation invalidates queued work; already durable
     // executions are not canceled. Answers leave in request order because the worker is FIFO.
     let answer = async {
-        while let Some((expiry, response, _permit)) = answering.recv().await {
+        while let Some((expiry, response, _permit, ack)) = answering.recv().await {
             let replies = timeout_at(expiry, settle(response)).await.map_err(|_| {
                 Failure::local(CloseReason::InternalError, "admission deadline elapsed")
             })??;
+            if let Some(ack) = ack {
+                delivery
+                    .lock()
+                    .map_err(|_| {
+                        Failure::local(CloseReason::InternalError, "delivery window poisoned")
+                    })?
+                    .acknowledged(&ack);
+            }
             for reply in replies {
                 outgoing.send(reply).await.map_err(queue_closed)?;
             }
@@ -377,8 +391,22 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
         let mut tick = interval(Duration::from_millis(config.heartbeat_ms));
         loop {
             tick.tick().await;
-            for event in settle(enqueue(sender, &active, Request::Replay)?).await? {
-                outgoing.send(event).await.map_err(queue_closed)?;
+            let cursors = delivery
+                .lock()
+                .map_err(|_| {
+                    Failure::local(CloseReason::InternalError, "delivery window poisoned")
+                })?
+                .cursors();
+            for event in settle(enqueue(sender, &active, Request::Replay(cursors))?).await? {
+                let reserved = delivery
+                    .lock()
+                    .map_err(|_| {
+                        Failure::local(CloseReason::InternalError, "delivery window poisoned")
+                    })?
+                    .reserve(&event);
+                if reserved {
+                    outgoing.send(event).await.map_err(queue_closed)?;
+                }
             }
         }
         #[allow(unreachable_code)]
@@ -394,6 +422,11 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
             timeout(deadline, transmit(writer, &message))
                 .await
                 .map_err(|_| Failure::silent())??;
+            if let NodeToControllerMessage::SessionCommandAccepted(reply) = &message
+                && let Some(agents) = &info.agents
+            {
+                agents.command_arrived(&reply.execution_id);
+            }
         }
     };
     tokio::select! {

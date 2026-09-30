@@ -447,3 +447,41 @@ fn field(record: &serde_json::Map<String, Value>, path: &[&str]) -> String {
         .unwrap_or_default()
         .to_string()
 }
+
+/// A failed durable Executed transition must stop the session before sending the queued prompt.
+#[tokio::test(flavor = "multi_thread")]
+async fn failed_command_settlement_never_runs_the_queued_turn() {
+    let fixture = Fixture::new();
+    let sessions = fixture.sessions(PLUGIN_VERSION);
+    fixture.start(&sessions, PLUGIN_VERSION, "hello");
+    until(|| {
+        fixture
+            .ledger
+            .events()
+            .iter()
+            .any(|event| field(&event.record, &["type"]) == "turnEnded")
+            .then_some(())
+    })
+    .await;
+    fixture.ledger.fail_executed_settlements();
+    fixture.command(
+        &sessions,
+        "failed-command",
+        SessionCommand::SubmitUserTurn(turn("must-not-run", "must not run")),
+    );
+    let ended = fixture.ended().await;
+    assert_eq!(ended.reason, AgentSessionEndReason::AgentFailed);
+    assert_eq!(ended.detail.as_deref(), Some("ledger_unavailable"));
+    assert!(
+        !fixture
+            .ledger
+            .events()
+            .iter()
+            .any(|event| event.turn_id == Some(ora_node_protocol::TurnId::new("must-not-run")))
+    );
+    assert_eq!(
+        fixture.ledger.settlements(),
+        vec![("failed-command".into(), vec![CommandSettlement::Discarded])]
+    );
+    sessions.shutdown().await;
+}

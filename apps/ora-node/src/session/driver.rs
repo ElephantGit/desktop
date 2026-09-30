@@ -68,7 +68,8 @@ pub(super) async fn run<L, C, P>(
     execution: ExecutionId,
     spec: AgentSessionSpec,
     wake: Arc<Notify>,
-) where
+) -> bool
+where
     L: SessionLedger,
     C: CheckoutResolver,
     P: PluginCatalog,
@@ -89,14 +90,17 @@ pub(super) async fn run<L, C, P>(
             ora_warn!(execution_id = %execution, error = %error, "session queue unreadable at end");
         }
     }
-    shared.release(&execution);
     let ended = AgentSessionEnded {
         node: shared.node.clone(),
         reason: end.reason,
         detail: end.detail.map(str::to_string),
     };
-    if let Err(error) = shared.ledger.end_session(&execution, ended) {
-        ora_warn!(execution_id = %execution, error = %error, "session terminal result was not written");
+    match shared.ledger.end_session(&execution, ended) {
+        Ok(_) => true,
+        Err(error) => {
+            ora_warn!(execution_id = %execution, error = %error, "session terminal result was not written");
+            false
+        }
     }
 }
 
@@ -167,13 +171,13 @@ where
                 mirror: &mirror,
                 wake,
             };
-            let end = conversation
-                .run(
-                    &AgentRef::for_plugin(&plugin_id),
-                    spec,
-                    shared.config.agent_ready_timeout,
-                )
-                .await;
+            let mut stopping = shared.stopping.subscribe();
+            let agent_ref = AgentRef::for_plugin(&plugin_id);
+            let end = tokio::select! {
+                biased;
+                _ = async { let _ = stopping.wait_for(|stop| *stop).await; } => conversation.stop(SessionEnd::requested(EndSessionReason::Cancelled)).await,
+                end = conversation.run(&agent_ref, spec, shared.config.agent_ready_timeout) => end,
+            };
             // Dropping the manager releases its connection supervisor, which stops reconnecting.
             drop(manager);
             end
@@ -237,9 +241,13 @@ fn settle<L: SessionLedger>(
     execution: &ExecutionId,
     command_id: &CommandId,
     settlement: CommandSettlement,
-) {
-    if let Err(error) = ledger.settle_command(execution, command_id, settlement) {
-        ora_warn!(execution_id = %execution, command_id = %command_id, error = %error, "session command was not settled");
+) -> bool {
+    match ledger.settle_command(execution, command_id, settlement) {
+        Ok(()) => true,
+        Err(error) => {
+            ora_warn!(execution_id = %execution, command_id = %command_id, error = %error, "session command was not settled");
+            false
+        }
     }
 }
 
@@ -308,12 +316,16 @@ impl<L: SessionLedger> Conversation<'_, L> {
                 Some(turn) => turn,
                 None => match self.ledger.queued_commands(self.execution).map(plan) {
                     Ok(Plan::Turn { command_id, turn }) => {
-                        settle(
+                        if !settle(
                             self.ledger,
                             self.execution,
                             &command_id,
                             CommandSettlement::Executed,
-                        );
+                        ) {
+                            return self
+                                .stop(SessionEnd::agent_failed("ledger_unavailable"))
+                                .await;
+                        }
                         turn
                     }
                     Ok(Plan::End {
