@@ -55,12 +55,12 @@ fn acknowledged_commit_under_normal_synchronous_is_rolled_back_by_a_power_cut()
     let uri = simulator.database_uri(directory.path());
 
     let connection = Connection::open(&uri)?;
-    connection.pragma_update(None, "journal_mode", "WAL")?;
+    connection.pragma_update(/*schema_name*/ None, "journal_mode", "WAL")?;
     // The durable prefix: created while commits were still synced.
-    connection.pragma_update(None, "synchronous", "FULL")?;
+    connection.pragma_update(/*schema_name*/ None, "synchronous", "FULL")?;
     connection.execute_batch("CREATE TABLE acknowledged (value INTEGER NOT NULL)")?;
     // One more transaction under the profile the bug report hit.
-    connection.pragma_update(None, "synchronous", "NORMAL")?;
+    connection.pragma_update(/*schema_name*/ None, "synchronous", "NORMAL")?;
     connection.execute("INSERT INTO acknowledged (value) VALUES (1)", [])?;
     let visible: i64 =
         connection.query_row("SELECT count(*) FROM acknowledged", [], |row| row.get(0))?;
@@ -93,8 +93,8 @@ fn acknowledged_commit_under_full_synchronous_survives_a_power_cut() -> rusqlite
     let uri = simulator.database_uri(directory.path());
 
     let connection = Connection::open(&uri)?;
-    connection.pragma_update(None, "journal_mode", "WAL")?;
-    connection.pragma_update(None, "synchronous", "FULL")?;
+    connection.pragma_update(/*schema_name*/ None, "journal_mode", "WAL")?;
+    connection.pragma_update(/*schema_name*/ None, "synchronous", "FULL")?;
     connection.execute_batch("CREATE TABLE acknowledged (value INTEGER NOT NULL)")?;
     connection.execute("INSERT INTO acknowledged (value) VALUES (1)", [])?;
     let visible: i64 =
@@ -239,11 +239,81 @@ fn repository_rows_survive_a_power_cut_with_the_pool_still_running()
         vec![session],
         "the conversation row must survive the power cut",
     );
+    assert_eq!(
+        SqliteWorktreeProvisioningLeaseRepository::new(rebooted.clone()).list_leases()?,
+        Vec::<WorktreeProvisioningLease>::new(),
+        "committing the task deletes its lease in the same transaction, so that deletion must survive the power cut",
+    );
     rebooted.with_connection(|connection| {
         let integrity: String =
             connection.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
         assert_eq!(integrity, "ok");
         Ok(())
     })?;
+    Ok(())
+}
+
+/// Proves a provisioning lease that has not been consumed yet is still listed
+/// after a power cut. `commit_worktree_task` deletes the lease, so the end-to-end
+/// test above cannot show that the write-ahead record itself is durable.
+#[test]
+fn outstanding_provisioning_lease_survives_a_power_cut() -> Result<(), Box<dyn std::error::Error>> {
+    let simulator = register_simulator();
+    let directory = TempDir::new()?;
+    let location = DatabaseLocation::path(simulator.database_uri(directory.path()));
+    let catalog = default_migration_catalog()?;
+
+    let pool = with_trace_logging(|| {
+        DatabaseBootstrapper::new(FixedTimestampSource)
+            .bootstrap_repository_pool(&location, &catalog)
+    })?;
+    let project = SqliteProjectRepository::with_clock(pool.clone(), TestClock::new(10))
+        .create_project(
+            Project::new(
+                ProjectId::new("project-lease"),
+                "Lease project",
+                AuditFields::new(10, 10, /*is_deleted*/ false),
+            ),
+            WorkspaceLocation::local_filesystem(
+                directory
+                    .path()
+                    .join("repository")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+        )?;
+    let lease = WorktreeProvisioningLease::new(
+        WorktreeProvisioningLeaseId::new("lease-outstanding"),
+        project.id,
+        WorkspaceId::new("workspace-lease"),
+        directory
+            .path()
+            .join("repository")
+            .to_string_lossy()
+            .into_owned(),
+        directory
+            .path()
+            .join("worktrees")
+            .join("lease")
+            .to_string_lossy()
+            .into_owned(),
+        "ora/lease",
+        /*lease_expires_at*/ 60_000,
+        /*now*/ 10,
+    );
+    SqliteWorktreeProvisioningLeaseRepository::new(pool.clone()).create_lease(&lease)?;
+
+    simulator.crash();
+    drop(pool);
+
+    let rebooted = with_trace_logging(|| {
+        DatabaseBootstrapper::new(FixedTimestampSource)
+            .bootstrap_repository_pool(&location, &catalog)
+    })?;
+    assert_eq!(
+        SqliteWorktreeProvisioningLeaseRepository::new(rebooted).list_leases()?,
+        vec![lease],
+        "an acknowledged provisioning lease must still be reclaimable after the power cut",
+    );
     Ok(())
 }

@@ -13,12 +13,20 @@
 //! data. Under `synchronous = NORMAL` the write-ahead log is never synced at
 //! commit, so a cut rolls acknowledged transactions back; under
 //! `synchronous = FULL` every commit syncs the WAL and survives the cut.
+//!
+//! After the cut, a reopened pool maps one wal-index from many connections, so
+//! those locks live in the simulator instead of the platform. A successful delete
+//! drops that path from the snapshot: SQLite removes the rollback journal when
+//! it enables WAL without asking for a directory sync, and resurrecting the
+//! journal makes recovery ignore the write-ahead log.
+
+mod io;
 
 use std::collections::HashMap;
-use std::ffi::{CStr, CString};
-use std::os::raw::{c_char, c_int, c_void};
+use std::ffi::CString;
+use std::os::raw::{c_int, c_void};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rusqlite::ffi;
@@ -26,16 +34,27 @@ use rusqlite::ffi;
 /// Distinguishes simulators so parallel tests each get their own machine.
 static NEXT_SIMULATOR_ID: AtomicU32 = AtomicU32::new(1);
 
+/// SQLite's wal-index has this many independent locks (`SQLITE_SHM_NLOCK`).
+const SHM_LOCK_SLOTS: u32 = 8;
+
 /// Everything the simulated machine remembers between power-on and power-cut.
 struct MachineState {
     /// Flips once when the plug is pulled; never flips back.
     crashed: AtomicBool,
+    /// Platform handles opened before the cut. Their close-time deletes must
+    /// not erase the snapshot, so deletes are ignored until this hits zero.
+    dying_handles: AtomicUsize,
     /// File content as of its last successful sync, by path. This is exactly
     /// what a power cut leaves behind on a real machine.
     durable: Mutex<HashMap<String, Vec<u8>>>,
     /// The world after the cut: content shared per path so every connection of
     /// a reopened pool observes one consistent machine.
     after_crash: Mutex<AfterCrash>,
+    /// In-process wal-index locks for post-crash files. The platform locks do
+    /// not cover memory files, and the pool maps one index from many connections.
+    shm_locks: Mutex<HashMap<u64, ShmHolder>>,
+    /// Hands each post-crash file a lock identity released from `xClose`.
+    next_shm_holder: AtomicU64,
 }
 
 /// Memory-backed state that only exists once the machine has come back up.
@@ -45,6 +64,23 @@ struct AfterCrash {
     /// even while the outer vectors grow, which the shared-memory contract of
     /// `xShmMap` requires.
     shm: HashMap<String, Vec<Box<[u64]>>>,
+}
+
+/// Shared and exclusive wal-index bits held by one post-crash file handle.
+struct ShmHolder {
+    path: String,
+    shared: u8,
+    exclusive: u8,
+}
+
+/// Whether a platform file was opened by the process that is about to die.
+#[derive(Clone, Copy)]
+enum PlatformFileLifetime {
+    /// Closing this handle retires one dying-process file, which is what
+    /// re-enables deletes once that process has finished exiting.
+    DyingProcess,
+    /// Temporary file of a process that started after the cut.
+    Restarted,
 }
 
 impl MachineState {
@@ -58,14 +94,51 @@ impl MachineState {
         self.crashed.store(true, Ordering::SeqCst);
     }
 
-    /// Reads what the platform file currently holds, treating an absent file as
-    /// empty the way a freshly created file reads back.
+    /// Counts a platform handle that still belongs to the dying process.
+    fn note_dying_open(&self) {
+        self.dying_handles.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Retires one dying-process handle. Deletes stay suppressed until the last
+    /// one closes, so `drop` of the dead pool cannot checkpoint the snapshot away.
+    fn note_dying_close(&self) {
+        let previous = self.dying_handles.fetch_sub(1, Ordering::SeqCst);
+        assert!(
+            previous > 0,
+            "dying platform handle closed without a matching open"
+        );
+    }
+
+    /// Reports whether the dead process still has a file open.
+    fn dying_process_still_open(&self) -> bool {
+        self.dying_handles.load(Ordering::SeqCst) > 0
+    }
+
+    /// Allocates the lock identity `xClose` uses to drop every slot this file held.
+    fn allocate_shm_holder(&self) -> u64 {
+        self.next_shm_holder.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    /// Reads what the platform file currently holds.
+    ///
+    /// An absent file is empty, the same way a freshly created file reads back.
+    /// Any other I/O error must fail the test: treating it as an empty snapshot
+    /// would record a power cut that never happened.
     fn current_content(path: &str) -> Vec<u8> {
-        std::fs::read(path).unwrap_or_default()
+        match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(error) => {
+                panic!("reading {path} for the durability snapshot failed: {error}");
+            }
+        }
     }
 
     /// Records the file's current content as the durability baseline, keeping
     /// any baseline a previous sync of this machine already established.
+    ///
+    /// A later open must not replace that baseline with a dirty page-cache read.
+    /// Durable deletes remove the entry first, so a recreated file can seed again.
     fn seed_durable(&self, path: &str) {
         let mut durable = self.durable.lock().expect("durable map lock");
         durable
@@ -82,24 +155,68 @@ impl MachineState {
             .insert(path.to_owned(), Self::current_content(path));
     }
 
+    /// Drops a file whose deletion SQLite has made durable.
+    fn forget_durable(&self, path: &str) {
+        self.durable.lock().expect("durable map lock").remove(path);
+    }
+
+    /// Reports whether a restarted open should see this path.
+    ///
+    /// Existence is the durable snapshot plus files the restarted process has
+    /// already created. The live page cache is not consulted: it still holds
+    /// writes the cut was supposed to forget.
+    fn visible_after_crash(&self, path: &str) -> bool {
+        if self
+            .after_crash
+            .lock()
+            .expect("post-crash lock")
+            .files
+            .contains_key(path)
+        {
+            return true;
+        }
+        self.durable
+            .lock()
+            .expect("durable map lock")
+            .contains_key(path)
+    }
+
     /// Returns the post-crash content for one path, seeding it from what the
     /// power cut preserved the first time it is touched.
     fn memory_file(&self, path: &str) -> Arc<Mutex<Vec<u8>>> {
         let mut after_crash = self.after_crash.lock().expect("post-crash lock");
-        after_crash
-            .files
-            .entry(path.to_owned())
-            .or_insert_with(|| {
-                let preserved = self
-                    .durable
-                    .lock()
-                    .expect("durable map lock")
-                    .get(path)
-                    .cloned()
-                    .unwrap_or_default();
-                Arc::new(Mutex::new(preserved))
-            })
-            .clone()
+        if let Some(existing) = after_crash.files.get(path) {
+            return existing.clone();
+        }
+        let preserved = self
+            .durable
+            .lock()
+            .expect("durable map lock")
+            .get(path)
+            .cloned()
+            .unwrap_or_default();
+        let memory = Arc::new(Mutex::new(preserved));
+        after_crash.files.insert(path.to_owned(), memory.clone());
+        memory
+    }
+
+    /// Applies a delete from the restarted process.
+    ///
+    /// The bytes are removed from both the snapshot and the restarted image so
+    /// a later open cannot replay a WAL checkpoint already deleted. Mapped
+    /// wal-index pages are zeroed in place; freeing them would dangle pointers
+    /// SQLite still holds.
+    fn delete_restarted_file(&self, path: &str) {
+        {
+            let mut after_crash = self.after_crash.lock().expect("post-crash lock");
+            after_crash.files.remove(path);
+            if let Some(regions) = after_crash.shm.get_mut(path) {
+                for region in regions {
+                    region.fill(0);
+                }
+            }
+        }
+        self.forget_durable(path);
     }
 
     /// Resolves one wal-index region, following the platform contract: a
@@ -114,17 +231,131 @@ impl MachineState {
         extend: bool,
         out: *mut *mut c_void,
     ) {
+        if out.is_null() {
+            return;
+        }
         let mut after_crash = self.after_crash.lock().expect("post-crash lock");
         let regions = after_crash.shm.entry(path.to_owned()).or_default();
-        if regions.len() > index {
+        if index < regions.len() {
             unsafe { *out = regions[index].as_ptr().cast::<c_void>().cast_mut() };
             return;
         }
-        if extend && regions.len() == index {
+        if extend && regions.len() == index && size > 0 {
             regions.push(vec![0u64; size.div_ceil(8)].into_boxed_slice());
             unsafe { *out = regions[index].as_ptr().cast::<c_void>().cast_mut() };
+            return;
+        }
+        unsafe { *out = std::ptr::null_mut() };
+    }
+
+    /// Acquires or releases wal-index locks for one post-crash file.
+    ///
+    /// The same handle may upgrade a shared slot to exclusive when no other
+    /// handle holds it. Contention returns `SQLITE_BUSY` immediately: blocking
+    /// inside `xShmLock` can deadlock SQLite, which backs off through the
+    /// connection busy handler instead.
+    fn shm_lock(
+        &self,
+        holder_id: u64,
+        path: &str,
+        offset: c_int,
+        count: c_int,
+        flags: c_int,
+    ) -> c_int {
+        let mask = shm_range_mask(offset, count);
+        let mut table = self.shm_locks.lock().expect("shm lock table");
+        match try_shm_lock(&mut table, holder_id, path, mask, flags) {
+            ShmLockResult::Acquired => ffi::SQLITE_OK,
+            ShmLockResult::Busy => ffi::SQLITE_BUSY,
         }
     }
+
+    /// Drops every wal-index slot one file still holds.
+    fn release_shm_holder(&self, holder_id: u64) {
+        self.shm_locks
+            .lock()
+            .expect("shm lock table")
+            .remove(&holder_id);
+    }
+}
+
+/// Outcome of one non-blocking attempt to change a holder's wal-index bits.
+enum ShmLockResult {
+    Acquired,
+    Busy,
+}
+
+/// Applies one lock or unlock if it does not conflict with other holders.
+fn try_shm_lock(
+    table: &mut HashMap<u64, ShmHolder>,
+    holder_id: u64,
+    path: &str,
+    mask: u8,
+    flags: c_int,
+) -> ShmLockResult {
+    table.entry(holder_id).or_insert_with(|| ShmHolder {
+        path: path.to_owned(),
+        shared: 0,
+        exclusive: 0,
+    });
+
+    if (flags & ffi::SQLITE_SHM_UNLOCK) != 0 {
+        let holder = table.get_mut(&holder_id).expect("shm holder");
+        if (flags & ffi::SQLITE_SHM_SHARED) != 0 {
+            holder.shared &= !mask;
+        }
+        if (flags & ffi::SQLITE_SHM_EXCLUSIVE) != 0 {
+            holder.exclusive &= !mask;
+        }
+        return ShmLockResult::Acquired;
+    }
+
+    let (others_shared, others_exclusive) = other_shm_bits(table, holder_id, path);
+    let holder = table.get_mut(&holder_id).expect("shm holder");
+    if (flags & ffi::SQLITE_SHM_EXCLUSIVE) != 0 {
+        if (others_shared | others_exclusive) & mask != 0 {
+            return ShmLockResult::Busy;
+        }
+        // Upgrading drops this handle's shared bits so readers do not observe
+        // both modes on a slot this connection now owns exclusively.
+        holder.exclusive |= mask;
+        holder.shared &= !mask;
+        return ShmLockResult::Acquired;
+    }
+    if (flags & ffi::SQLITE_SHM_SHARED) != 0 && (others_exclusive & mask) != 0 {
+        return ShmLockResult::Busy;
+    }
+    if (flags & ffi::SQLITE_SHM_SHARED) != 0 {
+        holder.shared |= mask;
+    }
+    ShmLockResult::Acquired
+}
+
+/// ORs the shared and exclusive bits every other handle holds on `path`.
+fn other_shm_bits(table: &HashMap<u64, ShmHolder>, holder_id: u64, path: &str) -> (u8, u8) {
+    table
+        .iter()
+        .filter(|(id, holder)| **id != holder_id && holder.path == path)
+        .fold((0u8, 0u8), |(shared, exclusive), (_, holder)| {
+            (shared | holder.shared, exclusive | holder.exclusive)
+        })
+}
+
+/// Builds the bit mask SQLite names with `offset` and `n` into the 8 lock slots.
+fn shm_range_mask(offset: c_int, count: c_int) -> u8 {
+    if offset < 0 || count <= 0 {
+        return 0;
+    }
+    let offset = offset as u32;
+    if offset >= SHM_LOCK_SLOTS {
+        return 0;
+    }
+    let last = (offset + count as u32).min(SHM_LOCK_SLOTS);
+    let mut mask = 0u8;
+    for bit in offset..last {
+        mask |= 1 << bit;
+    }
+    mask
 }
 
 /// The registered VFS plus the handle a test uses to drive its machine.
@@ -161,6 +392,10 @@ struct CrashFile {
     underlying_storage: Vec<u64>,
     /// Shared post-crash content; absent while the machine is powered on.
     memory: Option<Arc<Mutex<Vec<u8>>>>,
+    /// Set for platform files opened before the cut.
+    lifetime: PlatformFileLifetime,
+    /// Zero until this post-crash file takes a wal-index lock identity.
+    shm_holder: u64,
 }
 
 impl CrashFile {
@@ -188,10 +423,29 @@ impl Simulator {
         let database = directory.join("ora.sqlite3");
         format!(
             "file:{}?vfs={}",
-            database.to_string_lossy().replace('\\', "/"),
+            encode_sqlite_uri_path(&database),
             self.vfs_name
         )
     }
+}
+
+/// Percent-encodes a filesystem path for a SQLite `file:` URI.
+///
+/// Reserved characters would otherwise be parsed as the query or fragment, and
+/// the `vfs` parameter that selects this simulator would be dropped. The drive
+/// colon and slashes stay literal so Windows paths still parse.
+fn encode_sqlite_uri_path(path: &Path) -> String {
+    let text = path.to_string_lossy().replace('\\', "/");
+    let mut encoded = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b':' | b'.' | b'-' | b'_' | b'~' => {
+                encoded.push(char::from(byte));
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
 }
 
 /// Registers a fresh power-cut simulator with a process-unique VFS name.
@@ -200,11 +454,14 @@ pub(super) fn register_simulator() -> Simulator {
     let name = CString::new(format!("ora-power-cut-{id}")).expect("VFS name is valid");
     let state = Arc::new(MachineState {
         crashed: AtomicBool::new(false),
+        dying_handles: AtomicUsize::new(0),
         durable: Mutex::new(HashMap::new()),
         after_crash: Mutex::new(AfterCrash {
             files: HashMap::new(),
             shm: HashMap::new(),
         }),
+        shm_locks: Mutex::new(HashMap::new()),
+        next_shm_holder: AtomicU64::new(0),
     });
 
     // Safety: querying the default VFS only reads SQLite's global registry,
@@ -214,22 +471,22 @@ pub(super) fn register_simulator() -> Simulator {
 
     let io = ffi::sqlite3_io_methods {
         iVersion: 2,
-        xClose: Some(xclose),
-        xRead: Some(xread),
-        xWrite: Some(xwrite),
-        xTruncate: Some(xtruncate),
-        xSync: Some(xsync),
-        xFileSize: Some(xfile_size),
-        xLock: Some(xlock),
-        xUnlock: Some(xunlock),
-        xCheckReservedLock: Some(xcheck_reserved_lock),
-        xFileControl: Some(xfile_control),
-        xSectorSize: Some(xsector_size),
-        xDeviceCharacteristics: Some(xdevice_characteristics),
-        xShmMap: Some(xshm_map),
-        xShmLock: Some(xshm_lock),
-        xShmBarrier: Some(xshm_barrier),
-        xShmUnmap: Some(xshm_unmap),
+        xClose: Some(io::xclose),
+        xRead: Some(io::xread),
+        xWrite: Some(io::xwrite),
+        xTruncate: Some(io::xtruncate),
+        xSync: Some(io::xsync),
+        xFileSize: Some(io::xfile_size),
+        xLock: Some(io::xlock),
+        xUnlock: Some(io::xunlock),
+        xCheckReservedLock: Some(io::xcheck_reserved_lock),
+        xFileControl: Some(io::xfile_control),
+        xSectorSize: Some(io::xsector_size),
+        xDeviceCharacteristics: Some(io::xdevice_characteristics),
+        xShmMap: Some(io::xshm_map),
+        xShmLock: Some(io::xshm_lock),
+        xShmBarrier: Some(io::xshm_barrier),
+        xShmUnmap: Some(io::xshm_unmap),
         xFetch: None,
         xUnfetch: None,
     };
@@ -244,19 +501,19 @@ pub(super) fn register_simulator() -> Simulator {
         pNext: std::ptr::null_mut(),
         zName: name.as_ptr(),
         pAppData: std::ptr::null_mut(),
-        xOpen: Some(xopen),
-        xDelete: Some(xdelete),
-        xAccess: Some(xaccess),
-        xFullPathname: Some(xfull_pathname),
-        xDlOpen: Some(xdl_open),
-        xDlError: Some(xdl_error),
-        xDlSym: Some(xdl_sym),
-        xDlClose: Some(xdl_close),
-        xRandomness: Some(xrandomness),
-        xSleep: Some(xsleep),
-        xCurrentTime: Some(xcurrent_time),
-        xGetLastError: Some(xget_last_error),
-        xCurrentTimeInt64: Some(xcurrent_time_int64),
+        xOpen: Some(io::xopen),
+        xDelete: Some(io::xdelete),
+        xAccess: Some(io::xaccess),
+        xFullPathname: Some(io::xfull_pathname),
+        xDlOpen: Some(io::xdl_open),
+        xDlError: Some(io::xdl_error),
+        xDlSym: Some(io::xdl_sym),
+        xDlClose: Some(io::xdl_close),
+        xRandomness: Some(io::xrandomness),
+        xSleep: Some(io::xsleep),
+        xCurrentTime: Some(io::xcurrent_time),
+        xGetLastError: Some(io::xget_last_error),
+        xCurrentTimeInt64: Some(io::xcurrent_time_int64),
         xSetSystemCall: None,
         xGetSystemCall: None,
         xNextSystemCall: None,
@@ -285,618 +542,5 @@ pub(super) fn register_simulator() -> Simulator {
     Simulator {
         vfs_name: leaked.name.to_string_lossy().into_owned(),
         state,
-    }
-}
-
-/// Borrows the file handle SQLite handed to an I/O method.
-unsafe fn crash_file(file: *mut ffi::sqlite3_file) -> &'static mut CrashFile {
-    unsafe { &mut *(file as *mut CrashFile) }
-}
-
-/// Reads the method table of the wrapped platform file.
-unsafe fn underlying_methods(handle: &CrashFile) -> &'static ffi::sqlite3_io_methods {
-    unsafe { &*(*handle.underlying).pMethods }
-}
-
-/// Decodes the file name SQLite handed to `xOpen`, using an empty string for
-/// its unnamed temporary files.
-unsafe fn decode_name(z_name: *const c_char) -> String {
-    if z_name.is_null() {
-        String::new()
-    } else {
-        unsafe { CStr::from_ptr(z_name) }
-            .to_string_lossy()
-            .into_owned()
-    }
-}
-
-/// Copies `amount` bytes at `offset` out of shared memory, zero-filling what
-/// lies past the end and reporting the short read SQLite expects.
-unsafe fn read_memory(
-    memory: &Mutex<Vec<u8>>,
-    buffer: *mut c_void,
-    amount: c_int,
-    offset: i64,
-) -> c_int {
-    unsafe {
-        let content = memory.lock().expect("post-crash file lock");
-        let start = usize::try_from(offset).unwrap_or(usize::MAX);
-        let amount = usize::try_from(amount).unwrap_or(0);
-        let destination = std::slice::from_raw_parts_mut(buffer.cast::<u8>(), amount);
-        let available = content.len().saturating_sub(start).min(amount);
-        if available > 0 {
-            destination[..available].copy_from_slice(&content[start..start + available]);
-        }
-        if available < amount {
-            destination[available..].fill(0);
-            return ffi::SQLITE_IOERR_SHORT_READ;
-        }
-        ffi::SQLITE_OK
-    }
-}
-
-/// Copies `amount` bytes at `offset` into shared memory, growing it as needed.
-unsafe fn write_memory(
-    memory: &Mutex<Vec<u8>>,
-    buffer: *const c_void,
-    amount: c_int,
-    offset: i64,
-) -> c_int {
-    unsafe {
-        let mut content = memory.lock().expect("post-crash file lock");
-        let start = usize::try_from(offset).unwrap_or(usize::MAX);
-        let amount = usize::try_from(amount).unwrap_or(0);
-        let source = std::slice::from_raw_parts(buffer.cast::<u8>(), amount);
-        if start > content.len() {
-            content.resize(start, 0);
-        }
-        let end = start.saturating_add(amount);
-        if end > content.len() {
-            content.resize(end, 0);
-        }
-        content[start..end].copy_from_slice(source);
-        ffi::SQLITE_OK
-    }
-}
-
-/// Opens a platform file and wraps it for a powered-on machine.
-unsafe fn open_platform_file(
-    simulator: &CrashVfs,
-    z_name: *const c_char,
-    file: *mut ffi::sqlite3_file,
-    flags: c_int,
-    out_flags: *mut c_int,
-) -> c_int {
-    unsafe {
-        // The platform file struct needs its own allocation matching the
-        // platform VFS's declared size; u64 chunks satisfy its alignment.
-        let storage_words = ((*simulator.underlying).szOsFile.max(0) as usize).div_ceil(8);
-        let mut storage = vec![0u64; storage_words];
-        let underlying = storage.as_mut_ptr().cast::<ffi::sqlite3_file>();
-        let result = match (*simulator.underlying).xOpen {
-            Some(open) => open(simulator.underlying, z_name, underlying, flags, out_flags),
-            None => return ffi::SQLITE_ERROR,
-        };
-        if result != ffi::SQLITE_OK {
-            // SQLite does not call xClose for a failed open, so nothing was
-            // wrapped and the storage is simply dropped here.
-            return result;
-        }
-        // The buffer SQLite handed over is uninitialized, so the handle is
-        // written wholesale with `ptr::write`: a plain field assignment would
-        // first drop the garbage bytes as an Arc/String/Vec.
-        std::ptr::write(
-            file as *mut CrashFile,
-            CrashFile {
-                base: ffi::sqlite3_file {
-                    pMethods: &simulator.io,
-                },
-                state: simulator.state.clone(),
-                path: decode_name(z_name),
-                underlying,
-                underlying_storage: storage,
-                memory: None,
-            },
-        );
-        ffi::SQLITE_OK
-    }
-}
-
-unsafe extern "C" fn xopen(
-    vfs: *mut ffi::sqlite3_vfs,
-    z_name: ffi::sqlite3_filename,
-    file: *mut ffi::sqlite3_file,
-    flags: c_int,
-    out_flags: *mut c_int,
-) -> c_int {
-    unsafe {
-        let simulator = &*(vfs as *const CrashVfs);
-        let state = simulator.state.clone();
-
-        // SQLite passes a null name for its own temporary files. They hold no
-        // durable database state, so the platform serves them directly whether
-        // the machine is on or has come back from a cut.
-        if z_name.is_null() {
-            return open_platform_file(simulator, z_name, file, flags, out_flags);
-        }
-        let path = decode_name(z_name);
-
-        if state.is_crashed() {
-            let memory = state.memory_file(&path);
-            std::ptr::write(
-                file as *mut CrashFile,
-                CrashFile {
-                    base: ffi::sqlite3_file {
-                        pMethods: &simulator.io,
-                    },
-                    state,
-                    path,
-                    underlying: std::ptr::null_mut(),
-                    underlying_storage: Vec::new(),
-                    memory: Some(memory),
-                },
-            );
-            if !out_flags.is_null() {
-                *out_flags = flags;
-            }
-            return ffi::SQLITE_OK;
-        }
-
-        // Powered on: open through the platform VFS and remember what the
-        // file holds right now as the baseline a cut would fall back to.
-        let result = open_platform_file(simulator, z_name, file, flags, out_flags);
-        if result == ffi::SQLITE_OK {
-            state.seed_durable(&path);
-        }
-        result
-    }
-}
-
-unsafe extern "C" fn xdelete(
-    vfs: *mut ffi::sqlite3_vfs,
-    z_name: *const c_char,
-    sync_dir: c_int,
-) -> c_int {
-    unsafe {
-        let simulator = &*(vfs as *const CrashVfs);
-        if simulator.state.is_crashed() {
-            // Close-time cleanups of the dying process must not erase what
-            // the cut preserved, and post-crash files only exist in simulator
-            // memory.
-            return ffi::SQLITE_OK;
-        }
-        match (*simulator.underlying).xDelete {
-            Some(delete) => delete(simulator.underlying, z_name, sync_dir),
-            None => ffi::SQLITE_OK,
-        }
-    }
-}
-
-unsafe extern "C" fn xaccess(
-    vfs: *mut ffi::sqlite3_vfs,
-    z_name: *const c_char,
-    flags: c_int,
-    out: *mut c_int,
-) -> c_int {
-    unsafe {
-        let simulator = &*(vfs as *const CrashVfs);
-        match (*simulator.underlying).xAccess {
-            Some(access) => access(simulator.underlying, z_name, flags, out),
-            None => ffi::SQLITE_ERROR,
-        }
-    }
-}
-
-unsafe extern "C" fn xfull_pathname(
-    vfs: *mut ffi::sqlite3_vfs,
-    z_name: *const c_char,
-    n_out: c_int,
-    z_out: *mut c_char,
-) -> c_int {
-    unsafe {
-        let simulator = &*(vfs as *const CrashVfs);
-        match (*simulator.underlying).xFullPathname {
-            Some(full_pathname) => full_pathname(simulator.underlying, z_name, n_out, z_out),
-            None => ffi::SQLITE_ERROR,
-        }
-    }
-}
-
-unsafe extern "C" fn xdl_open(vfs: *mut ffi::sqlite3_vfs, path: *const c_char) -> *mut c_void {
-    unsafe {
-        let simulator = &*(vfs as *const CrashVfs);
-        match (*simulator.underlying).xDlOpen {
-            Some(dl_open) => dl_open(simulator.underlying, path),
-            None => std::ptr::null_mut(),
-        }
-    }
-}
-
-unsafe extern "C" fn xdl_error(vfs: *mut ffi::sqlite3_vfs, n_byte: c_int, message: *mut c_char) {
-    unsafe {
-        let simulator = &*(vfs as *const CrashVfs);
-        if let Some(dl_error) = (*simulator.underlying).xDlError {
-            dl_error(simulator.underlying, n_byte, message);
-        }
-    }
-}
-
-unsafe extern "C" fn xdl_sym(
-    vfs: *mut ffi::sqlite3_vfs,
-    handle: *mut c_void,
-    symbol: *const c_char,
-) -> Option<unsafe extern "C" fn(*mut ffi::sqlite3_vfs, *mut c_void, *const c_char)> {
-    unsafe {
-        let simulator = &*(vfs as *const CrashVfs);
-        (*simulator.underlying)
-            .xDlSym
-            .and_then(|dl_sym| dl_sym(simulator.underlying, handle, symbol))
-    }
-}
-
-unsafe extern "C" fn xdl_close(vfs: *mut ffi::sqlite3_vfs, handle: *mut c_void) {
-    unsafe {
-        let simulator = &*(vfs as *const CrashVfs);
-        if let Some(dl_close) = (*simulator.underlying).xDlClose {
-            dl_close(simulator.underlying, handle);
-        }
-    }
-}
-
-unsafe extern "C" fn xrandomness(
-    vfs: *mut ffi::sqlite3_vfs,
-    n_byte: c_int,
-    z_out: *mut c_char,
-) -> c_int {
-    unsafe {
-        let simulator = &*(vfs as *const CrashVfs);
-        match (*simulator.underlying).xRandomness {
-            Some(randomness) => randomness(simulator.underlying, n_byte, z_out),
-            None => ffi::SQLITE_ERROR,
-        }
-    }
-}
-
-unsafe extern "C" fn xsleep(vfs: *mut ffi::sqlite3_vfs, microseconds: c_int) -> c_int {
-    unsafe {
-        let simulator = &*(vfs as *const CrashVfs);
-        match (*simulator.underlying).xSleep {
-            Some(sleep) => sleep(simulator.underlying, microseconds),
-            None => ffi::SQLITE_ERROR,
-        }
-    }
-}
-
-unsafe extern "C" fn xcurrent_time(vfs: *mut ffi::sqlite3_vfs, now: *mut f64) -> c_int {
-    unsafe {
-        let simulator = &*(vfs as *const CrashVfs);
-        match (*simulator.underlying).xCurrentTime {
-            Some(current_time) => current_time(simulator.underlying, now),
-            None => ffi::SQLITE_ERROR,
-        }
-    }
-}
-
-unsafe extern "C" fn xget_last_error(
-    vfs: *mut ffi::sqlite3_vfs,
-    n_byte: c_int,
-    z_out: *mut c_char,
-) -> c_int {
-    unsafe {
-        let simulator = &*(vfs as *const CrashVfs);
-        match (*simulator.underlying).xGetLastError {
-            Some(get_last_error) => get_last_error(simulator.underlying, n_byte, z_out),
-            None => ffi::SQLITE_ERROR,
-        }
-    }
-}
-
-unsafe extern "C" fn xcurrent_time_int64(vfs: *mut ffi::sqlite3_vfs, now: *mut i64) -> c_int {
-    unsafe {
-        let simulator = &*(vfs as *const CrashVfs);
-        match (*simulator.underlying).xCurrentTimeInt64 {
-            Some(current_time) => current_time(simulator.underlying, now),
-            None => ffi::SQLITE_ERROR,
-        }
-    }
-}
-
-unsafe extern "C" fn xclose(file: *mut ffi::sqlite3_file) -> c_int {
-    unsafe {
-        let handle = crash_file(file);
-        let mut result = ffi::SQLITE_OK;
-        if handle.wraps_platform_file() {
-            // Releasing the platform handle is exactly what process death
-            // does; a crashed handle simply has nothing left to flush.
-            if let Some(close) = underlying_methods(handle).xClose {
-                result = close(handle.underlying);
-            }
-            handle.underlying = std::ptr::null_mut();
-        }
-        // The handle lives in SQLite-owned memory, so its Rust fields are
-        // dropped here rather than by any Rust scope.
-        std::ptr::drop_in_place(file as *mut CrashFile);
-        result
-    }
-}
-
-unsafe extern "C" fn xread(
-    file: *mut ffi::sqlite3_file,
-    buffer: *mut c_void,
-    amount: c_int,
-    offset: i64,
-) -> c_int {
-    unsafe {
-        let handle = crash_file(file);
-        if let Some(memory) = &handle.memory {
-            let result = read_memory(memory, buffer, amount, offset);
-            return result;
-        }
-        if handle.path.is_empty() || !handle.state.is_crashed() {
-            if let Some(read) = underlying_methods(handle).xRead {
-                return read(handle.underlying, buffer, amount, offset);
-            }
-            return ffi::SQLITE_OK;
-        }
-        ffi::SQLITE_IOERR_READ
-    }
-}
-
-unsafe extern "C" fn xwrite(
-    file: *mut ffi::sqlite3_file,
-    buffer: *const c_void,
-    amount: c_int,
-    offset: i64,
-) -> c_int {
-    unsafe {
-        let handle = crash_file(file);
-        if let Some(memory) = &handle.memory {
-            return write_memory(memory, buffer, amount, offset);
-        }
-        if handle.path.is_empty() || !handle.state.is_crashed() {
-            if let Some(write) = underlying_methods(handle).xWrite {
-                return write(handle.underlying, buffer, amount, offset);
-            }
-            return ffi::SQLITE_OK;
-        }
-        ffi::SQLITE_IOERR_WRITE
-    }
-}
-
-unsafe extern "C" fn xtruncate(file: *mut ffi::sqlite3_file, size: i64) -> c_int {
-    unsafe {
-        let handle = crash_file(file);
-        if let Some(memory) = &handle.memory {
-            let length = usize::try_from(size).unwrap_or(0);
-            memory
-                .lock()
-                .expect("post-crash file lock")
-                .resize(length, 0);
-            return ffi::SQLITE_OK;
-        }
-        if handle.path.is_empty() || !handle.state.is_crashed() {
-            if let Some(truncate) = underlying_methods(handle).xTruncate {
-                return truncate(handle.underlying, size);
-            }
-            return ffi::SQLITE_OK;
-        }
-        ffi::SQLITE_IOERR_WRITE
-    }
-}
-
-unsafe extern "C" fn xsync(file: *mut ffi::sqlite3_file, flags: c_int) -> c_int {
-    unsafe {
-        let handle = crash_file(file);
-        // Post-crash memory already is the machine's only storage; nothing
-        // more can be lost, so syncing is a no-op.
-        if handle.memory.is_some() {
-            return ffi::SQLITE_OK;
-        }
-        if handle.path.is_empty() || !handle.state.is_crashed() {
-            let result = match underlying_methods(handle).xSync {
-                Some(sync) => sync(handle.underlying, flags),
-                None => ffi::SQLITE_OK,
-            };
-            if result == ffi::SQLITE_OK && !handle.path.is_empty() {
-                handle.state.mark_durable(&handle.path);
-            }
-            return result;
-        }
-        ffi::SQLITE_IOERR_FSYNC
-    }
-}
-
-unsafe extern "C" fn xfile_size(file: *mut ffi::sqlite3_file, size: *mut i64) -> c_int {
-    unsafe {
-        let handle = crash_file(file);
-        if let Some(memory) = &handle.memory {
-            *size = memory.lock().expect("post-crash file lock").len() as i64;
-            return ffi::SQLITE_OK;
-        }
-        if handle.path.is_empty() || !handle.state.is_crashed() {
-            if let Some(file_size) = underlying_methods(handle).xFileSize {
-                return file_size(handle.underlying, size);
-            }
-            return ffi::SQLITE_OK;
-        }
-        ffi::SQLITE_IOERR_FSTAT
-    }
-}
-
-unsafe extern "C" fn xlock(file: *mut ffi::sqlite3_file, lock: c_int) -> c_int {
-    unsafe {
-        let handle = crash_file(file);
-        if handle.memory.is_some() {
-            return ffi::SQLITE_OK;
-        }
-        if handle.path.is_empty() || !handle.state.is_crashed() {
-            if let Some(lock_file) = underlying_methods(handle).xLock {
-                return lock_file(handle.underlying, lock);
-            }
-            return ffi::SQLITE_OK;
-        }
-        ffi::SQLITE_IOERR_LOCK
-    }
-}
-
-unsafe extern "C" fn xunlock(file: *mut ffi::sqlite3_file, lock: c_int) -> c_int {
-    unsafe {
-        let handle = crash_file(file);
-        if handle.memory.is_some() {
-            return ffi::SQLITE_OK;
-        }
-        if handle.path.is_empty() || !handle.state.is_crashed() {
-            if let Some(unlock) = underlying_methods(handle).xUnlock {
-                return unlock(handle.underlying, lock);
-            }
-            return ffi::SQLITE_OK;
-        }
-        ffi::SQLITE_IOERR_UNLOCK
-    }
-}
-
-unsafe extern "C" fn xcheck_reserved_lock(file: *mut ffi::sqlite3_file, out: *mut c_int) -> c_int {
-    unsafe {
-        let handle = crash_file(file);
-        if handle.memory.is_some() {
-            *out = 0;
-            return ffi::SQLITE_OK;
-        }
-        if handle.path.is_empty() || !handle.state.is_crashed() {
-            if let Some(check) = underlying_methods(handle).xCheckReservedLock {
-                return check(handle.underlying, out);
-            }
-            return ffi::SQLITE_OK;
-        }
-        ffi::SQLITE_IOERR_LOCK
-    }
-}
-
-unsafe extern "C" fn xfile_control(
-    file: *mut ffi::sqlite3_file,
-    op: c_int,
-    arg: *mut c_void,
-) -> c_int {
-    unsafe {
-        let handle = crash_file(file);
-        if handle.memory.is_some() {
-            // The simulator implements no file controls of its own.
-            return ffi::SQLITE_NOTFOUND;
-        }
-        if handle.path.is_empty() || !handle.state.is_crashed() {
-            if let Some(file_control) = underlying_methods(handle).xFileControl {
-                return file_control(handle.underlying, op, arg);
-            }
-            return ffi::SQLITE_NOTFOUND;
-        }
-        ffi::SQLITE_NOTFOUND
-    }
-}
-
-unsafe extern "C" fn xsector_size(file: *mut ffi::sqlite3_file) -> c_int {
-    unsafe {
-        let handle = crash_file(file);
-        if handle.memory.is_some() {
-            return 512;
-        }
-        match underlying_methods(handle).xSectorSize {
-            Some(sector_size) => sector_size(handle.underlying),
-            None => 512,
-        }
-    }
-}
-
-unsafe extern "C" fn xdevice_characteristics(file: *mut ffi::sqlite3_file) -> c_int {
-    unsafe {
-        let handle = crash_file(file);
-        if handle.memory.is_some() {
-            return 0;
-        }
-        match underlying_methods(handle).xDeviceCharacteristics {
-            Some(characteristics) => characteristics(handle.underlying),
-            None => 0,
-        }
-    }
-}
-
-unsafe extern "C" fn xshm_map(
-    file: *mut ffi::sqlite3_file,
-    region_index: c_int,
-    region_size: c_int,
-    extend: c_int,
-    out: *mut *mut c_void,
-) -> c_int {
-    unsafe {
-        let handle = crash_file(file);
-        if handle.memory.is_some() {
-            // A missing region without the extend flag maps to a null pointer
-            // with success, the same way the platform VFSes behave; that is
-            // what makes SQLite rebuild the wal-index from the recovered WAL.
-            handle.state.shm_region(
-                &handle.path,
-                region_index.max(0) as usize,
-                region_size.max(0) as usize,
-                extend != 0,
-                out,
-            );
-            return ffi::SQLITE_OK;
-        }
-        if handle.path.is_empty() || !handle.state.is_crashed() {
-            if let Some(shm_map) = underlying_methods(handle).xShmMap {
-                return shm_map(handle.underlying, region_index, region_size, extend, out);
-            }
-            return ffi::SQLITE_OK;
-        }
-        ffi::SQLITE_IOERR
-    }
-}
-
-unsafe extern "C" fn xshm_lock(
-    file: *mut ffi::sqlite3_file,
-    offset: c_int,
-    n: c_int,
-    flags: c_int,
-) -> c_int {
-    unsafe {
-        let handle = crash_file(file);
-        if handle.memory.is_some() {
-            return ffi::SQLITE_OK;
-        }
-        if handle.path.is_empty() || !handle.state.is_crashed() {
-            if let Some(shm_lock) = underlying_methods(handle).xShmLock {
-                return shm_lock(handle.underlying, offset, n, flags);
-            }
-            return ffi::SQLITE_OK;
-        }
-        ffi::SQLITE_IOERR_LOCK
-    }
-}
-
-unsafe extern "C" fn xshm_barrier(file: *mut ffi::sqlite3_file) {
-    unsafe {
-        let handle = crash_file(file);
-        if handle.memory.is_some() || handle.state.is_crashed() {
-            return;
-        }
-        if let Some(shm_barrier) = underlying_methods(handle).xShmBarrier {
-            shm_barrier(handle.underlying);
-        }
-    }
-}
-
-unsafe extern "C" fn xshm_unmap(file: *mut ffi::sqlite3_file, delete_flag: c_int) -> c_int {
-    unsafe {
-        let handle = crash_file(file);
-        if handle.memory.is_some() {
-            // Regions stay in simulator memory; they model files the cut kept.
-            return ffi::SQLITE_OK;
-        }
-        if handle.path.is_empty() || !handle.state.is_crashed() {
-            if let Some(shm_unmap) = underlying_methods(handle).xShmUnmap {
-                return shm_unmap(handle.underlying, delete_flag);
-            }
-            return ffi::SQLITE_OK;
-        }
-        ffi::SQLITE_OK
     }
 }

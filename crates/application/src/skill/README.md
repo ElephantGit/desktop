@@ -44,8 +44,9 @@ on-disk packages.
 - Power-loss durability is part of package atomicity. Package files, journal markers, and
   directory promotes are flushed before the database commit so the remaining crash window is
   "directory exists, row not yet committed", which startup reconciliation already repairs by
-  removing unowned packages. SQLite uses `synchronous=NORMAL`, so a power loss may drop the
-  last COMMIT and leave an unowned directory, which reconciliation removes. Mutation-time
+  removing unowned packages. SQLite uses `synchronous=FULL`, so a COMMIT that has already
+  returned survives power loss. A crash after the directory promote and before that COMMIT
+  returns still leaves an unowned directory, which reconciliation removes. Mutation-time
   directory fsync is a hard error on Unix; startup recovery treats an unsupported directory fsync
   as best-effort so restoring a valid backup cannot permanently block startup. Windows cannot
   reliably flush directory metadata, so that flush is best-effort there, and macOS `sync_all` is

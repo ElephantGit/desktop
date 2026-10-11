@@ -58,8 +58,10 @@ The workspace now uses bundled `rusqlite` 0.40.2 / SQLite 3.53.2, including the
 `sqlite_source_id()` through a real pooled connection and require the linked mainline engine to be
 at least 3.51.3. They also cover committed versus uncommitted visibility across connections,
 rollback, checkpoint and reopening a file-backed database. This is a dependency prerequisite,
-not guardian crash-durability evidence; the existing application database schema and its
-`synchronous=NORMAL` policy are unchanged. Host and guardian journals independently enable `FULL`.
+not guardian crash-durability evidence. This guardian work does not change the application
+database schema. Application connections now use `synchronous=FULL` as well, so an acknowledged
+commit survives power loss; see [Database Repositories](../database-repositories.md). Host and
+guardian journals independently enable `FULL`.
 
 The approved [rootless guardian bootstrap decision](../../specs/decisions/node/process/recovery/20260917-rootless-guardian-bootstrap-and-reconnect.md)
 now has its first building block: `ora_utils::fs::LinuxFileLock`. It accepts an already opened
