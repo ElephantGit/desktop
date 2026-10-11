@@ -154,7 +154,10 @@ impl SilentHttpServer {
                         counter.fetch_add(1, Ordering::SeqCst);
                         held.push(stream);
                     }
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    // A nonblocking accept has nothing ready, or the kernel interrupted it.
+                    // Those are not a dead listener: exiting here leaves the accept count at
+                    // zero and the reuse assertion fails even though the probe did connect.
+                    Err(error) if transient_accept(&error) => {
                         thread::sleep(Duration::from_millis(5));
                     }
                     Err(_) => return,
@@ -183,6 +186,20 @@ impl Drop for SilentHttpServer {
     }
 }
 
+/// Reports accept errors that mean "no connection this time", not a dead listener.
+///
+/// `WouldBlock` is the normal nonblocking result. `Interrupted` and
+/// `ConnectionAborted` also show up on a loaded macOS runner; treating them as
+/// fatal stops the accept thread and the reuse test then sees zero connections.
+fn transient_accept(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::WouldBlock
+            | std::io::ErrorKind::Interrupted
+            | std::io::ErrorKind::ConnectionAborted
+    )
+}
+
 /// Waits until the silent server has accepted at least `count` connections.
 ///
 /// Accepting happens on the server's own polling thread, so a connection can already have
@@ -191,7 +208,10 @@ impl Drop for SilentHttpServer {
 /// loaded runner can stretch that delay far beyond the probe's own timeout, so asserting the
 /// count immediately after a probe returns races with the accept thread.
 async fn wait_accepted(server: &SilentHttpServer, count: usize) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    // The accept thread polls independently of the probe. A loaded runner can
+    // leave the established connection in the backlog well after the probe
+    // has already timed out; 10s was not enough on the macOS CI host.
+    let deadline = Instant::now() + Duration::from_secs(30);
     while Instant::now() < deadline {
         if server.accepts() >= count {
             return;

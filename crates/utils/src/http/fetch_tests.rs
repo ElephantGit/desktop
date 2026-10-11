@@ -1,7 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 use super::*;
 use pretty_assertions::assert_eq;
-use std::os::unix::fs::PermissionsExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -103,14 +102,20 @@ async fn stores_a_success_body_owner_only_with_its_digest() {
         }
     );
     assert_eq!(std::fs::read(&destination).unwrap(), b"bundle bytes");
-    assert_eq!(
-        std::fs::metadata(&destination)
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777,
-        0o600
-    );
+    // The owner-only mode is a Unix permission; the producer only sets it there, so the
+    // assertion has nothing to check on platforms without POSIX modes.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&destination)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
     assert_eq!(
         server.await.unwrap(),
         Received {
