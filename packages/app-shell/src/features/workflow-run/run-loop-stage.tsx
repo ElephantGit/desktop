@@ -33,15 +33,17 @@ export function RunLoopStage({
       ? stage.phases.flatMap((phase) => phase.nodeIds)
       : [];
   const reason =
-    parent?.stopReason === "loop_exit"
-      ? "workflowRun.loopView.exit"
-      : parent?.stopReason === "loop_succeeded"
-        ? "workflowRun.loopView.condition"
-        : parent?.status === "failed"
-          ? "workflowRun.loopView.failed"
-          : parent?.status === "cancelled"
-            ? "workflowRun.loopView.cancelled"
-            : "workflowRun.loopView.resultPending";
+    parent?.stopReason === "loop_max_iterations"
+      ? "workflowRun.loopView.maxIterations"
+      : parent?.stopReason === "loop_exit"
+        ? "workflowRun.loopView.exit"
+        : parent?.stopReason === "loop_succeeded"
+          ? "workflowRun.loopView.condition"
+          : parent?.status === "failed"
+            ? "workflowRun.loopView.failed"
+            : parent?.status === "cancelled"
+              ? "workflowRun.loopView.cancelled"
+              : "workflowRun.loopView.resultPending";
   return (
     <section
       className="rounded-2xl border border-border bg-card p-5 shadow-sm"

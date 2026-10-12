@@ -190,6 +190,7 @@ fn advances_loop_rounds_without_exposing_partial_child_state() {
                 .advance_loop_round(
                     &round_one_id,
                     &LoopRoundAdvance::Succeed {
+                        reason: ora_application::LoopCompletionReason::ConditionSatisfied,
                         outputs: Default::default(),
                     },
                     /*now*/ 3,
@@ -320,6 +321,7 @@ fn advances_loop_rounds_without_exposing_partial_child_state() {
             )
             .unwrap();
         let succeed = LoopRoundAdvance::Succeed {
+            reason: ora_application::LoopCompletionReason::ConditionSatisfied,
             outputs: [("result".into(), json!("final"))].into(),
         };
         assert_eq!(

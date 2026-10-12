@@ -273,7 +273,9 @@ export function RunTheaterActCard({
             <span className="text-[10px] text-muted-foreground">
               {state.stopReason === "loop_exit"
                 ? t("workflowRun.loopExit.completed")
-                : state.stopReason}
+                : state.stopReason === "loop_max_iterations"
+                  ? t("workflowRun.loopView.maxIterations")
+                  : state.stopReason}
             </span>
           )}
         </div>

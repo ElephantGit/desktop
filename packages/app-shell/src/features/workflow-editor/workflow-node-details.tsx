@@ -1,3 +1,4 @@
+import { WorkflowLoopLimitFields } from "./workflow-loop-limit-fields";
 import { selectorToText, textToSelector } from "./workflow-selector-text";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -1123,38 +1124,12 @@ function LoopNodeDetails({
             />
           </section>
         )}
-        <InspectorField
-          label={t("settings.workflow.field.maxIterations")}
-          htmlFor="workflow-node-max-iterations"
-        >
-          <Input
-            id="workflow-node-max-iterations"
-            type="number"
-            min={1}
-            max={100}
-            value={loopConfig?.maxIterations ?? 3}
-            disabled={loopConfig === undefined}
-            onChange={(event) => {
-              const parsed = Number(event.target.value);
-              if (loopConfig === undefined || !Number.isFinite(parsed)) {
-                return;
-              }
-              onUpdate({
-                ...node,
-                data: {
-                  ...node.data,
-                  loopConfig: {
-                    ...loopConfig,
-                    maxIterations: Math.min(
-                      100,
-                      Math.max(1, Math.trunc(parsed)),
-                    ),
-                  },
-                },
-              });
-            }}
-          />
-        </InspectorField>
+        <WorkflowLoopLimitFields
+          config={loopConfig}
+          onChange={(config) =>
+            onUpdate({ ...node, data: { ...node.data, loopConfig: config } })
+          }
+        />
         <p className="rounded-lg border border-border bg-muted/25 px-3 py-2 text-[11px] leading-5 text-muted-foreground">
           {loopConfig === undefined
             ? t("settings.workflow.loop.legacyUnsupported")

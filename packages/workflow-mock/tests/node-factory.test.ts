@@ -142,6 +142,7 @@ describe("createMockWorkflowNode", () => {
         kind: "loop",
         loopConfig: {
           maxIterations: 3,
+          maxIterationsBehavior: "fail",
           variables: [
             {
               name: "value",
@@ -238,7 +239,11 @@ describe("createMockWorkflowNode", () => {
           kind: "loop",
           label: "循环",
           description: "重复执行直到满足条件",
-          configFields: ["maxIterations", "loopInitialValue"],
+          configFields: [
+            "maxIterations",
+            "maxIterationsBehavior",
+            "loopInitialValue",
+          ],
           supportedScopes: ["workflow"],
         },
         {

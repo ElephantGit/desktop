@@ -162,6 +162,7 @@ describe("graph envelope codec", () => {
         description: "",
         loopConfig: {
           maxIterations: 3,
+          maxIterationsBehavior: "succeed",
           variables: [
             {
               name: "draft",

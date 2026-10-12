@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { GraphWorkflowRun } from "@ora/workflow-runtime";
 import {
+  loopRoundOutcome,
   projectLoopRoundNodeStates,
   selectedLoopRound,
 } from "./loop-round-state";
@@ -115,6 +116,18 @@ function createRun(): GraphWorkflowRun {
 }
 
 describe("Loop round state projection", () => {
+  it("distinguishes budget exhaustion from a met condition only on the last round", () => {
+    const run = createRun();
+    run.nodeStates.loop = {
+      status: "succeeded",
+      stopReason: "loop_max_iterations",
+    };
+    run.rounds![1].status = "succeeded";
+    expect(run.rounds!.map((round) => loopRoundOutcome(run, round))).toEqual([
+      "workflowRun.loopView.continue",
+      "workflowRun.loopView.maxIterations",
+    ]);
+  });
   it("never falls back to another round's session for an unexecuted member", () => {
     const run = createRun();
     run.nodeStates.reviewer = {

@@ -34,18 +34,3 @@ pub(super) fn request(
     transaction.execute("UPDATE workflow_node_runs SET status = 4, finished_at = ?2, updated_at = ?2 WHERE scope_id = ?1 AND status IN (0, 1) AND is_deleted = 0", params![scope_id.as_ref(), now])?;
     Ok(())
 }
-
-/// Distinguishes an explicit break from an ordinary successful round in the parent history.
-pub(super) fn is_requested(
-    transaction: &Transaction<'_>,
-    scope_id: &WorkflowScopeId,
-) -> Result<bool, crate::DatabaseError> {
-    let state: String = transaction.query_row(
-        "SELECT state FROM workflow_execution_scopes WHERE id = ?1",
-        params![scope_id.as_ref()],
-        |row| row.get(0),
-    )?;
-    Ok(serde_json::from_str::<LoopRoundExecutionState>(&state)?
-        .exit
-        .is_some())
-}

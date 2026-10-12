@@ -12,6 +12,7 @@ export const workflowRunTranslations = {
     "workflowRun.loopView.continue": "已完成 · 继续循环",
     "workflowRun.loopView.exit": "已完成 · 通过退出节点结束",
     "workflowRun.loopView.condition": "已完成 · 满足结束条件",
+    "workflowRun.loopView.maxIterations": "达到最大轮次，继续工作流",
     "workflowRun.loopView.completed": "已完成",
     "workflowRun.loopView.failed": "失败",
     "workflowRun.loopView.cancelled": "已取消",
@@ -420,6 +421,8 @@ export const workflowRunTranslations = {
     "workflowRun.loopView.continue": "Completed · continuing",
     "workflowRun.loopView.exit": "Completed · exit node reached",
     "workflowRun.loopView.condition": "Completed · end condition met",
+    "workflowRun.loopView.maxIterations":
+      "Maximum rounds reached; continuing workflow",
     "workflowRun.loopView.completed": "Completed",
     "workflowRun.loopView.failed": "Failed",
     "workflowRun.loopView.cancelled": "Cancelled",

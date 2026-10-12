@@ -323,6 +323,27 @@ it("keeps unexecuted branch alternatives out of the round path while allowing in
   );
 });
 
+it("shows budget completion and the final output without claiming the condition was met", async () => {
+  const user = userEvent.setup();
+  const run = fixture();
+  run.status = "succeeded";
+  run.nodeStates.loop = {
+    status: "succeeded",
+    stopReason: "loop_max_iterations",
+    output: { summary: '{"result":"last draft"}' },
+  };
+  run.rounds![1].status = "succeeded";
+  mount(run);
+  await user.click(screen.getByRole("button", { name: /Review loop:/ }));
+  await user.click(screen.getByRole("button", { name: "Loop results" }));
+  const result = screen.getByRole("region", { name: "Loop results" });
+  expect(result).toHaveTextContent(
+    "Maximum rounds reached; continuing workflow",
+  );
+  expect(result).toHaveTextContent('"result": "last draft"');
+  expect(result).not.toHaveTextContent("end condition met");
+});
+
 it("shows only the selected round's committed output in the inspector", async () => {
   const user = userEvent.setup();
   mount(fixture());

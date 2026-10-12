@@ -26,6 +26,7 @@ export type WorkflowConfigField =
   | "maxAttempts"
   | "exitCondition"
   | "maxIterations"
+  | "maxIterationsBehavior"
   | "loopInitialValue"
   | "iteration";
 
@@ -347,7 +348,11 @@ export function createMockWorkflowNodeType(
           locale === "zh-CN"
             ? "重复执行直到满足条件"
             : "Repeat until the exit condition is met",
-        configFields: ["maxIterations", "loopInitialValue"],
+        configFields: [
+          "maxIterations",
+          "maxIterationsBehavior",
+          "loopInitialValue",
+        ],
         supportedScopes: ["workflow"],
       };
     case "iteration":

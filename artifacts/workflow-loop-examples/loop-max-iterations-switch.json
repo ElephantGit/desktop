@@ -1,0 +1,126 @@
+{
+  "schemaVersion": 2,
+  "id": "loop-max-iterations-switch-example",
+  "name": "最大循环轮次开关测试（无需模型）",
+  "description": "默认：最多 3 轮，中断开关关闭，循环值 KEEP_RUNNING 永远不满足 DONE，达到上限后继续后续输出。开启中断开关后应失败且后续输出不执行。将循环初始值改为 DONE 后应第 1 轮正常结束。无需 Agent、模型、Skill 或 MCP。",
+  "updatedAt": "2026-10-12T14:30:23+08:00",
+  "viewport": { "x": 35, "y": 80, "zoom": 0.8 },
+  "nodes": [
+    {
+      "id": "start",
+      "type": "workflow",
+      "position": { "x": 30, "y": 195 },
+      "data": { "kind": "start", "title": "开始", "description": "" },
+      "deletable": false
+    },
+    {
+      "id": "limit-loop",
+      "type": "workflow",
+      "position": { "x": 380, "y": 90 },
+      "data": {
+        "kind": "loop",
+        "title": "循环：最多 3 轮",
+        "description": "",
+        "loopConfig": {
+          "maxIterations": 3,
+          "maxIterationsBehavior": "succeed",
+          "variables": [
+            {
+              "name": "value",
+              "valueType": "string",
+              "initial": { "kind": "constant", "value": "KEEP_RUNNING" },
+              "feedback": ["limit-loop", "value"]
+            }
+          ],
+          "until": {
+            "logic": "and",
+            "conditions": [
+              {
+                "variableSelector": ["limit-loop", "value"],
+                "operator": "equals",
+                "value": "DONE"
+              }
+            ]
+          },
+          "outputs": [
+            { "name": "result", "variableSelector": ["limit-loop", "value"] }
+          ]
+        }
+      },
+      "initialWidth": 680,
+      "initialHeight": 320
+    },
+    {
+      "id": "round-start",
+      "type": "workflow",
+      "position": { "x": 35, "y": 135 },
+      "data": {
+        "kind": "start",
+        "title": "轮次开始",
+        "description": "",
+        "containerId": "limit-loop"
+      },
+      "parentId": "limit-loop",
+      "deletable": false
+    },
+    {
+      "id": "round-value",
+      "type": "workflow",
+      "position": { "x": 345, "y": 135 },
+      "data": {
+        "kind": "condition",
+        "title": "本轮检查：当前值是否为 DONE",
+        "description": "",
+        "containerId": "limit-loop",
+        "cases": [
+          {
+            "id": "if-done",
+            "logic": "and",
+            "conditions": [
+              {
+                "variableSelector": ["limit-loop", "value"],
+                "operator": "equals",
+                "value": "DONE"
+              }
+            ]
+          }
+        ]
+      },
+      "parentId": "limit-loop"
+    },
+    {
+      "id": "after-loop",
+      "type": "workflow",
+      "position": { "x": 1160, "y": 195 },
+      "data": {
+        "kind": "output",
+        "title": "后续节点：输出循环结果",
+        "description": "",
+        "outputs": [
+          { "name": "result", "variableSelector": ["limit-loop", "result"] }
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "start-loop",
+      "source": "start",
+      "target": "limit-loop",
+      "type": "workflow"
+    },
+    {
+      "id": "loop-output",
+      "source": "limit-loop",
+      "target": "after-loop",
+      "type": "workflow"
+    },
+    {
+      "id": "round-start-value",
+      "source": "round-start",
+      "target": "round-value",
+      "type": "workflow"
+    }
+  ],
+  "globalVariables": []
+}
