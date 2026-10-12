@@ -145,6 +145,7 @@ pub(super) fn launch(fixture: &Fixture, clone: &CloneConfig, bind: SocketAddr) -
             node: fixture.config(),
             process: fixture.process(),
             clone: Some(clone.clone()),
+            git_access: None,
             control: Some(ora_node::ControlConfig {
                 target: Some(runtime_fixture::scope()),
                 controller_id: ControllerId::new("owner"),

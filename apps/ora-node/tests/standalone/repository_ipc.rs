@@ -48,6 +48,7 @@ pub(super) fn write_config(
             node: fixture.config(),
             process: fixture.process(),
             clone: Some(clone.clone()),
+            git_access: None,
             control: Some(ora_node::ControlConfig {
                 target: None,
                 controller_id: ControllerId::new("owner"),

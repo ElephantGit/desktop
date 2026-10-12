@@ -33,6 +33,8 @@ pub use git::{Checkout, DirectoryState, ExecutionGitRunner, Observation, Worktre
 #[cfg(target_os = "linux")]
 pub use repository::{CloneConfig, CloneSsh};
 #[cfg(target_os = "linux")]
+mod git_access;
+#[cfg(target_os = "linux")]
 mod managed;
 #[cfg(target_os = "linux")]
 mod model_proxy;
@@ -42,6 +44,8 @@ mod revision;
 mod service;
 #[cfg(target_os = "linux")]
 mod session;
+#[cfg(target_os = "linux")]
+pub use git_access::GitAccessConfig;
 #[cfg(target_os = "linux")]
 pub use managed::{ManagedGitRunner, ProcessConfig, Shutdown};
 #[cfg(target_os = "linux")]
