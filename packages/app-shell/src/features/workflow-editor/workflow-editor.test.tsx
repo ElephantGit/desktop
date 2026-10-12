@@ -2202,7 +2202,11 @@ describe("WorkflowEditor", () => {
     );
     act(() => screen.getByLabelText("值 1").focus());
     await user.keyboard("APPROVED");
-    expect(screen.getByLabelText("值 1")).toHaveValue("APPROVED");
+    await waitFor(() =>
+      expect(screen.getByLabelText("值 1").dataset.composerText).toBe(
+        "APPROVED",
+      ),
+    );
     const expected = {
       logic: "and",
       conditions: [
@@ -2227,7 +2231,9 @@ describe("WorkflowEditor", () => {
     renderEditor(<WorkflowEditor />, state, undefined, false);
     const loop = await screen.findByLabelText("循环节点: 循环 1");
     await user.click(loop.closest(".react-flow__node") ?? loop);
-    expect(await screen.findByLabelText("值 1")).toHaveValue("APPROVED");
+    expect((await screen.findByLabelText("值 1")).dataset.composerText).toBe(
+      "APPROVED",
+    );
     expect(screen.getByLabelText("条件 1")).toHaveTextContent("包含");
   });
 
