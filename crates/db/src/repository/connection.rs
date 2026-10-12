@@ -103,10 +103,24 @@ impl ManageConnection for SqliteConnectionManager {
 fn configure_repository_connection(connection: &Connection) -> Result<(), rusqlite::Error> {
     // These PRAGMAs are centralized here so every pooled connection uses the same
     // concurrency and durability profile instead of relying on repository call sites.
-    connection.pragma_update(None, "journal_mode", "WAL")?;
+    // The pool opens connections concurrently. WAL locks are taken while applying
+    // journal_mode, so the busy handler has to be installed first or a peer's
+    // recovery lock fails the open instead of waiting.
     connection.busy_timeout(Duration::from_millis(BUSY_TIMEOUT_MILLIS))?;
-    connection.pragma_update(None, "synchronous", "NORMAL")?;
-    connection.pragma_update(None, "foreign_keys", "ON")?;
+    connection.pragma_update(/*schema_name*/ None, "journal_mode", "WAL")?;
+    // WAL defers durability decisions to the `synchronous` setting: with NORMAL a
+    // COMMIT only appends write-ahead frames to the OS page cache, so a power cut
+    // rolls the database back to the last WAL sync — which, because auto-checkpoint
+    // rarely triggers at Ora's write volume and the WAL is only reset on a clean
+    // close, can span the whole session. Users experienced exactly that as projects
+    // disappearing from the sidebar and every task/worktree of the surviving
+    // projects vanishing after a power outage. FULL makes each COMMIT fsync the WAL
+    // before reporting success, so power loss can lose at most the in-flight
+    // transaction, never acknowledged writes. This matches the durability policy
+    // every other SQLite owner in the workspace (node-db, controller, and the
+    // process-runtime state journal) already applies.
+    connection.pragma_update(/*schema_name*/ None, "synchronous", "FULL")?;
+    connection.pragma_update(/*schema_name*/ None, "foreign_keys", "ON")?;
 
     Ok(())
 }

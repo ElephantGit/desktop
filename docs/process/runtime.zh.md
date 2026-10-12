@@ -45,8 +45,9 @@ Workspace 已升级为捆绑 `rusqlite` 0.40.2／SQLite 3.53.2，包含
 [WAL-reset 修复](https://sqlite.org/wal.html)。`ora-db` 测试通过真实池连接查询
 `sqlite_version()` 和 `sqlite_source_id()`，要求实际链接的主线引擎不低于 3.51.3；
 另覆盖多连接间已提交与未提交数据的可见性、回滚、checkpoint 和文件数据库重新打开。
-这是依赖前置条件，不是 guardian 崩溃耐久证据；现有业务数据库 schema 和
-`synchronous=NORMAL` 政策不变，host 与 guardian journal 已分别启用 `FULL`。
+这是依赖前置条件，不是 guardian 崩溃耐久证据。这次 guardian 工作不改变业务数据库 schema。
+业务库连接现在同样使用 `synchronous=FULL`，已确认的提交在断电后仍然保留；见
+[数据库仓储](../database-repositories.md)。host 与 guardian journal 仍分别启用 `FULL`。
 
 已批准的[无特权 Guardian 启动决策](../../specs/decisions/node/process/recovery/20260917-rootless-guardian-bootstrap-and-reconnect.md)
 已实现第一项基础能力：`ora_utils::fs::LinuxFileLock`。它接收已打开的普通文件，以非阻塞方式尝试
