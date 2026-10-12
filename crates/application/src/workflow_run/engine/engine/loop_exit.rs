@@ -68,7 +68,10 @@ where
             return Ok(());
         };
         let advance = match result.and(exit.result) {
-            Ok(outputs) => LoopRoundAdvance::Succeed { outputs },
+            Ok(outputs) => LoopRoundAdvance::Succeed {
+                outputs,
+                reason: crate::LoopCompletionReason::LoopExit,
+            },
             Err(error) => LoopRoundAdvance::Fail { error },
         };
         self.repository.advance_loop_round(

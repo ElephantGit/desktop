@@ -76,6 +76,7 @@ fn terminates_on_first_or_last_round() {
         assert_eq!(
             config().complete_round(round, &pool),
             Ok(LoopRoundDecision::Succeeded {
+                reason: LoopCompletionReason::ConditionSatisfied,
                 outputs: BTreeMap::from([("result".into(), json!("draft"))])
             })
         );
@@ -101,6 +102,90 @@ fn enforces_exact_round_limit() {
             })
         );
     }
+}
+
+/// The opt-in policy changes exhaustion only and keeps completed-round output semantics.
+#[test]
+fn succeeds_at_limit_without_applying_next_round_feedback() {
+    let mut config = config();
+    config.max_iterations_behavior = LoopMaxIterationsBehavior::Succeed;
+    config.outputs.push(super::super::graph::OutputBinding {
+        name: "carried".into(),
+        variable_selector: VariableSelector::try_from_parts(&["loop".into(), "left".into()])
+            .unwrap(),
+    });
+    assert!(matches!(
+        config.complete_round(/*round*/ 1, &pool()),
+        Ok(LoopRoundDecision::Continue { .. })
+    ));
+    for max_iterations in [1, 2] {
+        config.max_iterations = max_iterations;
+        assert_eq!(
+            config.complete_round(max_iterations, &pool()),
+            Ok(LoopRoundDecision::Succeeded {
+                outputs: BTreeMap::from([
+                    ("result".into(), json!("draft")),
+                    ("carried".into(), json!(1)),
+                ]),
+                reason: LoopCompletionReason::MaxIterations,
+            })
+        );
+        let mut approved = pool();
+        approved
+            .set("review.approved", "review", json!(true))
+            .unwrap();
+        assert!(matches!(
+            config.complete_round(max_iterations, &approved),
+            Ok(LoopRoundDecision::Succeeded {
+                reason: LoopCompletionReason::ConditionSatisfied,
+                ..
+            })
+        ));
+    }
+    config.until.cases.clear();
+    assert!(matches!(
+        config.complete_round(/*round*/ 2, &pool()),
+        Ok(LoopRoundDecision::Succeeded {
+            reason: LoopCompletionReason::MaxIterations,
+            ..
+        })
+    ));
+}
+
+/// Budget completion must not hide unavailable outputs, invalid feedback, or condition errors.
+#[test]
+fn successful_limit_policy_preserves_value_validation() {
+    let mut config = config();
+    config.max_iterations_behavior = LoopMaxIterationsBehavior::Succeed;
+    for (missing, selector) in [
+        ("loop.left", "loop.left"),
+        ("writer.structured", "writer.structured.text"),
+    ] {
+        let mut completed = pool();
+        completed.values.remove(missing);
+        let before = completed.clone();
+        assert_eq!(
+            config.complete_round(/*round*/ 2, &completed),
+            Err(LoopRoundError::UnsetValue {
+                selector: selector.into()
+            })
+        );
+        assert_eq!(completed, before);
+    }
+    let mut completed = pool();
+    completed.values.remove("review.approved");
+    assert!(matches!(
+        config.complete_round(/*round*/ 2, &completed),
+        Err(LoopRoundError::Condition(_))
+    ));
+    config.variables[1].value_type = "boolean".into();
+    assert_eq!(
+        config.complete_round(/*round*/ 2, &pool()),
+        Err(LoopRoundError::TypeMismatch {
+            name: "right".into(),
+            value_type: "boolean".into()
+        })
+    );
 }
 
 /// Unset feedback, such as an inactive branch, aborts the whole transition without partial writes.

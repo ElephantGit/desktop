@@ -50,7 +50,7 @@
 | 退出       | 活跃子图执行结束后判断类型化 `until` 条件；复用 Condition 求值                           |
 | 上限       | 必填正整数最大轮数；建议默认 5、上限 100，前后端均校验                                   |
 | 顺序       | 解析反馈值，基于已完成轮次判断退出，再原子退出或推进；所有反馈赋值读取同一份赋值前变量池 |
-| 达到上限   | 退出条件仍为假时，返回类型化上限错误，并保留最后一轮供检查                               |
+| 达到上限   | 退出条件仍为假时，默认失败；可配置为成功导出最后一轮结果并继续工作流，保留轮次历史       |
 | 输出       | 成功时导出显式命名的 Loop 输出；外部节点只在 Loop 完成后读取                             |
 | Agent 执行 | 每轮每节点新建 NodeRun 与 Session，沿用模型、Skill、MCP 和输出契约行为                   |
 | 人工反馈   | 支持在 Loop 内使用现有 interactive Agent，包括等待、后续对话和手动完成                   |
@@ -76,7 +76,7 @@
 
 容器快照使用 `schemaVersion: 2`。Loop 是根层节点，配置为 `data.kind: "loop"` 和 `data.loopConfig`。子节点通过 `data.containerId` 指向 Loop；若序列化渲染器的 `parentId`，两者必须一致。根图与每个循环体都要求一个 Start 节点，且所有节点可达。拒绝嵌套容器与跨作用域连线。旧的扁平快照保留原有解码行为。
 
-`loopConfig` 包含 `maxIterations`、`variables`、`until` 和 `outputs`。变量包含 `name`、`valueType`、`initial` 和 `feedback`。初值使用带标签的 `{ "kind": "constant", "value": ... }` 或 `{ "kind": "variable", "selector": ["node", "variable"] }`；反馈为选择器数组。`until` 复用 Condition 的 `logic` 与 `conditions` 语法。输出形如 `{ "name": "result", "variableSelector": ["child", "output"] }`。
+`loopConfig` 包含 `maxIterations`、`variables`、`until` 和 `outputs`。可选的 `maxIterationsBehavior` 为 `fail`（默认）或 `succeed`，控制达到上限时是否中断工作流；详见[最大轮次行为](workflow-loop-exit.zh.md#达到最大轮次后的行为)。变量包含 `name`、`valueType`、`initial` 和 `feedback`。初值使用带标签的 `{ "kind": "constant", "value": ... }` 或 `{ "kind": "variable", "selector": ["node", "variable"] }`；反馈为选择器数组。`until` 复用 Condition 的 `logic` 与 `conditions` 语法。输出形如 `{ "name": "result", "variableSelector": ["child", "output"] }`。
 
 初值可引用全局变量和外层上游节点。反馈、终止条件与导出可引用完成后的循环体、跨轮变量、全局变量和外层上游值。外层节点必须读取 Loop 导出的结果，不能直接引用子节点。解析层边界不能替代运行时的变量声明、值类型、缺失值和未激活分支检查；这些检查必须在开放执行前完成。
 

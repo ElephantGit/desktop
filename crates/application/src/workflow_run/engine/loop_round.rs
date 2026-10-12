@@ -2,7 +2,7 @@
 
 use super::condition::{ConditionConfig, ConditionError, ELSE_BRANCH_ID, evaluate_condition};
 use super::graph::WorkflowGraph;
-use super::loop_config::{LoopConfig, LoopInitialValue};
+use super::loop_config::{LoopConfig, LoopInitialValue, LoopMaxIterationsBehavior};
 use super::variable_pool::{VariableSelector, WorkflowVariablePool, WorkflowVariablePoolError};
 use super::variable_value::normalize_workflow_value;
 use serde::{Deserialize, Serialize};
@@ -13,8 +13,21 @@ use thiserror::Error;
 /// A completed round either supplies the next round's inputs or exports the final results.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoopRoundDecision {
-    Continue { carried: BTreeMap<String, Value> },
-    Succeeded { outputs: BTreeMap<String, Value> },
+    Continue {
+        carried: BTreeMap<String, Value>,
+    },
+    Succeeded {
+        outputs: BTreeMap<String, Value>,
+        reason: LoopCompletionReason,
+    },
+}
+
+/// Explains successful completion without claiming that an exhausted loop met its condition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoopCompletionReason {
+    ConditionSatisfied,
+    MaxIterations,
+    LoopExit,
 }
 
 /// Durable execution data private to one round scope.
@@ -196,9 +209,20 @@ impl LoopConfig {
             && evaluate_condition(&self.until, completed)? != ELSE_BRANCH_ID
         {
             let outputs = self.exit_outputs(completed)?;
-            return Ok(LoopRoundDecision::Succeeded { outputs });
+            return Ok(LoopRoundDecision::Succeeded {
+                outputs,
+                reason: LoopCompletionReason::ConditionSatisfied,
+            });
         }
         // A successful final permitted round still succeeds; only a false termination hits the cap.
+        if round == self.max_iterations
+            && self.max_iterations_behavior == LoopMaxIterationsBehavior::Succeed
+        {
+            return Ok(LoopRoundDecision::Succeeded {
+                outputs: self.exit_outputs(completed)?,
+                reason: LoopCompletionReason::MaxIterations,
+            });
+        }
         if round == self.max_iterations {
             return Err(LoopRoundError::LimitReached {
                 max_iterations: self.max_iterations,

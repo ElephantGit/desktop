@@ -6,7 +6,17 @@ Add **Exit loop** from a loop member’s output-port plus menu. It belongs to th
 
 Reaching an exit stops the owning Loop, not the outer workflow. Existing loop output bindings export values from the current committed round. The exit does not read next-round feedback or evaluate the normal end conditions. A missing output binding value fails explicitly; previous-round node outputs are never substituted. Loop variables still refer to their committed carried values.
 
-End conditions can be removed entirely to use exit nodes alone. Without a reached exit or a satisfied end condition, the maximum round limit still fails the Loop. Existing workflows retain their behavior. No filesystem or database schema migration is required.
+End conditions can be removed entirely to finish through exit nodes or the round limit. Without a reached exit or a satisfied end condition, the limit fails the Loop by default; disabling the switch below allows successful completion. Existing workflows retain their behavior. No filesystem or database schema migration is required.
+
+## Maximum round behavior
+
+The Loop inspector provides **Stop workflow at maximum rounds** below the maximum round count, enabled by default. When enabled, exhaustion fails both the Loop and the workflow. When disabled, the last completed round publishes the configured outputs, succeeds the Loop, and releases downstream nodes without starting an extra round. A condition satisfied on the last round still records condition completion.
+
+The setting is stored as `loopConfig.maxIterationsBehavior`: enabled means `"fail"` and disabled means `"succeed"`. Missing fields in older snapshots default to `"fail"`; other values are rejected. Runs use their frozen snapshot configuration, including on restart recovery; later edits do not change a run already started. Explicitly switching the run snapshot adopts the selected snapshot's configuration.
+
+This switch changes only budget exhaustion. Normal feedback validation, condition evaluation, and output validation retain their order. Execution errors, missing or mistyped feedback, condition evaluation errors, and missing outputs still fail. Outputs come from the last completed round's pool, without substituting previous-round node outputs or applying next-round feedback to current carried variables.
+
+Successful exhaustion records `stop_reason: loop_max_iterations` on the parent. Round overviews and Loop results show “Maximum rounds reached; continuing workflow”, distinct from a satisfied condition or an explicit exit.
 
 ## Execution and recovery
 

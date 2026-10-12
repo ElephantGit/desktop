@@ -109,6 +109,7 @@ pub enum LoopRoundAdvance {
     /// Closes the round and publishes the configured values through the parent Loop node.
     Succeed {
         outputs: BTreeMap<String, serde_json::Value>,
+        reason: super::loop_round::LoopCompletionReason,
     },
     /// Terminates the current round, parent Loop, and root run with one durable error.
     Fail { error: String },

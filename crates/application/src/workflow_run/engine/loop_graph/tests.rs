@@ -224,6 +224,35 @@ fn accepts_executable_iteration_bounds() {
     }
 }
 
+/// Old snapshots retain failure semantics while explicit policies are strictly decoded.
+#[test]
+fn parses_loop_max_iterations_behavior() {
+    use crate::LoopMaxIterationsBehavior;
+    let original = snapshot();
+    let graph = WorkflowGraph::parse(&original.to_string()).unwrap();
+    assert_eq!(
+        graph.loop_body("loop").unwrap().0.max_iterations_behavior,
+        LoopMaxIterationsBehavior::Fail
+    );
+    for (wire, expected) in [
+        ("fail", LoopMaxIterationsBehavior::Fail),
+        ("succeed", LoopMaxIterationsBehavior::Succeed),
+    ] {
+        let mut value = original.clone();
+        value["nodes"][1]["data"]["loopConfig"]["maxIterationsBehavior"] = json!(wire);
+        let graph = WorkflowGraph::parse(&value.to_string()).unwrap();
+        assert_eq!(
+            graph.loop_body("loop").unwrap().0.max_iterations_behavior,
+            expected
+        );
+    }
+    for invalid in [json!("continue"), json!(true), json!(null), json!(0)] {
+        let mut value = original.clone();
+        value["nodes"][1]["data"]["loopConfig"]["maxIterationsBehavior"] = invalid;
+        assert!(WorkflowGraph::parse(&value.to_string()).is_err());
+    }
+}
+
 /// Generated qualification scenarios must satisfy the real decoder before any Agent is started.
 #[test]
 fn qualification_generator_obeys_execution_graph_contract() {
