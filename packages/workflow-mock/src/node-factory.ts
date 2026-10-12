@@ -179,6 +179,7 @@ export function createMockWorkflowLoopGroup({
     ...loop.data,
     loopConfig: {
       maxIterations: 3,
+      maxIterationsBehavior: "fail",
       variables: [
         {
           name: "value",

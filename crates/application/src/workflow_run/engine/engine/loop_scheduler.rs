@@ -181,7 +181,9 @@ where
                 )?,
             }
         }
-        Ok(LoopRoundDecision::Succeeded { outputs }) => LoopRoundAdvance::Succeed { outputs },
+        Ok(LoopRoundDecision::Succeeded { outputs, reason }) => {
+            LoopRoundAdvance::Succeed { outputs, reason }
+        }
         Err(error) => return engine.fail_loop_round(&scope, error.to_string(), now),
     };
     engine

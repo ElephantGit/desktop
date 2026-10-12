@@ -12,9 +12,19 @@ use std::collections::HashSet;
 #[derive(Debug, Clone, PartialEq)]
 pub struct LoopConfig {
     pub max_iterations: u32,
+    pub max_iterations_behavior: LoopMaxIterationsBehavior,
     pub variables: Vec<LoopVariable>,
     pub until: ConditionConfig,
     pub outputs: Vec<OutputBinding>,
+}
+
+/// Controls only exhaustion of the round budget; execution and value errors still fail.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LoopMaxIterationsBehavior {
+    #[default]
+    Fail,
+    Succeed,
 }
 
 /// One typed carried value, with an explicit initializer and simultaneous feedback assignment.
@@ -37,6 +47,8 @@ pub enum LoopInitialValue {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct WireLoopConfig {
     max_iterations: u32,
+    #[serde(default)]
+    max_iterations_behavior: LoopMaxIterationsBehavior,
     variables: Vec<WireLoopVariable>,
     until: WireUntil,
     outputs: Vec<WireBinding>,
@@ -129,6 +141,7 @@ impl LoopConfig {
         }
         Ok(Self {
             max_iterations: wire.max_iterations,
+            max_iterations_behavior: wire.max_iterations_behavior,
             variables,
             until,
             outputs,

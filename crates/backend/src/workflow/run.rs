@@ -14,6 +14,8 @@ mod last_failure;
 #[cfg(test)]
 mod loop_exit_tests;
 #[cfg(test)]
+mod loop_limit_tests;
+#[cfg(test)]
 mod loop_resume_tests;
 #[cfg(test)]
 mod mixed_scope_tests;

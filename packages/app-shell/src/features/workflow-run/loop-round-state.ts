@@ -54,6 +54,8 @@ export function loopRoundOutcome(
   )
     return "workflowRun.loopView.continue";
   const parent = run.nodeStates[round.parentLoopNodeId];
+  if (parent?.stopReason === "loop_max_iterations")
+    return "workflowRun.loopView.maxIterations";
   if (parent?.stopReason === "loop_exit") return "workflowRun.loopView.exit";
   if (parent?.stopReason === "loop_succeeded")
     return "workflowRun.loopView.condition";

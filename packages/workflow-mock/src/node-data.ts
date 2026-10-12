@@ -286,6 +286,8 @@ export interface WorkflowLoopVariable {
 /** Executable bounded Loop configuration consumed by the workflow engine. */
 export interface WorkflowLoopConfig {
   maxIterations: number;
+  /** Missing in older snapshots; defaults to failing when the end condition is still false. */
+  maxIterationsBehavior?: "fail" | "succeed";
   variables: WorkflowLoopVariable[];
   until: {
     logic: WorkflowConditionLogic;

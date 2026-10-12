@@ -3,6 +3,7 @@
 use super::iteration::write_pool_variable;
 use super::payload_json::merge_complete_payload;
 use super::*;
+use ora_application::LoopCompletionReason;
 
 /// Creates a round scope and its Start node in one transaction.
 pub(super) fn start(
@@ -167,7 +168,12 @@ pub(super) fn advance(
                         now,
                     )?;
                 }
-                LoopRoundAdvance::Succeed { outputs } => {
+                LoopRoundAdvance::Succeed { outputs, reason } => {
+                    let stop_reason = match reason {
+                        LoopCompletionReason::ConditionSatisfied => "loop_succeeded",
+                        LoopCompletionReason::MaxIterations => "loop_max_iterations",
+                        LoopCompletionReason::LoopExit => "loop_exit",
+                    };
                     settle(&transaction, scope_id, WorkflowScopeStatus::Succeeded, now)?;
                     let mut payload = run_payload
                         .as_deref()
@@ -195,7 +201,7 @@ pub(super) fn advance(
                             // recorded before the rounds ran survives the Loop's completion.
                             merge_complete_payload(
                                 parent_payload,
-                                Some(if super::loop_exit::is_requested(&transaction, scope_id)? { "loop_exit" } else { "loop_succeeded" }.into()),
+                                Some(stop_reason.into()),
                                 vec![],
                             )?,
                             now,

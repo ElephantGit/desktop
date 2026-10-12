@@ -48,8 +48,10 @@ pub use handlers::WorkflowRunControlHandler;
 pub use iteration::{
     CompositeRegion, IterationConfig, IterationErrorStrategy, IterationLedger, RoundOutcome,
 };
-pub use loop_config::{LoopConfig, LoopInitialValue, LoopVariable};
-pub use loop_round::{LoopExitState, LoopRoundDecision, LoopRoundError, LoopRoundExecutionState};
+pub use loop_config::{LoopConfig, LoopInitialValue, LoopMaxIterationsBehavior, LoopVariable};
+pub use loop_round::{
+    LoopCompletionReason, LoopExitState, LoopRoundDecision, LoopRoundError, LoopRoundExecutionState,
+};
 pub use node_executor::{
     EngineError, LoopExitCleanup, NodeExecutor, WorkflowRunCallback, WorkflowValidationError,
 };

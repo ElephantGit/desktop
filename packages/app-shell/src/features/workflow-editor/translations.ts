@@ -358,10 +358,13 @@ export const workflowEditorTranslations = {
     "settings.workflow.junction.collectResults": "收集结果继续",
     "settings.workflow.loop.exitConditionPlaceholder":
       "如 verification.status == passed",
+    "settings.workflow.loop.interruptAtLimit": "达到最大轮次时中断工作流",
+    "settings.workflow.loop.limitHint":
+      "结束条件仍未满足时，开启则标记失败并中断；关闭则结束循环、输出最后一轮结果并继续后续节点。执行或数据校验错误仍会失败。",
     "settings.workflow.loop.until": "结束条件",
     "settings.workflow.loop.untilLogic": "结束条件组合方式",
     "settings.workflow.loop.defaultBehavior":
-      "执行到退出循环节点时提前结束；否则每轮完成后检查结束条件。可删除所有条件，仅使用退出节点。达到最大轮次仍未结束时，循环失败。输出引用的值必须已生成。",
+      "执行到退出循环节点时提前结束；否则每轮完成后检查结束条件。可删除所有条件，改用退出节点或最大轮次结束。达到最大轮次时按配置结束。输出引用的值必须已生成。",
     "settings.workflow.loop.legacyUnsupported":
       "此旧循环节点缺少可执行配置，请删除后重新添加。",
     "settings.workflow.subflow.hint":
@@ -933,10 +936,14 @@ export const workflowEditorTranslations = {
     "settings.workflow.junction.collectResults": "Collect results and continue",
     "settings.workflow.loop.exitConditionPlaceholder":
       "e.g. verification.status == passed",
+    "settings.workflow.loop.interruptAtLimit":
+      "Stop workflow at maximum rounds",
+    "settings.workflow.loop.limitHint":
+      "If the end condition is still unmet, enable to fail and stop the workflow; disable to finish the loop, publish the last round's outputs, and continue. Execution and validation errors still fail.",
     "settings.workflow.loop.until": "End conditions",
     "settings.workflow.loop.untilLogic": "End condition logic",
     "settings.workflow.loop.defaultBehavior":
-      "Exit loop nodes stop the loop early; otherwise conditions are checked after each round. Remove all conditions to use only exit nodes. Reaching the limit without an exit fails the loop. Output bindings must already have values.",
+      "Exit loop nodes stop the loop early; otherwise conditions are checked after each round. Remove all conditions to finish through exit nodes or the round limit. The round limit behavior is configurable. Output bindings must already have values.",
     "settings.workflow.loop.legacyUnsupported":
       "This legacy Loop lacks executable configuration. Delete it and add a new Loop.",
     "settings.workflow.subflow.hint":
