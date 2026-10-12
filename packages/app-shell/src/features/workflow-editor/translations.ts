@@ -288,7 +288,7 @@ export const workflowEditorTranslations = {
     "settings.workflow.condition.unset": "条件未设置",
     "settings.workflow.condition.variablePlaceholder": "如 工具1.exit_code",
     "settings.workflow.condition.operatorPlaceholder": "选择条件",
-    "settings.workflow.condition.valuePlaceholder": "如 0",
+    "settings.workflow.condition.valuePlaceholder": "输入值",
     "settings.workflow.aggregation.description":
       "按声明顺序取第一个已产出的候选变量，原值透传为输出。声明顺序即优先级。",
     "settings.workflow.aggregation.selectorLabel": "候选变量 {{index}}",
@@ -852,7 +852,7 @@ export const workflowEditorTranslations = {
     "settings.workflow.condition.unset": "Condition not set",
     "settings.workflow.condition.variablePlaceholder": "e.g. tool1.exit_code",
     "settings.workflow.condition.operatorPlaceholder": "Select condition",
-    "settings.workflow.condition.valuePlaceholder": "e.g. 0",
+    "settings.workflow.condition.valuePlaceholder": "Enter value",
     "settings.workflow.aggregation.description":
       "Passes the first produced candidate variable through in declaration order. Declaration order is the priority.",
     "settings.workflow.aggregation.selectorLabel":

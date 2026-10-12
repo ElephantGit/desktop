@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { JSONContent } from "@tiptap/core";
 import {
@@ -34,6 +35,9 @@ interface WorkflowPromptEditorProps {
   ariaLabel: string;
   insertVariableLabel: string;
   onChange: (value: string) => void;
+  /** Compact single-line field used by condition comparison values. */
+  compact?: boolean;
+  placeholder?: string;
 }
 
 interface VariableMenuPosition {
@@ -48,8 +52,11 @@ export function WorkflowPromptEditor({
   ariaLabel,
   insertVariableLabel,
   onChange,
+  compact = false,
+  placeholder,
 }: WorkflowPromptEditorProps) {
   const { t } = useTranslation();
+  const menuId = `workflow-variable-menu-${useId().replaceAll(":", "")}`;
   const globalVariablesLabel = t("settings.workflow.globalVariables");
   const editorRef = useRef<ComposerEditorHandle>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -59,6 +66,8 @@ export function WorkflowPromptEditor({
   const [characterCount, setCharacterCount] = useState(value.length);
   const [expanded, setExpanded] = useState(false);
   const [slashQuery, setSlashQuery] = useState<string | null>(null);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const [highlightQuery, setHighlightQuery] = useState<string | null>(null);
   const [menuPosition, setMenuPosition] = useState<VariableMenuPosition>({
     left: 8,
     top: 68,
@@ -84,6 +93,21 @@ export function WorkflowPromptEditor({
     () => groupWorkflowVariables(visibleVariables, globalVariablesLabel),
     [globalVariablesLabel, visibleVariables],
   );
+  // Filter and open/close reset the highlight to the first visible row, matching Dify.
+  if (slashQuery !== highlightQuery) {
+    setHighlightQuery(slashQuery);
+    setHighlightedIndex(0);
+  }
+  if (
+    visibleVariables.length > 0 &&
+    highlightedIndex >= visibleVariables.length
+  ) {
+    setHighlightedIndex(visibleVariables.length - 1);
+  }
+  const activeOptionId =
+    slashQuery !== null && visibleVariables[highlightedIndex] !== undefined
+      ? `${menuId}-option-${highlightedIndex}`
+      : undefined;
 
   /** Replaces the active slash query with one serialized variable token. */
   const insertVariable = (variable: WorkflowVariableCatalogEntry): void => {
@@ -97,56 +121,182 @@ export function WorkflowPromptEditor({
     setSlashQuery(null);
   };
 
-  /** Places the variable menu immediately below the editor's active slash caret. */
+  /**
+   * Arrow/Enter stay on the picker while it is open so Enter confirms a variable
+   * instead of inserting a newline the way the prompt field normally does.
+   */
+  const handleMenuKeyDown = (event: KeyboardEvent): boolean => {
+    if (slashQuery === null) {
+      return false;
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (visibleVariables.length === 0) {
+        return true;
+      }
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      setHighlightedIndex(
+        (current) =>
+          (current + direction + visibleVariables.length) %
+          visibleVariables.length,
+      );
+      return true;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setSlashQuery(null);
+      return true;
+    }
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      const variable = visibleVariables[highlightedIndex];
+      if (variable !== undefined) {
+        insertVariable(variable);
+      }
+      return true;
+    }
+    return false;
+  };
+
+  useEffect(() => {
+    if (slashQuery === null || activeOptionId === undefined) {
+      return;
+    }
+    document
+      .getElementById(activeOptionId)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [activeOptionId, slashQuery]);
+
+  /**
+   * Places the picker in the viewport below the caret so overflow-hidden
+   * condition cards cannot clip it or grow around it.
+   */
   const positionVariableMenu = (): void => {
     const panel = panelRef.current?.getBoundingClientRect();
     const caret = editorRef.current?.getCaretRect();
-    if (
-      panel === undefined ||
-      panel.width <= 0 ||
-      caret === null ||
-      caret === undefined
-    ) {
-      setMenuPosition({ left: 8, top: 68 });
+    const anchor = caret ?? panel;
+    if (anchor === undefined || anchor === null) {
+      setMenuPosition({ left: 8, top: 8 });
       return;
     }
-    setMenuPosition({
-      left: Math.max(8, Math.min(caret.left - panel.left, panel.width - 272)),
-      top: caret.bottom - panel.top + 4,
-    });
+    const menuWidth = 256;
+    const menuHeight = 224;
+    const gap = 4;
+    const left = Math.max(
+      8,
+      Math.min(anchor.left, window.innerWidth - menuWidth - 8),
+    );
+    const below = anchor.bottom + gap;
+    const top =
+      below + menuHeight > window.innerHeight - 8
+        ? Math.max(8, anchor.top - menuHeight - gap)
+        : below;
+    setMenuPosition({ left, top });
   };
+
+  useEffect(() => {
+    if (slashQuery === null) {
+      return;
+    }
+    const frame = requestAnimationFrame(() => positionVariableMenu());
+    const update = (): void => positionVariableMenu();
+    window.addEventListener("resize", update);
+    document.addEventListener("scroll", update, true);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("resize", update);
+      document.removeEventListener("scroll", update, true);
+    };
+  }, [slashQuery]);
 
   const panel = (
     <div
       ref={panelRef}
       className={
-        expanded
-          ? "relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-input bg-background"
-          : "relative rounded-lg border border-input bg-background"
+        compact
+          ? "relative"
+          : expanded
+            ? "relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-input bg-background"
+            : "relative rounded-lg border border-input bg-background"
       }
     >
-      <div className="flex h-9 shrink-0 items-center justify-end gap-0.5 border-b border-border bg-muted/35 px-1.5">
-        <span
-          className="mr-auto px-1.5 text-[11px] tabular-nums text-muted-foreground"
-          aria-label={t("settings.workflow.field.promptCharacterCount", {
-            count: characterCount,
-          })}
-        >
-          {characterCount}
-        </span>
+      {!compact && (
+        <div className="flex h-9 shrink-0 items-center justify-end gap-0.5 border-b border-border bg-muted/35 px-1.5">
+          <span
+            className="mr-auto px-1.5 text-[11px] tabular-nums text-muted-foreground"
+            aria-label={t("settings.workflow.field.promptCharacterCount", {
+              count: characterCount,
+            })}
+          >
+            {characterCount}
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="size-7"
+            disabled={variableCatalog.length === 0}
+            aria-label={insertVariableLabel}
+            title={insertVariableLabel}
+            onMouseDown={(event) => {
+              preservedSelectionRef.current =
+                editorRef.current?.getSelection() ?? null;
+              // Keeping browser focus in the editor preserves the visible caret while the button
+              // still receives its subsequent click event.
+              event.preventDefault();
+            }}
+            onClick={() => {
+              editorRef.current?.insertText(
+                "/",
+                preservedSelectionRef.current ?? undefined,
+              );
+              preservedSelectionRef.current = null;
+            }}
+          >
+            <IconVariable className="size-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="size-7"
+            aria-label={t("settings.workflow.field.copyPrompt")}
+            title={t("settings.workflow.field.copyPrompt")}
+            onClick={() => {
+              void navigator.clipboard?.writeText(
+                editorRef.current?.getText() ?? value,
+              );
+            }}
+          >
+            <IconCopy className="size-4" />
+          </Button>
+          {!expanded && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="size-7"
+              aria-label={t("settings.workflow.field.expandPrompt")}
+              title={t("settings.workflow.field.expandPrompt")}
+              onClick={() => setExpanded(true)}
+            >
+              <IconArrowsMaximize className="size-4" />
+            </Button>
+          )}
+        </div>
+      )}
+      {compact && (
         <Button
           type="button"
           variant="ghost"
           size="icon-sm"
-          className="size-7"
+          className="absolute top-0.5 right-0.5 z-10 size-6"
           disabled={variableCatalog.length === 0}
           aria-label={insertVariableLabel}
           title={insertVariableLabel}
           onMouseDown={(event) => {
             preservedSelectionRef.current =
               editorRef.current?.getSelection() ?? null;
-            // Keeping browser focus in the editor preserves the visible caret while the button
-            // still receives its subsequent click event.
             event.preventDefault();
           }}
           onClick={() => {
@@ -157,54 +307,32 @@ export function WorkflowPromptEditor({
             preservedSelectionRef.current = null;
           }}
         >
-          <IconVariable className="size-4" />
+          <IconVariable className="size-3.5" />
         </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          className="size-7"
-          aria-label={t("settings.workflow.field.copyPrompt")}
-          title={t("settings.workflow.field.copyPrompt")}
-          onClick={() => {
-            void navigator.clipboard?.writeText(
-              editorRef.current?.getText() ?? value,
-            );
-          }}
-        >
-          <IconCopy className="size-4" />
-        </Button>
-        {!expanded && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="size-7"
-            aria-label={t("settings.workflow.field.expandPrompt")}
-            title={t("settings.workflow.field.expandPrompt")}
-            onClick={() => setExpanded(true)}
-          >
-            <IconArrowsMaximize className="size-4" />
-          </Button>
-        )}
-      </div>
+      )}
       <ComposerEditor
         ref={editorRef}
-        id="workflow-agent-prompt"
+        id={compact ? undefined : "workflow-agent-prompt"}
         initialDocument={initialDocument}
         promptTokenExtension={WorkflowPromptVariableToken}
-        enterKey="newline"
+        placeholder={placeholder}
+        enterKey={compact ? "submit" : "newline"}
         className={
-          expanded
-            ? // Shell scrolls; tip tap must not keep overflow:auto or it swallows the wheel.
-              "min-h-0 flex-1 overflow-y-auto border-0 bg-transparent text-xs leading-5 [&_.tiptap]:min-h-full [&_.tiptap]:!max-h-none [&_.tiptap]:!overflow-y-visible"
-            : "min-h-32 border-0 bg-transparent text-xs leading-5 [&_.tiptap]:min-h-32 [&_.tiptap]:!max-h-64"
+          compact
+            ? "workflow-compact-value h-8 min-h-8 overflow-hidden border-0 bg-transparent pr-7 text-xs leading-5 [&_.composer-editor-content]:!px-1.5 [&_.composer-editor-content]:!py-0"
+            : expanded
+              ? // Shell scrolls; tip tap must not keep overflow:auto or it swallows the wheel.
+                "min-h-0 flex-1 overflow-y-auto border-0 bg-transparent text-xs leading-5 [&_.tiptap]:min-h-full [&_.tiptap]:!max-h-none [&_.tiptap]:!overflow-y-visible"
+              : "min-h-32 border-0 bg-transparent text-xs leading-5 [&_.tiptap]:min-h-32 [&_.tiptap]:!max-h-64"
         }
         ariaLabel={ariaLabel}
         ariaAutoComplete="list"
         ariaHasPopup="listbox"
         ariaExpanded={slashQuery !== null}
+        ariaControls={slashQuery !== null ? menuId : undefined}
+        ariaActivedescendant={activeOptionId}
         slashQueryMode="inline"
+        onMenuKeyDown={handleMenuKeyDown}
         onSubmit={() => undefined}
         onTextChange={(text) => {
           setCharacterCount(text.length);
@@ -212,48 +340,62 @@ export function WorkflowPromptEditor({
         }}
         onQueryChange={(query) => {
           setSlashQuery(query.slashQuery);
-          if (query.slashQuery !== null) {
-            requestAnimationFrame(positionVariableMenu);
-          }
         }}
       />
-      {slashQuery !== null && (
-        <div
-          role="listbox"
-          aria-label={insertVariableLabel}
-          className="absolute z-50 max-h-56 w-64 overflow-y-auto rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-lg"
-          style={{ left: menuPosition.left, top: menuPosition.top }}
-        >
-          {variableGroups.map((group) => (
-            <section key={group.label} aria-label={group.label}>
-              <p className="px-2 pt-1.5 pb-0.5 text-[11px] font-medium text-muted-foreground">
-                {group.label}
+      {slashQuery !== null &&
+        createPortal(
+          <div
+            id={menuId}
+            role="listbox"
+            aria-label={insertVariableLabel}
+            className="fixed z-[200] max-h-56 w-64 overflow-y-auto rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-lg"
+            style={{ left: menuPosition.left, top: menuPosition.top }}
+          >
+            {variableGroups.map((group) => (
+              <section key={group.label} aria-label={group.label}>
+                <p className="px-2 pt-1.5 pb-0.5 text-[11px] font-medium text-muted-foreground">
+                  {group.label}
+                </p>
+                {group.variables.map((variable) => {
+                  const optionIndex = visibleVariables.findIndex(
+                    (candidate) =>
+                      candidate.selector.join(".") ===
+                      variable.selector.join("."),
+                  );
+                  const selected = optionIndex === highlightedIndex;
+                  return (
+                    <button
+                      key={variable.selector.join(".")}
+                      id={`${menuId}-option-${optionIndex}`}
+                      type="button"
+                      role="option"
+                      aria-label={workflowVariableLabel(variable)}
+                      aria-selected={selected}
+                      className="flex w-full items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left text-xs shadow-none aria-selected:bg-background aria-selected:shadow-sm"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onMouseEnter={() => setHighlightedIndex(optionIndex)}
+                      onClick={() => insertVariable(variable)}
+                    >
+                      <WorkflowVariableRowContent variable={variable} />
+                    </button>
+                  );
+                })}
+              </section>
+            ))}
+            {visibleVariables.length === 0 && (
+              <p className="px-2 py-3 text-center text-xs text-muted-foreground">
+                {insertVariableLabel}
               </p>
-              {group.variables.map((variable) => (
-                <button
-                  key={variable.selector.join(".")}
-                  type="button"
-                  role="option"
-                  aria-label={workflowVariableLabel(variable)}
-                  aria-selected="false"
-                  className="flex w-full items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-accent-foreground"
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => insertVariable(variable)}
-                >
-                  <WorkflowVariableRowContent variable={variable} />
-                </button>
-              ))}
-            </section>
-          ))}
-          {visibleVariables.length === 0 && (
-            <p className="px-2 py-3 text-center text-xs text-muted-foreground">
-              {insertVariableLabel}
-            </p>
-          )}
-        </div>
-      )}
+            )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
+
+  if (compact) {
+    return panel;
+  }
 
   return (
     <>

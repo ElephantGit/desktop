@@ -262,7 +262,7 @@ describe("WorkflowInspector kind-specific layouts", () => {
       "如 工具1.exit_code",
     );
     expect(screen.getByLabelText("条件 1")).toHaveTextContent("选择条件");
-    expect(screen.getByLabelText("值 1")).toHaveValue("");
+    expect(screen.getByLabelText("值 1")).toHaveTextContent("");
   });
 
   it("renders an IF/ELSE branch panel for condition nodes", async () => {
@@ -289,7 +289,14 @@ describe("WorkflowInspector kind-specific layouts", () => {
       ),
     ).toHaveTextContent("exit_code");
     expect(screen.getByLabelText("条件 1")).toHaveTextContent("等于");
-    expect(screen.getByLabelText("值 1")).toHaveValue("0");
+    expect(screen.getByLabelText("值 1")).toHaveTextContent("0");
+    await user.click(screen.getByLabelText("插入变量"));
+    await user.click(
+      await screen.findByRole("option", { name: "writer.output" }),
+    );
+    expect(screen.getByLabelText("值 1").dataset.composerText).toContain(
+      "{{#writer.output#}}",
+    );
     expect(
       screen.getByRole("button", { name: "添加条件" }),
     ).toBeInTheDocument();
@@ -345,6 +352,15 @@ describe("WorkflowInspector kind-specific layouts", () => {
     );
 
     expect(screen.getByLabelText("分支 1 逻辑 · 1")).toHaveTextContent("OR");
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText("分支 1 逻辑 · 1"));
+    expect(
+      await screen.findByRole("option", { name: "AND · 满足以下所有条件" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "OR · 满足以下任一条件" }),
+    ).toBeInTheDocument();
+    await user.keyboard("{Escape}");
     const secondVariable = screen.getByLabelText("变量 2");
     expect(
       secondVariable.querySelector(
@@ -509,6 +525,16 @@ describe("WorkflowInspector kind-specific layouts", () => {
     expect(prompt.dataset.composerText).toBe(
       "输出完整方案。{{#writer.output#}} ",
     );
+
+    await user.clear(prompt);
+    await user.click(screen.getByLabelText("插入变量"));
+    const options = screen.getAllByRole("option");
+    expect(options[0]).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{ArrowDown}");
+    expect(options[0]).toHaveAttribute("aria-selected", "false");
+    expect(options[1]).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{Enter}");
+    expect(prompt.dataset.composerText).toContain("{{#writer.output#}}");
 
     const writeText = vi.spyOn(navigator.clipboard, "writeText");
     await user.click(screen.getByLabelText("复制文本"));
