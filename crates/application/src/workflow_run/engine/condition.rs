@@ -1,4 +1,5 @@
 use super::variable_pool::{VariableSelector, WorkflowVariablePool, WorkflowVariablePoolError};
+use super::variable_template::{VariableTemplateError, render_variable_template};
 use serde::Deserialize;
 use serde_json::Value;
 use std::fmt;
@@ -255,36 +256,115 @@ fn evaluate_rule(
 ) -> Result<bool, ConditionError> {
     let resolved = pool
         .resolve(&rule.variable_selector)
-        .map_err(|error| match error {
-            WorkflowVariablePoolError::Undeclared { selector } => {
-                ConditionError::Undeclared { selector }
-            }
-            WorkflowVariablePoolError::PathMissing { selector, segment } => {
-                ConditionError::InvalidPath { selector, segment }
-            }
-            WorkflowVariablePoolError::PathNotObject { selector, path } => {
-                ConditionError::TypeMismatch {
-                    selector,
-                    operator: rule.operator,
-                    actual: path,
-                    expected: "object".to_string(),
-                }
-            }
-            WorkflowVariablePoolError::InvalidWriter { .. } => {
-                unreachable!("resolving never validates a writer")
-            }
-            WorkflowVariablePoolError::TypeMismatch { .. } => {
-                unreachable!("resolving never validates an assigned value's declared type")
-            }
-            WorkflowVariablePoolError::LengthExceeded { .. } => {
-                unreachable!("resolving never validates an assigned value's length")
-            }
-        })?;
+        .map_err(|error| map_pool_resolve_error(error, rule.operator))?;
+    let expected = match rule.value.as_ref() {
+        None => None,
+        Some(value) => Some(resolve_comparison_value(value, pool, rule.operator)?),
+    };
     rule.operator.evaluate(
         resolved,
-        rule.value.as_ref(),
+        expected.as_ref(),
         &rule.variable_selector.qualified(),
     )
+}
+
+/// Expands a Dify-style comparison operand from the variable pool.
+///
+/// A value that is only `{{#node.var#}}` keeps the bound JSON type so numeric and boolean
+/// compares stay typed. Mixed templates always render as strings.
+fn resolve_comparison_value(
+    value: &Value,
+    pool: &WorkflowVariablePool,
+    operator: ComparisonOperator,
+) -> Result<Value, ConditionError> {
+    let Some(text) = value.as_str() else {
+        return Ok(value.clone());
+    };
+    if !text.contains("{{#") {
+        return Ok(value.clone());
+    }
+    if let Some(selector) = exclusive_template_selector(text) {
+        let resolved = pool
+            .resolve(&selector)
+            .map_err(|error| map_pool_resolve_error(error, operator))?;
+        return resolved.cloned().ok_or(ConditionError::UnsetVariable {
+            selector: selector.qualified(),
+        });
+    }
+    let rendered = render_variable_template(text, pool)
+        .map_err(|error| map_template_error(error, operator))?;
+    Ok(Value::String(rendered))
+}
+
+/// Reads a string that is exactly one `{{#selector#}}` placeholder.
+fn exclusive_template_selector(text: &str) -> Option<VariableSelector> {
+    let trimmed = text.trim();
+    let inner = trimmed.strip_prefix("{{#")?.strip_suffix("#}}")?;
+    if inner.contains("{{#") || inner.contains("#}}") {
+        return None;
+    }
+    let parts: Vec<String> = inner.split('.').map(str::to_string).collect();
+    VariableSelector::try_from_parts(&parts)
+}
+
+/// Maps pool resolution failures onto condition errors with the active operator.
+fn map_pool_resolve_error(
+    error: WorkflowVariablePoolError,
+    operator: ComparisonOperator,
+) -> ConditionError {
+    match error {
+        WorkflowVariablePoolError::Undeclared { selector } => {
+            ConditionError::Undeclared { selector }
+        }
+        WorkflowVariablePoolError::PathMissing { selector, segment } => {
+            ConditionError::InvalidPath { selector, segment }
+        }
+        WorkflowVariablePoolError::PathNotObject { selector, path } => {
+            ConditionError::TypeMismatch {
+                selector,
+                operator,
+                actual: path,
+                expected: "object".to_string(),
+            }
+        }
+        WorkflowVariablePoolError::InvalidWriter { .. } => {
+            unreachable!("resolving never validates a writer")
+        }
+        WorkflowVariablePoolError::TypeMismatch { .. } => {
+            unreachable!("resolving never validates an assigned value's declared type")
+        }
+        WorkflowVariablePoolError::LengthExceeded { .. } => {
+            unreachable!("resolving never validates an assigned value's length")
+        }
+    }
+}
+
+/// Maps template rendering failures onto condition errors.
+fn map_template_error(
+    error: VariableTemplateError,
+    operator: ComparisonOperator,
+) -> ConditionError {
+    match error {
+        VariableTemplateError::Unterminated => ConditionError::InvalidSelector {
+            selector: vec!["{{#".to_string()],
+        },
+        VariableTemplateError::InvalidSelector { selector } => ConditionError::InvalidSelector {
+            selector: selector.split('.').map(str::to_string).collect(),
+        },
+        VariableTemplateError::Undeclared { selector } => ConditionError::Undeclared { selector },
+        VariableTemplateError::InvalidPath { selector, segment } => {
+            ConditionError::InvalidPath { selector, segment }
+        }
+        VariableTemplateError::PathNotObject { selector } => ConditionError::TypeMismatch {
+            selector,
+            operator,
+            actual: "value".to_string(),
+            expected: "object".to_string(),
+        },
+        VariableTemplateError::UnsetVariable { selector } => {
+            ConditionError::UnsetVariable { selector }
+        }
+    }
 }
 
 impl ComparisonOperator {
@@ -707,5 +787,41 @@ mod tests {
         assert_eq!(cfg.cases[0].id, "approved");
         assert_eq!(cfg.cases[0].logic, ConditionLogic::Or);
         assert_eq!(cfg.cases[0].conditions.len(), 2);
+    }
+
+    /// A comparison value that is only a placeholder keeps the bound JSON type.
+    #[test]
+    fn comparison_value_placeholder_keeps_bound_type() {
+        let mut pool = pool_with_review();
+        pool.declare("start.limit", "number", "start");
+        pool.set("start.limit", "start", json!(90)).unwrap();
+        let cfg = config(vec![case(
+            "c",
+            "and",
+            vec![rule(
+                &["review", "structured_output", "score"],
+                "greater_than",
+                Some(json!("{{#start.limit#}}")),
+            )],
+        )]);
+        assert_eq!(evaluate_condition(&cfg, &pool).unwrap(), "c");
+    }
+
+    /// Mixed templates render as strings before string operators run.
+    #[test]
+    fn mixed_comparison_value_template_renders_as_string() {
+        let mut pool = pool_with_review();
+        pool.declare("start.token", "string", "start");
+        pool.set("start.token", "start", json!("审查")).unwrap();
+        let cfg = config(vec![case(
+            "c",
+            "and",
+            vec![rule(
+                &["review", "text"],
+                "contains",
+                Some(json!("{{#start.token#}}完")),
+            )],
+        )]);
+        assert_eq!(evaluate_condition(&cfg, &pool).unwrap(), "c");
     }
 }

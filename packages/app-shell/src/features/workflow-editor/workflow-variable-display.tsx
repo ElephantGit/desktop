@@ -39,7 +39,7 @@ export function WorkflowVariableDisplay({
   const kind = variableSourceKind(variable);
   const Icon = kind !== undefined ? getNodeMetadata(kind).icon : IconVariable;
   return (
-    <span className="inline-flex max-w-full min-w-0 items-center gap-1 align-middle text-xs">
+    <span className="inline-flex max-w-full min-w-0 items-center gap-0.5 align-middle text-xs">
       <Icon
         aria-hidden="true"
         data-workflow-variable-part="node-icon"
@@ -47,7 +47,7 @@ export function WorkflowVariableDisplay({
       />
       <span
         data-workflow-variable-part="node-name"
-        className="truncate font-medium text-foreground"
+        className="min-w-0 truncate font-medium text-foreground"
       >
         {nodeName}
       </span>
@@ -63,7 +63,7 @@ export function WorkflowVariableDisplay({
       </span>
       <span
         data-workflow-variable-part="variable-name"
-        className="truncate font-medium text-blue-600 dark:text-blue-400"
+        className="shrink-0 font-medium text-blue-600 dark:text-blue-400"
       >
         {variable.variableName}
       </span>

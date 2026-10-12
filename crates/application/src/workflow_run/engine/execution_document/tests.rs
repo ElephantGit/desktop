@@ -107,6 +107,27 @@ fn rejects_active_prompt_referencing_unused_output() {
     );
 }
 
+/// Condition comparison values may name unused producers and must fail the same way.
+#[test]
+fn rejects_active_condition_value_referencing_unused_output() {
+    let source = json!({"nodes":[
+        {"id":"start","data":{"kind":"start"}},
+        {"id":"c","data":{"kind":"condition","cases":[
+            {"id":"ok","logic":"and","conditions":[
+                {"variableSelector":["start","input"],"operator":"equals","value":"{{#spare.text#}}"}
+            ]}
+        ]}},
+        {"id":"spare","data":{"kind":"agent"}}
+    ],"edges":[{"source":"start","target":"c"}]})
+    .to_string();
+    assert_eq!(
+        WorkflowGraph::parse(&source).unwrap_err(),
+        GraphError::InvalidNode {
+            reason: "variable references unused node spare".into(),
+        }
+    );
+}
+
 /// Filtering cannot hide dangling edges even when their source is unused.
 #[test]
 fn rejects_invalid_document_structure_before_filtering() {

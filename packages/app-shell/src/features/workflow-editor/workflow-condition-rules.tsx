@@ -11,7 +11,6 @@ import type {
 } from "@ora/workflow-mock";
 import {
   Button,
-  Input,
   Select,
   SelectContent,
   SelectItem,
@@ -21,6 +20,7 @@ import {
 } from "@ora/ui";
 import { WorkflowVariableDisplay } from "./workflow-variable-display";
 import { WorkflowVariableSelectGroups } from "./workflow-variable-list";
+import { WorkflowPromptEditor } from "./workflow-prompt-editor";
 
 /** Edits one condition group shared by branch routing and Loop termination. */
 export function WorkflowConditionRules({
@@ -30,6 +30,7 @@ export function WorkflowConditionRules({
   operators,
   variableCatalog,
   logicLabel,
+  branchLabel,
   minimumConditions = 0,
 }: {
   conditions: WorkflowConditionComparison[];
@@ -41,6 +42,8 @@ export function WorkflowConditionRules({
   operators: WorkflowChoice[];
   variableCatalog: WorkflowVariableCatalogEntry[];
   logicLabel: string;
+  /** When set, drawn in the left rail like Dify's IF / ELIF label. */
+  branchLabel?: string;
   minimumConditions?: number;
 }) {
   const { t } = useTranslation();
@@ -71,11 +74,12 @@ export function WorkflowConditionRules({
       conditions: conditions.filter((_, candidate) => candidate !== index),
     });
   }
+  const showRail = branchLabel !== undefined || conditions.length > 1;
   return (
     <div
       className={cn(
-        "px-1",
-        conditions.length > 1 && "relative ml-2 border-l border-border/80 pl-3",
+        "grid min-w-0 items-stretch gap-x-1.5 gap-y-1.5 overflow-hidden",
+        showRail ? "grid-cols-[2rem_minmax(0,1fr)]" : "grid-cols-1",
       )}
     >
       {conditions.map((comparison, comparisonIndex) => {
@@ -95,34 +99,57 @@ export function WorkflowConditionRules({
         ].includes(comparison.operator);
         return (
           <Fragment key={comparisonIndex}>
-            {comparisonIndex > 0 && (
-              <div className="relative h-7">
-                <Select
-                  value={logic}
-                  onValueChange={(logic) => {
-                    if (logic === "and" || logic === "or") {
-                      onChange({ logic, conditions });
-                    }
-                  }}
-                >
-                  <SelectTrigger
-                    aria-label={`${logicLabel} · ${comparisonIndex}`}
-                    className="absolute -left-6 top-1/2 h-6 w-auto min-w-10 -translate-y-1/2 justify-center gap-1 rounded-md border-blue-200 bg-background px-1.5 text-[10px] font-semibold text-blue-600 shadow-sm dark:border-blue-800 dark:text-blue-400"
+            {comparisonIndex > 0 && showRail && (
+              <>
+                <div className="relative">
+                  <span className="absolute inset-y-[-0.35rem] left-1/2 w-px -translate-x-1/2 bg-border" />
+                </div>
+                <div className="flex min-w-0 items-center">
+                  <Select
+                    value={logic}
+                    onValueChange={(nextLogic) => {
+                      if (nextLogic === "and" || nextLogic === "or") {
+                        onChange({ logic: nextLogic, conditions });
+                      }
+                    }}
                   >
-                    <span>{logic.toUpperCase()}</span>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {logicOptions.map((logic) => (
-                      <SelectItem key={logic.value} value={logic.value}>
-                        {logic.value.toUpperCase()} · {logic.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                    <SelectTrigger
+                      size="sm"
+                      aria-label={`${logicLabel} · ${comparisonIndex}`}
+                      className="h-5 min-h-5 w-auto shrink-0 justify-center gap-0 rounded-md border-blue-200 bg-background px-1.5 py-0 pr-1.5 text-[10px] font-semibold text-blue-600 shadow-sm dark:border-blue-800 dark:text-blue-400 [&_svg]:hidden"
+                    >
+                      <span>{logic.toUpperCase()}</span>
+                    </SelectTrigger>
+                    <SelectContent
+                      alignItemWithTrigger={false}
+                      side="bottom"
+                      align="start"
+                      className="w-max min-w-52 max-w-[min(18rem,calc(100vw-2rem))]"
+                    >
+                      {logicOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.value.toUpperCase()} · {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
+            )}
+            {showRail && (
+              <div className="relative flex justify-center">
+                {conditions.length > 1 && (
+                  <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border" />
+                )}
+                {comparisonIndex === 0 && branchLabel !== undefined && (
+                  <span className="relative z-10 mt-1.5 bg-background px-0.5 text-[11px] font-semibold leading-4">
+                    {branchLabel}
+                  </span>
+                )}
               </div>
             )}
-            <div className="flex items-start gap-1.5">
-              <div className="min-w-0 flex-1 space-y-1.5 rounded-lg bg-muted/70 p-2">
+            <div className="min-w-0 overflow-hidden rounded-lg border border-border/60 bg-muted/40">
+              <div className="flex min-w-0 items-center gap-0.5 px-1 py-0.5">
                 <Select
                   value={selectorToText(comparison.variableSelector)}
                   onValueChange={(value) => {
@@ -140,7 +167,7 @@ export function WorkflowConditionRules({
                   }}
                 >
                   <SelectTrigger
-                    className="h-8 w-full bg-background"
+                    className="h-7 w-auto max-w-[min(100%,11.5rem)] min-w-0 shrink justify-start gap-0.5 overflow-hidden border-0 bg-transparent px-1 pr-0.5 shadow-none dark:bg-transparent [&_[data-slot=select-value]]:flex-none [&_svg]:size-3"
                     aria-label={t("settings.workflow.field.variable", {
                       index: comparisonIndex + 1,
                     })}
@@ -156,7 +183,7 @@ export function WorkflowConditionRules({
                   <SelectContent
                     alignItemWithTrigger={false}
                     align="start"
-                    className="w-70 min-w-70 max-w-70"
+                    className="w-[min(17.5rem,calc(100vw-2rem))] min-w-0 max-w-[min(17.5rem,var(--available-width))]"
                   >
                     <WorkflowVariableSelectGroups
                       variables={variableCatalog}
@@ -166,116 +193,135 @@ export function WorkflowConditionRules({
                     />
                   </SelectContent>
                 </Select>
-                <div className="flex min-w-0 gap-1.5">
-                  <Select
-                    key={selectorToText(comparison.variableSelector)}
-                    value={comparison.operator}
-                    onValueChange={(operator) => {
-                      if (operator !== null) {
-                        updateComparison(comparisonIndex, {
-                          operator,
-                          value: undefined,
-                        });
-                      }
-                    }}
+                <Select
+                  key={selectorToText(comparison.variableSelector)}
+                  value={comparison.operator}
+                  onValueChange={(operator) => {
+                    if (operator !== null) {
+                      updateComparison(comparisonIndex, {
+                        operator,
+                        value: undefined,
+                      });
+                    }
+                  }}
+                >
+                  <SelectTrigger
+                    size="sm"
+                    aria-label={t("settings.workflow.field.operator", {
+                      index: comparisonIndex + 1,
+                    })}
+                    className="h-7 w-fit max-w-[6rem] shrink-0 rounded-md border-0 bg-transparent px-1 text-xs shadow-none [&_[data-slot=select-value]]:flex-none [&_svg]:size-3"
                   >
-                    <SelectTrigger
-                      aria-label={t("settings.workflow.field.operator", {
-                        index: comparisonIndex + 1,
-                      })}
-                      className="h-8 w-20 shrink-0 bg-background"
+                    <LocalizedSelectValue
+                      options={operators}
+                      value={comparison.operator}
+                      placeholder={t(
+                        "settings.workflow.condition.operatorPlaceholder",
+                      )}
+                    />
+                  </SelectTrigger>
+                  <SelectContent
+                    alignItemWithTrigger={false}
+                    className="min-w-36 max-w-[min(18rem,var(--available-width))]"
+                  >
+                    {availableOperators.map((operator) => (
+                      <SelectItem key={operator.value} value={operator.value}>
+                        {operator.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="ml-auto size-7 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                  disabled={conditions.length <= minimumConditions}
+                  aria-label={t("settings.workflow.condition.removeRule")}
+                  onClick={() => removeComparison(comparisonIndex)}
+                >
+                  <IconTrash className="size-3.5" />
+                </Button>
+              </div>
+              {needsValue && (
+                <div className="min-w-0 border-t border-border/70 px-1 py-0.5">
+                  {variableType === "boolean" ? (
+                    <Select
+                      value={
+                        comparison.value === undefined
+                          ? ""
+                          : String(comparison.value)
+                      }
+                      onValueChange={(value) => {
+                        if (value === "true" || value === "false")
+                          updateComparison(comparisonIndex, {
+                            value: value === "true",
+                          });
+                      }}
                     >
-                      <LocalizedSelectValue
-                        options={operators}
-                        value={comparison.operator}
-                        placeholder={t(
-                          "settings.workflow.condition.operatorPlaceholder",
-                        )}
-                      />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {availableOperators.map((operator) => (
-                        <SelectItem key={operator.value} value={operator.value}>
-                          {operator.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {needsValue &&
-                    (variableType === "boolean" ? (
-                      <Select
-                        value={
-                          comparison.value === undefined
-                            ? ""
-                            : String(comparison.value)
-                        }
-                        onValueChange={(value) => {
-                          if (value === "true" || value === "false")
-                            updateComparison(comparisonIndex, {
-                              value: value === "true",
-                            });
-                        }}
-                      >
-                        <SelectTrigger
-                          className="h-8 min-w-0 flex-1 bg-background"
-                          aria-label={t("settings.workflow.field.value", {
-                            index: comparisonIndex + 1,
-                          })}
-                        >
-                          <SelectValue
-                            placeholder={t(
-                              "settings.workflow.condition.valuePlaceholder",
-                            )}
-                          />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="true">true</SelectItem>
-                          <SelectItem value="false">false</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <Input
-                        value={comparisonValueToText(comparison.value)}
+                      <SelectTrigger
+                        className="h-8 w-full min-w-0 border-0 bg-transparent px-1.5 shadow-none dark:bg-transparent"
                         aria-label={t("settings.workflow.field.value", {
                           index: comparisonIndex + 1,
                         })}
-                        placeholder={t(
-                          "settings.workflow.condition.valuePlaceholder",
-                        )}
-                        className="h-8 min-w-0 flex-1 bg-background"
-                        onChange={(event) =>
-                          updateComparison(comparisonIndex, {
-                            value:
-                              variableType === "string" ||
-                              variableType === "secret"
-                                ? event.target.value
-                                : parseComparisonValue(event.target.value),
-                          })
-                        }
-                      />
-                    ))}
+                      >
+                        <SelectValue
+                          placeholder={t(
+                            "settings.workflow.condition.valuePlaceholder",
+                          )}
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="true">true</SelectItem>
+                        <SelectItem value="false">false</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <WorkflowPromptEditor
+                      key={`${selectorToText(comparison.variableSelector)}-${comparison.operator}-${comparisonIndex}`}
+                      compact
+                      value={comparisonValueToText(comparison.value)}
+                      variableCatalog={variableCatalog}
+                      ariaLabel={t("settings.workflow.field.value", {
+                        index: comparisonIndex + 1,
+                      })}
+                      insertVariableLabel={t(
+                        "settings.workflow.field.insertVariable",
+                      )}
+                      placeholder={t(
+                        "settings.workflow.condition.valuePlaceholder",
+                      )}
+                      onChange={(text) =>
+                        updateComparison(comparisonIndex, {
+                          value:
+                            text.trim() === ""
+                              ? undefined
+                              : variableType === "string" ||
+                                  variableType === "secret" ||
+                                  text.includes("{{#")
+                                ? text
+                                : parseComparisonValue(text),
+                        })
+                      }
+                    />
+                  )}
                 </div>
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="mt-1 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                disabled={conditions.length <= minimumConditions}
-                aria-label={t("settings.workflow.condition.removeRule")}
-                onClick={() => removeComparison(comparisonIndex)}
-              >
-                <IconTrash className="size-3.5" />
-              </Button>
+              )}
             </div>
           </Fragment>
         );
       })}
+      {showRail && conditions.length === 0 && (
+        <span className="pt-1.5 text-center text-[11px] font-semibold">
+          {branchLabel}
+        </span>
+      )}
+      {showRail && conditions.length > 0 && <div />}
       <Button
         type="button"
         variant="ghost"
         size="sm"
-        className="mt-3 w-fit justify-start border border-border bg-background shadow-sm"
+        className="w-fit justify-start border border-border bg-background shadow-sm"
         onClick={addComparison}
       >
         <IconPlus />
@@ -351,6 +397,9 @@ export function LocalizedSelectValue({
 
 /** Coerces the comparison value's text form into a JSON-ish value for the backend. */
 function parseComparisonValue(text: string): unknown {
+  if (text.includes("{{#")) {
+    return text;
+  }
   const trimmed = text.trim();
   if (trimmed === "true") {
     return true;

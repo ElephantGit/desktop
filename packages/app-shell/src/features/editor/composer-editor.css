@@ -10,6 +10,17 @@
   white-space: pre-wrap;
 }
 
+/* Condition comparison values stay one line; the default 3.5rem prompt
+   min-height would leave a tall empty box in the inspector. */
+.composer-editor-shell.workflow-compact-value .tiptap {
+  height: 2rem;
+  min-height: 2rem;
+  max-height: 2rem;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 2rem;
+}
+
 /* Unknown commands remain editable and sendable; the marker is the
    quiet affordance, while the title on the decorated range explains it. */
 .composer-editor-shell .composer-unsupported-command {
@@ -508,6 +519,7 @@
   align-items: center;
   vertical-align: middle;
   line-height: 1;
+  box-shadow: 0 1px 2px color-mix(in oklch, var(--foreground) 14%, transparent);
 }
 
 .composer-editor-shell .composer-mention::selection {

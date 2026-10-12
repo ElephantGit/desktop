@@ -398,25 +398,20 @@ function ConditionNodeDetails({
             key={conditionCase.id}
             className="space-y-2 border-b border-border/70 pb-4"
           >
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold">
-                {caseIndex === 0 ? "IF" : "ELIF"}
-              </span>
-              <div className="flex items-center gap-1">
-                {caseIndex > 0 && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    className="shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                    aria-label={t("settings.workflow.condition.removeBranch")}
-                    onClick={() => removeCase(caseIndex)}
-                  >
-                    <IconTrash className="size-3.5" />
-                  </Button>
-                )}
+            {caseIndex > 0 && (
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                  aria-label={t("settings.workflow.condition.removeBranch")}
+                  onClick={() => removeCase(caseIndex)}
+                >
+                  <IconTrash className="size-3.5" />
+                </Button>
               </div>
-            </div>
+            )}
             <WorkflowConditionRules
               conditions={conditionCase.conditions}
               logic={conditionCase.logic ?? "and"}
@@ -426,6 +421,7 @@ function ConditionNodeDetails({
               logicLabel={t("settings.workflow.condition.branchLogic", {
                 index: caseIndex + 1,
               })}
+              branchLabel={caseIndex === 0 ? "IF" : "ELIF"}
             />
           </section>
         ))}
