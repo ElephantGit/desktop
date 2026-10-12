@@ -85,6 +85,10 @@ pub struct ServiceConfig {
     pub clone: Option<CloneConfig>,
     #[serde(default)]
     pub control: Option<ControlConfig>,
+    /// Dedicated git-access client identity for the platform Git Server, distinct from Node WSS
+    /// server TLS and model access; present only when the deployment enables the Git Server.
+    #[serde(default)]
+    pub git_access: Option<crate::GitAccessConfig>,
     pub recovery_interval_ms: u64,
     pub timezone: String,
 }
@@ -177,6 +181,9 @@ pub async fn serve(config: ServiceConfig, shutdown: Shutdown) -> io::Result<()> 
         .and_then(|agent| agent.model_proxy.as_ref())
     {
         proxy.validate().map_err(io::Error::other)?;
+    }
+    if let Some(git_access) = &config.git_access {
+        git_access.validate().map_err(io::Error::other)?;
     }
     let control = config.control.clone();
     let (sender, receiver) = mpsc::sync_channel(ADMISSION_QUEUE_BOUND);
