@@ -108,6 +108,18 @@ disabled, clone's environment and protocol policy), on a blocking thread:
    `origin/<branch>` is appended to the first turn, so it also reaches the session history and
    Thread.
 
+## Git Server access material
+
+A deployment that enables the platform Git Server (proposed ADR `cloud/git-server/0`) adds a
+top-level `git_access` section with absolute `ca_cert`, `client_cert`, and `client_key` paths. The
+Sandbox Server then issues a git-access client certificate for the runtime's tenant, Workspace and
+generation, separate from the Node WSS server identity and the model-access identity; the entrypoint
+writes it into the private `/run/ora` tmpfs (`git-ca.pem`, `git-client.pem`, `git-client-key.pem`,
+root-owned, mode 0600), out of the workload's reach. The Node validates this material at startup and
+refuses to start when it is unusable. The certificate grants no repository permission by itself, and
+the Git Server address is not configured here: each execution input supplies it. Delivery and
+restore still use object storage until the Revision ADRs adopt the Git Server.
+
 ## Known limits
 
 - Agent plugins run outside host Scopes, so "process scope closed" means the session's terminal

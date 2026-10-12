@@ -81,6 +81,15 @@ ADR `node/revision/0`）。只要部署配置含 `clone` 段 Node 就声明该�
 5. 若某个前置提交不是 `refs/remotes/origin/<branch>` 的祖先，说明远端历史被改写：在首条提问末尾追加一段固定格式
    的英文说明，写明恢复的提交、它的基础提交与 `origin/<branch>`，它因此也进入会话记录与 Thread。
 
+## Git Server 访问材料
+
+启用平台 Git Server（`proposed` 的 ADR `cloud/git-server/0`）的部署在顶层加 `git_access`，含绝对路径
+`ca_cert`、`client_cert`、`client_key`。Sandbox Server 随之为该运行时的租户、Workspace 与代次签发 git-access
+客户端证书，与 Node WSS 服务端身份和 model-access 身份分开；entrypoint 把它写入私有 tmpfs `/run/ora`
+（`git-ca.pem`、`git-client.pem`、`git-client-key.pem`，root 所有，0600），工作负载读不到。Node 启动时校验这些
+材料，不可用时拒绝启动。证书本身不授予任何仓库权限；Git Server 地址不在这里配置，由每个执行输入给出。在
+Revision 相关 ADR 改用 Git Server 之前，交付与恢复仍走对象存储。
+
 ## 已知限制
 
 - Agent 插件不在 host Scope 中运行，“进程 scope 已关闭”指会话终态已写入且会话运行时已停止插件进程树。

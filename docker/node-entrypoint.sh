@@ -62,6 +62,20 @@ prepare() {
     done
   fi
   unset ORA_MODEL_CLIENT_CERT ORA_MODEL_CLIENT_KEY ORA_MODEL_CA value
+  # The git-access identity is separate from WSS and model access; only the root Node presents it
+  # to the Git Server, so it stays in the private management tmpfs like the other identities.
+  if jq -e '.git_access != null' "$config_file" >/dev/null; then
+    for name in git-client git-client-key git-ca; do
+      case "$name" in
+        git-client) value=${ORA_GIT_CLIENT_CERT:?} ;;
+        git-client-key) value=${ORA_GIT_CLIENT_KEY:?} ;;
+        git-ca) value=${ORA_GIT_CA:?} ;;
+      esac
+      printf '%s' "$value" | base64 -d >"/run/ora/$name.pem"
+      chmod 0600 "/run/ora/$name.pem"
+    done
+  fi
+  unset ORA_GIT_CLIENT_CERT ORA_GIT_CLIENT_KEY ORA_GIT_CA value
   unset ORA_NODE_CONFIG
   supervise
 }
