@@ -62,19 +62,47 @@ pub(super) fn validate(graph: &WorkflowGraph, unused: &[String]) -> Result<(), G
                 .agent_config
                 .iter()
                 .map(|config| config.prompt.as_str())
+                .chain(
+                    node.condition_config
+                        .iter()
+                        .flat_map(|config| &config.cases)
+                        .flat_map(|case| &case.conditions)
+                        .filter_map(|rule| rule.value.as_ref().and_then(|value| value.as_str())),
+                )
+                .chain(
+                    scope
+                        .loop_body(&node.id)
+                        .into_iter()
+                        .flat_map(|(config, _)| {
+                            config
+                                .until
+                                .cases
+                                .iter()
+                                .flat_map(|case| &case.conditions)
+                                .filter_map(|rule| {
+                                    rule.value.as_ref().and_then(|value| value.as_str())
+                                })
+                        }),
+                )
             {
-                let mut remaining = text;
-                while let Some((_, after_open)) = remaining.split_once("{{#") {
-                    let Some((selector, rest)) = after_open.split_once("#}}") else {
-                        break;
-                    };
-                    if let Some((node_id, _)) = selector.split_once('.') {
-                        require_used(node_id, &unused)?;
-                    }
-                    remaining = rest;
-                }
+                visit_template_node_ids(text, &unused)?;
             }
         }
+    }
+    Ok(())
+}
+
+/// Walks Dify-style `{{#node.variable#}}` placeholders and rejects unused producers.
+fn visit_template_node_ids(text: &str, unused: &HashSet<&str>) -> Result<(), GraphError> {
+    let mut remaining = text;
+    while let Some((_, after_open)) = remaining.split_once("{{#") {
+        let Some((selector, rest)) = after_open.split_once("#}}") else {
+            break;
+        };
+        if let Some((node_id, _)) = selector.split_once('.') {
+            require_used(node_id, unused)?;
+        }
+        remaining = rest;
     }
     Ok(())
 }
