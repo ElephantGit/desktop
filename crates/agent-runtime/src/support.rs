@@ -281,7 +281,7 @@ pub(super) fn map_acp_error(error: ora_acp::AcpError) -> RuntimeError {
 /// ACP request errors otherwise contain provider-authored free text, so only the exact observed
 /// login refusal is classified. Every other message stays on the generic protocol failure path and
 /// never becomes user-visible text.
-pub(super) fn map_prompt_acp_error(error: ora_acp::AcpError) -> RuntimeError {
+pub(super) fn map_prompt_error(error: ora_acp::AcpError) -> RuntimeError {
     if matches!(
         &error,
         ora_acp::AcpError::RequestFailed(message)
@@ -309,7 +309,7 @@ pub(super) fn history_degraded() -> RuntimeError {
 #[cfg(test)]
 mod tests {
     use super::{
-        agent_model_discovery_failed, agent_start_failed, agent_timed_out, map_prompt_acp_error,
+        agent_model_discovery_failed, agent_start_failed, agent_timed_out, map_prompt_error,
         pick_auto_allow_option, session_event_overflow, session_history_unreadable,
     };
     use crate::ErrorClassification;
@@ -347,13 +347,13 @@ mod tests {
     /// Classifies only the observed login refusal and keeps arbitrary request text generic.
     #[test]
     fn classifies_known_authentication_refusal_without_exposing_other_request_errors() {
-        let authentication = map_prompt_acp_error(ora_acp::AcpError::RequestFailed(
+        let authentication = map_prompt_error(ora_acp::AcpError::RequestFailed(
             "Authentication required".to_string(),
         ));
-        let not_logged_in = map_prompt_acp_error(ora_acp::AcpError::RequestFailed(
+        let not_logged_in = map_prompt_error(ora_acp::AcpError::RequestFailed(
             "Not logged in".to_string(),
         ));
-        let unknown = map_prompt_acp_error(ora_acp::AcpError::RequestFailed(
+        let unknown = map_prompt_error(ora_acp::AcpError::RequestFailed(
             "provider diagnostic".to_string(),
         ));
 
