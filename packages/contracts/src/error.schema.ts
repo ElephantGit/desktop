@@ -192,6 +192,9 @@ export const contractErrorSchema = z.object({
         "code": z.literal("agent_timed_out"),
         "params": emptyErrorParamsSchema
     }), z.object({
+        "code": z.literal("agent_authentication_required"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
         "code": z.literal("agent_model_discovery_failed"),
         "params": emptyErrorParamsSchema
     }), z.object({
@@ -549,6 +552,9 @@ export const publicErrorSchema = z.union([z.object({
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("agent_timed_out"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("agent_authentication_required"),
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("agent_model_discovery_failed"),

@@ -205,6 +205,7 @@ pub enum PublicError {
     AgentRuntimeUnavailable(EmptyErrorParams),
     AgentStartFailed(EmptyErrorParams),
     AgentTimedOut(EmptyErrorParams),
+    AgentAuthenticationRequired(EmptyErrorParams),
     AgentModelDiscoveryFailed(EmptyErrorParams),
     SessionBusy(EmptyErrorParams),
     SessionStopped(EmptyErrorParams),
@@ -338,6 +339,7 @@ impl PublicError {
             Self::AgentRuntimeUnavailable(_) => "agent_runtime_unavailable",
             Self::AgentStartFailed(_) => "agent_start_failed",
             Self::AgentTimedOut(_) => "agent_timed_out",
+            Self::AgentAuthenticationRequired(_) => "agent_authentication_required",
             Self::AgentModelDiscoveryFailed(_) => "agent_model_discovery_failed",
             Self::SessionBusy(_) => "session_busy",
             Self::SessionStopped(_) => "session_stopped",
@@ -552,6 +554,7 @@ mod tests {
             PublicError::AgentRuntimeUnavailable(empty),
             PublicError::AgentStartFailed(empty),
             PublicError::AgentTimedOut(empty),
+            PublicError::AgentAuthenticationRequired(empty),
             PublicError::AgentModelDiscoveryFailed(empty),
             PublicError::SessionBusy(empty),
             PublicError::SessionStopped(empty),
@@ -684,6 +687,7 @@ mod tests {
                 | PublicError::AgentRuntimeUnavailable(_)
                 | PublicError::AgentStartFailed(_)
                 | PublicError::AgentTimedOut(_)
+                | PublicError::AgentAuthenticationRequired(_)
                 | PublicError::AgentModelDiscoveryFailed(_)
                 | PublicError::SessionBusy(_)
                 | PublicError::SessionStopped(_)
@@ -769,7 +773,7 @@ mod tests {
     #[test]
     fn public_error_codes_match_serde_tags_for_every_variant() {
         let samples = public_error_samples();
-        assert_eq!(samples.len(), 112);
+        assert_eq!(samples.len(), 113);
 
         for error in samples {
             let serialized = serde_json::to_value(&error).unwrap();

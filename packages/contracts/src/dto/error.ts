@@ -80,6 +80,7 @@ export type ContractError =
     | { "code": "agent_runtime_unavailable"; "params": EmptyErrorParams }
     | { "code": "agent_start_failed"; "params": EmptyErrorParams }
     | { "code": "agent_timed_out"; "params": EmptyErrorParams }
+    | { "code": "agent_authentication_required"; "params": EmptyErrorParams }
     | { "code": "agent_model_discovery_failed"; "params": EmptyErrorParams }
     | { "code": "session_busy"; "params": EmptyErrorParams }
     | { "code": "session_stopped"; "params": EmptyErrorParams }
@@ -308,6 +309,7 @@ export type PublicError =
   | { "code": "agent_runtime_unavailable"; "params": EmptyErrorParams }
   | { "code": "agent_start_failed"; "params": EmptyErrorParams }
   | { "code": "agent_timed_out"; "params": EmptyErrorParams }
+  | { "code": "agent_authentication_required"; "params": EmptyErrorParams }
   | { "code": "agent_model_discovery_failed"; "params": EmptyErrorParams }
   | { "code": "session_busy"; "params": EmptyErrorParams }
   | { "code": "session_stopped"; "params": EmptyErrorParams }

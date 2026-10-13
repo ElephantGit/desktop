@@ -176,6 +176,14 @@ impl EchoAgent {
             .collect::<Vec<_>>()
             .join("\n");
         let cwd = self.sessions.get(&session_id).cloned().unwrap_or_default();
+        if text.contains("[authentication-required]") {
+            return acp(
+                output,
+                json!({"jsonrpc": JSON_RPC_VERSION, "id": id,
+                "error": {"code": -32603, "message": "Authentication required"}}),
+            )
+            .await;
+        }
         if text.contains("[request-failed]") {
             return acp(
                 output,

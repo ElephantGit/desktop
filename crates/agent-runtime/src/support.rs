@@ -276,6 +276,27 @@ pub(super) fn map_acp_error(error: ora_acp::AcpError) -> RuntimeError {
     )
 }
 
+/// Maps a prompt rejection that has one known authentication meaning onto a stable public error.
+///
+/// ACP request errors otherwise contain provider-authored free text, so only the exact observed
+/// login refusal is classified. Every other message stays on the generic protocol failure path and
+/// never becomes user-visible text.
+pub(super) fn map_prompt_acp_error(error: ora_acp::AcpError) -> RuntimeError {
+    if matches!(
+        &error,
+        ora_acp::AcpError::RequestFailed(message)
+            if matches!(message.trim(), "Authentication required" | "Not logged in")
+    ) {
+        return RuntimeError::with_source(
+            ErrorClassification::Unprocessable,
+            PublicError::AgentAuthenticationRequired(EmptyErrorParams {}),
+            "agent authentication is required",
+            error,
+        );
+    }
+    map_acp_error(error)
+}
+
 /// Builds the refusal returned while a session's history cannot be extended.
 pub(super) fn history_degraded() -> RuntimeError {
     RuntimeError::new(
@@ -288,8 +309,8 @@ pub(super) fn history_degraded() -> RuntimeError {
 #[cfg(test)]
 mod tests {
     use super::{
-        agent_model_discovery_failed, agent_start_failed, agent_timed_out, pick_auto_allow_option,
-        session_event_overflow, session_history_unreadable,
+        agent_model_discovery_failed, agent_start_failed, agent_timed_out, map_prompt_acp_error,
+        pick_auto_allow_option, session_event_overflow, session_history_unreadable,
     };
     use crate::ErrorClassification;
     use agent_client_protocol_schema::v1::{PermissionOption, PermissionOptionKind};
@@ -320,6 +341,33 @@ mod tests {
         assert_eq!(
             error.public_error(),
             &PublicError::AgentStartFailed(EmptyErrorParams {})
+        );
+    }
+
+    /// Classifies only the observed login refusal and keeps arbitrary request text generic.
+    #[test]
+    fn classifies_known_authentication_refusal_without_exposing_other_request_errors() {
+        let authentication = map_prompt_acp_error(ora_acp::AcpError::RequestFailed(
+            "Authentication required".to_string(),
+        ));
+        let not_logged_in = map_prompt_acp_error(ora_acp::AcpError::RequestFailed(
+            "Not logged in".to_string(),
+        ));
+        let unknown = map_prompt_acp_error(ora_acp::AcpError::RequestFailed(
+            "provider diagnostic".to_string(),
+        ));
+
+        assert_eq!(
+            authentication.public_error(),
+            &PublicError::AgentAuthenticationRequired(EmptyErrorParams {})
+        );
+        assert_eq!(
+            not_logged_in.public_error(),
+            &PublicError::AgentAuthenticationRequired(EmptyErrorParams {})
+        );
+        assert_eq!(
+            unknown.public_error(),
+            &PublicError::InternalError(EmptyErrorParams {})
         );
     }
 

@@ -76,6 +76,28 @@ fn provider_failure_ends_the_session_with_a_safe_code_and_releases_resources() {
     });
 }
 
+/// The known ACP login refusal becomes one bounded authentication code, never raw provider text.
+#[test]
+fn missing_agent_credentials_end_the_session_with_an_actionable_code() {
+    with_scoped_async_test(async {
+        let fixture = Fixture::new();
+        let sessions = fixture.sessions(PLUGIN_VERSION);
+        fixture.start(&sessions, PLUGIN_VERSION, "[authentication-required]");
+        let ended = tokio::time::timeout(std::time::Duration::from_secs(5), fixture.ended())
+            .await
+            .expect("an unauthenticated prompt must end the session");
+        assert_eq!(ended.reason, AgentSessionEndReason::AgentFailed);
+        assert_eq!(
+            ended.detail.as_deref(),
+            Some("agent_authentication_required")
+        );
+        let history = serde_json::to_string(&fixture.history_lines()).expect("encode history");
+        assert!(!history.contains("Authentication required"));
+        assert!(!history.contains("Not logged in"));
+        sessions.shutdown().await;
+    });
+}
+
 fn with_scoped_async_test(action: impl std::future::Future<Output = ()>) {
     ora_logging::with_trace_logging(|| {
         tokio::runtime::Builder::new_current_thread()
