@@ -6,6 +6,20 @@ Ora Desktop presents Settings through the App Shell and the Tauri-backed contrac
 
 The Backend `Settings` interface schedules developer-mode, log-level, and network-proxy persistence on the blocking executor. Async callers await the result without managing SQLite scheduling; database failures retain their existing error projection. The synchronous marketplace Git/cache rebuild uses the underlying synchronous settings service on its host blocking executor.
 
+## Plugin marketplace sources
+
+In **Settings → Plugins → Manage marketplace**, choose **Add source** to open a dialog.
+Enter the repository's HTTPS Git URL and branch (default `main`), and optionally enable
+**Use proxy** to use Ora's configured proxy. URL and branch are required; the Backend
+validates repository identity, branch syntax, and conflicts. New sources use Direct HTTPS
+artifact retrieval; configure S3 SigV4 later through the source's **Edit** action.
+
+The dialog focuses the URL field. Enter submits; Cancel, Escape, and the close button
+discard the draft and return focus to Add source without closing Settings. During submission,
+the form prevents duplicate requests and dismissal. Failures remain visible in the dialog
+and preserve the draft for correction or retry. Success closes the dialog and refreshes the
+source list. Use **Sync marketplace** in Plugins to refresh the available plugin listings.
+
 ## Developer mode
 
 Settings always includes a Developer options category, whose page contains the developer-mode switch. Its authoritative value is `user_config.developer_mode`, interpreted by the application layer over the generic SQLite key/value adapter; the frontend does not persist a second copy. A failed initial read leaves the switch disabled, keeps developer-only controls hidden on that page, and offers retry. A failed update retains the last backend response.
