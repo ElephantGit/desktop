@@ -1,4 +1,4 @@
-import { createElement, type ComponentProps } from "react";
+import type { ComponentProps } from "react";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { createChatStore, type ChatTurn } from "@ora/chat";
 import type { ContractsClient } from "@ora/contracts";
@@ -178,23 +178,15 @@ describe("WorkspaceView streaming renders", () => {
     useWorkspaceSelectionStore.getState().selectSession("s1", "t1", "p1");
 
     render(
-      createElement(
-        Wrapper,
-        null,
-        createElement(
-          AppI18nProvider,
-          null,
-          createElement(
-            PlatformProvider,
-            { adapter: createStubPlatform() },
-            createElement(
-              TooltipProvider,
-              null,
-              createElement(WorkspaceView, { userName: "Eric" }),
-            ),
-          ),
-        ),
-      ),
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceView userName="Eric" />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
     );
 
     await waitFor(() =>
