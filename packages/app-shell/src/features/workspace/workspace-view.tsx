@@ -209,8 +209,8 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const selectedWorkspace =
     selection.workflowRunId !== null
       ? undefined
-      : task !== undefined
-        ? workspaces.find((item) => item.id === task.workspaceId)
+      : selection.taskId !== null
+        ? workspaces.find((item) => item.id === task?.workspaceId)
         : workspaces.find(
             (item) =>
               item.projectId === selection.projectId && item.kind === "main",
@@ -218,7 +218,9 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const selectedWorkspaceId =
     selection.workflowRunId !== null
       ? undefined
-      : (task?.workspaceId ?? selectedWorkspace?.id);
+      : selection.taskId !== null
+        ? task?.workspaceId
+        : selectedWorkspace?.id;
   const targetAgentReadiness = useTargetAgentReadiness(selection);
   const agentEffectReadiness = useAgentEffectReadiness(
     selectedWorkspaceId,
@@ -450,6 +452,13 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       throw new DraftSendAbandonedError();
     };
     try {
+      // Keep this inside the failed-turn path so missing task data produces
+      // a visible error and a retryable draft, never a main-workspace session.
+      if (selection.taskId !== null && task === undefined) {
+        throw new Error(
+          "The selected task is not loaded. Please wait and try again.",
+        );
+      }
       if (selectedWorkspaceId === undefined) {
         throw new Error("No workspace is available for this chat");
       }
@@ -541,7 +550,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
     const workspaceId = started.session.workspaceId;
     const draftId = draftIdAtSend;
     const projectId = project.id;
-    const taskId = task?.id ?? null;
+    const taskId = selection.taskId;
     try {
       queryClient.setQueryData<Session[]>(sessionKeys.sessions, (current) =>
         upsertById(current, started.session),
