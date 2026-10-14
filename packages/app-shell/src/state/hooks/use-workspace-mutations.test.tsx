@@ -1,4 +1,5 @@
-import { act } from "@testing-library/react";
+import { act, waitFor } from "@testing-library/react";
+import type { Task } from "@ora/contracts";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   createTestClient,
@@ -30,6 +31,7 @@ import {
   useRenameSession,
 } from "./use-workspace-mutations";
 import { AGENT_REF } from "../../test/agent-identity";
+import { useTasks } from "./use-tasks";
 
 /** State for this test surface; no unrelated domain fixtures are initialized. */
 function createFixtureState() {
@@ -322,6 +324,71 @@ describe("delete mutations clear parked composer state", () => {
 });
 
 describe("useCreateTask", () => {
+  it("publishes the created task before selecting its draft while refetch is pending", async () => {
+    const state = createFixtureState();
+    const existing: Task = {
+      id: "existing",
+      projectId: "p1",
+      workspaceId: "workspace-existing",
+      title: "Existing",
+    };
+    state.tasks = [existing];
+    let resolveRefetch!: (value: { tasks: Task[] }) => void;
+    const refetch = new Promise<{ tasks: Task[] }>((resolve) => {
+      resolveRefetch = resolve;
+    });
+    let listCalls = 0;
+    const client = createTestClient({
+      ...createFixtureHandlers(state),
+      listTasks: async () => {
+        listCalls += 1;
+        return listCalls === 1 ? { tasks: [existing] } : refetch;
+      },
+    });
+    const queryClient = createTestQueryClient();
+    const { result } = renderHookWithClient(
+      () => ({ create: useCreateTask(), tasks: useTasks() }),
+      client,
+      queryClient,
+    );
+    await waitFor(() => expect(result.current.tasks.data).toEqual([existing]));
+    const atSelection: (Task[] | undefined)[] = [];
+    const unsubscribe = useWorkspaceSelectionStore.subscribe(
+      ({ selection }) => {
+        if (selection.draftId !== null) {
+          atSelection.push(
+            queryClient.getQueryData<Task[]>(workspaceKeys.tasks),
+          );
+        }
+      },
+    );
+    try {
+      let created: Task | undefined;
+      await act(async () => {
+        created = await result.current.create.mutateAsync({
+          projectId: "p1",
+          title: "New task",
+        });
+      });
+      expect(listCalls).toBe(2);
+      expect(atSelection).toEqual([[existing, created]]);
+      await waitFor(() =>
+        expect(result.current.tasks.data).toEqual([existing, created]),
+      );
+    } finally {
+      unsubscribe();
+      await act(async () => {
+        resolveRefetch({ tasks: [...state.tasks] });
+        await refetch;
+      });
+      await waitFor(() =>
+        expect(queryClient.isFetching({ queryKey: workspaceKeys.tasks })).toBe(
+          0,
+        ),
+      );
+    }
+  });
+
   it("creates a worktree task and selects its workspace draft", async () => {
     const state = createFixtureState();
     const clientHandlers: TestHandlers = createFixtureHandlers(state);
