@@ -114,8 +114,12 @@ export function cacheDeletedProject(
   };
 }
 
-/** Refreshes task and branch lists after the backend creates an Ora branch. */
-export function invalidateCreatedTask(queryClient: QueryClient, task: Task) {
+/** Publishes the confirmed task before draft selection, then refreshes task and branch lists. */
+export function cacheCreatedTask(queryClient: QueryClient, task: Task) {
+  queryClient.setQueryData<Task[]>(workspaceKeys.tasks, (current) => [
+    ...(current ?? []).filter((candidate) => candidate.id !== task.id),
+    task,
+  ]);
   queryClient.invalidateQueries({ queryKey: workspaceKeys.tasks });
   // The backend created a new Ora branch, so the next worktree dialog must
   // refetch before offering base branches.

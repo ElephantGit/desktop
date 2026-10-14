@@ -5,7 +5,7 @@ import {
   cacheCreatedProject,
   cacheUpdatedProject,
   cacheDeletedProject,
-  invalidateCreatedTask,
+  cacheCreatedTask,
   cacheUpdatedTask,
   cacheDeletedTask,
   findSessionPlacement,
@@ -118,7 +118,7 @@ export function useCreateTask() {
         .create({ projectId, title, baseBranch })
         .then((response) => response.task),
     onSuccess: (task) => {
-      invalidateCreatedTask(queryClient, task);
+      cacheCreatedTask(queryClient, task);
       startSessionDraft({ projectId: task.projectId, taskId: task.id });
       // Reveal the new row. Expanding here rather than reacting to the selection
       // keeps a plain row click free to collapse what it just selected.
