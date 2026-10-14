@@ -467,3 +467,175 @@ it("preserves input and shows a localized backend error before retrying", async 
   expect(add).toHaveBeenCalledTimes(2);
   expect(state.marketplaceSources).toHaveLength(1);
 });
+
+it("keeps Direct HTTPS as the default and hides S3 fields until that method is chosen", async () => {
+  const state = createFixtureState();
+  const user = userEvent.setup();
+  renderManager(createTestClient(createFixtureHandlers(state)));
+  await user.click(screen.getByRole("button", { name: /添加来源|Add source/ }));
+  const dialog = await screen.findByRole("dialog", {
+    name: /添加来源|Add source/,
+  });
+  expect(
+    within(dialog).getByLabelText(/插件包获取方式|Plugin package retrieval/),
+  ).toHaveTextContent(/HTTPS 直接获取|Direct HTTPS/);
+  expect(
+    within(dialog).queryByLabelText(/S3 Endpoint/i),
+  ).not.toBeInTheDocument();
+});
+
+it("requires the S3 fields before creating a source", async () => {
+  const state = createFixtureState();
+  const handlers = createFixtureHandlers(state);
+  const add = vi.fn(handlers.addMarketplaceSource!);
+  handlers.addMarketplaceSource = add;
+  const user = userEvent.setup();
+  renderManager(createTestClient(handlers));
+  await user.click(screen.getByRole("button", { name: /添加来源|Add source/ }));
+  const dialog = await screen.findByRole("dialog");
+  await user.type(
+    within(dialog).getByLabelText(/Git URL/),
+    "https://example.com/marketplace",
+  );
+  await user.click(
+    within(dialog).getByLabelText(/插件包获取方式|Plugin package retrieval/),
+  );
+  await user.click(await screen.findByRole("option", { name: /S3.*SigV4/i }));
+  await user.click(
+    within(dialog).getByRole("button", { name: /添加来源|Add source/ }),
+  );
+  expect(within(dialog).getByLabelText(/S3 Endpoint/i)).toHaveAttribute(
+    "aria-invalid",
+    "true",
+  );
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(/S3 [Ee]ndpoint/);
+  expect(within(dialog).getByLabelText(/S3 Endpoint/i)).toHaveFocus();
+  expect(add).not.toHaveBeenCalled();
+  expect(state.marketplaceSources).toEqual([]);
+});
+
+it("stores S3 retrieval with the new source and omits credentials from the list", async () => {
+  const state = createFixtureState();
+  const handlers = createFixtureHandlers(state);
+  const update = vi.fn(handlers.updateMarketplaceSource!);
+  handlers.updateMarketplaceSource = update;
+  const user = userEvent.setup();
+  renderManager(createTestClient(handlers));
+  await user.click(screen.getByRole("button", { name: /添加来源|Add source/ }));
+  const dialog = await screen.findByRole("dialog");
+  await user.type(
+    within(dialog).getByLabelText(/Git URL/),
+    "https://example.com/marketplace",
+  );
+  await user.click(
+    within(dialog).getByLabelText(/插件包获取方式|Plugin package retrieval/),
+  );
+  await user.click(await screen.findByRole("option", { name: /S3.*SigV4/i }));
+  await user.type(
+    within(dialog).getByLabelText(/S3 Endpoint/i),
+    "https://s3.example.com",
+  );
+  await user.type(within(dialog).getByLabelText(/^Bucket$/i), "plugins");
+  await user.type(within(dialog).getByLabelText(/^Region$/i), "region-1");
+  await user.type(within(dialog).getByLabelText(/Access Key ID/i), "access");
+  await user.type(
+    within(dialog).getByLabelText(/Secret Access Key/i),
+    "secret",
+  );
+  await user.click(
+    within(dialog).getByRole("button", { name: /添加来源|Add source/ }),
+  );
+  await waitFor(() =>
+    expect(state.marketplaceSources).toEqual([
+      {
+        url: "https://example.com/marketplace",
+        branch: "main",
+        useProxy: false,
+        enabled: true,
+        artifactRetrieval: {
+          type: "s3_sigv4",
+          endpoint: "https://s3.example.com",
+          bucket: "plugins",
+          region: "region-1",
+        },
+      },
+    ]),
+  );
+  expect(update.mock.calls[0]?.[0]).toEqual({
+    url: "https://example.com/marketplace",
+    newUrl: "https://example.com/marketplace",
+    branch: "main",
+    useProxy: false,
+    enabled: true,
+    artifactRetrieval: {
+      type: "s3_sigv4",
+      endpoint: "https://s3.example.com",
+      bucket: "plugins",
+      region: "region-1",
+      credentials: {
+        action: "replace",
+        accessKeyId: "access",
+        secretAccessKey: "secret",
+      },
+    },
+  });
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+});
+
+it("removes the new source when the S3 credential write fails", async () => {
+  const state = createFixtureState();
+  const handlers = createFixtureHandlers(state);
+  handlers.updateMarketplaceSource = vi.fn().mockRejectedValue(
+    new RemoteContractError(
+      {
+        code: "internal_error",
+        params: {},
+        requestId: "source-add-s3",
+      },
+      null,
+    ),
+  );
+  const remove = vi.fn(handlers.deleteMarketplaceSource!);
+  handlers.deleteMarketplaceSource = remove;
+  const user = userEvent.setup();
+  renderManager(createTestClient(handlers));
+  await user.click(screen.getByRole("button", { name: /添加来源|Add source/ }));
+  const dialog = await screen.findByRole("dialog");
+  await user.type(
+    within(dialog).getByLabelText(/Git URL/),
+    "https://example.com/marketplace",
+  );
+  await user.click(
+    within(dialog).getByLabelText(/插件包获取方式|Plugin package retrieval/),
+  );
+  await user.click(await screen.findByRole("option", { name: /S3.*SigV4/i }));
+  await user.type(
+    within(dialog).getByLabelText(/S3 Endpoint/i),
+    "https://s3.example.com",
+  );
+  await user.type(within(dialog).getByLabelText(/^Bucket$/i), "plugins");
+  await user.type(within(dialog).getByLabelText(/^Region$/i), "region-1");
+  await user.type(within(dialog).getByLabelText(/Access Key ID/i), "access");
+  await user.type(
+    within(dialog).getByLabelText(/Secret Access Key/i),
+    "secret",
+  );
+  await user.click(
+    within(dialog).getByRole("button", { name: /添加来源|Add source/ }),
+  );
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "source-add-s3",
+  );
+  expect(remove.mock.calls[0]?.[0]).toEqual({
+    url: "https://example.com/marketplace",
+  });
+  expect(state.marketplaceSources).toEqual([]);
+  expect(within(dialog).getByLabelText(/Git URL/)).toHaveValue(
+    "https://example.com/marketplace",
+  );
+  expect(within(dialog).getByLabelText(/Secret Access Key/i)).toHaveValue(
+    "secret",
+  );
+});
