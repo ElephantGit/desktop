@@ -65,6 +65,42 @@ beforeEach(() => {
   useDraftSessionsStore.getState().clear();
 });
 
+describe("WorkspaceDialogs delete confirmation", () => {
+  it("wraps an unbroken name inside the delete dialog", () => {
+    const name = "q".repeat(80);
+    const state = createFixtureState();
+    const client = createTestClient(createFixtureHandlers(state));
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    useUiStore.getState().setDeleteTarget({
+      kind: "project",
+      id: "p1",
+      name,
+      sessionIds: [],
+    });
+
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <TooltipProvider>
+              <WorkspaceDialogs />
+            </TooltipProvider>
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    const title = screen.getByRole("heading", { name: new RegExp(name) });
+    expect(title.className).toContain("wrap-break-word");
+    expect(title.className).toContain("min-w-0");
+    expect(title.className).toContain("w-full");
+  });
+});
+
 describe("WorkspaceDialogs project creation", () => {
   it.each([
     ["C:\\workspace\\ora", "ora"],
