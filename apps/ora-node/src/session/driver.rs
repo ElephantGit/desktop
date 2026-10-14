@@ -16,7 +16,7 @@ use crate::model_proxy::{ModelAccess, ModelAccessStatus};
 use agent_client_protocol_schema::v1::{ContentBlock as AcpContentBlock, MessageId, TextContent};
 use ora_agent_runtime::{AgentRuntimeManager, AgentRuntimeSetup, MemorySessionStore, NoSessionMcp};
 use ora_contracts::{
-    PromptSessionEvent, PromptSessionRequest, StartSessionRequest, StopPluginRequest,
+    PromptSessionEvent, PromptSessionRequest, PublicError, StartSessionRequest, StopPluginRequest,
     StopSessionRequest,
 };
 use ora_domain::{AgentRef, PluginId, SessionId};
@@ -520,7 +520,15 @@ impl<L: SessionLedger> Conversation<'_, L> {
             tokio::select! {
                 event = stream.recv() => match event {
                     Some(Ok(PromptSessionEvent::Completed { .. })) => break TurnOutcome::Finished,
-                    Some(Err(_)) => break TurnOutcome::Failed("agent_turn_failed"),
+                    Some(Err(error)) => {
+                        let code = match error.public_error() {
+                            PublicError::AgentAuthenticationRequired(_) => {
+                                "agent_authentication_required"
+                            }
+                            _ => "agent_turn_failed",
+                        };
+                        break TurnOutcome::Failed(code);
+                    }
                     None => break TurnOutcome::Failed("agent_stream_closed"),
                     Some(Ok(_)) => {}
                 },

@@ -7,6 +7,8 @@ export const chatTranslations = {
     "errors.agent_start_failed":
       "无法启动该 Agent，请检查其插件与本机安装是否正常。",
     "errors.agent_timed_out": "Agent 响应超时，请稍后重试。",
+    "errors.agent_authentication_required":
+      "Agent 未登录或缺少凭据，请先完成登录或配置凭据。",
     "errors.agent_model_discovery_failed": "无法获取该 Agent 的模型列表。",
     "errors.session_busy": "会话正在处理其他操作。",
     "errors.session_stopped": "会话与 Agent 的连接已断开，请重试。",
@@ -320,6 +322,8 @@ export const chatTranslations = {
     "errors.agent_start_failed":
       "This agent could not be started. Check its plugin and local installation.",
     "errors.agent_timed_out": "The agent did not respond in time. Try again.",
+    "errors.agent_authentication_required":
+      "The agent is not signed in or is missing credentials. Sign in or configure credentials first.",
     "errors.agent_model_discovery_failed":
       "The models for this agent could not be listed.",
     "errors.session_busy": "The session is busy with another operation.",
