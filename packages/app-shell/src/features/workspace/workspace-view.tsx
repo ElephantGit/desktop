@@ -47,16 +47,14 @@ import {
 import { useChatStore } from "../../chat-store-context";
 import { DragRegion } from "../../components/drag-region";
 import { WindowControls } from "../../components/window-controls";
-import { ChatView } from "../chat/chat-view";
 import { expandPromptRoleTokens } from "../chat/expand-prompt-role-tokens";
-import { ComposerContextBar } from "../chat/composer-context-bar";
 import { SessionAgentBanner } from "../chat/session-agent-banner";
 import { SessionMcpHealthBanner } from "../chat/session-mcp-health-banner";
-import { SessionHistoryBanner } from "../chat/session-history-banner";
 import {
-  SessionUsageIndicator,
-  shouldShowSessionUsage,
-} from "../chat/session-usage-surface";
+  SessionHistoryNotices,
+  SessionUsageSlot,
+  WorkspaceChatPane,
+} from "./workspace-chat-pane";
 import type { ChatTurn } from "@ora/chat";
 import {
   type SessionSetupPresentation,
@@ -228,7 +226,8 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const session = sessions.find((item) => item.id === selection.sessionId);
   const conversationSessionId = selection.sessionId;
   // Memoized: WorkspaceReviewLayout keys per-scope restore off this object's
-  // identity, and this component re-renders on every streaming chat update.
+  // identity. Streaming tokens update the chat pane, not this shell, so the
+  // object stays stable for the life of the selected task or project.
   const reviewContext = useMemo<WorkspaceReviewContext>(
     () =>
       task !== undefined && project !== undefined
@@ -247,10 +246,26 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
           : { kind: "none" },
     [project, task, selectedWorkspaceId],
   );
-  const conversation = useStore(chatStore, (state) =>
-    conversationSessionId === null
-      ? undefined
-      : state.conversations[conversationSessionId],
+  // Booleans, not the conversation. A token replaces the conversation object
+  // but leaves these flags alone, and useStore bails out on Object.is, so the
+  // shell does not reconcile the review panel beside the thread.
+  const conversationIsLoading = useStore(
+    chatStore,
+    (state) =>
+      conversationSessionId !== null &&
+      state.conversations[conversationSessionId]?.isLoading === true,
+  );
+  const conversationIsLoaded = useStore(
+    chatStore,
+    (state) =>
+      conversationSessionId !== null &&
+      state.conversations[conversationSessionId]?.isLoaded === true,
+  );
+  const conversationHasError = useStore(
+    chatStore,
+    (state) =>
+      conversationSessionId !== null &&
+      state.conversations[conversationSessionId]?.error != null,
   );
 
   // Deriving what to show rather than clearing on a transition is what makes the
@@ -264,9 +279,9 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   useEffect(() => {
     if (
       session !== undefined &&
-      conversation?.isLoading !== true &&
-      conversation?.isLoaded !== true &&
-      conversation?.error == null
+      !conversationIsLoading &&
+      !conversationIsLoaded &&
+      !conversationHasError
     ) {
       // A browser refresh replaces the in-memory chat store without stopping the backend-owned
       // process, so a selected session can still be Running while its local history is empty.
@@ -278,9 +293,9 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
     }
   }, [
     chatStore,
-    conversation?.error,
-    conversation?.isLoaded,
-    conversation?.isLoading,
+    conversationHasError,
+    conversationIsLoaded,
+    conversationIsLoading,
     session,
     sessionsQuery,
   ]);
@@ -669,62 +684,10 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const chatIsOpen = session === undefined || project !== undefined;
 
   if (chatIsOpen) {
-    const canChat =
-      targetAgentCli !== null &&
-      (session
-        ? session.status === "running" || conversation?.isLoaded === true
-        : project !== undefined);
-    // The send button alone carries this hint: the composer must stay typable
-    // so the picker next to it can fix the state, and it only applies where the
-    // whole-composer hint does not, so the two bubbles never compete.
-    const sendDisabledHint =
-      canChat && agentEffectReadiness.kind === "failed"
-        ? t("chat.agentEffectsFailed", {
-            message: agentEffectReadiness.message,
-          })
-        : canChat && agentEffectReadiness.kind === "blocked"
-          ? t("chat.agentEffectsNotReady")
-          : canChat && targetAgentReadiness === "blocked"
-            ? t("chat.pickAvailableAgent")
-            : undefined;
-    // A failed background session-create settles onto the draft conversation, so
-    // the conversation error already covers the start-up failure path. A pending
-    // send has no conversation to settle onto and carries its own.
-    const chatError = conversation?.error ?? pendingTurn?.error ?? null;
-    // The pending turn is appended rather than pushed into the store, since the
-    // session it would be keyed under does not exist while it is on screen. It is
-    // what flips `ChatView` out of the landing layout on the send itself.
-    const turns =
-      pendingTurn === null
-        ? (conversation?.turns ?? [])
-        : [...(conversation?.turns ?? []), pendingTurn];
-    // Session setup owns its own status row; once prompting begins, the ordinary
-    // response indicator starts from the turn's later response-phase timestamp.
-    const isResponding =
-      (conversation?.isResponding ?? false) ||
-      pendingTurn?.status === "streaming";
-    const visibleSessionSetups =
-      pendingTurn !== null
-        ? pendingSend === null
-          ? []
-          : [pendingSend.setup]
-        : selection.sessionId === null
-          ? []
-          : (sessionSetups[selection.sessionId] ?? []);
-    const lastTurn = conversation?.turns.at(-1);
-    // Output has begun once the live turn carries any item; until then the turn is
-    // still starting up (session creation or the wait for the first token).
-    const isStreaming =
-      (conversation?.isResponding ?? false) &&
-      (lastTurn?.items.length ?? 0) > 0;
-    // A selected session always owns a thread, so treat it as loading until its
-    // history has landed (or failed). This also covers the render between selecting
-    // the session and loadSession flipping isLoading on — without it the composer
-    // would bounce back to the landing layout for a frame when switching sessions.
-    const isLoadingHistory =
-      session !== undefined &&
-      conversation?.isLoaded !== true &&
-      conversation?.error == null;
+    const setupsForSession =
+      selection.sessionId === null
+        ? []
+        : (sessionSetups[selection.sessionId] ?? []);
     return (
       <main
         id="main-content"
@@ -755,57 +718,36 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
               </div>
             )}
           </DragRegion>
-          {conversation && shouldShowSessionUsage(conversation.usage) && (
-            <SessionUsageIndicator usage={conversation.usage} />
-          )}
+          <SessionUsageSlot sessionId={selection.sessionId} />
           <LocationActionsButton workspaceId={selectedWorkspaceId} />
           <SurfaceLauncher />
           <WindowControls />
         </div>
         <SessionAgentBanner session={session} />
         <SessionMcpHealthBanner session={session} />
-        <SessionHistoryBanner
-          session={session}
-          notices={conversation?.historyNotices ?? []}
-        />
+        <SessionHistoryNotices session={session} />
         <WorkspaceReviewLayout context={reviewContext}>
-          <ChatView
+          <WorkspaceChatPane
+            sessionId={selection.sessionId}
+            session={session}
             taskId={task?.id}
             projectId={project?.id}
             workspaceId={selectedWorkspaceId}
-            turns={turns}
-            modelChanges={conversation?.modelChanges}
             userName={userName}
-            isResponding={isResponding}
-            sessionSetups={visibleSessionSetups}
-            isStreaming={isStreaming}
-            isLoading={isLoadingHistory}
-            error={chatError}
-            pendingPermissions={conversation?.pendingPermissions ?? []}
+            pendingTurn={pendingTurn}
+            pendingSetup={
+              pendingTurn !== null ? (pendingSend?.setup ?? null) : null
+            }
+            sessionSetups={setupsForSession}
             skills={skillsQuery.data ?? []}
             roles={agentsQuery.data ?? []}
-            availableCommands={conversation?.availableCommands ?? []}
-            disabled={!canChat}
-            // An untouched chat cannot send yet, but disabling this picker as
-            // part of the composer would make choosing its first agent impossible.
-            modelSelectorDisabled={targetAgentCli !== null && !canChat}
-            disabledHint={
-              canChat
-                ? undefined
-                : project === undefined
-                  ? t("chat.pickProject")
-                  : t("chat.pickAgent")
+            targetAgentCli={targetAgentCli}
+            projectSelected={project !== undefined}
+            agentEffectReadiness={agentEffectReadiness}
+            targetAgentReadiness={targetAgentReadiness}
+            showContextBar={
+              selection.sessionId === null && pendingTurn === null
             }
-            sendDisabledHint={sendDisabledHint}
-            // A persisted or optimistic session already fixes its project and
-            // execution context, so the pickers only belong to a blank composer.
-            contextBar={
-              selection.sessionId === null && pendingTurn === null ? (
-                <ComposerContextBar />
-              ) : undefined
-            }
-            // Failures land in chatError; the rejection also lets the composer
-            // restore unsent text when the surface never left the draft.
             onSend={(text, images) => sendOrStartSession(text, images)}
             // A pending send has no session to stop — abandoning it before its
             // handshake resolves is what stops it.
