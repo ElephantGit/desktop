@@ -139,6 +139,10 @@ export const pluginTranslations = {
     "settings.plugins.s3CredentialsPreserved":
       "凭据不会回显；两项均留空可保留当前凭据，填写时必须同时替换。",
     "settings.plugins.addSource": "添加来源",
+    "settings.plugins.addSourceDescription":
+      "填写市场仓库的 HTTPS Git URL 和分支。添加后可同步插件市场；S3 获取方式可在来源的编辑窗口中配置。",
+    "settings.plugins.sourceUrlRequired": "请输入 Git URL。",
+    "settings.plugins.sourceBranchRequired": "请输入分支名称。",
     "settings.plugins.editSource": "编辑",
     "settings.plugins.editSourceDescription":
       "修改该市场源的 Git 地址或跟踪分支。指向不同仓库会使已安装插件与其列表脱节。",
@@ -517,6 +521,10 @@ export const pluginTranslations = {
     "settings.plugins.s3CredentialsPreserved":
       "Credentials are never displayed. Leave both fields blank to keep them, or fill both to replace them.",
     "settings.plugins.addSource": "Add source",
+    "settings.plugins.addSourceDescription":
+      "Enter the marketplace repository's HTTPS Git URL and branch. Sync the marketplace after adding it; configure S3 retrieval in the source's Edit dialog if needed.",
+    "settings.plugins.sourceUrlRequired": "Enter a Git URL.",
+    "settings.plugins.sourceBranchRequired": "Enter a branch name.",
     "settings.plugins.editSource": "Edit",
     "settings.plugins.editSourceDescription":
       "Change this marketplace source's Git URL or tracked branch. Pointing at a different repository detaches installed plugins from their listing.",

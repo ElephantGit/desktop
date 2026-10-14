@@ -22,20 +22,15 @@ import {
   Switch,
   toast,
 } from "@ora/ui";
-import {
-  IconLoader2,
-  IconPencil,
-  IconPlus,
-  IconTrash,
-} from "@tabler/icons-react";
+import { IconPencil, IconTrash } from "@tabler/icons-react";
 import type {
   MarketplaceArtifactRetrieval,
   MarketplaceArtifactRetrievalUpdate,
   MarketplaceSource,
 } from "@ora/contracts";
+import { PluginSourceAddDialog } from "./plugin-source-add-dialog";
 import { useContractErrorToast } from "../../i18n/use-contract-error-toast";
 import {
-  useAddMarketplaceSource,
   useDeleteMarketplaceSource,
   useUpdateMarketplaceSource,
   useMarketplaceSources,
@@ -53,32 +48,11 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
   const { t } = useTranslation();
   const showContractError = useContractErrorToast();
   const sourcesQuery = useMarketplaceSources();
-  const addSource = useAddMarketplaceSource();
   const deleteSource = useDeleteMarketplaceSource();
   const updateSource = useUpdateMarketplaceSource();
-  const [url, setUrl] = useState("");
-  const [branch, setBranch] = useState("main");
   const [editing, setEditing] = useState<MarketplaceSource | null>(null);
 
   const sources = sourcesQuery.data?.sources ?? [];
-
-  const handleAdd = () => {
-    const nextUrl = url.trim();
-    const nextBranch = branch.trim();
-    if (nextUrl === "" || nextBranch === "") return;
-    addSource.mutate(
-      { url: nextUrl, branch: nextBranch, useProxy: false },
-      {
-        onSuccess: () => {
-          setUrl("");
-          setBranch("main");
-          toast.success(t("settings.plugins.sourceAdded"));
-        },
-        onError: (cause) =>
-          showContractError(cause, t("settings.plugins.sourceAddFailed")),
-      },
-    );
-  };
 
   const patchSource = (
     source: MarketplaceSource,
@@ -126,48 +100,12 @@ export function PluginSourcesManager({ onBack }: { onBack: () => void }) {
         </BreadcrumbList>
       </Breadcrumb>
 
-      <header>
+      <header className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg font-semibold">
           {t("settings.plugins.manageSources")}
         </h2>
+        <PluginSourceAddDialog />
       </header>
-
-      <form
-        className="flex flex-col gap-3 rounded-lg border border-border/70 bg-muted/25 p-3 sm:flex-row sm:items-center"
-        onSubmit={(event) => {
-          event.preventDefault();
-          handleAdd();
-        }}
-      >
-        <Input
-          value={url}
-          onChange={(event) => setUrl(event.target.value)}
-          placeholder={t("settings.plugins.sourceUrl")}
-          aria-label={t("settings.plugins.sourceUrl")}
-          className="min-w-0 flex-1 bg-background"
-        />
-        <Input
-          value={branch}
-          onChange={(event) => setBranch(event.target.value)}
-          placeholder={t("settings.plugins.sourceBranch")}
-          aria-label={t("settings.plugins.sourceBranch")}
-          className="bg-background sm:w-40"
-        />
-        <Button
-          type="submit"
-          variant="outline"
-          size="sm"
-          className="shrink-0"
-          disabled={addSource.isPending}
-        >
-          {addSource.isPending ? (
-            <IconLoader2 className="animate-spin" />
-          ) : (
-            <IconPlus />
-          )}
-          {t("settings.plugins.addSource")}
-        </Button>
-      </form>
 
       {sources.length === 0 ? (
         <p className="py-10 text-center text-sm text-muted-foreground">
