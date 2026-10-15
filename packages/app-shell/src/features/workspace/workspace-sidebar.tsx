@@ -17,6 +17,7 @@ import {
 } from "@ora/ui";
 import {
   IconArrowLeft,
+  IconCalendarClock,
   IconLayoutSidebarLeftCollapse,
   IconMessageCirclePlus,
   IconPlus,
@@ -270,6 +271,8 @@ export function WorkspaceSidebar({ user }: WorkspaceSidebarProps) {
   const setDialog = useUiStore((s) => s.setDialog);
   const workflowEditorOpen = useUiStore((s) => s.workflowEditorOpen);
   const setWorkflowEditorOpen = useUiStore((s) => s.setWorkflowEditorOpen);
+  const scheduledTasksOpen = useUiStore((s) => s.scheduledTasksOpen);
+  const setScheduledTasksOpen = useUiStore((s) => s.setScheduledTasksOpen);
   const leaveWorkflowEditor = useWorkflowEditorStore(
     (state) => state.actions?.leave,
   );
@@ -410,7 +413,10 @@ export function WorkspaceSidebar({ user }: WorkspaceSidebarProps) {
     const handleNewChatShortcut = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
         event.preventDefault();
-        if (useUiStore.getState().workflowEditorOpen) {
+        if (
+          useUiStore.getState().workflowEditorOpen ||
+          useUiStore.getState().scheduledTasksOpen
+        ) {
           return;
         }
         startNewChat();
@@ -425,17 +431,21 @@ export function WorkspaceSidebar({ user }: WorkspaceSidebarProps) {
       {/* Width is owned by the enclosing ResizablePanel, so the aside just fills it. */}
       <aside className="flex size-full min-w-0 flex-col bg-sidebar text-sidebar-foreground">
         <header className="flex h-14 items-center gap-2 px-3">
-          {workflowEditorOpen ? (
+          {workflowEditorOpen || scheduledTasksOpen ? (
             <>
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
-                disabled={leaveWorkflowEditor === undefined}
+                disabled={
+                  !scheduledTasksOpen && leaveWorkflowEditor === undefined
+                }
                 onClick={() => {
                   // Only the editor's registered leave flushes the draft. A store-only
                   // close would drop unsaved canvas edits.
-                  if (leaveWorkflowEditor !== undefined) {
+                  if (scheduledTasksOpen) {
+                    setScheduledTasksOpen(false);
+                  } else if (leaveWorkflowEditor !== undefined) {
                     void leaveWorkflowEditor();
                   }
                 }}
@@ -445,7 +455,9 @@ export function WorkspaceSidebar({ user }: WorkspaceSidebarProps) {
               </Button>
               <DragRegion>
                 <span className="text-[15px] font-semibold tracking-[-0.01em]">
-                  {t("sidebar.workflows")}
+                  {scheduledTasksOpen
+                    ? t("scheduledTask.title")
+                    : t("sidebar.workflows")}
                 </span>
               </DragRegion>
             </>
@@ -476,6 +488,10 @@ export function WorkspaceSidebar({ user }: WorkspaceSidebarProps) {
 
         {workflowEditorOpen ? (
           <WorkflowEditorList />
+        ) : scheduledTasksOpen ? (
+          <div className="min-h-0 flex-1 px-4 py-3 text-xs leading-relaxed text-muted-foreground">
+            {t("scheduledTask.description")}
+          </div>
         ) : (
           <>
             <div className="flex flex-col gap-1 px-2 pb-3">
@@ -487,6 +503,15 @@ export function WorkspaceSidebar({ user }: WorkspaceSidebarProps) {
               >
                 <IconMessageCirclePlus className="size-4 text-muted-foreground" />
                 {t("chat.new")}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-9 w-full justify-start gap-2 px-2 text-[13px] font-medium"
+                onClick={() => setScheduledTasksOpen(true)}
+              >
+                <IconCalendarClock className="size-4 text-muted-foreground" />
+                {t("scheduledTask.title")}
               </Button>
               <Button
                 type="button"
@@ -583,7 +608,7 @@ export function WorkspaceSidebar({ user }: WorkspaceSidebarProps) {
           </>
         )}
 
-        {error && !workflowEditorOpen && (
+        {error && !workflowEditorOpen && !scheduledTasksOpen && (
           <p
             data-selectable
             className="border-t border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive"
@@ -594,7 +619,8 @@ export function WorkspaceSidebar({ user }: WorkspaceSidebarProps) {
         <div
           className={cn(
             "p-2",
-            workflowEditorOpen && "border-t border-sidebar-border",
+            (workflowEditorOpen || scheduledTasksOpen) &&
+              "border-t border-sidebar-border",
           )}
         >
           <UserProfile

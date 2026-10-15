@@ -5,6 +5,7 @@ import { editorTranslations } from "../features/editor/translations";
 import { diffTranslations } from "../features/diff/translations";
 import { filesTranslations } from "../features/files/translations";
 import { sidebarTranslations } from "../features/sidebar/translations";
+import { scheduledTaskTranslations } from "../features/scheduled-task/translations";
 import { surfaceTranslations } from "../features/surface/translations";
 import { workspaceTranslations } from "../features/workspace/translations";
 import { workflowEditorTranslations } from "../features/workflow-editor/translations";
@@ -25,6 +26,7 @@ export const featureTranslationResources = {
   diff: diffTranslations,
   files: filesTranslations,
   sidebar: sidebarTranslations,
+  scheduledTask: scheduledTaskTranslations,
   surface: surfaceTranslations,
   workspace: workspaceTranslations,
   workflowEditor: workflowEditorTranslations,

@@ -12,6 +12,7 @@ beforeEach(() => {
     settingsOpen: false,
     settingsCategory: "appearance",
     workflowEditorOpen: false,
+    scheduledTasksOpen: false,
     expandedProjects: new Set<string>(),
     expandedTasks: new Set<string>(),
     treeExpansionBootstrapped: false,
@@ -49,6 +50,20 @@ describe("useUiStore", () => {
     expect(useUiStore.getState().workflowEditorOpen).toBe(true);
     useUiStore.getState().setWorkflowEditorOpen(false);
     expect(useUiStore.getState().workflowEditorOpen).toBe(false);
+  });
+
+  it("keeps workflow and Scheduled Task management mutually exclusive", () => {
+    useUiStore.getState().setWorkflowEditorOpen(true);
+    useUiStore.getState().setScheduledTasksOpen(true);
+    expect(useUiStore.getState()).toMatchObject({
+      workflowEditorOpen: false,
+      scheduledTasksOpen: true,
+    });
+    useUiStore.getState().setWorkflowEditorOpen(true);
+    expect(useUiStore.getState()).toMatchObject({
+      workflowEditorOpen: true,
+      scheduledTasksOpen: false,
+    });
   });
 
   it("toggles project expansion and produces a new Set each time", () => {
@@ -168,6 +183,7 @@ describe("useUiStore", () => {
     });
     expect(raw!).not.toContain("settingsOpen");
     expect(raw!).not.toContain("workflowEditorOpen");
+    expect(raw!).not.toContain("scheduledTasksOpen");
     expect(raw!).not.toContain("dialog");
   });
 

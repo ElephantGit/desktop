@@ -14,6 +14,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useProjects } from "../../state/hooks/use-projects";
 import { useTasks } from "../../state/hooks/use-tasks";
+import { ScheduledTaskManager } from "../scheduled-task/scheduled-task-manager";
 import { useSessions } from "../../state/hooks/use-sessions";
 import { useSkills } from "../../state/hooks/use-skills";
 import { useAgents } from "../../state/hooks/use-agents";
@@ -166,6 +167,7 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const setSidebarCollapsed = useUiStore((s) => s.setSidebarCollapsed);
   const workflowEditorOpen = useUiStore((s) => s.workflowEditorOpen);
+  const scheduledTasksOpen = useUiStore((s) => s.scheduledTasksOpen);
   const workflowEditorRecovery = useWorkflowEditorRenderRecovery();
   // Resolved the same way the picker shows it, so first send and model intent
   // target the same agent even while a switch remains client-side.
@@ -658,6 +660,11 @@ export function WorkspaceView({ userName }: WorkspaceViewProps) {
       roleExpansion === null ? undefined : `${text}\n\n${roleExpansion}`;
     await dispatchSend(text, agentText, images);
   };
+
+  // Scheduled Task definition management owns the main pane while it is open.
+  if (scheduledTasksOpen) {
+    return <ScheduledTaskManager />;
+  }
 
   // Graph workflow definition editor owns the main pane while it is open.
   if (workflowEditorOpen) {

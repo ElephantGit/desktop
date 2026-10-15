@@ -249,6 +249,7 @@ beforeEach(() => {
     dialog: null,
     deleteTarget: null,
     workflowEditorOpen: false,
+    scheduledTasksOpen: false,
   });
   useWorkflowEditorStore.setState({
     selectedWorkflowId: null,
@@ -1995,6 +1996,33 @@ describe("WorkspaceSidebar", () => {
     await user.click(screen.getByRole("button", { name: /返回|Back/ }));
 
     expect(useUiStore.getState().workflowEditorOpen).toBe(false);
+    expect(
+      await screen.findByRole("button", { name: /新建对话|New chat/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("opens Scheduled Tasks from the action stack and returns with Back", async () => {
+    const user = userEvent.setup();
+    renderSidebar(workspaceWithOneSession());
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: /定时任务|Scheduled Tasks/,
+      }),
+    );
+
+    expect(useUiStore.getState()).toMatchObject({
+      scheduledTasksOpen: true,
+      workflowEditorOpen: false,
+    });
+    expect(
+      screen.queryByPlaceholderText(/搜索工作区|Search workspace/),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /返回|Back/ })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: /返回|Back/ }));
+
+    expect(useUiStore.getState().scheduledTasksOpen).toBe(false);
     expect(
       await screen.findByRole("button", { name: /新建对话|New chat/ }),
     ).toBeInTheDocument();
