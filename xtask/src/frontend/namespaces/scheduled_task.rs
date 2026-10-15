@@ -30,6 +30,14 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
+        operation_name: "listScheduledTaskHistory",
+        namespace: NAMESPACE,
+        member_name: "listHistory",
+        request_type: "ListScheduledTaskHistoryRequest",
+        response_type: "ListScheduledTaskHistoryResponse",
+        response_mode: FrontendResponseMode::Unary,
+    },
+    FrontendEndpoint {
         operation_name: "updateScheduledTask",
         namespace: NAMESPACE,
         member_name: "update",

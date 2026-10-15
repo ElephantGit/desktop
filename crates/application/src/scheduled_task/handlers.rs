@@ -3,7 +3,8 @@ use std::sync::Arc;
 use ora_contracts::{
     CreateScheduledTaskRequest, CreateScheduledTaskResponse, DeleteScheduledTaskRequest,
     DeleteScheduledTaskResponse, GetScheduledTaskRequest, GetScheduledTaskResponse,
-    ListScheduledTasksRequest, ListScheduledTasksResponse, RevokeScheduledTaskApprovalRequest,
+    ListScheduledTaskHistoryRequest, ListScheduledTaskHistoryResponse, ListScheduledTasksRequest,
+    ListScheduledTasksResponse, RevokeScheduledTaskApprovalRequest,
     RevokeScheduledTaskApprovalResponse, ScheduledTaskExecutionLocation as ContractLocation,
     UpdateScheduledTaskRequest, UpdateScheduledTaskResponse,
 };
@@ -12,8 +13,8 @@ use ora_domain::{
     ScheduledTaskId,
 };
 
-use super::mapper::{approval_from_policy, map_task, parse_schedule};
-use super::{ScheduledTaskIdGenerator, ScheduledTaskRepository};
+use super::mapper::{approval_from_policy, map_history_entry, map_task, parse_schedule};
+use super::{ScheduledTaskHistoryRepository, ScheduledTaskIdGenerator, ScheduledTaskRepository};
 use crate::{ApplicationError, Clock, ProjectRepository};
 
 /// Handles creation of a first-release local scheduled-task definition.
@@ -144,6 +145,35 @@ where
             .map_err(ApplicationError::from_scheduled_task_repository_error)?;
         Ok(ListScheduledTasksResponse {
             tasks: tasks.into_iter().map(map_task).collect(),
+        })
+    }
+}
+
+/// Handles newest-first reads of persisted run and missed facts.
+pub struct ListScheduledTaskHistoryHandler<Repository> {
+    repository: Arc<Repository>,
+}
+
+impl<Repository> ListScheduledTaskHistoryHandler<Repository> {
+    pub fn new(repository: Arc<Repository>) -> Self {
+        Self { repository }
+    }
+}
+
+impl<Repository> ListScheduledTaskHistoryHandler<Repository>
+where
+    Repository: ScheduledTaskHistoryRepository + Send + Sync + 'static,
+{
+    pub fn handle(
+        &self,
+        request: ListScheduledTaskHistoryRequest,
+    ) -> Result<ListScheduledTaskHistoryResponse, ApplicationError> {
+        let entries = self
+            .repository
+            .list_scheduled_task_history(&ScheduledTaskId::new(request.task_id))
+            .map_err(ApplicationError::from_scheduled_task_repository_error)?;
+        Ok(ListScheduledTaskHistoryResponse {
+            entries: entries.into_iter().map(map_history_entry).collect(),
         })
     }
 }

@@ -15,11 +15,13 @@ mod tests;
 pub use admission::AdmitScheduledOccurrenceHandler;
 pub use handlers::{
     CreateScheduledTaskHandler, DeleteScheduledTaskHandler, GetScheduledTaskHandler,
-    ListScheduledTasksHandler, RevokeScheduledTaskApprovalHandler, UpdateScheduledTaskHandler,
+    ListScheduledTaskHistoryHandler, ListScheduledTasksHandler, RevokeScheduledTaskApprovalHandler,
+    UpdateScheduledTaskHandler,
 };
 pub use id_generator::{UuidScheduledRunIdGenerator, UuidScheduledTaskIdGenerator};
 pub use offline_recovery::{OfflineRecoveryResolution, RecordOfflineMissedOccurrenceHandler};
 pub use ports::{
     ScheduledOccurrenceCandidate, ScheduledOccurrenceRepository, ScheduledOccurrenceResolution,
-    ScheduledRunIdGenerator, ScheduledTaskIdGenerator, ScheduledTaskRepository,
+    ScheduledRunIdGenerator, ScheduledTaskHistoryRepository, ScheduledTaskIdGenerator,
+    ScheduledTaskRepository,
 };

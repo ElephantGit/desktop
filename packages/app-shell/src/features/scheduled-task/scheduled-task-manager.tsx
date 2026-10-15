@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import type {
   Project,
   ScheduledTask,
+  ScheduledTaskHistoryEntry,
   ScheduledTaskSchedule,
   ScheduledTaskWeekday,
 } from "@ora/contracts";
@@ -29,6 +30,7 @@ import {
 import {
   IconCalendarClock,
   IconEdit,
+  IconHistory,
   IconPlus,
   IconShieldX,
   IconTrash,
@@ -40,6 +42,7 @@ import {
   useCreateScheduledTask,
   useDeleteScheduledTask,
   useRevokeScheduledTaskApproval,
+  useScheduledTaskHistory,
   useScheduledTasks,
   useUpdateScheduledTask,
 } from "../../state/hooks/use-scheduled-tasks";
@@ -83,6 +86,91 @@ function scheduleLabel(
     days: schedule.weekdays.map((day) => labels.get(day) ?? day).join(", "),
     time,
   });
+}
+
+function historyStatusLabel(
+  entry: ScheduledTaskHistoryEntry,
+  t: ReturnType<typeof useTranslation>["t"],
+): string {
+  if (entry.kind === "missed") {
+    return t(`scheduledTask.historyReason.${entry.reason}`);
+  }
+  return t(`scheduledTask.historyStatus.${entry.status}`);
+}
+
+function formatTimestamp(timestamp: bigint): string {
+  return new Date(Number(timestamp)).toLocaleString();
+}
+
+function ScheduledTaskHistoryDialog({
+  task,
+  onOpenChange,
+}: {
+  task: ScheduledTask;
+  onOpenChange(open: boolean): void;
+}) {
+  const { t } = useTranslation();
+  const history = useScheduledTaskHistory(task.id);
+
+  return (
+    <Dialog open onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>{t("scheduledTask.history")}</DialogTitle>
+          <DialogDescription>{task.name}</DialogDescription>
+        </DialogHeader>
+        {history.isPending && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Spinner className="size-4" />
+            {t("scheduledTask.historyLoading")}
+          </div>
+        )}
+        {history.error && (
+          <p data-selectable className="text-sm text-destructive">
+            {localizeContractError(history.error, t)}
+          </p>
+        )}
+        {!history.isPending && !history.error && history.data?.length === 0 && (
+          <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+            {t("scheduledTask.historyEmpty")}
+          </p>
+        )}
+        <div className="grid gap-2">
+          {history.data?.map((entry) => (
+            <article
+              key={
+                entry.kind === "run"
+                  ? entry.id
+                  : `missed-${entry.scheduledAt.toString()}`
+              }
+              className="rounded-lg border p-3"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm font-medium">
+                  {historyStatusLabel(entry, t)}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {formatTimestamp(entry.scheduledAt)}
+                </span>
+              </div>
+              {entry.kind === "run" && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t("scheduledTask.historyRevision", {
+                    revision: entry.revision.toString(),
+                  })}
+                  {entry.sessionId === null
+                    ? ""
+                    : ` · ${t("scheduledTask.historySession", {
+                        session: entry.sessionId,
+                      })}`}
+                </p>
+              )}
+            </article>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 interface ScheduledTaskFormProps {
@@ -448,6 +536,7 @@ export function ScheduledTaskManager() {
   const deleteTask = useDeleteScheduledTask();
   const revokeApproval = useRevokeScheduledTaskApproval();
   const [editing, setEditing] = useState<ScheduledTask | null | undefined>();
+  const [historyTask, setHistoryTask] = useState<ScheduledTask | null>(null);
   const projects = useMemo(
     () => projectsQuery.data ?? [],
     [projectsQuery.data],
@@ -594,6 +683,15 @@ export function ScheduledTaskManager() {
                 </div>
               </dl>
               <div className="mt-4 flex flex-wrap justify-end gap-2 border-t pt-3">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setHistoryTask(task)}
+                >
+                  <IconHistory />
+                  {t("scheduledTask.history")}
+                </Button>
                 {task.approval !== null && (
                   <Button
                     type="button"
@@ -646,6 +744,12 @@ export function ScheduledTaskManager() {
           projects={projects}
           agents={agents}
           onOpenChange={(open) => !open && setEditing(undefined)}
+        />
+      )}
+      {historyTask !== null && (
+        <ScheduledTaskHistoryDialog
+          task={historyTask}
+          onOpenChange={(open) => !open && setHistoryTask(null)}
         />
       )}
     </section>

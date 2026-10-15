@@ -102,6 +102,7 @@ export function createContractsClient(transport: ContractTransport): ContractsCl
       delete: (request, options) => executeOperation("deleteScheduledTask", request, transport, options),
       get: (request, options) => executeOperation("getScheduledTask", request, transport, options),
       list: (request, options) => executeOperation("listScheduledTasks", request, transport, options),
+      listHistory: (request, options) => executeOperation("listScheduledTaskHistory", request, transport, options),
       revokeApproval: (request, options) => executeOperation("revokeScheduledTaskApproval", request, transport, options),
       update: (request, options) => executeOperation("updateScheduledTask", request, transport, options),
     },

@@ -8,6 +8,7 @@ import { useContractsClient } from "../../contracts-client-context";
 
 export const scheduledTaskKeys = {
   all: ["scheduledTasks"] as const,
+  history: (taskId: string) => ["scheduledTasks", taskId, "history"] as const,
 };
 
 /** Loads every visible Scheduled Task definition. */
@@ -17,6 +18,18 @@ export function useScheduledTasks() {
     queryKey: scheduledTaskKeys.all,
     queryFn: () =>
       client.scheduledTask.list({}).then((response) => response.tasks),
+  });
+}
+
+/** Loads newest-first persisted run and missed facts for one task. */
+export function useScheduledTaskHistory(taskId: string) {
+  const client = useContractsClient();
+  return useQuery({
+    queryKey: scheduledTaskKeys.history(taskId),
+    queryFn: () =>
+      client.scheduledTask
+        .listHistory({ taskId })
+        .then((response) => response.entries),
   });
 }
 

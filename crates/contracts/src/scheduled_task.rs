@@ -142,6 +142,70 @@ pub struct ListScheduledTasksResponse {
     pub tasks: Vec<ScheduledTask>,
 }
 
+/// Mirrors the persisted Scheduled Run lifecycle states used by task history.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "scheduled-task.ts")]
+pub enum ScheduledRunStatus {
+    Accepted,
+    Running,
+    Succeeded,
+    Failed,
+    Cancelled,
+    SkippedBusy,
+    SkippedCapacity,
+}
+
+/// Explains why a planned occurrence did not create a Scheduled Run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "scheduled-task.ts")]
+pub enum ScheduledMissReason {
+    AppNotRunning,
+    LateTrigger,
+}
+
+/// Returns one durable run or missed fact without exposing the frozen prompt snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+#[ts(export_to = "scheduled-task.ts")]
+pub enum ScheduledTaskHistoryEntry {
+    Run {
+        id: String,
+        scheduled_at: i64,
+        revision: u64,
+        status: ScheduledRunStatus,
+        session_id: Option<String>,
+        created_at: i64,
+        updated_at: i64,
+    },
+    Missed {
+        scheduled_at: i64,
+        reason: ScheduledMissReason,
+        observed_at: i64,
+    },
+}
+
+/// Identifies the local task whose persisted history should be returned.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "scheduled-task.ts")]
+pub struct ListScheduledTaskHistoryRequest {
+    pub task_id: String,
+}
+
+/// Returns newest-first persisted history for one local task.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "scheduled-task.ts")]
+pub struct ListScheduledTaskHistoryResponse {
+    pub entries: Vec<ScheduledTaskHistoryEntry>,
+}
+
 /// Replaces editable fields while preserving execution ownership and consent rules.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -212,6 +276,11 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     GetScheduledTaskResponse::export(config)?;
     ListScheduledTasksRequest::export(config)?;
     ListScheduledTasksResponse::export(config)?;
+    ScheduledRunStatus::export(config)?;
+    ScheduledMissReason::export(config)?;
+    ScheduledTaskHistoryEntry::export(config)?;
+    ListScheduledTaskHistoryRequest::export(config)?;
+    ListScheduledTaskHistoryResponse::export(config)?;
     UpdateScheduledTaskRequest::export(config)?;
     UpdateScheduledTaskResponse::export(config)?;
     DeleteScheduledTaskRequest::export(config)?;
@@ -228,7 +297,9 @@ mod tests {
     use pretty_assertions::assert_eq;
     use serde_json::json;
 
-    use super::{ScheduledTaskSchedule, ScheduledTaskWeekday};
+    use super::{
+        ScheduledMissReason, ScheduledTaskHistoryEntry, ScheduledTaskSchedule, ScheduledTaskWeekday,
+    };
 
     #[test]
     fn weekly_schedule_uses_the_public_tagged_shape() {
@@ -245,6 +316,25 @@ mod tests {
                 "weekdays": ["monday", "friday"],
                 "hour": 9,
                 "minute": 30
+            })
+        );
+    }
+
+    #[test]
+    fn missed_history_uses_the_public_tagged_shape() {
+        let entry = ScheduledTaskHistoryEntry::Missed {
+            scheduled_at: 100,
+            reason: ScheduledMissReason::LateTrigger,
+            observed_at: 700_001,
+        };
+
+        assert_eq!(
+            serde_json::to_value(entry).expect("serialize missed history"),
+            json!({
+                "kind": "missed",
+                "scheduledAt": 100,
+                "reason": "late_trigger",
+                "observedAt": 700_001
             })
         );
     }

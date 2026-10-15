@@ -41,6 +41,18 @@ export type GetScheduledTaskRequest = { taskId: string };
 export type GetScheduledTaskResponse = { task: ScheduledTask };
 
 /**
+ * Identifies the local task whose persisted history should be returned.
+ */
+export type ListScheduledTaskHistoryRequest = { taskId: string };
+
+/**
+ * Returns newest-first persisted history for one local task.
+ */
+export type ListScheduledTaskHistoryResponse = {
+  entries: Array<ScheduledTaskHistoryEntry>;
+};
+
+/**
  * Requests every visible scheduled task definition.
  */
 export type ListScheduledTasksRequest = Record<symbol, never>;
@@ -59,6 +71,23 @@ export type RevokeScheduledTaskApprovalRequest = { taskId: string };
  * Returns the disabled task after consent is revoked.
  */
 export type RevokeScheduledTaskApprovalResponse = { task: ScheduledTask };
+
+/**
+ * Explains why a planned occurrence did not create a Scheduled Run.
+ */
+export type ScheduledMissReason = "app_not_running" | "late_trigger";
+
+/**
+ * Mirrors the persisted Scheduled Run lifecycle states used by task history.
+ */
+export type ScheduledRunStatus =
+  | "accepted"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "skipped_busy"
+  | "skipped_capacity";
 
 /**
  * Public scheduled task definition shown in the Desktop list and editor.
@@ -96,6 +125,25 @@ export type ScheduledTaskApprovalPolicy = "full_auto_in_worktree";
  * Identifies which runtime owns every future occurrence of a task.
  */
 export type ScheduledTaskExecutionLocation = "local" | "cloud";
+
+/**
+ * Returns one durable run or missed fact without exposing the frozen prompt snapshot.
+ */
+export type ScheduledTaskHistoryEntry = {
+  "kind": "run";
+  id: string;
+  scheduledAt: bigint;
+  revision: bigint;
+  status: ScheduledRunStatus;
+  sessionId: string | null;
+  createdAt: bigint;
+  updatedAt: bigint;
+} | {
+  "kind": "missed";
+  scheduledAt: bigint;
+  reason: ScheduledMissReason;
+  observedAt: bigint;
+};
 
 /**
  * Describes one of the bounded first-release schedule shapes.

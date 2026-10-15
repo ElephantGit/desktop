@@ -1,11 +1,14 @@
 use ora_contracts::{
+    ScheduledMissReason as ContractMissReason, ScheduledRunStatus as ContractRunStatus,
     ScheduledTask as ContractScheduledTask, ScheduledTaskApproval as ContractApproval,
     ScheduledTaskApprovalPolicy as ContractApprovalPolicy,
     ScheduledTaskExecutionLocation as ContractExecutionLocation,
-    ScheduledTaskSchedule as ContractSchedule, ScheduledTaskWeekday as ContractWeekday,
+    ScheduledTaskHistoryEntry as ContractHistoryEntry, ScheduledTaskSchedule as ContractSchedule,
+    ScheduledTaskWeekday as ContractWeekday,
 };
 use ora_domain::{
-    ScheduledTask, ScheduledTaskApproval, ScheduledTaskExecutionLocation, ScheduledTaskSchedule,
+    ScheduledMissReason, ScheduledRunStatus, ScheduledTask, ScheduledTaskApproval,
+    ScheduledTaskExecutionLocation, ScheduledTaskHistoryEntry, ScheduledTaskSchedule,
     ScheduledTaskWeekday,
 };
 
@@ -29,6 +32,40 @@ pub(crate) fn parse_schedule(
         ),
     }
     .map_err(ApplicationError::from_scheduled_task_domain_error)
+}
+
+pub(crate) fn map_history_entry(entry: ScheduledTaskHistoryEntry) -> ContractHistoryEntry {
+    match entry {
+        ScheduledTaskHistoryEntry::Run(run) => ContractHistoryEntry::Run {
+            id: run.id.to_string(),
+            scheduled_at: run.occurrence.scheduled_at,
+            revision: run.snapshot.revision,
+            status: map_run_status(run.status),
+            session_id: run.session_id.map(|id| id.to_string()),
+            created_at: run.created_at,
+            updated_at: run.updated_at,
+        },
+        ScheduledTaskHistoryEntry::Missed(missed) => ContractHistoryEntry::Missed {
+            scheduled_at: missed.occurrence.scheduled_at,
+            reason: match missed.reason {
+                ScheduledMissReason::AppNotRunning => ContractMissReason::AppNotRunning,
+                ScheduledMissReason::LateTrigger => ContractMissReason::LateTrigger,
+            },
+            observed_at: missed.observed_at,
+        },
+    }
+}
+
+fn map_run_status(status: ScheduledRunStatus) -> ContractRunStatus {
+    match status {
+        ScheduledRunStatus::Accepted => ContractRunStatus::Accepted,
+        ScheduledRunStatus::Running => ContractRunStatus::Running,
+        ScheduledRunStatus::Succeeded => ContractRunStatus::Succeeded,
+        ScheduledRunStatus::Failed => ContractRunStatus::Failed,
+        ScheduledRunStatus::Cancelled => ContractRunStatus::Cancelled,
+        ScheduledRunStatus::SkippedBusy => ContractRunStatus::SkippedBusy,
+        ScheduledRunStatus::SkippedCapacity => ContractRunStatus::SkippedCapacity,
+    }
 }
 
 pub(crate) fn approval_from_policy(

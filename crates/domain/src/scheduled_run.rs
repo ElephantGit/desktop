@@ -59,6 +59,13 @@ pub struct ScheduledMissedOccurrence {
     pub observed_at: i64,
 }
 
+/// Presents one persisted run or missed fact in task history order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ScheduledTaskHistoryEntry {
+    Run(ScheduledRun),
+    Missed(ScheduledMissedOccurrence),
+}
+
 /// Freezes the execution inputs selected when an occurrence is first admitted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScheduledRunSnapshot {

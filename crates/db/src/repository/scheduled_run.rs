@@ -1,12 +1,12 @@
 use ora_application::{
     RepositoryError, ScheduledOccurrenceCandidate, ScheduledOccurrenceRepository,
-    ScheduledOccurrenceResolution,
+    ScheduledOccurrenceResolution, ScheduledTaskHistoryRepository,
 };
 use ora_domain::{
     AgentRef, MAX_CONCURRENT_LOCAL_SCHEDULED_RUNS, MAX_SCHEDULED_TASK_HISTORY_ENTRIES, ProjectId,
     ScheduledMissReason, ScheduledMissedOccurrence, ScheduledOccurrence, ScheduledRun,
     ScheduledRunId, ScheduledRunSnapshot, ScheduledRunStatus, ScheduledTaskApproval,
-    ScheduledTaskId, SessionId,
+    ScheduledTaskHistoryEntry, ScheduledTaskId, SessionId,
 };
 use rusqlite::{Row, Transaction, params};
 
@@ -72,6 +72,57 @@ impl ScheduledOccurrenceRepository for SqliteScheduledRunRepository {
                 Ok(resolution)
             })
             .map_err(repository_error_from_database)
+    }
+}
+
+impl ScheduledTaskHistoryRepository for SqliteScheduledRunRepository {
+    fn list_scheduled_task_history(
+        &self,
+        task_id: &ScheduledTaskId,
+    ) -> Result<Vec<ScheduledTaskHistoryEntry>, RepositoryError> {
+        self.pool
+            .with_connection(|connection| {
+                let mut statement = connection.prepare(
+                    "SELECT o.task_id AS occurrence_task_id,
+                            o.scheduled_at AS occurrence_scheduled_at,
+                            o.outcome, o.missed_reason, o.observed_at,
+                            r.id, r.task_id, r.scheduled_at, r.task_revision, r.project_id,
+                            r.agent_ref, r.model, r.prompt, r.approval_policy,
+                            r.approval_consented_at, r.status, r.session_id,
+                            r.created_at, r.updated_at
+                     FROM scheduled_occurrences o
+                     LEFT JOIN scheduled_runs r
+                       ON r.task_id = o.task_id AND r.scheduled_at = o.scheduled_at
+                     WHERE o.task_id = ?1
+                     ORDER BY o.scheduled_at DESC",
+                )?;
+                let mut rows = statement.query([task_id.as_ref()])?;
+                let mut entries = Vec::new();
+                while let Some(row) = rows.next()? {
+                    entries.push(map_history_row(row)?);
+                }
+                Ok(entries)
+            })
+            .map_err(repository_error_from_database)
+    }
+}
+
+fn map_history_row(row: &Row<'_>) -> Result<ScheduledTaskHistoryEntry, crate::DatabaseError> {
+    match row.get::<_, String>("outcome")?.as_str() {
+        "accepted" => Ok(ScheduledTaskHistoryEntry::Run(map_scheduled_run_row(row)?)),
+        "missed" => Ok(ScheduledTaskHistoryEntry::Missed(
+            ScheduledMissedOccurrence {
+                occurrence: ScheduledOccurrence {
+                    task_id: ScheduledTaskId::new(row.get::<_, String>("occurrence_task_id")?),
+                    scheduled_at: row.get("occurrence_scheduled_at")?,
+                },
+                reason: parse_missed_reason(&row.get::<_, String>("missed_reason")?)?,
+                observed_at: row.get("observed_at")?,
+            },
+        )),
+        outcome => Err(crate::DatabaseError::CorruptScheduledOccurrenceOutcome(
+            outcome.to_string(),
+        )),
     }
 }
 
@@ -346,12 +397,13 @@ fn repository_error_from_database(error: crate::DatabaseError) -> RepositoryErro
 mod tests {
     use ora_application::{
         ProjectRepository, ScheduledOccurrenceCandidate, ScheduledOccurrenceRepository,
-        ScheduledOccurrenceResolution, ScheduledTaskRepository,
+        ScheduledOccurrenceResolution, ScheduledTaskHistoryRepository, ScheduledTaskRepository,
     };
     use ora_domain::{
         AgentRef, AuditFields, Project, ProjectId, ScheduledMissReason, ScheduledMissedOccurrence,
         ScheduledOccurrence, ScheduledRun, ScheduledRunId, ScheduledTask, ScheduledTaskApproval,
-        ScheduledTaskExecutionLocation, ScheduledTaskId, ScheduledTaskSchedule, WorkspaceLocation,
+        ScheduledTaskExecutionLocation, ScheduledTaskHistoryEntry, ScheduledTaskId,
+        ScheduledTaskSchedule, WorkspaceLocation,
     };
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
@@ -627,6 +679,44 @@ mod tests {
 
         assert_eq!(active_count, 1);
         assert_eq!(occurrence_count, 101);
+    }
+
+    #[test]
+    fn history_reads_newest_first_after_definition_delete_and_repository_restart() {
+        let (temp_dir, pool) = bootstrapped_pool();
+        seed_definition(&pool, temp_dir.path());
+        let repository = SqliteScheduledRunRepository::new(pool.clone());
+        let run = ScheduledRun::accepted(
+            ScheduledRunId::new("run-older"),
+            occurrence(10),
+            &scheduled_task(),
+            11,
+        );
+        repository
+            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Run(run.clone()))
+            .expect("persist run");
+        let missed = ScheduledMissedOccurrence {
+            occurrence: occurrence(20),
+            reason: ScheduledMissReason::LateTrigger,
+            observed_at: 620_001,
+        };
+        repository
+            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Missed(missed.clone()))
+            .expect("persist missed fact");
+        SqliteScheduledTaskRepository::new(pool.clone())
+            .soft_delete_scheduled_task(&ScheduledTaskId::new("scheduled-task-1"), 30)
+            .expect("soft-delete definition");
+
+        let restarted_repository = SqliteScheduledRunRepository::new(pool);
+        assert_eq!(
+            restarted_repository
+                .list_scheduled_task_history(&ScheduledTaskId::new("scheduled-task-1"))
+                .expect("list retained history"),
+            vec![
+                ScheduledTaskHistoryEntry::Missed(missed),
+                ScheduledTaskHistoryEntry::Run(run),
+            ]
+        );
     }
 
     fn bootstrapped_pool() -> (TempDir, RepositoryPool) {

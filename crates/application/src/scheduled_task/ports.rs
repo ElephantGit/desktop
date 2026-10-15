@@ -1,6 +1,6 @@
 use ora_domain::{
     ScheduledMissedOccurrence, ScheduledOccurrence, ScheduledRun, ScheduledRunId, ScheduledTask,
-    ScheduledTaskId,
+    ScheduledTaskHistoryEntry, ScheduledTaskId,
 };
 
 use crate::RepositoryError;
@@ -73,6 +73,14 @@ pub trait ScheduledOccurrenceRepository {
         &self,
         candidate: ScheduledOccurrenceCandidate,
     ) -> Result<ScheduledOccurrenceResolution, RepositoryError>;
+}
+
+/// Defines newest-first history reads independently from occurrence admission writes.
+pub trait ScheduledTaskHistoryRepository {
+    fn list_scheduled_task_history(
+        &self,
+        task_id: &ScheduledTaskId,
+    ) -> Result<Vec<ScheduledTaskHistoryEntry>, RepositoryError>;
 }
 
 /// Supplies stable identifiers for newly admitted Scheduled Runs.

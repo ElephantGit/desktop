@@ -2,16 +2,20 @@ use std::sync::Arc;
 
 use ora_application::{
     CreateScheduledTaskHandler, DeleteScheduledTaskHandler, GetScheduledTaskHandler,
-    ListScheduledTasksHandler, RevokeScheduledTaskApprovalHandler, UpdateScheduledTaskHandler,
-    UuidScheduledTaskIdGenerator,
+    ListScheduledTaskHistoryHandler, ListScheduledTasksHandler, RevokeScheduledTaskApprovalHandler,
+    UpdateScheduledTaskHandler, UuidScheduledTaskIdGenerator,
 };
 use ora_contracts::{
     CreateScheduledTaskRequest, CreateScheduledTaskResponse, DeleteScheduledTaskRequest,
     DeleteScheduledTaskResponse, GetScheduledTaskRequest, GetScheduledTaskResponse,
-    ListScheduledTasksRequest, ListScheduledTasksResponse, RevokeScheduledTaskApprovalRequest,
+    ListScheduledTaskHistoryRequest, ListScheduledTaskHistoryResponse, ListScheduledTasksRequest,
+    ListScheduledTasksResponse, RevokeScheduledTaskApprovalRequest,
     RevokeScheduledTaskApprovalResponse, UpdateScheduledTaskRequest, UpdateScheduledTaskResponse,
 };
-use ora_db::{RepositoryPool, SqliteProjectRepository, SqliteScheduledTaskRepository};
+use ora_db::{
+    RepositoryPool, SqliteProjectRepository, SqliteScheduledRunRepository,
+    SqliteScheduledTaskRepository,
+};
 
 use crate::{BackendError, clock::SystemClock};
 
@@ -25,6 +29,7 @@ pub struct ScheduledTaskApi {
     >,
     get: GetScheduledTaskHandler<SqliteScheduledTaskRepository>,
     list: ListScheduledTasksHandler<SqliteScheduledTaskRepository>,
+    list_history: ListScheduledTaskHistoryHandler<SqliteScheduledRunRepository>,
     update: UpdateScheduledTaskHandler<
         SqliteScheduledTaskRepository,
         SqliteProjectRepository,
@@ -38,7 +43,8 @@ impl ScheduledTaskApi {
     /// Builds definition handlers from the shared repository pool.
     pub(crate) fn new(pool: RepositoryPool, clock: SystemClock) -> Self {
         let repository = Arc::new(SqliteScheduledTaskRepository::new(pool.clone()));
-        let projects = Arc::new(SqliteProjectRepository::new(pool));
+        let projects = Arc::new(SqliteProjectRepository::new(pool.clone()));
+        let run_repository = Arc::new(SqliteScheduledRunRepository::new(pool));
         Self {
             create: CreateScheduledTaskHandler::new(
                 repository.clone(),
@@ -48,6 +54,7 @@ impl ScheduledTaskApi {
             ),
             get: GetScheduledTaskHandler::new(repository.clone()),
             list: ListScheduledTasksHandler::new(repository.clone()),
+            list_history: ListScheduledTaskHistoryHandler::new(run_repository),
             update: UpdateScheduledTaskHandler::new(repository.clone(), projects, clock),
             delete: DeleteScheduledTaskHandler::new(repository.clone(), clock),
             revoke_approval: RevokeScheduledTaskApprovalHandler::new(repository, clock),
@@ -76,6 +83,16 @@ impl ScheduledTaskApi {
         request: ListScheduledTasksRequest,
     ) -> Result<ListScheduledTasksResponse, BackendError> {
         self.list.handle(request).map_err(BackendError::from)
+    }
+
+    /// Lists persisted run and missed facts for one Scheduled Task.
+    pub fn list_history(
+        &self,
+        request: ListScheduledTaskHistoryRequest,
+    ) -> Result<ListScheduledTaskHistoryResponse, BackendError> {
+        self.list_history
+            .handle(request)
+            .map_err(BackendError::from)
     }
 
     /// Updates mutable Scheduled Task definition fields.

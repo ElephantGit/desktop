@@ -24,6 +24,13 @@ backend_command!(
     "Lists Scheduled Task definitions through the shared Backend."
 );
 backend_command!(
+    list_scheduled_task_history,
+    ListScheduledTaskHistoryRequest,
+    ListScheduledTaskHistoryResponse,
+    scheduled_tasks.list_history,
+    "Lists persisted Scheduled Task run and missed history through the shared Backend."
+);
+backend_command!(
     update_scheduled_task,
     UpdateScheduledTaskRequest,
     UpdateScheduledTaskResponse,

@@ -84,6 +84,7 @@ commands.allow = [
     "list_project_branches",
     "list_project_directory",
     "list_projects",
+    "list_scheduled_task_history",
     "list_scheduled_tasks",
     "list_sessions",
     "list_skills",

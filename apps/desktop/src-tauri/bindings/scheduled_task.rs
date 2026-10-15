@@ -19,6 +19,11 @@ pub(super) const BINDINGS: &[Binding] = &[
         permission: Permission::MainWebview,
     },
     Binding::Unary {
+        operation: "listScheduledTaskHistory",
+        handler: "commands::scheduled_task::list_scheduled_task_history",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
         operation: "updateScheduledTask",
         handler: "commands::scheduled_task::update_scheduled_task",
         permission: Permission::MainWebview,

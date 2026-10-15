@@ -86,6 +86,7 @@ export const tauriCommands = {
   listProjectBranches: "list_project_branches",
   listProjectDirectory: "list_project_directory",
   listProjects: "list_projects",
+  listScheduledTaskHistory: "list_scheduled_task_history",
   listScheduledTasks: "list_scheduled_tasks",
   listSessions: "list_sessions",
   listSkills: "list_skills",

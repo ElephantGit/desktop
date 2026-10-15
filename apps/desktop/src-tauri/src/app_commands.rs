@@ -81,6 +81,7 @@ desktop_command_registry! {
     commands::project::list_project_branches,
     commands::files::list_project_directory,
     commands::project::list_projects,
+    commands::scheduled_task::list_scheduled_task_history,
     commands::scheduled_task::list_scheduled_tasks,
     commands::session::list_sessions,
     commands::skill::list_skills,

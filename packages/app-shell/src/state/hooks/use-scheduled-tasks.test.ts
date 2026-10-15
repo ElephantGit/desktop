@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { waitFor } from "@testing-library/react";
-import type { ScheduledTask } from "@ora/contracts";
+import type { ScheduledTask, ScheduledTaskHistoryEntry } from "@ora/contracts";
 import {
   createTestClient,
   type TestHandlers,
@@ -10,6 +10,7 @@ import {
   scheduledTaskKeys,
   useCreateScheduledTask,
   useRevokeScheduledTaskApproval,
+  useScheduledTaskHistory,
   useScheduledTasks,
 } from "./use-scheduled-tasks";
 
@@ -29,9 +30,29 @@ const TASK: ScheduledTask = {
   updatedAt: 10n,
 };
 
+const HISTORY: ScheduledTaskHistoryEntry[] = [
+  {
+    kind: "missed",
+    scheduledAt: 20n,
+    reason: "late_trigger",
+    observedAt: 620_001n,
+  },
+  {
+    kind: "run",
+    id: "run-1",
+    scheduledAt: 10n,
+    revision: 1n,
+    status: "succeeded",
+    sessionId: "session-1",
+    createdAt: 10n,
+    updatedAt: 15n,
+  },
+];
+
 function scheduledTaskHandlers(tasks: ScheduledTask[]): TestHandlers {
   return {
     listScheduledTasks: () => ({ tasks: [...tasks] }),
+    listScheduledTaskHistory: () => ({ entries: HISTORY }),
     createScheduledTask: (request) => {
       const task: ScheduledTask = {
         ...request,
@@ -63,6 +84,17 @@ describe("Scheduled Task hooks", () => {
 
     await waitFor(() => expect(hook.result.current.isSuccess).toBe(true));
     expect(hook.result.current.data).toEqual([TASK]);
+  });
+
+  it("loads newest-first persisted history through the generated namespace", async () => {
+    const client = createTestClient(scheduledTaskHandlers([TASK]));
+    const hook = renderHookWithClient(
+      () => useScheduledTaskHistory(TASK.id),
+      client,
+    );
+
+    await waitFor(() => expect(hook.result.current.isSuccess).toBe(true));
+    expect(hook.result.current.data).toEqual(HISTORY);
   });
 
   it("refreshes the shared list after create and approval revocation", async () => {

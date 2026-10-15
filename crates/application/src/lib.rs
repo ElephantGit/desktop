@@ -29,10 +29,11 @@ pub use project::{
 pub use repository_error::{BoxRepositorySource, RepositoryError};
 pub use scheduled_task::{
     AdmitScheduledOccurrenceHandler, CreateScheduledTaskHandler, DeleteScheduledTaskHandler,
-    GetScheduledTaskHandler, ListScheduledTasksHandler, OfflineRecoveryResolution,
-    RecordOfflineMissedOccurrenceHandler, RevokeScheduledTaskApprovalHandler,
-    ScheduledOccurrenceCandidate, ScheduledOccurrenceRepository, ScheduledOccurrenceResolution,
-    ScheduledRunIdGenerator, ScheduledTaskIdGenerator, ScheduledTaskRepository,
+    GetScheduledTaskHandler, ListScheduledTaskHistoryHandler, ListScheduledTasksHandler,
+    OfflineRecoveryResolution, RecordOfflineMissedOccurrenceHandler,
+    RevokeScheduledTaskApprovalHandler, ScheduledOccurrenceCandidate,
+    ScheduledOccurrenceRepository, ScheduledOccurrenceResolution, ScheduledRunIdGenerator,
+    ScheduledTaskHistoryRepository, ScheduledTaskIdGenerator, ScheduledTaskRepository,
     UpdateScheduledTaskHandler, UuidScheduledRunIdGenerator, UuidScheduledTaskIdGenerator,
 };
 pub use session::{
