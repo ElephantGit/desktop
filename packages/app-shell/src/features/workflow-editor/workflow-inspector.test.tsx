@@ -818,3 +818,45 @@ describe("WorkflowInspector aggregator panel", () => {
     ).toBeInTheDocument();
   });
 });
+
+function createIterationNode(): Node<WorkflowNodeData, "workflow"> {
+  return {
+    id: "iter-1",
+    type: "workflow",
+    position: { x: 0, y: 0 },
+    data: {
+      kind: "iteration",
+      title: "迭代 1",
+      description: "",
+      iterationConfig: {
+        iteratorSelector: [],
+        collectSelector: [],
+        errorStrategy: "fail",
+        maxIterations: 50,
+      },
+    },
+  };
+}
+
+describe("WorkflowInspector empty iteration selectors", () => {
+  it("shows an empty-menu hint instead of a blank popup", async () => {
+    await appI18n.changeLanguage("zh-CN");
+    const user = userEvent.setup();
+    render(
+      <StatefulInspectorHarness
+        node={createIterationNode()}
+        capabilities={createMockWorkflowCapabilities("zh-CN")}
+        variableCatalog={[]}
+      />,
+    );
+
+    expect(screen.getByText("选择一个数组变量")).toBeInTheDocument();
+    expect(screen.getByText("选择区域内节点变量")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("combobox", { name: "迭代源" }));
+    expect(await screen.findAllByText("暂无可用变量")).toHaveLength(1);
+
+    await user.click(screen.getByRole("combobox", { name: "收集目标" }));
+    expect(screen.getAllByText("暂无可用变量")).toHaveLength(2);
+  });
+});
