@@ -8,6 +8,9 @@ use crate::{
 /// Allows a live scheduler observation to arrive no more than ten minutes late.
 pub const MAX_SCHEDULED_OCCURRENCE_LATENESS_MILLIS: i64 = 10 * 60 * 1_000;
 
+/// Caps simultaneous local Scheduled Runs in the first release.
+pub const MAX_CONCURRENT_LOCAL_SCHEDULED_RUNS: i64 = 4;
+
 /// Identifies one planned trigger independently from the task revision that produced it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScheduledOccurrence {
@@ -77,6 +80,13 @@ pub enum ScheduledRunStatus {
     SkippedCapacity,
 }
 
+impl ScheduledRunStatus {
+    /// Reports whether this state occupies the task and global admission slots.
+    pub fn is_active(self) -> bool {
+        matches!(self, Self::Accepted | Self::Running)
+    }
+}
+
 /// Stores one admitted occurrence and the immutable inputs it will execute.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScheduledRun {
@@ -121,7 +131,8 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use crate::{
-        ScheduledMissReason, ScheduledOccurrence, ScheduledOccurrenceTiming, ScheduledTaskId,
+        ScheduledMissReason, ScheduledOccurrence, ScheduledOccurrenceTiming, ScheduledRunStatus,
+        ScheduledTaskId,
     };
 
     #[test]
@@ -143,5 +154,21 @@ mod tests {
             occurrence.timing_at(1_600_001),
             ScheduledOccurrenceTiming::Missed(ScheduledMissReason::LateTrigger)
         );
+    }
+
+    #[test]
+    fn only_accepted_and_running_states_occupy_admission_slots() {
+        for status in [ScheduledRunStatus::Accepted, ScheduledRunStatus::Running] {
+            assert!(status.is_active());
+        }
+        for status in [
+            ScheduledRunStatus::Succeeded,
+            ScheduledRunStatus::Failed,
+            ScheduledRunStatus::Cancelled,
+            ScheduledRunStatus::SkippedBusy,
+            ScheduledRunStatus::SkippedCapacity,
+        ] {
+            assert!(!status.is_active());
+        }
     }
 }

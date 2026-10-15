@@ -3,9 +3,9 @@ use ora_application::{
     ScheduledOccurrenceResolution,
 };
 use ora_domain::{
-    AgentRef, ProjectId, ScheduledMissReason, ScheduledMissedOccurrence, ScheduledOccurrence,
-    ScheduledRun, ScheduledRunId, ScheduledRunSnapshot, ScheduledRunStatus, ScheduledTaskApproval,
-    ScheduledTaskId, SessionId,
+    AgentRef, MAX_CONCURRENT_LOCAL_SCHEDULED_RUNS, ProjectId, ScheduledMissReason,
+    ScheduledMissedOccurrence, ScheduledOccurrence, ScheduledRun, ScheduledRunId,
+    ScheduledRunSnapshot, ScheduledRunStatus, ScheduledTaskApproval, ScheduledTaskId, SessionId,
 };
 use rusqlite::{Row, Transaction, params};
 
@@ -51,8 +51,11 @@ impl ScheduledOccurrenceRepository for SqliteScheduledRunRepository {
                 let resolution = if inserted {
                     match &candidate {
                         ScheduledOccurrenceCandidate::Run(run) => {
-                            insert_scheduled_run(&transaction, run)?;
-                            ScheduledOccurrenceResolution::Admitted(run.clone())
+                            let mut admitted = run.clone();
+                            admitted.status =
+                                admission_status(&transaction, &admitted.occurrence.task_id)?;
+                            insert_scheduled_run(&transaction, &admitted)?;
+                            ScheduledOccurrenceResolution::Admitted(admitted)
                         }
                         ScheduledOccurrenceCandidate::Missed(missed) => {
                             ScheduledOccurrenceResolution::Missed(missed.clone())
@@ -66,6 +69,31 @@ impl ScheduledOccurrenceRepository for SqliteScheduledRunRepository {
             })
             .map_err(repository_error_from_database)
     }
+}
+
+fn admission_status(
+    transaction: &Transaction<'_>,
+    task_id: &ScheduledTaskId,
+) -> Result<ScheduledRunStatus, crate::DatabaseError> {
+    let task_active_count: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM scheduled_runs
+         WHERE task_id = ?1 AND status IN ('accepted', 'running')",
+        [task_id.as_ref()],
+        |row| row.get(0),
+    )?;
+    if task_active_count > 0 {
+        return Ok(ScheduledRunStatus::SkippedBusy);
+    }
+    let global_active_count: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM scheduled_runs
+         WHERE status IN ('accepted', 'running')",
+        [],
+        |row| row.get(0),
+    )?;
+    if global_active_count >= MAX_CONCURRENT_LOCAL_SCHEDULED_RUNS {
+        return Ok(ScheduledRunStatus::SkippedCapacity);
+    }
+    Ok(ScheduledRunStatus::Accepted)
 }
 
 fn candidate_columns(
@@ -365,6 +393,103 @@ mod tests {
         assert_eq!(run_count, 0_i64);
     }
 
+    #[test]
+    fn active_run_causes_the_same_task_to_persist_skipped_busy() {
+        let (temp_dir, pool) = bootstrapped_pool();
+        seed_definition(&pool, temp_dir.path());
+        let repository = SqliteScheduledRunRepository::new(pool);
+        let first = ScheduledRun::accepted(
+            ScheduledRunId::new("run-active"),
+            occurrence(300),
+            &scheduled_task(),
+            301,
+        );
+        let first = repository
+            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Run(first))
+            .expect("admit active run");
+        assert!(matches!(
+            first,
+            ScheduledOccurrenceResolution::Admitted(ScheduledRun {
+                status: ora_domain::ScheduledRunStatus::Accepted,
+                ..
+            })
+        ));
+
+        let second = ScheduledRun::accepted(
+            ScheduledRunId::new("run-busy"),
+            occurrence(400),
+            &scheduled_task(),
+            401,
+        );
+        let second = repository
+            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Run(second))
+            .expect("record busy skip");
+        assert!(matches!(
+            second,
+            ScheduledOccurrenceResolution::Admitted(ScheduledRun {
+                status: ora_domain::ScheduledRunStatus::SkippedBusy,
+                session_id: None,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn fifth_active_task_persists_skipped_capacity() {
+        let (temp_dir, pool) = bootstrapped_pool();
+        seed_project(&pool, temp_dir.path());
+        let repository = SqliteScheduledRunRepository::new(pool.clone());
+        for index in 1_i64..=5 {
+            SqliteScheduledTaskRepository::new(pool.clone())
+                .create_scheduled_task(scheduled_task_with_id(&format!("scheduled-task-{index}")))
+                .expect("create Scheduled Task");
+        }
+
+        for index in 1_i64..=4 {
+            let task = scheduled_task_with_id(&format!("scheduled-task-{index}"));
+            let run = ScheduledRun::accepted(
+                ScheduledRunId::new(format!("run-{index}")),
+                ScheduledOccurrence {
+                    task_id: task.id.clone(),
+                    scheduled_at: 1_000 + index,
+                },
+                &task,
+                2_000 + index,
+            );
+            let resolution = repository
+                .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Run(run))
+                .expect("admit within capacity");
+            assert!(matches!(
+                resolution,
+                ScheduledOccurrenceResolution::Admitted(ScheduledRun {
+                    status: ora_domain::ScheduledRunStatus::Accepted,
+                    ..
+                })
+            ));
+        }
+
+        let fifth_task = scheduled_task_with_id("scheduled-task-5");
+        let fifth = ScheduledRun::accepted(
+            ScheduledRunId::new("run-5"),
+            ScheduledOccurrence {
+                task_id: fifth_task.id.clone(),
+                scheduled_at: 1_005,
+            },
+            &fifth_task,
+            2_005,
+        );
+        assert!(matches!(
+            repository
+                .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Run(fifth))
+                .expect("record capacity skip"),
+            ScheduledOccurrenceResolution::Admitted(ScheduledRun {
+                status: ora_domain::ScheduledRunStatus::SkippedCapacity,
+                session_id: None,
+                ..
+            })
+        ));
+    }
+
     fn bootstrapped_pool() -> (TempDir, RepositoryPool) {
         let temp_dir = TempDir::new().expect("create temp directory");
         let database_path = temp_dir.path().join("scheduled-run.sqlite3");
@@ -378,6 +503,13 @@ mod tests {
     }
 
     fn seed_definition(pool: &RepositoryPool, temp_root: &std::path::Path) {
+        seed_project(pool, temp_root);
+        SqliteScheduledTaskRepository::new(pool.clone())
+            .create_scheduled_task(scheduled_task())
+            .expect("create Scheduled Task");
+    }
+
+    fn seed_project(pool: &RepositoryPool, temp_root: &std::path::Path) {
         let workspace_root = temp_root.join("project");
         std::fs::create_dir_all(&workspace_root).expect("create project workspace");
         SqliteProjectRepository::with_clock(pool.clone(), TestClock::new(1))
@@ -390,9 +522,6 @@ mod tests {
                 WorkspaceLocation::local_filesystem(workspace_root.to_string_lossy()),
             )
             .expect("create project");
-        SqliteScheduledTaskRepository::new(pool.clone())
-            .create_scheduled_task(scheduled_task())
-            .expect("create Scheduled Task");
     }
 
     fn occurrence(scheduled_at: i64) -> ScheduledOccurrence {
@@ -403,8 +532,12 @@ mod tests {
     }
 
     fn scheduled_task() -> ScheduledTask {
+        scheduled_task_with_id("scheduled-task-1")
+    }
+
+    fn scheduled_task_with_id(task_id: &str) -> ScheduledTask {
         ScheduledTask::new(
-            ScheduledTaskId::new("scheduled-task-1"),
+            ScheduledTaskId::new(task_id),
             "Quality report",
             true,
             ScheduledTaskSchedule::every_hours(4).expect("hourly schedule"),
