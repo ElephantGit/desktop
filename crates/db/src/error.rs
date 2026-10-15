@@ -36,6 +36,14 @@ pub enum DatabaseError {
     CorruptWorkflowVariablePool(#[from] ora_application::WorkflowVariablePoolError),
     #[error("session MCP selection is corrupt: {0}")]
     CorruptSessionMcpSelection(serde_json::Error),
+    #[error("scheduled task schedule is corrupt: {0}")]
+    CorruptScheduledTaskSchedule(serde_json::Error),
+    #[error("scheduled task execution location is corrupt: {0}")]
+    CorruptScheduledTaskExecutionLocation(String),
+    #[error("scheduled task approval is corrupt: {0}")]
+    CorruptScheduledTaskApproval(String),
+    #[error("scheduled task revision is corrupt: {0}")]
+    CorruptScheduledTaskRevision(String),
     #[error("Effect state is corrupt: {0}")]
     CorruptEffectState(String),
     #[error("workflow run execution context is incomplete")]
