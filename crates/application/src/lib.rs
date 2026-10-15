@@ -28,9 +28,11 @@ pub use project::{
 };
 pub use repository_error::{BoxRepositorySource, RepositoryError};
 pub use scheduled_task::{
-    CreateScheduledTaskHandler, DeleteScheduledTaskHandler, GetScheduledTaskHandler,
-    ListScheduledTasksHandler, RevokeScheduledTaskApprovalHandler, ScheduledTaskIdGenerator,
-    ScheduledTaskRepository, UpdateScheduledTaskHandler, UuidScheduledTaskIdGenerator,
+    AdmitScheduledOccurrenceHandler, CreateScheduledTaskHandler, DeleteScheduledTaskHandler,
+    GetScheduledTaskHandler, ListScheduledTasksHandler, RevokeScheduledTaskApprovalHandler,
+    ScheduledRunAdmission, ScheduledRunIdGenerator, ScheduledRunRepository,
+    ScheduledTaskIdGenerator, ScheduledTaskRepository, UpdateScheduledTaskHandler,
+    UuidScheduledRunIdGenerator, UuidScheduledTaskIdGenerator,
 };
 pub use session::{
     DeleteSessionHandler, GetSessionHandler, ListSessionsHandler, RenameSessionHandler,

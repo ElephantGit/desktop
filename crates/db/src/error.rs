@@ -44,6 +44,8 @@ pub enum DatabaseError {
     CorruptScheduledTaskApproval(String),
     #[error("scheduled task revision is corrupt: {0}")]
     CorruptScheduledTaskRevision(String),
+    #[error("Scheduled Run status is corrupt: {0}")]
+    CorruptScheduledRunStatus(String),
     #[error("Effect state is corrupt: {0}")]
     CorruptEffectState(String),
     #[error("workflow run execution context is incomplete")]

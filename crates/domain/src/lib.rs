@@ -9,6 +9,7 @@ mod plugin_id;
 mod plugin_namespace;
 mod project;
 mod prompt_inactivity_policy;
+mod scheduled_run;
 mod scheduled_task;
 mod session;
 mod session_title;
@@ -40,6 +41,9 @@ pub use plugin_id::{PluginId, PluginIdError, PluginIdSegment};
 pub use plugin_namespace::{MAX_PLUGIN_NAMESPACE_BYTES, PluginNamespace};
 pub use project::Project;
 pub use prompt_inactivity_policy::PromptInactivityPolicy;
+pub use scheduled_run::{
+    ScheduledOccurrence, ScheduledRun, ScheduledRunSnapshot, ScheduledRunStatus,
+};
 pub use scheduled_task::{
     FULL_AUTO_IN_WORKTREE_POLICY, ScheduledTask, ScheduledTaskApproval,
     ScheduledTaskExecutionLocation, ScheduledTaskSchedule, ScheduledTaskWeekday,

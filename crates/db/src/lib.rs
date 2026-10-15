@@ -30,10 +30,10 @@ pub use repository::{
     SourceMutationOutcome, SqliteAgentDefinitionRepository, SqliteCascadeRepository,
     SqliteEffectRepository, SqliteGitCleanupJobRepository, SqlitePackInstallationRepository,
     SqlitePluginMarketplaceSourceRepository, SqlitePluginSourceNamespaceRepository,
-    SqliteProjectRepository, SqliteScheduledTaskRepository, SqliteSessionRepository,
-    SqliteSkillRepository, SqliteTaskRepository, SqliteTaskWorkspaceRepository,
-    SqliteUserConfigRepository, SqliteWorkflowRepository, SqliteWorkflowRunEngineRepository,
-    SqliteWorkflowRunRepository, SqliteWorkspaceRepository,
+    SqliteProjectRepository, SqliteScheduledRunRepository, SqliteScheduledTaskRepository,
+    SqliteSessionRepository, SqliteSkillRepository, SqliteTaskRepository,
+    SqliteTaskWorkspaceRepository, SqliteUserConfigRepository, SqliteWorkflowRepository,
+    SqliteWorkflowRunEngineRepository, SqliteWorkflowRunRepository, SqliteWorkspaceRepository,
     SqliteWorktreeProvisioningLeaseRepository, SqliteWorktreeRepository,
 };
 pub use time::{LocalTimestampSource, SystemTimestampSource, TimestampSource};
