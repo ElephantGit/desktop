@@ -22,8 +22,9 @@ export const scheduledTaskTranslations = {
     "scheduledTask.time": "时间",
     "scheduledTask.weekdays": "星期",
     "scheduledTask.enabled": "创建后立即启用",
-    "scheduledTask.approval": "允许此任务在独立工作树中无人值守运行",
-    "scheduledTask.approvalHelp": "启用任务前必须明确授权。授权可随时撤销。",
+    "scheduledTask.approval": "我了解风险，并允许此任务无人值守运行",
+    "scheduledTask.approvalHelp":
+      "工作树不是沙箱。Agent 仍可执行任意命令、读写工作树外的文件，并使用本机凭据（例如 git push）；运行会消耗模型额度。授权可随时撤销。",
     "scheduledTask.local": "本地运行",
     "scheduledTask.cloud": "Cloud（暂不可用）",
     "scheduledTask.save": "保存",
@@ -74,9 +75,9 @@ export const scheduledTaskTranslations = {
     "scheduledTask.weekdays": "Weekdays",
     "scheduledTask.enabled": "Enable immediately",
     "scheduledTask.approval":
-      "Allow unattended execution in an isolated worktree",
+      "I understand the risks and allow unattended execution",
     "scheduledTask.approvalHelp":
-      "Explicit consent is required before enabling. You can revoke it at any time.",
+      "A worktree is not a sandbox. The agent can still run arbitrary commands, read or write files outside the worktree, and use local credentials (for example, git push); runs consume model usage. You can revoke approval at any time.",
     "scheduledTask.local": "Run locally",
     "scheduledTask.cloud": "Cloud (not available yet)",
     "scheduledTask.save": "Save",
