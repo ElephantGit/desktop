@@ -150,6 +150,31 @@ pub enum ApplicationError {
         #[source]
         source: RepositoryError,
     },
+    #[error("scheduled task not found: {task_id}")]
+    ScheduledTaskNotFound { task_id: String },
+    #[error("scheduled task name must not be blank")]
+    ScheduledTaskNameBlank,
+    #[error("scheduled task prompt must not be blank")]
+    ScheduledTaskPromptBlank,
+    #[error("scheduled task agent reference is invalid")]
+    ScheduledTaskAgentRefInvalid,
+    #[error("scheduled task interval must be at least one hour")]
+    ScheduledTaskIntervalTooShort,
+    #[error("scheduled task time is invalid")]
+    ScheduledTaskTimeInvalid,
+    #[error("weekly scheduled tasks must select at least one weekday")]
+    ScheduledTaskWeekdaysEmpty,
+    #[error("scheduled tasks require a Git project")]
+    ScheduledTaskRequiresGitProject,
+    #[error("Cloud scheduled tasks are not available in this Desktop release")]
+    ScheduledTaskCloudUnavailable,
+    #[error("enabled local scheduled tasks require explicit unattended approval")]
+    ScheduledTaskApprovalRequired,
+    #[error("scheduled task repository operation failed")]
+    ScheduledTaskRepository {
+        #[source]
+        source: RepositoryError,
+    },
     #[error("workflow name must not be blank")]
     WorkflowNameBlank,
     #[error("workflow name already exists: {namespace}/{name}")]
@@ -352,6 +377,26 @@ impl ApplicationError {
         Self::UserConfigRepository { source: error }
     }
 
+    /// Converts scheduled-task validation failures into stable application errors.
+    pub(crate) fn from_scheduled_task_domain_error(error: DomainModelError) -> Self {
+        match error {
+            DomainModelError::EmptyScheduledTaskName => Self::ScheduledTaskNameBlank,
+            DomainModelError::EmptyScheduledTaskPrompt => Self::ScheduledTaskPromptBlank,
+            DomainModelError::InvalidAgentRef(_) => Self::ScheduledTaskAgentRefInvalid,
+            DomainModelError::ScheduledTaskIntervalTooShort => Self::ScheduledTaskIntervalTooShort,
+            DomainModelError::InvalidScheduledTaskTime => Self::ScheduledTaskTimeInvalid,
+            DomainModelError::EmptyScheduledTaskWeekdays => Self::ScheduledTaskWeekdaysEmpty,
+            _ => Self::ScheduledTaskRepository {
+                source: RepositoryError::new(error),
+            },
+        }
+    }
+
+    /// Maps scheduled-task persistence failures into the stable application contract.
+    pub(crate) fn from_scheduled_task_repository_error(error: RepositoryError) -> Self {
+        Self::ScheduledTaskRepository { source: error }
+    }
+
     /// Converts workflow-construction validation failures into application errors.
     pub(crate) fn from_workflow_domain_error(error: DomainModelError) -> Self {
         match error {
@@ -525,6 +570,18 @@ impl PartialEq for ApplicationError {
             (SessionTitleBlank, SessionTitleBlank) | (SessionTitleTooLong, SessionTitleTooLong) => {
                 true
             }
+            (ScheduledTaskNotFound { task_id: left }, ScheduledTaskNotFound { task_id: right }) => {
+                left == right
+            }
+            (ScheduledTaskNameBlank, ScheduledTaskNameBlank)
+            | (ScheduledTaskPromptBlank, ScheduledTaskPromptBlank)
+            | (ScheduledTaskAgentRefInvalid, ScheduledTaskAgentRefInvalid)
+            | (ScheduledTaskIntervalTooShort, ScheduledTaskIntervalTooShort)
+            | (ScheduledTaskTimeInvalid, ScheduledTaskTimeInvalid)
+            | (ScheduledTaskWeekdaysEmpty, ScheduledTaskWeekdaysEmpty)
+            | (ScheduledTaskRequiresGitProject, ScheduledTaskRequiresGitProject)
+            | (ScheduledTaskCloudUnavailable, ScheduledTaskCloudUnavailable)
+            | (ScheduledTaskApprovalRequired, ScheduledTaskApprovalRequired) => true,
             (WorkflowNotFound { workflow_id: left }, WorkflowNotFound { workflow_id: right }) => {
                 left == right
             }

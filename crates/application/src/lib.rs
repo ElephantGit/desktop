@@ -3,6 +3,7 @@ mod effect;
 mod error;
 mod project;
 mod repository_error;
+mod scheduled_task;
 mod session;
 mod skill;
 mod skill_import;
@@ -26,6 +27,11 @@ pub use project::{
     ProjectRepository, UpdateProjectHandler, UuidProjectIdGenerator,
 };
 pub use repository_error::{BoxRepositorySource, RepositoryError};
+pub use scheduled_task::{
+    CreateScheduledTaskHandler, DeleteScheduledTaskHandler, GetScheduledTaskHandler,
+    ListScheduledTasksHandler, RevokeScheduledTaskApprovalHandler, ScheduledTaskIdGenerator,
+    ScheduledTaskRepository, UpdateScheduledTaskHandler, UuidScheduledTaskIdGenerator,
+};
 pub use session::{
     DeleteSessionHandler, GetSessionHandler, ListSessionsHandler, RenameSessionHandler,
     SessionIdGenerator, SessionRepository, UuidSessionIdGenerator,
