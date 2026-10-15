@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { SelectGroup, SelectItem, SelectLabel } from "@ora/ui";
 import type { WorkflowVariableCatalogEntry } from "@ora/workflow-mock";
 import { groupWorkflowVariables } from "./workflow-variable-groups";
@@ -43,9 +44,19 @@ export function WorkflowVariableSelectGroups({
   variables: WorkflowVariableCatalogEntry[];
   globalVariablesLabel: string;
 }) {
+  const { t } = useTranslation();
+  const groups = groupWorkflowVariables(variables, globalVariablesLabel);
+  // An empty popup collapses to its border, which reads as a stray line under the trigger.
+  if (groups.length === 0) {
+    return (
+      <p className="px-2 py-2 text-xs text-muted-foreground">
+        {t("settings.workflow.variableSelect.empty")}
+      </p>
+    );
+  }
   return (
     <>
-      {groupWorkflowVariables(variables, globalVariablesLabel).map((group) => (
+      {groups.map((group) => (
         <SelectGroup key={group.label}>
           <SelectLabel className="px-2 pt-1.5 pb-0.5 text-[11px] font-medium text-muted-foreground">
             {group.label}

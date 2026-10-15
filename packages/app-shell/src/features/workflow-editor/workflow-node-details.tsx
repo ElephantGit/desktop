@@ -1230,16 +1230,18 @@ function IterationNodeDetails({
         id={htmlId}
         aria-label={ariaLabel}
       >
-        <SelectValue placeholder={placeholder}>
-          {resolved === undefined ? (
-            value
-          ) : (
+        {resolved !== undefined ? (
+          <SelectValue placeholder={placeholder}>
             <WorkflowVariableDisplay
               variable={resolved}
               nodeName={resolved.sourceNodeTitle ?? resolved.sourceNodeId}
             />
-          )}
-        </SelectValue>
+          </SelectValue>
+        ) : value === "" ? (
+          <SelectValue placeholder={placeholder} />
+        ) : (
+          <SelectValue placeholder={placeholder}>{value}</SelectValue>
+        )}
       </SelectTrigger>
       <SelectContent
         alignItemWithTrigger={false}

@@ -319,6 +319,7 @@ export const workflowEditorTranslations = {
     "settings.workflow.field.iterationErrorStrategy": "错误策略",
     "settings.workflow.iteration.failStrategy": "任一轮失败即失败",
     "settings.workflow.iteration.continueStrategy": "失败轮记入账本并继续",
+    "settings.workflow.variableSelect.empty": "暂无可用变量",
     "settings.workflow.iteration.iteratorPlaceholder": "选择一个数组变量",
     "settings.workflow.iteration.collectPlaceholder": "选择区域内节点变量",
     "settings.workflow.iteration.iteratorEmpty": "迭代源未设置",
@@ -888,6 +889,7 @@ export const workflowEditorTranslations = {
       "Fail on the first failed round",
     "settings.workflow.iteration.continueStrategy":
       "Record failed rounds and continue",
+    "settings.workflow.variableSelect.empty": "No variables available",
     "settings.workflow.iteration.iteratorPlaceholder": "Pick an array variable",
     "settings.workflow.iteration.collectPlaceholder":
       "Pick a region node variable",
