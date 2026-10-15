@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use ora_application::{
     CreateScheduledTaskHandler, DeleteScheduledTaskHandler, GetScheduledTaskHandler,
-    ListScheduledTaskHistoryHandler, ListScheduledTasksHandler, RevokeScheduledTaskApprovalHandler,
-    UpdateScheduledTaskHandler, UuidScheduledTaskIdGenerator,
+    GitScheduledTaskTargetValidator, ListScheduledTaskHistoryHandler, ListScheduledTasksHandler,
+    RevokeScheduledTaskApprovalHandler, UpdateScheduledTaskHandler, UuidScheduledTaskIdGenerator,
 };
 use ora_contracts::{
     CreateScheduledTaskRequest, CreateScheduledTaskResponse, DeleteScheduledTaskRequest,
@@ -14,7 +14,7 @@ use ora_contracts::{
 };
 use ora_db::{
     RepositoryPool, SqliteProjectRepository, SqliteScheduledRunRepository,
-    SqliteScheduledTaskRepository,
+    SqliteScheduledTaskRepository, SqliteWorkspaceRepository,
 };
 
 use crate::{BackendError, clock::SystemClock};
@@ -24,6 +24,8 @@ pub struct ScheduledTaskApi {
     create: CreateScheduledTaskHandler<
         SqliteScheduledTaskRepository,
         SqliteProjectRepository,
+        SqliteWorkspaceRepository,
+        GitScheduledTaskTargetValidator,
         UuidScheduledTaskIdGenerator,
         SystemClock,
     >,
@@ -33,6 +35,8 @@ pub struct ScheduledTaskApi {
     update: UpdateScheduledTaskHandler<
         SqliteScheduledTaskRepository,
         SqliteProjectRepository,
+        SqliteWorkspaceRepository,
+        GitScheduledTaskTargetValidator,
         SystemClock,
     >,
     delete: DeleteScheduledTaskHandler<SqliteScheduledTaskRepository, SystemClock>,
@@ -44,18 +48,27 @@ impl ScheduledTaskApi {
     pub(crate) fn new(pool: RepositoryPool, clock: SystemClock) -> Self {
         let repository = Arc::new(SqliteScheduledTaskRepository::new(pool.clone()));
         let projects = Arc::new(SqliteProjectRepository::new(pool.clone()));
+        let workspaces = Arc::new(SqliteWorkspaceRepository::new(pool.clone()));
         let run_repository = Arc::new(SqliteScheduledRunRepository::new(pool));
         Self {
             create: CreateScheduledTaskHandler::new(
                 repository.clone(),
                 projects.clone(),
+                workspaces.clone(),
+                GitScheduledTaskTargetValidator,
                 UuidScheduledTaskIdGenerator::new(),
                 clock,
             ),
             get: GetScheduledTaskHandler::new(repository.clone()),
             list: ListScheduledTasksHandler::new(repository.clone()),
             list_history: ListScheduledTaskHistoryHandler::new(run_repository),
-            update: UpdateScheduledTaskHandler::new(repository.clone(), projects, clock),
+            update: UpdateScheduledTaskHandler::new(
+                repository.clone(),
+                projects,
+                workspaces,
+                GitScheduledTaskTargetValidator,
+                clock,
+            ),
             delete: DeleteScheduledTaskHandler::new(repository.clone(), clock),
             revoke_approval: RevokeScheduledTaskApprovalHandler::new(repository, clock),
         }

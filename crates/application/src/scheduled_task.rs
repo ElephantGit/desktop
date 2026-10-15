@@ -4,6 +4,7 @@ mod id_generator;
 mod mapper;
 mod offline_recovery;
 mod ports;
+mod target_validator;
 
 #[cfg(test)]
 mod admission_tests;
@@ -23,5 +24,6 @@ pub use offline_recovery::{OfflineRecoveryResolution, RecordOfflineMissedOccurre
 pub use ports::{
     ScheduledOccurrenceCandidate, ScheduledOccurrenceRepository, ScheduledOccurrenceResolution,
     ScheduledRunIdGenerator, ScheduledTaskHistoryRepository, ScheduledTaskIdGenerator,
-    ScheduledTaskRepository,
+    ScheduledTaskRepository, ScheduledTaskTargetValidator,
 };
+pub use target_validator::GitScheduledTaskTargetValidator;

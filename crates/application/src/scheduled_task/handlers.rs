@@ -10,44 +10,78 @@ use ora_contracts::{
 };
 use ora_domain::{
     AgentRef, AuditFields, ProjectId, ScheduledTask, ScheduledTaskExecutionLocation,
-    ScheduledTaskId,
+    ScheduledTaskId, WorkspaceLocation,
 };
 
 use super::mapper::{approval_from_policy, map_history_entry, map_task, parse_schedule};
-use super::{ScheduledTaskHistoryRepository, ScheduledTaskIdGenerator, ScheduledTaskRepository};
-use crate::{ApplicationError, Clock, ProjectRepository};
+use super::{
+    ScheduledTaskHistoryRepository, ScheduledTaskIdGenerator, ScheduledTaskRepository,
+    ScheduledTaskTargetValidator,
+};
+use crate::{
+    ApplicationError, Clock, ProjectRepository, TaskWorktreeProvisionerError, WorkspaceRepository,
+};
 
 /// Handles creation of a first-release local scheduled-task definition.
-pub struct CreateScheduledTaskHandler<Repository, Projects, IdGenerator, ClockSource> {
+pub struct CreateScheduledTaskHandler<
+    Repository,
+    Projects,
+    Workspaces,
+    TargetValidator,
+    IdGenerator,
+    ClockSource,
+> {
     repository: Arc<Repository>,
     projects: Arc<Projects>,
+    workspaces: Arc<Workspaces>,
+    target_validator: TargetValidator,
     id_generator: IdGenerator,
     clock: ClockSource,
 }
 
-impl<Repository, Projects, IdGenerator, ClockSource>
-    CreateScheduledTaskHandler<Repository, Projects, IdGenerator, ClockSource>
+impl<Repository, Projects, Workspaces, TargetValidator, IdGenerator, ClockSource>
+    CreateScheduledTaskHandler<
+        Repository,
+        Projects,
+        Workspaces,
+        TargetValidator,
+        IdGenerator,
+        ClockSource,
+    >
 {
     pub fn new(
         repository: Arc<Repository>,
         projects: Arc<Projects>,
+        workspaces: Arc<Workspaces>,
+        target_validator: TargetValidator,
         id_generator: IdGenerator,
         clock: ClockSource,
     ) -> Self {
         Self {
             repository,
             projects,
+            workspaces,
+            target_validator,
             id_generator,
             clock,
         }
     }
 }
 
-impl<Repository, Projects, IdGenerator, ClockSource>
-    CreateScheduledTaskHandler<Repository, Projects, IdGenerator, ClockSource>
+impl<Repository, Projects, Workspaces, TargetValidator, IdGenerator, ClockSource>
+    CreateScheduledTaskHandler<
+        Repository,
+        Projects,
+        Workspaces,
+        TargetValidator,
+        IdGenerator,
+        ClockSource,
+    >
 where
     Repository: ScheduledTaskRepository + Send + Sync + 'static,
     Projects: ProjectRepository + Send + Sync + 'static,
+    Workspaces: WorkspaceRepository + Send + Sync + 'static,
+    TargetValidator: ScheduledTaskTargetValidator,
     IdGenerator: ScheduledTaskIdGenerator,
     ClockSource: Clock,
 {
@@ -82,6 +116,7 @@ where
         )
         .map_err(ApplicationError::from_scheduled_task_domain_error)?;
         require_activation_approval(&task)?;
+        require_active_local_target(&task, self.workspaces.as_ref(), &self.target_validator)?;
 
         let task = self
             .repository
@@ -179,29 +214,47 @@ where
 }
 
 /// Handles replacement of editable task fields while preserving frozen ownership rules.
-pub struct UpdateScheduledTaskHandler<Repository, Projects, ClockSource> {
+pub struct UpdateScheduledTaskHandler<
+    Repository,
+    Projects,
+    Workspaces,
+    TargetValidator,
+    ClockSource,
+> {
     repository: Arc<Repository>,
     projects: Arc<Projects>,
+    workspaces: Arc<Workspaces>,
+    target_validator: TargetValidator,
     clock: ClockSource,
 }
 
-impl<Repository, Projects, ClockSource>
-    UpdateScheduledTaskHandler<Repository, Projects, ClockSource>
+impl<Repository, Projects, Workspaces, TargetValidator, ClockSource>
+    UpdateScheduledTaskHandler<Repository, Projects, Workspaces, TargetValidator, ClockSource>
 {
-    pub fn new(repository: Arc<Repository>, projects: Arc<Projects>, clock: ClockSource) -> Self {
+    pub fn new(
+        repository: Arc<Repository>,
+        projects: Arc<Projects>,
+        workspaces: Arc<Workspaces>,
+        target_validator: TargetValidator,
+        clock: ClockSource,
+    ) -> Self {
         Self {
             repository,
             projects,
+            workspaces,
+            target_validator,
             clock,
         }
     }
 }
 
-impl<Repository, Projects, ClockSource>
-    UpdateScheduledTaskHandler<Repository, Projects, ClockSource>
+impl<Repository, Projects, Workspaces, TargetValidator, ClockSource>
+    UpdateScheduledTaskHandler<Repository, Projects, Workspaces, TargetValidator, ClockSource>
 where
     Repository: ScheduledTaskRepository + Send + Sync + 'static,
     Projects: ProjectRepository + Send + Sync + 'static,
+    Workspaces: WorkspaceRepository + Send + Sync + 'static,
+    TargetValidator: ScheduledTaskTargetValidator,
     ClockSource: Clock,
 {
     /// Replaces editable fields, increments frozen Prompt revision, and revalidates consent.
@@ -253,6 +306,11 @@ where
         .map_err(ApplicationError::from_scheduled_task_domain_error)?;
         replacement.revision = existing.revision + u64::from(revision_changed);
         require_activation_approval(&replacement)?;
+        require_active_local_target(
+            &replacement,
+            self.workspaces.as_ref(),
+            &self.target_validator,
+        )?;
 
         let task = self
             .repository
@@ -382,4 +440,34 @@ fn require_activation_approval(task: &ScheduledTask) -> Result<(), ApplicationEr
         return Err(ApplicationError::ScheduledTaskApprovalRequired);
     }
     Ok(())
+}
+
+fn require_active_local_target<Workspaces, TargetValidator>(
+    task: &ScheduledTask,
+    workspaces: &Workspaces,
+    target_validator: &TargetValidator,
+) -> Result<(), ApplicationError>
+where
+    Workspaces: WorkspaceRepository,
+    TargetValidator: ScheduledTaskTargetValidator,
+{
+    if !task.enabled {
+        return Ok(());
+    }
+    let workspace = workspaces
+        .find_main_workspace(&task.project_id)
+        .map_err(ApplicationError::from_workflow_run_repository_error)?
+        .filter(ora_domain::Workspace::is_admissible)
+        .ok_or(ApplicationError::ScheduledTaskRequiresGitProject)?;
+    let WorkspaceLocation::LocalFilesystem { path } = workspace.location else {
+        return Err(ApplicationError::ScheduledTaskRequiresGitProject);
+    };
+    target_validator
+        .validate_git_worktree_target(std::path::Path::new(&path))
+        .map_err(|error| match error {
+            TaskWorktreeProvisionerError::NotARepository => {
+                ApplicationError::ScheduledTaskRequiresGitProject
+            }
+            other => ApplicationError::from_task_worktree_provisioner_error(other),
+        })
 }

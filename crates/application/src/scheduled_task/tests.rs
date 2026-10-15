@@ -5,15 +5,19 @@ use ora_contracts::{
     ScheduledTaskExecutionLocation, ScheduledTaskSchedule, UpdateScheduledTaskRequest,
 };
 use ora_domain::{
-    AuditFields, Project, ProjectId, ScheduledTask, ScheduledTaskId, WorkspaceLocation,
+    AuditFields, Project, ProjectId, ScheduledTask, ScheduledTaskId, Workspace, WorkspaceId,
+    WorkspaceKind, WorkspaceLifecycle, WorkspaceLocation,
 };
 use pretty_assertions::assert_eq;
 
 use super::{
     CreateScheduledTaskHandler, RevokeScheduledTaskApprovalHandler, ScheduledTaskIdGenerator,
-    ScheduledTaskRepository, UpdateScheduledTaskHandler,
+    ScheduledTaskRepository, ScheduledTaskTargetValidator, UpdateScheduledTaskHandler,
 };
-use crate::{ApplicationError, Clock, ProjectRepository, RepositoryError};
+use crate::{
+    ApplicationError, Clock, ProjectRepository, RepositoryError, TaskWorktreeProvisionerError,
+    WorkspaceRepository,
+};
 
 const NOW: i64 = 1_760_000_000_000;
 
@@ -63,7 +67,13 @@ fn prompt_and_schedule_changes_increment_revision_without_reconsent() {
         .expect("create task")
         .task;
     let consented_at = created.approval.expect("approval").consented_at;
-    let handler = UpdateScheduledTaskHandler::new(repository, projects(), FixedClock(NOW + 1_000));
+    let handler = UpdateScheduledTaskHandler::new(
+        repository,
+        projects(),
+        workspaces(),
+        AcceptingTargetValidator,
+        FixedClock(NOW + 1_000),
+    );
 
     let response = handler
         .handle(UpdateScheduledTaskRequest {
@@ -102,6 +112,11 @@ fn changing_project_requires_fresh_consent_before_remaining_enabled() {
             git_project("project-1"),
             git_project("project-2"),
         ])),
+        Arc::new(MemoryWorkspaceRepository::with_workspaces(vec![
+            main_workspace("project-1"),
+            main_workspace("project-2"),
+        ])),
+        AcceptingTargetValidator,
         FixedClock(NOW + 1_000),
     );
 
@@ -140,15 +155,64 @@ fn revoking_approval_disables_the_task_without_changing_revision() {
     assert_eq!(response.task.revision, 1);
 }
 
+#[test]
+fn enabled_local_task_rejects_a_target_without_git_worktree_capability() {
+    let repository = Arc::new(MemoryScheduledTaskRepository::default());
+    let handler = CreateScheduledTaskHandler::new(
+        repository.clone(),
+        projects(),
+        workspaces(),
+        RejectingTargetValidator,
+        FixedIdGenerator,
+        FixedClock(NOW),
+    );
+
+    let result = handler.handle(create_request());
+
+    assert_eq!(
+        result,
+        Err(ApplicationError::ScheduledTaskRequiresGitProject)
+    );
+    assert!(repository.tasks.lock().expect("lock tasks").is_empty());
+}
+
+#[test]
+fn disabled_local_draft_does_not_require_a_current_git_worktree_target() {
+    let repository = Arc::new(MemoryScheduledTaskRepository::default());
+    let handler = CreateScheduledTaskHandler::new(
+        repository,
+        projects(),
+        Arc::new(MemoryWorkspaceRepository::with_workspaces(Vec::new())),
+        RejectingTargetValidator,
+        FixedIdGenerator,
+        FixedClock(NOW),
+    );
+    let mut request = create_request();
+    request.enabled = false;
+
+    let response = handler.handle(request).expect("create disabled draft");
+
+    assert!(!response.task.enabled);
+}
+
 fn create_handler(
     repository: Arc<MemoryScheduledTaskRepository>,
 ) -> CreateScheduledTaskHandler<
     MemoryScheduledTaskRepository,
     MemoryProjectRepository,
+    MemoryWorkspaceRepository,
+    AcceptingTargetValidator,
     FixedIdGenerator,
     FixedClock,
 > {
-    CreateScheduledTaskHandler::new(repository, projects(), FixedIdGenerator, FixedClock(NOW))
+    CreateScheduledTaskHandler::new(
+        repository,
+        projects(),
+        workspaces(),
+        AcceptingTargetValidator,
+        FixedIdGenerator,
+        FixedClock(NOW),
+    )
 }
 
 fn create_request() -> CreateScheduledTaskRequest {
@@ -171,6 +235,12 @@ fn projects() -> Arc<MemoryProjectRepository> {
     )]))
 }
 
+fn workspaces() -> Arc<MemoryWorkspaceRepository> {
+    Arc::new(MemoryWorkspaceRepository::with_workspaces(vec![
+        main_workspace("project-1"),
+    ]))
+}
+
 fn git_project(id: &str) -> Project {
     Project {
         id: ProjectId::new(id),
@@ -180,6 +250,17 @@ fn git_project(id: &str) -> Project {
         default_branch: Some("main".to_string()),
         audit_fields: AuditFields::new(NOW, NOW, false),
     }
+}
+
+fn main_workspace(project_id: &str) -> Workspace {
+    Workspace::new(
+        WorkspaceId::new(format!("workspace-{project_id}")),
+        ProjectId::new(project_id),
+        WorkspaceKind::Main,
+        WorkspaceLocation::local_filesystem(format!("/workspace/{project_id}")),
+        WorkspaceLifecycle::Active,
+        AuditFields::new(NOW, NOW, false),
+    )
 }
 
 #[derive(Default)]
@@ -314,6 +395,73 @@ impl ProjectRepository for MemoryProjectRepository {
         project.audit_fields.is_deleted = true;
         project.audit_fields.updated_at = deleted_at;
         Ok(true)
+    }
+}
+
+struct MemoryWorkspaceRepository {
+    workspaces: Vec<Workspace>,
+}
+
+impl MemoryWorkspaceRepository {
+    fn with_workspaces(workspaces: Vec<Workspace>) -> Self {
+        Self { workspaces }
+    }
+}
+
+impl WorkspaceRepository for MemoryWorkspaceRepository {
+    fn find_workspace(
+        &self,
+        workspace_id: &WorkspaceId,
+    ) -> Result<Option<Workspace>, RepositoryError> {
+        Ok(self
+            .workspaces
+            .iter()
+            .find(|workspace| &workspace.id == workspace_id)
+            .cloned())
+    }
+
+    fn find_main_workspace(
+        &self,
+        project_id: &ProjectId,
+    ) -> Result<Option<Workspace>, RepositoryError> {
+        Ok(self
+            .workspaces
+            .iter()
+            .find(|workspace| {
+                &workspace.project_id == project_id && workspace.kind == WorkspaceKind::Main
+            })
+            .cloned())
+    }
+
+    fn is_provisioning_ready(&self, workspace_id: &WorkspaceId) -> Result<bool, RepositoryError> {
+        Ok(self
+            .workspaces
+            .iter()
+            .any(|workspace| &workspace.id == workspace_id && workspace.is_admissible()))
+    }
+}
+
+#[derive(Clone, Copy)]
+struct AcceptingTargetValidator;
+
+impl ScheduledTaskTargetValidator for AcceptingTargetValidator {
+    fn validate_git_worktree_target(
+        &self,
+        _project_root: &std::path::Path,
+    ) -> Result<(), TaskWorktreeProvisionerError> {
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+struct RejectingTargetValidator;
+
+impl ScheduledTaskTargetValidator for RejectingTargetValidator {
+    fn validate_git_worktree_target(
+        &self,
+        _project_root: &std::path::Path,
+    ) -> Result<(), TaskWorktreeProvisionerError> {
+        Err(TaskWorktreeProvisionerError::NotARepository)
     }
 }
 

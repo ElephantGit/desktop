@@ -2,8 +2,9 @@ use ora_domain::{
     ScheduledMissedOccurrence, ScheduledOccurrence, ScheduledRun, ScheduledRunId, ScheduledTask,
     ScheduledTaskHistoryEntry, ScheduledTaskId,
 };
+use std::path::Path;
 
-use crate::RepositoryError;
+use crate::{RepositoryError, TaskWorktreeProvisionerError};
 
 /// Defines persistence operations required by scheduled-task definition use cases.
 pub trait ScheduledTaskRepository {
@@ -37,6 +38,15 @@ pub trait ScheduledTaskRepository {
 pub trait ScheduledTaskIdGenerator {
     /// Produces one new scheduled-task identifier.
     fn generate_scheduled_task_id(&self) -> ScheduledTaskId;
+}
+
+/// Verifies that a local Scheduled Task target can use the isolated-worktree execution mode.
+pub trait ScheduledTaskTargetValidator {
+    /// Checks the configured project directory without creating a branch or worktree.
+    fn validate_git_worktree_target(
+        &self,
+        project_root: &Path,
+    ) -> Result<(), TaskWorktreeProvisionerError>;
 }
 
 /// Supplies the fact a scheduler wants to persist for one planned occurrence.
