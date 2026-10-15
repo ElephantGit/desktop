@@ -1,5 +1,6 @@
 use ora_domain::{
-    ScheduledOccurrence, ScheduledRun, ScheduledRunId, ScheduledTask, ScheduledTaskId,
+    ScheduledMissedOccurrence, ScheduledOccurrence, ScheduledRun, ScheduledRunId, ScheduledTask,
+    ScheduledTaskId,
 };
 
 use crate::RepositoryError;
@@ -38,35 +39,40 @@ pub trait ScheduledTaskIdGenerator {
     fn generate_scheduled_task_id(&self) -> ScheduledTaskId;
 }
 
-/// Distinguishes a newly persisted run from an idempotent replay of the same occurrence.
+/// Supplies the fact a scheduler wants to persist for one planned occurrence.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ScheduledRunAdmission {
-    Admitted(ScheduledRun),
-    Existing(ScheduledRun),
+pub enum ScheduledOccurrenceCandidate {
+    Run(ScheduledRun),
+    Missed(ScheduledMissedOccurrence),
 }
 
-impl ScheduledRunAdmission {
-    /// Returns the single run fact associated with the occurrence.
-    pub fn run(&self) -> &ScheduledRun {
+impl ScheduledOccurrenceCandidate {
+    /// Returns the stable planned identity shared by run and missed facts.
+    pub fn occurrence(&self) -> &ScheduledOccurrence {
         match self {
-            Self::Admitted(run) | Self::Existing(run) => run,
+            Self::Run(run) => &run.occurrence,
+            Self::Missed(missed) => &missed.occurrence,
         }
     }
 }
 
-/// Defines the atomic persistence boundary for planned occurrence admission.
-pub trait ScheduledRunRepository {
-    /// Inserts the candidate at most once and returns the existing fact on replay.
-    fn admit_scheduled_run(
-        &self,
-        candidate: ScheduledRun,
-    ) -> Result<ScheduledRunAdmission, RepositoryError>;
+/// Distinguishes newly persisted occurrence facts from idempotent replays.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScheduledOccurrenceResolution {
+    NotDue,
+    Admitted(ScheduledRun),
+    ExistingRun(ScheduledRun),
+    Missed(ScheduledMissedOccurrence),
+    ExistingMissed(ScheduledMissedOccurrence),
+}
 
-    /// Loads the run already associated with a planned occurrence.
-    fn find_scheduled_run(
+/// Defines the atomic persistence boundary shared by admitted and missed occurrences.
+pub trait ScheduledOccurrenceRepository {
+    /// Inserts one outcome at most once and returns the existing outcome on replay.
+    fn resolve_scheduled_occurrence(
         &self,
-        occurrence: &ScheduledOccurrence,
-    ) -> Result<Option<ScheduledRun>, RepositoryError>;
+        candidate: ScheduledOccurrenceCandidate,
+    ) -> Result<ScheduledOccurrenceResolution, RepositoryError>;
 }
 
 /// Supplies stable identifiers for newly admitted Scheduled Runs.

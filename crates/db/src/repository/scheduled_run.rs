@@ -1,108 +1,170 @@
-use ora_application::{RepositoryError, ScheduledRunAdmission, ScheduledRunRepository};
-use ora_domain::{
-    AgentRef, ProjectId, ScheduledOccurrence, ScheduledRun, ScheduledRunId, ScheduledRunSnapshot,
-    ScheduledRunStatus, ScheduledTaskApproval, ScheduledTaskId, SessionId,
+use ora_application::{
+    RepositoryError, ScheduledOccurrenceCandidate, ScheduledOccurrenceRepository,
+    ScheduledOccurrenceResolution,
 };
-use rusqlite::{Row, params};
+use ora_domain::{
+    AgentRef, ProjectId, ScheduledMissReason, ScheduledMissedOccurrence, ScheduledOccurrence,
+    ScheduledRun, ScheduledRunId, ScheduledRunSnapshot, ScheduledRunStatus, ScheduledTaskApproval,
+    ScheduledTaskId, SessionId,
+};
+use rusqlite::{Row, Transaction, params};
 
 use crate::repository::RepositoryPool;
 
-/// Atomically admits planned Scheduled Task occurrences through the shared SQLite pool.
+/// Atomically resolves accepted and missed Scheduled Task occurrences through SQLite.
 #[derive(Clone, Debug)]
 pub struct SqliteScheduledRunRepository {
     pool: RepositoryPool,
 }
 
 impl SqliteScheduledRunRepository {
-    /// Builds a Scheduled Run repository from the shared SQLite connection pool.
+    /// Builds a Scheduled occurrence repository from the shared SQLite connection pool.
     pub fn new(pool: RepositoryPool) -> Self {
         Self { pool }
     }
 }
 
-impl ScheduledRunRepository for SqliteScheduledRunRepository {
-    fn admit_scheduled_run(
+impl ScheduledOccurrenceRepository for SqliteScheduledRunRepository {
+    fn resolve_scheduled_occurrence(
         &self,
-        candidate: ScheduledRun,
-    ) -> Result<ScheduledRunAdmission, RepositoryError> {
-        let revision = serialize_revision(candidate.snapshot.revision)?;
-        let (approval_policy, approval_consented_at) =
-            approval_columns(candidate.snapshot.approval.as_ref());
+        candidate: ScheduledOccurrenceCandidate,
+    ) -> Result<ScheduledOccurrenceResolution, RepositoryError> {
+        let occurrence = candidate.occurrence().clone();
         self.pool
             .with_connection_mut(|connection| {
                 let transaction = connection.transaction()?;
+                let (outcome, missed_reason, observed_at) = candidate_columns(&candidate);
                 let inserted = transaction.execute(
-                    "INSERT INTO scheduled_runs (
-                        id, task_id, scheduled_at, task_revision, project_id, agent_ref,
-                        model, prompt, approval_policy, approval_consented_at, status,
-                        session_id, created_at, updated_at
-                     ) VALUES (
-                        ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14
-                     )
+                    "INSERT INTO scheduled_occurrences (
+                        task_id, scheduled_at, outcome, missed_reason, observed_at
+                     ) VALUES (?1, ?2, ?3, ?4, ?5)
                      ON CONFLICT(task_id, scheduled_at) DO NOTHING",
                     params![
-                        candidate.id.as_ref(),
-                        candidate.occurrence.task_id.as_ref(),
-                        candidate.occurrence.scheduled_at,
-                        revision,
-                        candidate.snapshot.project_id.as_ref(),
-                        candidate.snapshot.agent_ref.as_str(),
-                        candidate.snapshot.model.as_deref(),
-                        &candidate.snapshot.prompt,
-                        approval_policy,
-                        approval_consented_at,
-                        status_column(candidate.status),
-                        candidate.session_id.as_ref().map(AsRef::<str>::as_ref),
-                        candidate.created_at,
-                        candidate.updated_at,
+                        occurrence.task_id.as_ref(),
+                        occurrence.scheduled_at,
+                        outcome,
+                        missed_reason,
+                        observed_at,
                     ],
                 )? > 0;
-                let persisted = {
-                    let mut statement = transaction.prepare(
-                        "SELECT id, task_id, scheduled_at, task_revision, project_id, agent_ref,
-                                model, prompt, approval_policy, approval_consented_at, status,
-                                session_id, created_at, updated_at
-                         FROM scheduled_runs
-                         WHERE task_id = ?1 AND scheduled_at = ?2",
-                    )?;
-                    let mut rows = statement.query(params![
-                        candidate.occurrence.task_id.as_ref(),
-                        candidate.occurrence.scheduled_at,
-                    ])?;
-                    let row = rows.next()?.ok_or(rusqlite::Error::QueryReturnedNoRows)?;
-                    map_scheduled_run_row(row)?
+
+                let resolution = if inserted {
+                    match &candidate {
+                        ScheduledOccurrenceCandidate::Run(run) => {
+                            insert_scheduled_run(&transaction, run)?;
+                            ScheduledOccurrenceResolution::Admitted(run.clone())
+                        }
+                        ScheduledOccurrenceCandidate::Missed(missed) => {
+                            ScheduledOccurrenceResolution::Missed(missed.clone())
+                        }
+                    }
+                } else {
+                    load_existing_resolution(&transaction, &occurrence)?
                 };
                 transaction.commit()?;
-                Ok(if inserted {
-                    ScheduledRunAdmission::Admitted(persisted)
-                } else {
-                    ScheduledRunAdmission::Existing(persisted)
-                })
+                Ok(resolution)
             })
             .map_err(repository_error_from_database)
     }
+}
 
-    fn find_scheduled_run(
-        &self,
-        occurrence: &ScheduledOccurrence,
-    ) -> Result<Option<ScheduledRun>, RepositoryError> {
-        self.pool
-            .with_connection(|connection| {
-                let mut statement = connection.prepare(
-                    "SELECT id, task_id, scheduled_at, task_revision, project_id, agent_ref,
-                            model, prompt, approval_policy, approval_consented_at, status,
-                            session_id, created_at, updated_at
-                     FROM scheduled_runs
-                     WHERE task_id = ?1 AND scheduled_at = ?2",
-                )?;
-                let mut rows = statement.query(params![
-                    occurrence.task_id.as_ref(),
-                    occurrence.scheduled_at,
-                ])?;
-                rows.next()?.map(map_scheduled_run_row).transpose()
-            })
-            .map_err(repository_error_from_database)
+fn candidate_columns(
+    candidate: &ScheduledOccurrenceCandidate,
+) -> (&'static str, Option<&'static str>, i64) {
+    match candidate {
+        ScheduledOccurrenceCandidate::Run(run) => ("accepted", None, run.created_at),
+        ScheduledOccurrenceCandidate::Missed(missed) => (
+            "missed",
+            Some(missed_reason_column(missed.reason)),
+            missed.observed_at,
+        ),
     }
+}
+
+fn insert_scheduled_run(
+    transaction: &Transaction<'_>,
+    run: &ScheduledRun,
+) -> Result<(), crate::DatabaseError> {
+    let revision = i64::try_from(run.snapshot.revision).map_err(|_| {
+        crate::DatabaseError::CorruptScheduledTaskRevision(run.snapshot.revision.to_string())
+    })?;
+    let (approval_policy, approval_consented_at) = approval_columns(run.snapshot.approval.as_ref());
+    transaction.execute(
+        "INSERT INTO scheduled_runs (
+            id, task_id, scheduled_at, task_revision, project_id, agent_ref,
+            model, prompt, approval_policy, approval_consented_at, status,
+            session_id, created_at, updated_at
+         ) VALUES (
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14
+         )",
+        params![
+            run.id.as_ref(),
+            run.occurrence.task_id.as_ref(),
+            run.occurrence.scheduled_at,
+            revision,
+            run.snapshot.project_id.as_ref(),
+            run.snapshot.agent_ref.as_str(),
+            run.snapshot.model.as_deref(),
+            &run.snapshot.prompt,
+            approval_policy,
+            approval_consented_at,
+            status_column(run.status),
+            run.session_id.as_ref().map(AsRef::<str>::as_ref),
+            run.created_at,
+            run.updated_at,
+        ],
+    )?;
+    Ok(())
+}
+
+fn load_existing_resolution(
+    transaction: &Transaction<'_>,
+    occurrence: &ScheduledOccurrence,
+) -> Result<ScheduledOccurrenceResolution, crate::DatabaseError> {
+    let (outcome, missed_reason, observed_at): (String, Option<String>, i64) = transaction
+        .query_row(
+            "SELECT outcome, missed_reason, observed_at
+             FROM scheduled_occurrences
+             WHERE task_id = ?1 AND scheduled_at = ?2",
+            params![occurrence.task_id.as_ref(), occurrence.scheduled_at],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+    match outcome.as_str() {
+        "accepted" if missed_reason.is_none() => Ok(ScheduledOccurrenceResolution::ExistingRun(
+            load_scheduled_run(transaction, occurrence)?,
+        )),
+        "missed" => Ok(ScheduledOccurrenceResolution::ExistingMissed(
+            ScheduledMissedOccurrence {
+                occurrence: occurrence.clone(),
+                reason: parse_missed_reason(missed_reason.as_deref().ok_or_else(|| {
+                    crate::DatabaseError::CorruptScheduledMissReason("missing".to_string())
+                })?)?,
+                observed_at,
+            },
+        )),
+        _ => Err(crate::DatabaseError::CorruptScheduledOccurrenceOutcome(
+            format!("outcome={outcome:?}, missed_reason={missed_reason:?}"),
+        )),
+    }
+}
+
+fn load_scheduled_run(
+    transaction: &Transaction<'_>,
+    occurrence: &ScheduledOccurrence,
+) -> Result<ScheduledRun, crate::DatabaseError> {
+    let mut statement = transaction.prepare(
+        "SELECT id, task_id, scheduled_at, task_revision, project_id, agent_ref,
+                model, prompt, approval_policy, approval_consented_at, status,
+                session_id, created_at, updated_at
+         FROM scheduled_runs
+         WHERE task_id = ?1 AND scheduled_at = ?2",
+    )?;
+    let mut rows = statement.query(params![
+        occurrence.task_id.as_ref(),
+        occurrence.scheduled_at,
+    ])?;
+    let row = rows.next()?.ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+    map_scheduled_run_row(row)
 }
 
 fn map_scheduled_run_row(row: &Row<'_>) -> Result<ScheduledRun, crate::DatabaseError> {
@@ -167,12 +229,21 @@ fn parse_status(value: &str) -> Result<ScheduledRunStatus, crate::DatabaseError>
     }
 }
 
-fn serialize_revision(revision: u64) -> Result<i64, RepositoryError> {
-    i64::try_from(revision).map_err(|_| {
-        repository_error_from_database(crate::DatabaseError::CorruptScheduledTaskRevision(
-            revision.to_string(),
-        ))
-    })
+fn missed_reason_column(reason: ScheduledMissReason) -> &'static str {
+    match reason {
+        ScheduledMissReason::AppNotRunning => "app_not_running",
+        ScheduledMissReason::LateTrigger => "late_trigger",
+    }
+}
+
+fn parse_missed_reason(value: &str) -> Result<ScheduledMissReason, crate::DatabaseError> {
+    match value {
+        "app_not_running" => Ok(ScheduledMissReason::AppNotRunning),
+        "late_trigger" => Ok(ScheduledMissReason::LateTrigger),
+        _ => Err(crate::DatabaseError::CorruptScheduledMissReason(
+            value.to_string(),
+        )),
+    }
 }
 
 fn approval_columns(approval: Option<&ScheduledTaskApproval>) -> (Option<String>, Option<i64>) {
@@ -207,12 +278,13 @@ fn repository_error_from_database(error: crate::DatabaseError) -> RepositoryErro
 #[cfg(test)]
 mod tests {
     use ora_application::{
-        ProjectRepository, ScheduledRunAdmission, ScheduledRunRepository, ScheduledTaskRepository,
+        ProjectRepository, ScheduledOccurrenceCandidate, ScheduledOccurrenceRepository,
+        ScheduledOccurrenceResolution, ScheduledTaskRepository,
     };
     use ora_domain::{
-        AgentRef, AuditFields, Project, ProjectId, ScheduledOccurrence, ScheduledRun,
-        ScheduledRunId, ScheduledTask, ScheduledTaskApproval, ScheduledTaskExecutionLocation,
-        ScheduledTaskId, ScheduledTaskSchedule, WorkspaceLocation,
+        AgentRef, AuditFields, Project, ProjectId, ScheduledMissReason, ScheduledMissedOccurrence,
+        ScheduledOccurrence, ScheduledRun, ScheduledRunId, ScheduledTask, ScheduledTaskApproval,
+        ScheduledTaskExecutionLocation, ScheduledTaskId, ScheduledTaskSchedule, WorkspaceLocation,
     };
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
@@ -230,40 +302,67 @@ mod tests {
         seed_definition(&pool, temp_dir.path());
         let repository = SqliteScheduledRunRepository::new(pool);
         let task = scheduled_task();
-        let occurrence = ScheduledOccurrence {
-            task_id: task.id.clone(),
-            scheduled_at: 100,
-        };
+        let occurrence = occurrence(100);
         let first =
             ScheduledRun::accepted(ScheduledRunId::new("run-1"), occurrence.clone(), &task, 101);
         assert_eq!(
             repository
-                .admit_scheduled_run(first.clone())
+                .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Run(first.clone()))
                 .expect("admit first run"),
-            ScheduledRunAdmission::Admitted(first.clone())
+            ScheduledOccurrenceResolution::Admitted(first.clone())
         );
 
         let mut edited_task = task;
         edited_task.revision = 2;
         edited_task.prompt = "New prompt".to_string();
-        let replay = ScheduledRun::accepted(
-            ScheduledRunId::new("run-2"),
-            occurrence.clone(),
-            &edited_task,
-            102,
-        );
+        let replay =
+            ScheduledRun::accepted(ScheduledRunId::new("run-2"), occurrence, &edited_task, 102);
         assert_eq!(
             repository
-                .admit_scheduled_run(replay)
+                .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Run(replay))
                 .expect("replay occurrence"),
-            ScheduledRunAdmission::Existing(first.clone())
+            ScheduledOccurrenceResolution::ExistingRun(first)
+        );
+    }
+
+    #[test]
+    fn missed_outcome_prevents_a_later_run_for_the_same_occurrence() {
+        let (temp_dir, pool) = bootstrapped_pool();
+        seed_definition(&pool, temp_dir.path());
+        let repository = SqliteScheduledRunRepository::new(pool.clone());
+        let occurrence = occurrence(200);
+        let missed = ScheduledMissedOccurrence {
+            occurrence: occurrence.clone(),
+            reason: ScheduledMissReason::LateTrigger,
+            observed_at: 800_001,
+        };
+        assert_eq!(
+            repository
+                .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Missed(missed.clone(),))
+                .expect("record missed occurrence"),
+            ScheduledOccurrenceResolution::Missed(missed.clone())
+        );
+
+        let run = ScheduledRun::accepted(
+            ScheduledRunId::new("run-after-missed"),
+            occurrence,
+            &scheduled_task(),
+            800_002,
         );
         assert_eq!(
             repository
-                .find_scheduled_run(&occurrence)
-                .expect("find admitted run"),
-            Some(first)
+                .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Run(run))
+                .expect("replay missed occurrence"),
+            ScheduledOccurrenceResolution::ExistingMissed(missed)
         );
+        let run_count: i64 = pool
+            .with_connection(|connection| {
+                connection
+                    .query_row("SELECT COUNT(*) FROM scheduled_runs", [], |row| row.get(0))
+                    .map_err(Into::into)
+            })
+            .expect("count runs");
+        assert_eq!(run_count, 0_i64);
     }
 
     fn bootstrapped_pool() -> (TempDir, RepositoryPool) {
@@ -294,6 +393,13 @@ mod tests {
         SqliteScheduledTaskRepository::new(pool.clone())
             .create_scheduled_task(scheduled_task())
             .expect("create Scheduled Task");
+    }
+
+    fn occurrence(scheduled_at: i64) -> ScheduledOccurrence {
+        ScheduledOccurrence {
+            task_id: ScheduledTaskId::new("scheduled-task-1"),
+            scheduled_at,
+        }
     }
 
     fn scheduled_task() -> ScheduledTask {

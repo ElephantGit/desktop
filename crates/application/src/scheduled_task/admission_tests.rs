@@ -1,71 +1,126 @@
 use std::sync::Mutex;
 
 use ora_domain::{
-    AgentRef, AuditFields, ProjectId, ScheduledOccurrence, ScheduledRun, ScheduledRunId,
+    AgentRef, AuditFields, ProjectId, ScheduledMissReason, ScheduledOccurrence, ScheduledRunId,
     ScheduledTask, ScheduledTaskApproval, ScheduledTaskExecutionLocation, ScheduledTaskId,
     ScheduledTaskSchedule,
 };
 use pretty_assertions::assert_eq;
 
 use super::{
-    AdmitScheduledOccurrenceHandler, ScheduledRunAdmission, ScheduledRunIdGenerator,
-    ScheduledRunRepository,
+    AdmitScheduledOccurrenceHandler, ScheduledOccurrenceCandidate, ScheduledOccurrenceRepository,
+    ScheduledOccurrenceResolution, ScheduledRunIdGenerator,
 };
 use crate::RepositoryError;
+
+const SCHEDULED_AT: i64 = 1_000_000;
 
 #[test]
 fn replay_returns_the_original_application_admission_after_definition_changes() {
     let handler = AdmitScheduledOccurrenceHandler::new(
-        MemoryScheduledRunRepository::default(),
+        MemoryScheduledOccurrenceRepository::default(),
         IncrementingRunIdGenerator::default(),
     );
     let task = scheduled_task();
     let first = handler
-        .handle(&task, 100, 101)
+        .handle(&task, SCHEDULED_AT, SCHEDULED_AT)
         .expect("admit first occurrence");
-    assert!(matches!(first, ScheduledRunAdmission::Admitted(_)));
+    let ScheduledOccurrenceResolution::Admitted(first_run) = first else {
+        panic!("first delivery must admit a run");
+    };
 
     let mut edited = task;
     edited.revision = 2;
     edited.prompt = "New prompt".to_string();
     let replay = handler
-        .handle(&edited, 100, 102)
+        .handle(&edited, SCHEDULED_AT, SCHEDULED_AT + 1)
         .expect("replay occurrence");
 
-    assert_eq!(replay, ScheduledRunAdmission::Existing(first.run().clone()));
-    assert_eq!(replay.run().snapshot.revision, 1);
-    assert_eq!(replay.run().snapshot.prompt, "Run the quality gate");
+    assert_eq!(
+        replay,
+        ScheduledOccurrenceResolution::ExistingRun(first_run.clone())
+    );
+    assert_eq!(first_run.snapshot.revision, 1);
+    assert_eq!(first_run.snapshot.prompt, "Run the quality gate");
+}
+
+#[test]
+fn ten_minute_boundary_admits_but_the_next_millisecond_records_missed() {
+    let due_handler = AdmitScheduledOccurrenceHandler::new(
+        MemoryScheduledOccurrenceRepository::default(),
+        IncrementingRunIdGenerator::default(),
+    );
+    assert!(matches!(
+        due_handler
+            .handle(&scheduled_task(), SCHEDULED_AT, SCHEDULED_AT + 600_000)
+            .expect("admit boundary occurrence"),
+        ScheduledOccurrenceResolution::Admitted(_)
+    ));
+
+    let missed_handler = AdmitScheduledOccurrenceHandler::new(
+        MemoryScheduledOccurrenceRepository::default(),
+        PanicRunIdGenerator,
+    );
+    assert_eq!(
+        missed_handler
+            .handle(&scheduled_task(), SCHEDULED_AT, SCHEDULED_AT + 600_001,)
+            .expect("record late occurrence"),
+        ScheduledOccurrenceResolution::Missed(ora_domain::ScheduledMissedOccurrence {
+            occurrence: ScheduledOccurrence {
+                task_id: ScheduledTaskId::new("scheduled-task-1"),
+                scheduled_at: SCHEDULED_AT,
+            },
+            reason: ScheduledMissReason::LateTrigger,
+            observed_at: SCHEDULED_AT + 600_001,
+        })
+    );
+}
+
+#[test]
+fn early_observation_does_not_persist_or_allocate_a_run() {
+    let handler = AdmitScheduledOccurrenceHandler::new(
+        MemoryScheduledOccurrenceRepository::default(),
+        PanicRunIdGenerator,
+    );
+    assert_eq!(
+        handler
+            .handle(&scheduled_task(), SCHEDULED_AT, SCHEDULED_AT - 1)
+            .expect("ignore early observation"),
+        ScheduledOccurrenceResolution::NotDue
+    );
 }
 
 #[derive(Default)]
-struct MemoryScheduledRunRepository {
-    run: Mutex<Option<ScheduledRun>>,
+struct MemoryScheduledOccurrenceRepository {
+    candidate: Mutex<Option<ScheduledOccurrenceCandidate>>,
 }
 
-impl ScheduledRunRepository for MemoryScheduledRunRepository {
-    fn admit_scheduled_run(
+impl ScheduledOccurrenceRepository for MemoryScheduledOccurrenceRepository {
+    fn resolve_scheduled_occurrence(
         &self,
-        candidate: ScheduledRun,
-    ) -> Result<ScheduledRunAdmission, RepositoryError> {
-        let mut run = self.run.lock().expect("lock run");
-        if let Some(existing) = run.as_ref() {
-            return Ok(ScheduledRunAdmission::Existing(existing.clone()));
+        candidate: ScheduledOccurrenceCandidate,
+    ) -> Result<ScheduledOccurrenceResolution, RepositoryError> {
+        let mut stored = self.candidate.lock().expect("lock occurrence");
+        if let Some(existing) = stored.as_ref() {
+            return Ok(match existing {
+                ScheduledOccurrenceCandidate::Run(run) => {
+                    ScheduledOccurrenceResolution::ExistingRun(run.clone())
+                }
+                ScheduledOccurrenceCandidate::Missed(missed) => {
+                    ScheduledOccurrenceResolution::ExistingMissed(missed.clone())
+                }
+            });
         }
-        *run = Some(candidate.clone());
-        Ok(ScheduledRunAdmission::Admitted(candidate))
-    }
-
-    fn find_scheduled_run(
-        &self,
-        occurrence: &ScheduledOccurrence,
-    ) -> Result<Option<ScheduledRun>, RepositoryError> {
-        Ok(self
-            .run
-            .lock()
-            .expect("lock run")
-            .as_ref()
-            .filter(|run| &run.occurrence == occurrence)
-            .cloned())
+        let resolution = match &candidate {
+            ScheduledOccurrenceCandidate::Run(run) => {
+                ScheduledOccurrenceResolution::Admitted(run.clone())
+            }
+            ScheduledOccurrenceCandidate::Missed(missed) => {
+                ScheduledOccurrenceResolution::Missed(missed.clone())
+            }
+        };
+        *stored = Some(candidate);
+        Ok(resolution)
     }
 }
 
@@ -79,6 +134,14 @@ impl ScheduledRunIdGenerator for IncrementingRunIdGenerator {
         let mut next = self.next.lock().expect("lock generator");
         *next += 1;
         ScheduledRunId::new(format!("run-{next}"))
+    }
+}
+
+struct PanicRunIdGenerator;
+
+impl ScheduledRunIdGenerator for PanicRunIdGenerator {
+    fn generate_scheduled_run_id(&self) -> ScheduledRunId {
+        panic!("missed and early occurrences must not allocate a run")
     }
 }
 

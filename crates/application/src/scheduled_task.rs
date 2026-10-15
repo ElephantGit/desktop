@@ -16,6 +16,6 @@ pub use handlers::{
 };
 pub use id_generator::{UuidScheduledRunIdGenerator, UuidScheduledTaskIdGenerator};
 pub use ports::{
-    ScheduledRunAdmission, ScheduledRunIdGenerator, ScheduledRunRepository,
-    ScheduledTaskIdGenerator, ScheduledTaskRepository,
+    ScheduledOccurrenceCandidate, ScheduledOccurrenceRepository, ScheduledOccurrenceResolution,
+    ScheduledRunIdGenerator, ScheduledTaskIdGenerator, ScheduledTaskRepository,
 };

@@ -1,6 +1,12 @@
-use ora_domain::{ScheduledOccurrence, ScheduledRun, ScheduledTask};
+use ora_domain::{
+    ScheduledMissedOccurrence, ScheduledOccurrence, ScheduledOccurrenceTiming, ScheduledRun,
+    ScheduledTask,
+};
 
-use super::{ScheduledRunAdmission, ScheduledRunIdGenerator, ScheduledRunRepository};
+use super::{
+    ScheduledOccurrenceCandidate, ScheduledOccurrenceRepository, ScheduledOccurrenceResolution,
+    ScheduledRunIdGenerator,
+};
 use crate::ApplicationError;
 
 /// Admits a planned occurrence while freezing the task inputs used by the future execution.
@@ -20,28 +26,42 @@ impl<Repository, IdGenerator> AdmitScheduledOccurrenceHandler<Repository, IdGene
 
 impl<Repository, IdGenerator> AdmitScheduledOccurrenceHandler<Repository, IdGenerator>
 where
-    Repository: ScheduledRunRepository,
+    Repository: ScheduledOccurrenceRepository,
     IdGenerator: ScheduledRunIdGenerator,
 {
-    /// Returns the first persisted run when the same planned time is delivered repeatedly.
+    /// Resolves one live observation at the fixed ten-minute boundary and persists it once.
     pub fn handle(
         &self,
         task: &ScheduledTask,
         scheduled_at: i64,
         accepted_at: i64,
-    ) -> Result<ScheduledRunAdmission, ApplicationError> {
+    ) -> Result<ScheduledOccurrenceResolution, ApplicationError> {
         let occurrence = ScheduledOccurrence {
             task_id: task.id.clone(),
             scheduled_at,
         };
-        let candidate = ScheduledRun::accepted(
-            self.id_generator.generate_scheduled_run_id(),
-            occurrence,
-            task,
-            accepted_at,
-        );
+        let candidate = match occurrence.timing_at(accepted_at) {
+            ScheduledOccurrenceTiming::NotDue => {
+                return Ok(ScheduledOccurrenceResolution::NotDue);
+            }
+            ScheduledOccurrenceTiming::Due => {
+                ScheduledOccurrenceCandidate::Run(ScheduledRun::accepted(
+                    self.id_generator.generate_scheduled_run_id(),
+                    occurrence,
+                    task,
+                    accepted_at,
+                ))
+            }
+            ScheduledOccurrenceTiming::Missed(reason) => {
+                ScheduledOccurrenceCandidate::Missed(ScheduledMissedOccurrence {
+                    occurrence,
+                    reason,
+                    observed_at: accepted_at,
+                })
+            }
+        };
         self.repository
-            .admit_scheduled_run(candidate)
+            .resolve_scheduled_occurrence(candidate)
             .map_err(ApplicationError::from_scheduled_task_repository_error)
     }
 }
