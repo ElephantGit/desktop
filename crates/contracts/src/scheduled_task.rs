@@ -233,10 +233,7 @@ mod tests {
     #[test]
     fn weekly_schedule_uses_the_public_tagged_shape() {
         let schedule = ScheduledTaskSchedule::Weekly {
-            weekdays: BTreeSet::from([
-                ScheduledTaskWeekday::Monday,
-                ScheduledTaskWeekday::Friday,
-            ]),
+            weekdays: BTreeSet::from([ScheduledTaskWeekday::Monday, ScheduledTaskWeekday::Friday]),
             hour: 9,
             minute: 30,
         };

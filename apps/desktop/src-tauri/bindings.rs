@@ -29,6 +29,8 @@ mod project;
 mod proxy;
 #[path = "bindings/runtime_log_level.rs"]
 mod runtime_log_level;
+#[path = "bindings/scheduled_task.rs"]
+mod scheduled_task;
 #[path = "bindings/session.rs"]
 mod session;
 #[path = "bindings/skill.rs"]
@@ -51,6 +53,7 @@ pub(crate) fn bindings() -> Vec<Binding> {
         developer_mode::BINDINGS,
         runtime_log_level::BINDINGS,
         task::BINDINGS,
+        scheduled_task::BINDINGS,
         session::BINDINGS,
         agent_runtime::BINDINGS,
         app_events::BINDINGS,

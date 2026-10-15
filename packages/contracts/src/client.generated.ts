@@ -97,6 +97,14 @@ export function createContractsClient(transport: ContractTransport): ContractsCl
       get: (request, options) => executeOperation("getRuntimeLogLevel", request, transport, options),
       set: (request, options) => executeOperation("setRuntimeLogLevel", request, transport, options),
     },
+    scheduledTask: {
+      create: (request, options) => executeOperation("createScheduledTask", request, transport, options),
+      delete: (request, options) => executeOperation("deleteScheduledTask", request, transport, options),
+      get: (request, options) => executeOperation("getScheduledTask", request, transport, options),
+      list: (request, options) => executeOperation("listScheduledTasks", request, transport, options),
+      revokeApproval: (request, options) => executeOperation("revokeScheduledTaskApproval", request, transport, options),
+      update: (request, options) => executeOperation("updateScheduledTask", request, transport, options),
+    },
     session: {
       cancelPrompt: (request, options) => executeOperation("cancelSessionPrompt", request, transport, options),
       delete: (request, options) => executeOperation("deleteSession", request, transport, options),

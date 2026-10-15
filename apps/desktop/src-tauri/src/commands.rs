@@ -162,6 +162,7 @@ pub(crate) mod files;
 pub(crate) mod git_identity;
 pub(crate) mod plugin;
 pub(crate) mod project;
+pub(crate) mod scheduled_task;
 pub(crate) mod session;
 pub(crate) mod settings;
 pub(crate) mod skill;

@@ -510,6 +510,24 @@ impl From<ApplicationError> for BackendError {
                 PublicError::InvalidRequest(EmptyErrorParams {}),
                 "session title exceeds the maximum length",
             ),
+            ApplicationError::ScheduledTaskNotFound { .. } => (
+                ErrorClassification::NotFound,
+                PublicError::ScheduledTaskNotFound(EmptyErrorParams {}),
+                "scheduled task not found",
+            ),
+            ApplicationError::ScheduledTaskNameBlank
+            | ApplicationError::ScheduledTaskPromptBlank
+            | ApplicationError::ScheduledTaskAgentRefInvalid
+            | ApplicationError::ScheduledTaskIntervalTooShort
+            | ApplicationError::ScheduledTaskTimeInvalid
+            | ApplicationError::ScheduledTaskWeekdaysEmpty
+            | ApplicationError::ScheduledTaskRequiresGitProject
+            | ApplicationError::ScheduledTaskCloudUnavailable
+            | ApplicationError::ScheduledTaskApprovalRequired => (
+                ErrorClassification::InvalidRequest,
+                PublicError::InvalidRequest(EmptyErrorParams {}),
+                "scheduled task request is invalid",
+            ),
             ApplicationError::SkillRepository { .. }
             | ApplicationError::SkillStorage { .. }
             | ApplicationError::AgentDefinitionRepository { .. }
@@ -523,6 +541,7 @@ impl From<ApplicationError> for BackendError {
             | ApplicationError::WorktreeRepository { .. }
             | ApplicationError::SessionRepository { .. }
             | ApplicationError::UserConfigRepository { .. }
+            | ApplicationError::ScheduledTaskRepository { .. }
             | ApplicationError::WorkflowRepository { .. }
             | ApplicationError::WorkflowRunRepository { .. } => (
                 ErrorClassification::Internal,
