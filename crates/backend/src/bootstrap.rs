@@ -227,7 +227,11 @@ impl Backend {
         ));
 
         Ok(Self {
-            scheduled_task: Arc::new(ScheduledTaskApi::new(pool.clone(), clock)),
+            scheduled_task: Arc::new(ScheduledTaskApi::new(
+                pool.clone(),
+                AgentRuntime::new(agent_runtime.clone()),
+                clock,
+            )),
             project: Arc::new(ProjectApi::new(
                 pool.clone(),
                 sessions_root.clone(),

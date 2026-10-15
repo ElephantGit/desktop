@@ -60,6 +60,18 @@ fn approved_local_task_is_created_at_revision_one() {
 }
 
 #[test]
+fn prepared_definition_is_not_written_until_runtime_eligibility_can_be_checked() {
+    let repository = Arc::new(MemoryScheduledTaskRepository::default());
+    let handler = create_handler(repository.clone());
+
+    let prepared = handler.prepare(create_request()).expect("prepare task");
+    assert!(repository.tasks.lock().expect("lock tasks").is_empty());
+
+    handler.persist(prepared).expect("persist prepared task");
+    assert_eq!(repository.tasks.lock().expect("lock tasks").len(), 1);
+}
+
+#[test]
 fn prompt_and_schedule_changes_increment_revision_without_reconsent() {
     let repository = Arc::new(MemoryScheduledTaskRepository::default());
     let created = create_handler(repository.clone())

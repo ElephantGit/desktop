@@ -90,6 +90,16 @@ where
         &self,
         request: CreateScheduledTaskRequest,
     ) -> Result<CreateScheduledTaskResponse, ApplicationError> {
+        let task = self.prepare(request)?;
+        self.persist(task)
+    }
+
+    /// Validates and freezes a definition without writing it, so adapters can check live runtime
+    /// eligibility before committing the task.
+    pub fn prepare(
+        &self,
+        request: CreateScheduledTaskRequest,
+    ) -> Result<ScheduledTask, ApplicationError> {
         if request.execution_location == ContractLocation::Cloud {
             return Err(ApplicationError::ScheduledTaskCloudUnavailable);
         }
@@ -118,6 +128,14 @@ where
         require_activation_approval(&task)?;
         require_active_local_target(&task, self.workspaces.as_ref(), &self.target_validator)?;
 
+        Ok(task)
+    }
+
+    /// Persists a definition returned by [`Self::prepare`].
+    pub fn persist(
+        &self,
+        task: ScheduledTask,
+    ) -> Result<CreateScheduledTaskResponse, ApplicationError> {
         let task = self
             .repository
             .create_scheduled_task(task)
@@ -262,6 +280,15 @@ where
         &self,
         request: UpdateScheduledTaskRequest,
     ) -> Result<UpdateScheduledTaskResponse, ApplicationError> {
+        let replacement = self.prepare(request)?;
+        self.persist(replacement)
+    }
+
+    /// Validates and freezes an update without writing it, preserving the existing revision rules.
+    pub fn prepare(
+        &self,
+        request: UpdateScheduledTaskRequest,
+    ) -> Result<ScheduledTask, ApplicationError> {
         let task_id = ScheduledTaskId::new(request.task_id);
         let existing = find_task(self.repository.as_ref(), &task_id)?;
         if existing.execution_location == ScheduledTaskExecutionLocation::Cloud {
@@ -312,12 +339,21 @@ where
             &self.target_validator,
         )?;
 
+        Ok(replacement)
+    }
+
+    /// Persists a replacement returned by [`Self::prepare`].
+    pub fn persist(
+        &self,
+        replacement: ScheduledTask,
+    ) -> Result<UpdateScheduledTaskResponse, ApplicationError> {
+        let task_id = replacement.id.clone();
         let task = self
             .repository
             .update_scheduled_task(replacement)
             .map_err(ApplicationError::from_scheduled_task_repository_error)?
             .ok_or_else(|| ApplicationError::ScheduledTaskNotFound {
-                task_id: existing.id.to_string(),
+                task_id: task_id.to_string(),
             })?;
         Ok(UpdateScheduledTaskResponse {
             task: map_task(task),

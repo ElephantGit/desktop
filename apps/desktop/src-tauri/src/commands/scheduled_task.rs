@@ -2,7 +2,7 @@
 
 use ora_contracts::*;
 
-backend_command!(
+async_backend_command!(
     create_scheduled_task,
     CreateScheduledTaskRequest,
     CreateScheduledTaskResponse,
@@ -30,7 +30,7 @@ backend_command!(
     scheduled_tasks.list_history,
     "Lists persisted Scheduled Task run and missed history through the shared Backend."
 );
-backend_command!(
+async_backend_command!(
     update_scheduled_task,
     UpdateScheduledTaskRequest,
     UpdateScheduledTaskResponse,
