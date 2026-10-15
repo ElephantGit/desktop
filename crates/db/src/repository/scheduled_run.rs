@@ -3,9 +3,10 @@ use ora_application::{
     ScheduledOccurrenceResolution,
 };
 use ora_domain::{
-    AgentRef, MAX_CONCURRENT_LOCAL_SCHEDULED_RUNS, ProjectId, ScheduledMissReason,
-    ScheduledMissedOccurrence, ScheduledOccurrence, ScheduledRun, ScheduledRunId,
-    ScheduledRunSnapshot, ScheduledRunStatus, ScheduledTaskApproval, ScheduledTaskId, SessionId,
+    AgentRef, MAX_CONCURRENT_LOCAL_SCHEDULED_RUNS, MAX_SCHEDULED_TASK_HISTORY_ENTRIES, ProjectId,
+    ScheduledMissReason, ScheduledMissedOccurrence, ScheduledOccurrence, ScheduledRun,
+    ScheduledRunId, ScheduledRunSnapshot, ScheduledRunStatus, ScheduledTaskApproval,
+    ScheduledTaskId, SessionId,
 };
 use rusqlite::{Row, Transaction, params};
 
@@ -64,11 +65,49 @@ impl ScheduledOccurrenceRepository for SqliteScheduledRunRepository {
                 } else {
                     load_existing_resolution(&transaction, &occurrence)?
                 };
+                if inserted {
+                    prune_oldest_history(&transaction, &occurrence.task_id)?;
+                }
                 transaction.commit()?;
                 Ok(resolution)
             })
             .map_err(repository_error_from_database)
     }
+}
+
+fn prune_oldest_history(
+    transaction: &Transaction<'_>,
+    task_id: &ScheduledTaskId,
+) -> Result<(), crate::DatabaseError> {
+    let retained_offset = MAX_SCHEDULED_TASK_HISTORY_ENTRIES;
+    transaction.execute(
+        "DELETE FROM scheduled_runs
+         WHERE task_id = ?1 AND scheduled_at IN (
+             SELECT scheduled_at
+             FROM scheduled_occurrences
+             WHERE task_id = ?1
+             ORDER BY scheduled_at DESC
+             LIMIT -1 OFFSET ?2
+         ) AND status NOT IN ('accepted', 'running')",
+        params![task_id.as_ref(), retained_offset],
+    )?;
+    transaction.execute(
+        "DELETE FROM scheduled_occurrences
+         WHERE task_id = ?1 AND scheduled_at IN (
+             SELECT scheduled_at
+             FROM scheduled_occurrences
+             WHERE task_id = ?1
+             ORDER BY scheduled_at DESC
+             LIMIT -1 OFFSET ?2
+         ) AND NOT EXISTS (
+             SELECT 1 FROM scheduled_runs
+             WHERE scheduled_runs.task_id = scheduled_occurrences.task_id
+               AND scheduled_runs.scheduled_at = scheduled_occurrences.scheduled_at
+               AND scheduled_runs.status IN ('accepted', 'running')
+         )",
+        params![task_id.as_ref(), retained_offset],
+    )?;
+    Ok(())
 }
 
 fn admission_status(
@@ -488,6 +527,106 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn one_hundred_and_first_history_entry_prunes_only_the_oldest_fact() {
+        let (temp_dir, pool) = bootstrapped_pool();
+        seed_definition(&pool, temp_dir.path());
+        let repository = SqliteScheduledRunRepository::new(pool.clone());
+
+        for scheduled_at in 1_i64..=101 {
+            let candidate = if scheduled_at % 2 == 0 {
+                ScheduledOccurrenceCandidate::Run(ScheduledRun::accepted(
+                    ScheduledRunId::new(format!("run-{scheduled_at}")),
+                    occurrence(scheduled_at),
+                    &scheduled_task(),
+                    scheduled_at,
+                ))
+            } else {
+                ScheduledOccurrenceCandidate::Missed(ScheduledMissedOccurrence {
+                    occurrence: occurrence(scheduled_at),
+                    reason: ScheduledMissReason::AppNotRunning,
+                    observed_at: scheduled_at,
+                })
+            };
+            repository
+                .resolve_scheduled_occurrence(candidate)
+                .expect("persist history fact");
+        }
+
+        let (history_count, oldest, newest, run_count): (i64, i64, i64, i64) = pool
+            .with_connection(|connection| {
+                let (history_count, oldest, newest) = connection.query_row(
+                    "SELECT COUNT(*), MIN(scheduled_at), MAX(scheduled_at)
+                     FROM scheduled_occurrences
+                     WHERE task_id = 'scheduled-task-1'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )?;
+                let run_count = connection.query_row(
+                    "SELECT COUNT(*) FROM scheduled_runs
+                     WHERE task_id = 'scheduled-task-1'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                Ok((history_count, oldest, newest, run_count))
+            })
+            .expect("read retained history");
+
+        assert_eq!(history_count, 100);
+        assert_eq!(oldest, 2);
+        assert_eq!(newest, 101);
+        assert_eq!(run_count, 50);
+    }
+
+    #[test]
+    fn retention_never_prunes_an_active_run_needed_for_admission() {
+        let (temp_dir, pool) = bootstrapped_pool();
+        seed_definition(&pool, temp_dir.path());
+        let repository = SqliteScheduledRunRepository::new(pool.clone());
+        repository
+            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Run(
+                ScheduledRun::accepted(
+                    ScheduledRunId::new("run-active"),
+                    occurrence(1),
+                    &scheduled_task(),
+                    1,
+                ),
+            ))
+            .expect("persist active run");
+        for scheduled_at in 2_i64..=101 {
+            repository
+                .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Missed(
+                    ScheduledMissedOccurrence {
+                        occurrence: occurrence(scheduled_at),
+                        reason: ScheduledMissReason::AppNotRunning,
+                        observed_at: scheduled_at,
+                    },
+                ))
+                .expect("persist missed fact");
+        }
+
+        let (active_count, occurrence_count): (i64, i64) = pool
+            .with_connection(|connection| {
+                let active_count = connection.query_row(
+                    "SELECT COUNT(*) FROM scheduled_runs
+                     WHERE id = 'run-active' AND status = 'accepted'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                let occurrence_count = connection.query_row(
+                    "SELECT COUNT(*) FROM scheduled_occurrences
+                     WHERE task_id = 'scheduled-task-1'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                Ok((active_count, occurrence_count))
+            })
+            .expect("read active retention state");
+
+        assert_eq!(active_count, 1);
+        assert_eq!(occurrence_count, 101);
     }
 
     fn bootstrapped_pool() -> (TempDir, RepositoryPool) {

@@ -11,6 +11,9 @@ pub const MAX_SCHEDULED_OCCURRENCE_LATENESS_MILLIS: i64 = 10 * 60 * 1_000;
 /// Caps simultaneous local Scheduled Runs in the first release.
 pub const MAX_CONCURRENT_LOCAL_SCHEDULED_RUNS: i64 = 4;
 
+/// Bounds persisted run and missed history for one Scheduled Task.
+pub const MAX_SCHEDULED_TASK_HISTORY_ENTRIES: i64 = 100;
+
 /// Identifies one planned trigger independently from the task revision that produced it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScheduledOccurrence {
