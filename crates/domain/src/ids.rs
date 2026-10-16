@@ -30,6 +30,14 @@ macro_rules! define_id {
 define_id!(ProjectId, "Identifies a persisted project.");
 define_id!(WorkspaceId, "Identifies a persisted workspace.");
 define_id!(TaskId, "Identifies a persisted task.");
+define_id!(
+    ScheduledTaskId,
+    "Identifies a persisted scheduled task definition."
+);
+define_id!(
+    ScheduledRunId,
+    "Identifies one persisted scheduled task run."
+);
 define_id!(GitCleanupJobId, "Identifies a persisted Git cleanup job.");
 define_id!(
     WorktreeProvisioningLeaseId,

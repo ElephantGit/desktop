@@ -6,6 +6,7 @@ use crate::effects::Effects;
 use crate::error::BackendError;
 use crate::plugin::{PluginApi, Plugins};
 use crate::project::ProjectApi;
+use crate::scheduled_task::ScheduledTaskApi;
 use crate::session::Sessions;
 use crate::settings::Settings;
 use crate::skill::SkillApi;
@@ -79,6 +80,7 @@ pub enum BackendBootstrapError {
 pub struct Backend {
     effect: Effects,
     project: Arc<ProjectApi>,
+    scheduled_task: Arc<ScheduledTaskApi>,
     task: Arc<TaskApi>,
     workspace: WorkspaceApi,
     settings: Arc<Settings>,
@@ -225,6 +227,11 @@ impl Backend {
         ));
 
         Ok(Self {
+            scheduled_task: Arc::new(ScheduledTaskApi::new(
+                pool.clone(),
+                AgentRuntime::new(agent_runtime.clone()),
+                clock,
+            )),
             project: Arc::new(ProjectApi::new(
                 pool.clone(),
                 sessions_root.clone(),
@@ -304,6 +311,11 @@ impl Backend {
     /// Shares complete project use cases, including aggregate deletion and cleanup notification.
     pub fn projects(&self) -> Arc<ProjectApi> {
         self.project.clone()
+    }
+
+    /// Shares local Scheduled Task definition use cases without exposing scheduler internals.
+    pub fn scheduled_tasks(&self) -> Arc<ScheduledTaskApi> {
+        self.scheduled_task.clone()
     }
 
     /// Shares task use cases without exposing Git provisioning gates or deletion transactions.

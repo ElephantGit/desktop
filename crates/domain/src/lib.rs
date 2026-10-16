@@ -9,6 +9,8 @@ mod plugin_id;
 mod plugin_namespace;
 mod project;
 mod prompt_inactivity_policy;
+mod scheduled_run;
+mod scheduled_task;
 mod session;
 mod session_title;
 mod skill;
@@ -30,15 +32,25 @@ pub use git_cleanup::{
     truncate_cleanup_error,
 };
 pub use ids::{
-    AgentDefinitionId, GitCleanupJobId, ProjectId, SessionId, SkillId, TaskId, WorkflowId,
-    WorkflowNodeRunId, WorkflowRunId, WorkflowScopeId, WorkflowSnapshotId, WorkspaceId,
-    WorktreeProvisioningLeaseId,
+    AgentDefinitionId, GitCleanupJobId, ProjectId, ScheduledRunId, ScheduledTaskId, SessionId,
+    SkillId, TaskId, WorkflowId, WorkflowNodeRunId, WorkflowRunId, WorkflowScopeId,
+    WorkflowSnapshotId, WorkspaceId, WorktreeProvisioningLeaseId,
 };
 pub use namespace::Namespace;
 pub use plugin_id::{PluginId, PluginIdError, PluginIdSegment};
 pub use plugin_namespace::{MAX_PLUGIN_NAMESPACE_BYTES, PluginNamespace};
 pub use project::Project;
 pub use prompt_inactivity_policy::PromptInactivityPolicy;
+pub use scheduled_run::{
+    MAX_CONCURRENT_LOCAL_SCHEDULED_RUNS, MAX_SCHEDULED_OCCURRENCE_LATENESS_MILLIS,
+    MAX_SCHEDULED_TASK_HISTORY_ENTRIES, ScheduledMissReason, ScheduledMissedOccurrence,
+    ScheduledOccurrence, ScheduledOccurrenceTiming, ScheduledRun, ScheduledRunFailureReason,
+    ScheduledRunSnapshot, ScheduledRunStatus, ScheduledRunTransition, ScheduledTaskHistoryEntry,
+};
+pub use scheduled_task::{
+    FULL_AUTO_IN_WORKTREE_POLICY, ScheduledTask, ScheduledTaskApproval,
+    ScheduledTaskExecutionLocation, ScheduledTaskSchedule, ScheduledTaskWeekday,
+};
 pub use session::{HistoryState, Session, SessionMcpSelection, SessionStatus};
 pub use session_title::{MAX_SESSION_TITLE_CHARS, SessionTitle, SessionTitleError};
 pub use skill::{

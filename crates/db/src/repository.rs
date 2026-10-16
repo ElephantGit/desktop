@@ -6,6 +6,9 @@ mod git_cleanup_job;
 mod marketplace_source;
 mod pack_installation;
 mod project;
+mod scheduled_approval;
+mod scheduled_run;
+mod scheduled_task;
 mod session;
 mod skill;
 mod source_namespace;
@@ -33,6 +36,8 @@ pub use pack_installation::{
     SqlitePackInstallationRepository,
 };
 pub use project::SqliteProjectRepository;
+pub use scheduled_run::SqliteScheduledRunRepository;
+pub use scheduled_task::SqliteScheduledTaskRepository;
 pub use session::SqliteSessionRepository;
 pub use skill::{PluginSkillProjection, SqliteSkillRepository};
 pub use source_namespace::SqlitePluginSourceNamespaceRepository;

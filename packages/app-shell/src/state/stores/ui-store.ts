@@ -96,6 +96,8 @@ interface UiState {
   clearPluginSettingsRequest(): void;
   /** First-class workflow definition editor; session-only, not persisted. */
   workflowEditorOpen: boolean;
+  /** First-class Scheduled Task definition manager; session-only, not persisted. */
+  scheduledTasksOpen: boolean;
   expandedProjects: Set<string>;
   expandedTasks: Set<string>;
   /**
@@ -116,6 +118,7 @@ interface UiState {
   setSidebarCollapsed: (collapsed: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
   setWorkflowEditorOpen: (open: boolean) => void;
+  setScheduledTasksOpen: (open: boolean) => void;
   toggleProjectExpand: (projectId: string) => void;
   toggleTaskExpand: (taskId: string) => void;
   /** Expands a project without toggling it closed (used after mutations select a child). */
@@ -255,6 +258,7 @@ export const useUiStore = create<UiState>()(
       settingsCategory: "appearance",
       pluginSettingsRequest: null,
       workflowEditorOpen: false,
+      scheduledTasksOpen: false,
       expandedProjects: initialPersist.expandedProjects,
       expandedTasks: initialPersist.expandedTasks,
       treeExpansionBootstrapped: initialPersist.treeExpansionBootstrapped,
@@ -275,7 +279,19 @@ export const useUiStore = create<UiState>()(
         }),
       clearPluginSettingsRequest: () => set({ pluginSettingsRequest: null }),
       setWorkflowEditorOpen: (workflowEditorOpen) =>
-        set({ workflowEditorOpen }),
+        set({
+          workflowEditorOpen,
+          scheduledTasksOpen: workflowEditorOpen
+            ? false
+            : get().scheduledTasksOpen,
+        }),
+      setScheduledTasksOpen: (scheduledTasksOpen) =>
+        set({
+          scheduledTasksOpen,
+          workflowEditorOpen: scheduledTasksOpen
+            ? false
+            : get().workflowEditorOpen,
+        }),
       toggleProjectExpand: (projectId) =>
         set((state) => {
           const next = new Set(state.expandedProjects);

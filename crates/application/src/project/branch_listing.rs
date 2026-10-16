@@ -92,7 +92,7 @@ where
         let workspace = self
             .workspace_repository
             .find_main_workspace(&project_id)
-            .map_err(ApplicationError::from_workflow_run_repository_error)?
+            .map_err(ApplicationError::from_workspace_repository_error)?
             .ok_or_else(|| ApplicationError::ProjectNotFound {
                 project_id: project_id.to_string(),
             })?;

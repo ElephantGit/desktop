@@ -1,0 +1,14 @@
+{
+  "owner": "Scheduled task management",
+  "modules": {
+    "./scheduled-task-manager": {
+      "exports": ["ScheduledTaskManager"],
+      "purpose": "Workspace composition mounts the scheduled task management surface through this named interface."
+    },
+    "./translations": {
+      "exports": ["scheduledTaskTranslations"],
+      "purpose": "The single i18n composition loads this feature's pure resource bundle.",
+      "kind": "resources"
+    }
+  }
+}

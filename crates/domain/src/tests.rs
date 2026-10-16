@@ -1,8 +1,9 @@
 use crate::{
     AgentDefinition, AgentDefinitionId, AgentRef, AuditFields, BACKUP_DIR_NAME, DomainModelError,
-    HistoryState, JOURNAL_DIR_NAME, Namespace, Project, ProjectId, STAGING_DIR_NAME, Session,
-    SessionId, SessionMcpSelection, SessionStatus, Skill, SkillId, Task, TaskId, WorkspaceId,
-    Worktree, WorktreeActivity, WorktreeBaseline,
+    HistoryState, JOURNAL_DIR_NAME, Namespace, Project, ProjectId, STAGING_DIR_NAME, ScheduledTask,
+    ScheduledTaskApproval, ScheduledTaskExecutionLocation, ScheduledTaskId, ScheduledTaskSchedule,
+    ScheduledTaskWeekday, Session, SessionId, SessionMcpSelection, SessionStatus, Skill, SkillId,
+    Task, TaskId, WorkspaceId, Worktree, WorktreeActivity, WorktreeBaseline,
 };
 use pretty_assertions::assert_eq;
 
@@ -118,6 +119,81 @@ fn constructs_schema_backed_entities() {
             content: String::new(),
             audit_fields,
         }
+    );
+}
+
+/// Scheduled task definitions accept only the owner-approved first-release schedule shapes.
+#[test]
+fn validates_scheduled_task_definition() {
+    let schedule = ScheduledTaskSchedule::weekly(
+        std::collections::BTreeSet::from([
+            ScheduledTaskWeekday::Monday,
+            ScheduledTaskWeekday::Friday,
+        ]),
+        9,
+        30,
+    )
+    .unwrap();
+    let approval = ScheduledTaskApproval::full_auto_in_worktree(1_700_000_000_000);
+    let task = ScheduledTask::new(
+        ScheduledTaskId::new("scheduled-1"),
+        "Code quality",
+        true,
+        schedule.clone(),
+        ScheduledTaskExecutionLocation::Local,
+        ProjectId::new("project-1"),
+        AgentRef::parse("ora-space.nga").unwrap(),
+        Some("gpt-5".to_string()),
+        "Run the repository quality checks",
+        Some(approval.clone()),
+        AuditFields::new(1, 1, false),
+    )
+    .unwrap();
+
+    assert_eq!(task.schedule, schedule);
+    assert_eq!(task.approval, Some(approval));
+    assert!(task.local_activation_allowed());
+    assert_eq!(
+        ScheduledTaskSchedule::every_hours(0),
+        Err(DomainModelError::ScheduledTaskIntervalTooShort)
+    );
+    assert_eq!(
+        ScheduledTaskSchedule::daily(24, 0),
+        Err(DomainModelError::InvalidScheduledTaskTime)
+    );
+    assert_eq!(
+        ScheduledTaskSchedule::weekly(std::collections::BTreeSet::new(), 9, 0),
+        Err(DomainModelError::EmptyScheduledTaskWeekdays)
+    );
+}
+
+/// Cloud definitions and missing consent cannot become active local scheduler jobs.
+#[test]
+fn rejects_unapproved_local_activation() {
+    let create = |location, approval| {
+        ScheduledTask::new(
+            ScheduledTaskId::new("scheduled-1"),
+            "Daily report",
+            true,
+            ScheduledTaskSchedule::daily(17, 0).unwrap(),
+            location,
+            ProjectId::new("project-1"),
+            AgentRef::parse("ora-space.nga").unwrap(),
+            None,
+            "Summarize today's work",
+            approval,
+            AuditFields::new(1, 1, false),
+        )
+        .unwrap()
+    };
+
+    assert!(!create(ScheduledTaskExecutionLocation::Local, None).local_activation_allowed());
+    assert!(
+        !create(
+            ScheduledTaskExecutionLocation::Cloud,
+            Some(ScheduledTaskApproval::full_auto_in_worktree(1)),
+        )
+        .local_activation_allowed()
     );
 }
 

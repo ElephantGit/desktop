@@ -49,4 +49,14 @@ pub enum DomainModelError {
     EmptyAgentDefinitionName,
     #[error("workflow name must not be blank")]
     EmptyWorkflowName,
+    #[error("scheduled task name must not be blank")]
+    EmptyScheduledTaskName,
+    #[error("scheduled task prompt must not be blank")]
+    EmptyScheduledTaskPrompt,
+    #[error("scheduled task interval must be at least one hour")]
+    ScheduledTaskIntervalTooShort,
+    #[error("scheduled task time must be a valid local hour and minute")]
+    InvalidScheduledTaskTime,
+    #[error("weekly scheduled tasks must select at least one weekday")]
+    EmptyScheduledTaskWeekdays,
 }
