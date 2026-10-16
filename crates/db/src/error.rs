@@ -46,6 +46,8 @@ pub enum DatabaseError {
     CorruptScheduledTaskRevision(String),
     #[error("Scheduled Run status is corrupt: {0}")]
     CorruptScheduledRunStatus(String),
+    #[error("Scheduled Run failure reason is corrupt: {0}")]
+    CorruptScheduledRunFailureReason(String),
     #[error("scheduled occurrence outcome is corrupt: {0}")]
     CorruptScheduledOccurrenceOutcome(String),
     #[error("scheduled occurrence missed reason is corrupt: {0}")]

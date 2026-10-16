@@ -44,6 +44,8 @@ const HISTORY: ScheduledTaskHistoryEntry[] = [
     revision: 1n,
     status: "succeeded",
     sessionId: "session-1",
+    worktreePath: "worktrees/run-1",
+    failureReason: null,
     createdAt: 10n,
     updatedAt: 15n,
   },

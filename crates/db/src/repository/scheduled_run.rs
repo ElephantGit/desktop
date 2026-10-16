@@ -1,12 +1,14 @@
 use ora_application::{
     RepositoryError, ScheduledOccurrenceCandidate, ScheduledOccurrenceRepository,
-    ScheduledOccurrenceResolution, ScheduledTaskHistoryRepository,
+    ScheduledOccurrenceResolution, ScheduledRunLifecycleRepository,
+    ScheduledRunTransitionResolution, ScheduledTaskHistoryRepository,
 };
 use ora_domain::{
     AgentRef, MAX_CONCURRENT_LOCAL_SCHEDULED_RUNS, MAX_SCHEDULED_TASK_HISTORY_ENTRIES, ProjectId,
     ScheduledMissReason, ScheduledMissedOccurrence, ScheduledOccurrence, ScheduledRun,
-    ScheduledRunId, ScheduledRunSnapshot, ScheduledRunStatus, ScheduledTaskApproval,
-    ScheduledTaskHistoryEntry, ScheduledTaskId, SessionId,
+    ScheduledRunFailureReason, ScheduledRunId, ScheduledRunSnapshot, ScheduledRunStatus,
+    ScheduledRunTransition, ScheduledTaskApproval, ScheduledTaskHistoryEntry, ScheduledTaskId,
+    SessionId,
 };
 use rusqlite::{Row, Transaction, params};
 
@@ -89,7 +91,7 @@ impl ScheduledTaskHistoryRepository for SqliteScheduledRunRepository {
                             r.id, r.task_id, r.scheduled_at, r.task_revision, r.project_id,
                             r.agent_ref, r.model, r.prompt, r.approval_policy,
                             r.approval_consented_at, r.status, r.session_id,
-                            r.created_at, r.updated_at
+                            r.worktree_path, r.failure_reason, r.created_at, r.updated_at
                      FROM scheduled_occurrences o
                      LEFT JOIN scheduled_runs r
                        ON r.task_id = o.task_id AND r.scheduled_at = o.scheduled_at
@@ -102,6 +104,55 @@ impl ScheduledTaskHistoryRepository for SqliteScheduledRunRepository {
                     entries.push(map_history_row(row)?);
                 }
                 Ok(entries)
+            })
+            .map_err(repository_error_from_database)
+    }
+}
+
+impl ScheduledRunLifecycleRepository for SqliteScheduledRunRepository {
+    fn transition_scheduled_run(
+        &self,
+        run_id: &ScheduledRunId,
+        transition: ScheduledRunTransition,
+        transitioned_at: i64,
+    ) -> Result<ScheduledRunTransitionResolution, RepositoryError> {
+        self.pool
+            .with_connection_mut(|connection| {
+                let transaction = connection.transaction()?;
+                let resolution = match load_scheduled_run_by_id(&transaction, run_id)? {
+                    None => ScheduledRunTransitionResolution::NotFound,
+                    Some(mut run) => {
+                        let previous_status = run.status;
+                        if !run.transition(transition, transitioned_at) {
+                            ScheduledRunTransitionResolution::InvalidState(run)
+                        } else {
+                            let updated = transaction.execute(
+                                "UPDATE scheduled_runs
+                                 SET status = ?1, session_id = ?2, worktree_path = ?3,
+                                     failure_reason = ?4, updated_at = ?5
+                                 WHERE id = ?6 AND status = ?7",
+                                params![
+                                    status_column(run.status),
+                                    run.session_id.as_ref().map(AsRef::<str>::as_ref),
+                                    run.worktree_path.as_deref(),
+                                    run.failure_reason.map(failure_reason_column),
+                                    run.updated_at,
+                                    run.id.as_ref(),
+                                    status_column(previous_status),
+                                ],
+                            )?;
+                            if updated == 1 {
+                                ScheduledRunTransitionResolution::Updated(run)
+                            } else {
+                                let current = load_scheduled_run_by_id(&transaction, run_id)?
+                                    .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+                                ScheduledRunTransitionResolution::InvalidState(current)
+                            }
+                        }
+                    }
+                };
+                transaction.commit()?;
+                Ok(resolution)
             })
             .map_err(repository_error_from_database)
     }
@@ -211,9 +262,9 @@ fn insert_scheduled_run(
         "INSERT INTO scheduled_runs (
             id, task_id, scheduled_at, task_revision, project_id, agent_ref,
             model, prompt, approval_policy, approval_consented_at, status,
-            session_id, created_at, updated_at
+            session_id, worktree_path, failure_reason, created_at, updated_at
          ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16
          )",
         params![
             run.id.as_ref(),
@@ -228,6 +279,8 @@ fn insert_scheduled_run(
             approval_consented_at,
             status_column(run.status),
             run.session_id.as_ref().map(AsRef::<str>::as_ref),
+            run.worktree_path.as_deref(),
+            run.failure_reason.map(failure_reason_column),
             run.created_at,
             run.updated_at,
         ],
@@ -273,7 +326,7 @@ fn load_scheduled_run(
     let mut statement = transaction.prepare(
         "SELECT id, task_id, scheduled_at, task_revision, project_id, agent_ref,
                 model, prompt, approval_policy, approval_consented_at, status,
-                session_id, created_at, updated_at
+                session_id, worktree_path, failure_reason, created_at, updated_at
          FROM scheduled_runs
          WHERE task_id = ?1 AND scheduled_at = ?2",
     )?;
@@ -283,6 +336,21 @@ fn load_scheduled_run(
     ])?;
     let row = rows.next()?.ok_or(rusqlite::Error::QueryReturnedNoRows)?;
     map_scheduled_run_row(row)
+}
+
+fn load_scheduled_run_by_id(
+    transaction: &Transaction<'_>,
+    run_id: &ScheduledRunId,
+) -> Result<Option<ScheduledRun>, crate::DatabaseError> {
+    let mut statement = transaction.prepare(
+        "SELECT id, task_id, scheduled_at, task_revision, project_id, agent_ref,
+                model, prompt, approval_policy, approval_consented_at, status,
+                session_id, worktree_path, failure_reason, created_at, updated_at
+         FROM scheduled_runs
+         WHERE id = ?1",
+    )?;
+    let mut rows = statement.query([run_id.as_ref()])?;
+    rows.next()?.map(map_scheduled_run_row).transpose()
 }
 
 fn map_scheduled_run_row(row: &Row<'_>) -> Result<ScheduledRun, crate::DatabaseError> {
@@ -315,6 +383,11 @@ fn map_scheduled_run_row(row: &Row<'_>) -> Result<ScheduledRun, crate::DatabaseE
         session_id: row
             .get::<_, Option<String>>("session_id")?
             .map(SessionId::new),
+        worktree_path: row.get("worktree_path")?,
+        failure_reason: row
+            .get::<_, Option<String>>("failure_reason")?
+            .map(|value| parse_failure_reason(&value))
+            .transpose()?,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
     })
@@ -342,6 +415,31 @@ fn parse_status(value: &str) -> Result<ScheduledRunStatus, crate::DatabaseError>
         "skipped_busy" => Ok(ScheduledRunStatus::SkippedBusy),
         "skipped_capacity" => Ok(ScheduledRunStatus::SkippedCapacity),
         _ => Err(crate::DatabaseError::CorruptScheduledRunStatus(
+            value.to_string(),
+        )),
+    }
+}
+
+fn failure_reason_column(reason: ScheduledRunFailureReason) -> &'static str {
+    match reason {
+        ScheduledRunFailureReason::TargetUnavailable => "target_unavailable",
+        ScheduledRunFailureReason::ModelUnavailable => "model_unavailable",
+        ScheduledRunFailureReason::WorktreeFailed => "worktree_failed",
+        ScheduledRunFailureReason::ApprovalPolicyInvalid => "approval_policy_invalid",
+        ScheduledRunFailureReason::Timeout => "timeout",
+        ScheduledRunFailureReason::ExecutionError => "execution_error",
+    }
+}
+
+fn parse_failure_reason(value: &str) -> Result<ScheduledRunFailureReason, crate::DatabaseError> {
+    match value {
+        "target_unavailable" => Ok(ScheduledRunFailureReason::TargetUnavailable),
+        "model_unavailable" => Ok(ScheduledRunFailureReason::ModelUnavailable),
+        "worktree_failed" => Ok(ScheduledRunFailureReason::WorktreeFailed),
+        "approval_policy_invalid" => Ok(ScheduledRunFailureReason::ApprovalPolicyInvalid),
+        "timeout" => Ok(ScheduledRunFailureReason::Timeout),
+        "execution_error" => Ok(ScheduledRunFailureReason::ExecutionError),
+        _ => Err(crate::DatabaseError::CorruptScheduledRunFailureReason(
             value.to_string(),
         )),
     }
@@ -397,13 +495,15 @@ fn repository_error_from_database(error: crate::DatabaseError) -> RepositoryErro
 mod tests {
     use ora_application::{
         ProjectRepository, ScheduledOccurrenceCandidate, ScheduledOccurrenceRepository,
-        ScheduledOccurrenceResolution, ScheduledTaskHistoryRepository, ScheduledTaskRepository,
+        ScheduledOccurrenceResolution, ScheduledRunLifecycleRepository,
+        ScheduledRunTransitionResolution, ScheduledTaskHistoryRepository, ScheduledTaskRepository,
     };
     use ora_domain::{
         AgentRef, AuditFields, Project, ProjectId, ScheduledMissReason, ScheduledMissedOccurrence,
-        ScheduledOccurrence, ScheduledRun, ScheduledRunId, ScheduledTask, ScheduledTaskApproval,
+        ScheduledOccurrence, ScheduledRun, ScheduledRunFailureReason, ScheduledRunId,
+        ScheduledRunStatus, ScheduledRunTransition, ScheduledTask, ScheduledTaskApproval,
         ScheduledTaskExecutionLocation, ScheduledTaskHistoryEntry, ScheduledTaskId,
-        ScheduledTaskSchedule, WorkspaceLocation,
+        ScheduledTaskSchedule, SessionId, WorkspaceLocation,
     };
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
@@ -414,6 +514,80 @@ mod tests {
     };
 
     use super::SqliteScheduledRunRepository;
+
+    #[test]
+    fn persists_forward_lifecycle_and_rejects_a_late_terminal_callback() {
+        let (temp_dir, pool) = bootstrapped_pool();
+        seed_definition(&pool, temp_dir.path());
+        let repository = SqliteScheduledRunRepository::new(pool);
+        let run = ScheduledRun::accepted(
+            ScheduledRunId::new("run-lifecycle"),
+            occurrence(90),
+            &scheduled_task(),
+            91,
+        );
+        repository
+            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Run(run))
+            .expect("admit run");
+
+        let running = repository
+            .transition_scheduled_run(
+                &ScheduledRunId::new("run-lifecycle"),
+                ScheduledRunTransition::Start {
+                    session_id: SessionId::new("session-1"),
+                    worktree_path: "worktrees/run-lifecycle".to_string(),
+                },
+                100,
+            )
+            .expect("start run");
+        assert!(matches!(
+            running,
+            ScheduledRunTransitionResolution::Updated(ScheduledRun {
+                status: ScheduledRunStatus::Running,
+                session_id: Some(_),
+                worktree_path: Some(_),
+                failure_reason: None,
+                updated_at: 100,
+                ..
+            })
+        ));
+
+        let failed = repository
+            .transition_scheduled_run(
+                &ScheduledRunId::new("run-lifecycle"),
+                ScheduledRunTransition::Fail {
+                    reason: ScheduledRunFailureReason::Timeout,
+                },
+                200,
+            )
+            .expect("fail run");
+        assert!(matches!(
+            failed,
+            ScheduledRunTransitionResolution::Updated(ScheduledRun {
+                status: ScheduledRunStatus::Failed,
+                failure_reason: Some(ScheduledRunFailureReason::Timeout),
+                updated_at: 200,
+                ..
+            })
+        ));
+
+        let late_success = repository
+            .transition_scheduled_run(
+                &ScheduledRunId::new("run-lifecycle"),
+                ScheduledRunTransition::Succeed,
+                201,
+            )
+            .expect("reject late success");
+        assert!(matches!(
+            late_success,
+            ScheduledRunTransitionResolution::InvalidState(ScheduledRun {
+                status: ScheduledRunStatus::Failed,
+                failure_reason: Some(ScheduledRunFailureReason::Timeout),
+                updated_at: 200,
+                ..
+            })
+        ));
+    }
 
     #[test]
     fn replay_returns_the_first_run_and_its_frozen_snapshot() {

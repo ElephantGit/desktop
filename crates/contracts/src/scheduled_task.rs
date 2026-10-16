@@ -156,6 +156,19 @@ pub enum ScheduledRunStatus {
     SkippedCapacity,
 }
 
+/// Explains why an accepted Scheduled Run ended in the failed state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "scheduled-task.ts")]
+pub enum ScheduledRunFailureReason {
+    TargetUnavailable,
+    ModelUnavailable,
+    WorktreeFailed,
+    ApprovalPolicyInvalid,
+    Timeout,
+    ExecutionError,
+}
+
 /// Explains why a planned occurrence did not create a Scheduled Run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -180,6 +193,8 @@ pub enum ScheduledTaskHistoryEntry {
         revision: u64,
         status: ScheduledRunStatus,
         session_id: Option<String>,
+        worktree_path: Option<String>,
+        failure_reason: Option<ScheduledRunFailureReason>,
         created_at: i64,
         updated_at: i64,
     },
@@ -277,6 +292,7 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     ListScheduledTasksRequest::export(config)?;
     ListScheduledTasksResponse::export(config)?;
     ScheduledRunStatus::export(config)?;
+    ScheduledRunFailureReason::export(config)?;
     ScheduledMissReason::export(config)?;
     ScheduledTaskHistoryEntry::export(config)?;
     ListScheduledTaskHistoryRequest::export(config)?;

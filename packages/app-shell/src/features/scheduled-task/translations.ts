@@ -35,6 +35,7 @@ export const scheduledTaskTranslations = {
     "scheduledTask.historyEmpty": "还没有运行或错过记录。",
     "scheduledTask.historyRevision": "任务版本 {{revision}}",
     "scheduledTask.historySession": "会话 {{session}}",
+    "scheduledTask.historyWorktree": "工作树 {{worktree}}",
     "scheduledTask.historyStatus.accepted": "已接纳",
     "scheduledTask.historyStatus.running": "运行中",
     "scheduledTask.historyStatus.succeeded": "已成功",
@@ -44,6 +45,12 @@ export const scheduledTaskTranslations = {
     "scheduledTask.historyStatus.skipped_capacity": "已跳过：达到并发上限",
     "scheduledTask.historyReason.app_not_running": "已错过：Desktop 未运行",
     "scheduledTask.historyReason.late_trigger": "已错过：触发超过 10 分钟",
+    "scheduledTask.failureReason.target_unavailable": "失败：目标不可用",
+    "scheduledTask.failureReason.model_unavailable": "失败：模型不可用",
+    "scheduledTask.failureReason.worktree_failed": "失败：工作树创建失败",
+    "scheduledTask.failureReason.approval_policy_invalid": "失败：授权策略无效",
+    "scheduledTask.failureReason.timeout": "失败：运行超时",
+    "scheduledTask.failureReason.execution_error": "失败：执行错误",
     "scheduledTask.deleteConfirm":
       "确定删除“{{name}}”吗？历史执行记录不会被改写。",
     "scheduledTask.revoke": "撤销授权",
@@ -102,6 +109,7 @@ export const scheduledTaskTranslations = {
     "scheduledTask.historyEmpty": "No run or missed records yet.",
     "scheduledTask.historyRevision": "Task revision {{revision}}",
     "scheduledTask.historySession": "Session {{session}}",
+    "scheduledTask.historyWorktree": "Worktree {{worktree}}",
     "scheduledTask.historyStatus.accepted": "Accepted",
     "scheduledTask.historyStatus.running": "Running",
     "scheduledTask.historyStatus.succeeded": "Succeeded",
@@ -113,6 +121,16 @@ export const scheduledTaskTranslations = {
       "Missed: Desktop was not running",
     "scheduledTask.historyReason.late_trigger":
       "Missed: triggered over 10 minutes late",
+    "scheduledTask.failureReason.target_unavailable":
+      "Failed: target unavailable",
+    "scheduledTask.failureReason.model_unavailable":
+      "Failed: model unavailable",
+    "scheduledTask.failureReason.worktree_failed":
+      "Failed: worktree creation failed",
+    "scheduledTask.failureReason.approval_policy_invalid":
+      "Failed: approval policy invalid",
+    "scheduledTask.failureReason.timeout": "Failed: run timed out",
+    "scheduledTask.failureReason.execution_error": "Failed: execution error",
     "scheduledTask.deleteConfirm":
       "Delete “{{name}}”? Existing run history is not rewritten.",
     "scheduledTask.revoke": "Revoke approval",

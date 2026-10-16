@@ -78,6 +78,17 @@ export type RevokeScheduledTaskApprovalResponse = { task: ScheduledTask };
 export type ScheduledMissReason = "app_not_running" | "late_trigger";
 
 /**
+ * Explains why an accepted Scheduled Run ended in the failed state.
+ */
+export type ScheduledRunFailureReason =
+  | "target_unavailable"
+  | "model_unavailable"
+  | "worktree_failed"
+  | "approval_policy_invalid"
+  | "timeout"
+  | "execution_error";
+
+/**
  * Mirrors the persisted Scheduled Run lifecycle states used by task history.
  */
 export type ScheduledRunStatus =
@@ -136,6 +147,8 @@ export type ScheduledTaskHistoryEntry = {
   revision: bigint;
   status: ScheduledRunStatus;
   sessionId: string | null;
+  worktreePath: string | null;
+  failureReason: ScheduledRunFailureReason | null;
   createdAt: bigint;
   updatedAt: bigint;
 } | {

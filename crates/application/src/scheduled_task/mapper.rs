@@ -1,15 +1,16 @@
 use ora_contracts::{
-    ScheduledMissReason as ContractMissReason, ScheduledRunStatus as ContractRunStatus,
-    ScheduledTask as ContractScheduledTask, ScheduledTaskApproval as ContractApproval,
+    ScheduledMissReason as ContractMissReason, ScheduledRunFailureReason as ContractFailureReason,
+    ScheduledRunStatus as ContractRunStatus, ScheduledTask as ContractScheduledTask,
+    ScheduledTaskApproval as ContractApproval,
     ScheduledTaskApprovalPolicy as ContractApprovalPolicy,
     ScheduledTaskExecutionLocation as ContractExecutionLocation,
     ScheduledTaskHistoryEntry as ContractHistoryEntry, ScheduledTaskSchedule as ContractSchedule,
     ScheduledTaskWeekday as ContractWeekday,
 };
 use ora_domain::{
-    ScheduledMissReason, ScheduledRunStatus, ScheduledTask, ScheduledTaskApproval,
-    ScheduledTaskExecutionLocation, ScheduledTaskHistoryEntry, ScheduledTaskSchedule,
-    ScheduledTaskWeekday,
+    ScheduledMissReason, ScheduledRunFailureReason, ScheduledRunStatus, ScheduledTask,
+    ScheduledTaskApproval, ScheduledTaskExecutionLocation, ScheduledTaskHistoryEntry,
+    ScheduledTaskSchedule, ScheduledTaskWeekday,
 };
 
 use crate::ApplicationError;
@@ -42,6 +43,8 @@ pub(crate) fn map_history_entry(entry: ScheduledTaskHistoryEntry) -> ContractHis
             revision: run.snapshot.revision,
             status: map_run_status(run.status),
             session_id: run.session_id.map(|id| id.to_string()),
+            worktree_path: run.worktree_path,
+            failure_reason: run.failure_reason.map(map_failure_reason),
             created_at: run.created_at,
             updated_at: run.updated_at,
         },
@@ -53,6 +56,19 @@ pub(crate) fn map_history_entry(entry: ScheduledTaskHistoryEntry) -> ContractHis
             },
             observed_at: missed.observed_at,
         },
+    }
+}
+
+fn map_failure_reason(reason: ScheduledRunFailureReason) -> ContractFailureReason {
+    match reason {
+        ScheduledRunFailureReason::TargetUnavailable => ContractFailureReason::TargetUnavailable,
+        ScheduledRunFailureReason::ModelUnavailable => ContractFailureReason::ModelUnavailable,
+        ScheduledRunFailureReason::WorktreeFailed => ContractFailureReason::WorktreeFailed,
+        ScheduledRunFailureReason::ApprovalPolicyInvalid => {
+            ContractFailureReason::ApprovalPolicyInvalid
+        }
+        ScheduledRunFailureReason::Timeout => ContractFailureReason::Timeout,
+        ScheduledRunFailureReason::ExecutionError => ContractFailureReason::ExecutionError,
     }
 }
 

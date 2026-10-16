@@ -97,6 +97,43 @@ impl ScheduledRunStatus {
     }
 }
 
+/// Records the stable reason a Scheduled Run could not complete.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScheduledRunFailureReason {
+    TargetUnavailable,
+    ModelUnavailable,
+    WorktreeFailed,
+    ApprovalPolicyInvalid,
+    Timeout,
+    ExecutionError,
+}
+
+/// Names one forward-only lifecycle change requested by the local execution adapter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScheduledRunTransition {
+    Start {
+        session_id: SessionId,
+        worktree_path: String,
+    },
+    Succeed,
+    Fail {
+        reason: ScheduledRunFailureReason,
+    },
+    Cancel,
+}
+
+impl ScheduledRunTransition {
+    /// Rejects duplicate, backwards, and terminal-state transitions.
+    pub fn is_allowed_from(&self, status: ScheduledRunStatus) -> bool {
+        match self {
+            Self::Start { .. } => status == ScheduledRunStatus::Accepted,
+            Self::Succeed => status == ScheduledRunStatus::Running,
+            Self::Fail { .. } | Self::Cancel => status.is_active(),
+        }
+    }
+}
+
 /// Stores one admitted occurrence and the immutable inputs it will execute.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScheduledRun {
@@ -105,6 +142,8 @@ pub struct ScheduledRun {
     pub snapshot: ScheduledRunSnapshot,
     pub status: ScheduledRunStatus,
     pub session_id: Option<SessionId>,
+    pub worktree_path: Option<String>,
+    pub failure_reason: Option<ScheduledRunFailureReason>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -130,9 +169,44 @@ impl ScheduledRun {
             },
             status: ScheduledRunStatus::Accepted,
             session_id: None,
+            worktree_path: None,
+            failure_reason: None,
             created_at: accepted_at,
             updated_at: accepted_at,
         }
+    }
+
+    /// Applies one valid forward transition while preserving execution references for history.
+    pub fn transition(&mut self, transition: ScheduledRunTransition, transitioned_at: i64) -> bool {
+        if !transition.is_allowed_from(self.status) {
+            return false;
+        }
+
+        match transition {
+            ScheduledRunTransition::Start {
+                session_id,
+                worktree_path,
+            } => {
+                self.status = ScheduledRunStatus::Running;
+                self.session_id = Some(session_id);
+                self.worktree_path = Some(worktree_path);
+                self.failure_reason = None;
+            }
+            ScheduledRunTransition::Succeed => {
+                self.status = ScheduledRunStatus::Succeeded;
+                self.failure_reason = None;
+            }
+            ScheduledRunTransition::Fail { reason } => {
+                self.status = ScheduledRunStatus::Failed;
+                self.failure_reason = Some(reason);
+            }
+            ScheduledRunTransition::Cancel => {
+                self.status = ScheduledRunStatus::Cancelled;
+                self.failure_reason = None;
+            }
+        }
+        self.updated_at = transitioned_at;
+        true
     }
 }
 
@@ -142,7 +216,7 @@ mod tests {
 
     use crate::{
         ScheduledMissReason, ScheduledOccurrence, ScheduledOccurrenceTiming, ScheduledRunStatus,
-        ScheduledTaskId,
+        ScheduledRunTransition, ScheduledTaskId, SessionId,
     };
 
     #[test]
@@ -180,5 +254,18 @@ mod tests {
         ] {
             assert!(!status.is_active());
         }
+    }
+
+    #[test]
+    fn lifecycle_transitions_are_forward_only() {
+        let start = ScheduledRunTransition::Start {
+            session_id: SessionId::new("session-1"),
+            worktree_path: "worktrees/run-1".to_string(),
+        };
+        assert!(start.is_allowed_from(ScheduledRunStatus::Accepted));
+        assert!(!start.is_allowed_from(ScheduledRunStatus::Running));
+        assert!(ScheduledRunTransition::Succeed.is_allowed_from(ScheduledRunStatus::Running));
+        assert!(!ScheduledRunTransition::Succeed.is_allowed_from(ScheduledRunStatus::Accepted));
+        assert!(!ScheduledRunTransition::Cancel.is_allowed_from(ScheduledRunStatus::Succeeded));
     }
 }

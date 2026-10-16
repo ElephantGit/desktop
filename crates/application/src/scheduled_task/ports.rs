@@ -1,6 +1,6 @@
 use ora_domain::{
-    ScheduledMissedOccurrence, ScheduledOccurrence, ScheduledRun, ScheduledRunId, ScheduledTask,
-    ScheduledTaskHistoryEntry, ScheduledTaskId,
+    ScheduledMissedOccurrence, ScheduledOccurrence, ScheduledRun, ScheduledRunId,
+    ScheduledRunTransition, ScheduledTask, ScheduledTaskHistoryEntry, ScheduledTaskId,
 };
 use std::path::Path;
 
@@ -91,6 +91,24 @@ pub trait ScheduledTaskHistoryRepository {
         &self,
         task_id: &ScheduledTaskId,
     ) -> Result<Vec<ScheduledTaskHistoryEntry>, RepositoryError>;
+}
+
+/// Distinguishes a committed lifecycle write from missing or stale execution callbacks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScheduledRunTransitionResolution {
+    Updated(ScheduledRun),
+    NotFound,
+    InvalidState(ScheduledRun),
+}
+
+/// Persists forward-only Scheduled Run lifecycle changes atomically.
+pub trait ScheduledRunLifecycleRepository {
+    fn transition_scheduled_run(
+        &self,
+        run_id: &ScheduledRunId,
+        transition: ScheduledRunTransition,
+        transitioned_at: i64,
+    ) -> Result<ScheduledRunTransitionResolution, RepositoryError>;
 }
 
 /// Supplies stable identifiers for newly admitted Scheduled Runs.

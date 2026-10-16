@@ -95,6 +95,9 @@ function historyStatusLabel(
   if (entry.kind === "missed") {
     return t(`scheduledTask.historyReason.${entry.reason}`);
   }
+  if (entry.failureReason !== null) {
+    return t(`scheduledTask.failureReason.${entry.failureReason}`);
+  }
   return t(`scheduledTask.historyStatus.${entry.status}`);
 }
 
@@ -162,6 +165,11 @@ function ScheduledTaskHistoryDialog({
                     ? ""
                     : ` · ${t("scheduledTask.historySession", {
                         session: entry.sessionId,
+                      })}`}
+                  {entry.worktreePath === null
+                    ? ""
+                    : ` · ${t("scheduledTask.historyWorktree", {
+                        worktree: entry.worktreePath,
                       })}`}
                 </p>
               )}

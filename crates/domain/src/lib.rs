@@ -44,8 +44,8 @@ pub use prompt_inactivity_policy::PromptInactivityPolicy;
 pub use scheduled_run::{
     MAX_CONCURRENT_LOCAL_SCHEDULED_RUNS, MAX_SCHEDULED_OCCURRENCE_LATENESS_MILLIS,
     MAX_SCHEDULED_TASK_HISTORY_ENTRIES, ScheduledMissReason, ScheduledMissedOccurrence,
-    ScheduledOccurrence, ScheduledOccurrenceTiming, ScheduledRun, ScheduledRunSnapshot,
-    ScheduledRunStatus, ScheduledTaskHistoryEntry,
+    ScheduledOccurrence, ScheduledOccurrenceTiming, ScheduledRun, ScheduledRunFailureReason,
+    ScheduledRunSnapshot, ScheduledRunStatus, ScheduledRunTransition, ScheduledTaskHistoryEntry,
 };
 pub use scheduled_task::{
     FULL_AUTO_IN_WORKTREE_POLICY, ScheduledTask, ScheduledTaskApproval,

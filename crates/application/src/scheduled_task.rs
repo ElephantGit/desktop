@@ -23,7 +23,8 @@ pub use id_generator::{UuidScheduledRunIdGenerator, UuidScheduledTaskIdGenerator
 pub use offline_recovery::{OfflineRecoveryResolution, RecordOfflineMissedOccurrenceHandler};
 pub use ports::{
     ScheduledOccurrenceCandidate, ScheduledOccurrenceRepository, ScheduledOccurrenceResolution,
-    ScheduledRunIdGenerator, ScheduledTaskHistoryRepository, ScheduledTaskIdGenerator,
-    ScheduledTaskRepository, ScheduledTaskTargetValidator,
+    ScheduledRunIdGenerator, ScheduledRunLifecycleRepository, ScheduledRunTransitionResolution,
+    ScheduledTaskHistoryRepository, ScheduledTaskIdGenerator, ScheduledTaskRepository,
+    ScheduledTaskTargetValidator,
 };
 pub use target_validator::GitScheduledTaskTargetValidator;

@@ -33,6 +33,7 @@ pub use scheduled_task::{
     ListScheduledTasksHandler, OfflineRecoveryResolution, RecordOfflineMissedOccurrenceHandler,
     RevokeScheduledTaskApprovalHandler, ScheduledOccurrenceCandidate,
     ScheduledOccurrenceRepository, ScheduledOccurrenceResolution, ScheduledRunIdGenerator,
+    ScheduledRunLifecycleRepository, ScheduledRunTransitionResolution,
     ScheduledTaskHistoryRepository, ScheduledTaskIdGenerator, ScheduledTaskRepository,
     ScheduledTaskTargetValidator, UpdateScheduledTaskHandler, UuidScheduledRunIdGenerator,
     UuidScheduledTaskIdGenerator,
