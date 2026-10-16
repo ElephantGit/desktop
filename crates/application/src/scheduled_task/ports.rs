@@ -24,7 +24,8 @@ pub trait ScheduledTaskRepository {
     fn update_scheduled_task(
         &self,
         task: ScheduledTask,
-    ) -> Result<Option<ScheduledTask>, RepositoryError>;
+        expected_updated_at: i64,
+    ) -> Result<ScheduledTaskUpdateResolution, RepositoryError>;
 
     /// Marks one visible task definition deleted without removing its history.
     fn soft_delete_scheduled_task(
@@ -32,6 +33,14 @@ pub trait ScheduledTaskRepository {
         task_id: &ScheduledTaskId,
         deleted_at: i64,
     ) -> Result<bool, RepositoryError>;
+}
+
+/// Distinguishes a committed replacement from a missing or concurrently changed definition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScheduledTaskUpdateResolution {
+    Updated(Box<ScheduledTask>),
+    NotFound,
+    Conflict,
 }
 
 /// Supplies stable identifiers for newly created scheduled-task definitions.

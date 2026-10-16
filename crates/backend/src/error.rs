@@ -515,6 +515,11 @@ impl From<ApplicationError> for BackendError {
                 PublicError::ScheduledTaskNotFound(EmptyErrorParams {}),
                 "scheduled task not found",
             ),
+            ApplicationError::ScheduledTaskConflict { .. } => (
+                ErrorClassification::Conflict,
+                PublicError::ScheduledTaskConflict(EmptyErrorParams {}),
+                "scheduled task was modified concurrently",
+            ),
             ApplicationError::ScheduledTaskNameBlank
             | ApplicationError::ScheduledTaskPromptBlank
             | ApplicationError::ScheduledTaskAgentRefInvalid

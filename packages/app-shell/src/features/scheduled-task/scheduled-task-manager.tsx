@@ -222,7 +222,10 @@ function ScheduledTaskForm({
     initialSchedule.kind === "weekly" ? initialSchedule.weekdays : ["monday"],
   );
   const [enabled, setEnabled] = useState(task?.enabled ?? false);
-  const [approved, setApproved] = useState(task?.approval !== null);
+  // A new definition never ships with pre-checked unattended consent: the user must opt in.
+  const [approved, setApproved] = useState(
+    task !== null && task.approval !== null,
+  );
   const [validationError, setValidationError] = useState(false);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const pending = createTask.isPending || updateTask.isPending;
@@ -281,15 +284,27 @@ function ScheduledTaskForm({
         agentRef,
         model: model.trim() || null,
         prompt: prompt.trim(),
-        approvalPolicy: approved ? ("full_auto_in_worktree" as const) : null,
       };
       if (task === null) {
         await createTask.mutateAsync({
           ...common,
           executionLocation: "local",
+          approvalPolicy: approved ? ("full_auto_in_worktree" as const) : null,
         });
       } else {
-        await updateTask.mutateAsync({ ...common, taskId: task.id });
+        await updateTask.mutateAsync({
+          ...common,
+          taskId: task.id,
+          expectedUpdatedAt: task.updatedAt,
+          // Only an active re-check is a new consent fact. Echoing the stored
+          // approval must neither refresh its consentedAt nor resurrect a
+          // revoked one, and unchecking revokes it explicitly.
+          approvalChange: approved
+            ? task.approval !== null
+              ? ({ kind: "keep" } as const)
+              : ({ kind: "grant", policy: "full_auto_in_worktree" } as const)
+            : ({ kind: "revoke" } as const),
+        });
       }
       onOpenChange(false);
     } catch (error) {
@@ -579,7 +594,10 @@ export function ScheduledTaskManager() {
       agentRef: task.agentRef,
       model: task.model,
       prompt: task.prompt,
-      approvalPolicy: task.approval?.policy ?? null,
+      expectedUpdatedAt: task.updatedAt,
+      // The quick toggle must never grant, refresh, or revoke unattended consent;
+      // the form is the only surface that owns that decision.
+      approvalChange: { kind: "keep" },
     });
   };
 

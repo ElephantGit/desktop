@@ -193,6 +193,7 @@ pub enum PublicError {
     ProjectNotFound(EmptyErrorParams),
     TaskNotFound(EmptyErrorParams),
     ScheduledTaskNotFound(EmptyErrorParams),
+    ScheduledTaskConflict(EmptyErrorParams),
     ResourceInUse(EmptyErrorParams),
     WorktreeRequiresGitRepository(EmptyErrorParams),
     TaskBaseBranchRequired(EmptyErrorParams),
@@ -328,6 +329,7 @@ impl PublicError {
             Self::ProjectNotFound(_) => "project_not_found",
             Self::TaskNotFound(_) => "task_not_found",
             Self::ScheduledTaskNotFound(_) => "scheduled_task_not_found",
+            Self::ScheduledTaskConflict(_) => "scheduled_task_conflict",
             Self::ResourceInUse(_) => "resource_in_use",
             Self::WorktreeRequiresGitRepository(_) => "worktree_requires_git_repository",
             Self::TaskBaseBranchRequired(_) => "task_base_branch_required",
@@ -542,6 +544,7 @@ mod tests {
             PublicError::ProjectNotFound(empty),
             PublicError::TaskNotFound(empty),
             PublicError::ScheduledTaskNotFound(empty),
+            PublicError::ScheduledTaskConflict(empty),
             PublicError::ResourceInUse(empty),
             PublicError::WorktreeRequiresGitRepository(empty),
             PublicError::TaskBaseBranchRequired(empty),
@@ -678,6 +681,7 @@ mod tests {
                 | PublicError::ProjectNotFound(_)
                 | PublicError::TaskNotFound(_)
                 | PublicError::ScheduledTaskNotFound(_)
+                | PublicError::ScheduledTaskConflict(_)
                 | PublicError::ResourceInUse(_)
                 | PublicError::WorktreeRequiresGitRepository(_)
                 | PublicError::TaskBaseBranchRequired(_)
@@ -777,7 +781,7 @@ mod tests {
     #[test]
     fn public_error_codes_match_serde_tags_for_every_variant() {
         let samples = public_error_samples();
-        assert_eq!(samples.len(), 114);
+        assert_eq!(samples.len(), 115);
 
         for error in samples {
             let serialized = serde_json::to_value(&error).unwrap();

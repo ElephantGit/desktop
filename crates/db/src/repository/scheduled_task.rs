@@ -1,4 +1,4 @@
-use ora_application::{RepositoryError, ScheduledTaskRepository};
+use ora_application::{RepositoryError, ScheduledTaskRepository, ScheduledTaskUpdateResolution};
 use ora_domain::{
     AgentRef, AuditFields, FULL_AUTO_IN_WORKTREE_POLICY, ProjectId, ScheduledTask,
     ScheduledTaskApproval, ScheduledTaskExecutionLocation, ScheduledTaskId, ScheduledTaskSchedule,
@@ -101,11 +101,14 @@ impl ScheduledTaskRepository for SqliteScheduledTaskRepository {
     fn update_scheduled_task(
         &self,
         task: ScheduledTask,
-    ) -> Result<Option<ScheduledTask>, RepositoryError> {
+        expected_updated_at: i64,
+    ) -> Result<ScheduledTaskUpdateResolution, RepositoryError> {
         let task_id = task.id.clone();
         let schedule_json = serialize_schedule(&task.schedule)?;
         let revision = serialize_revision(task.revision)?;
         let (approval_policy, approval_consented_at) = approval_columns(task.approval.as_ref());
+        // The expected timestamp makes the replacement conditional so a concurrent edit,
+        // revocation, or soft delete can never be silently overwritten by a stale writer.
         let updated = self
             .pool
             .with_connection(|connection| {
@@ -116,7 +119,7 @@ impl ScheduledTaskRepository for SqliteScheduledTaskRepository {
                              agent_ref = ?6, model = ?7, prompt = ?8, revision = ?9,
                              approval_policy = ?10, approval_consented_at = ?11,
                              updated_at = ?12
-                         WHERE id = ?1 AND is_deleted = 0",
+                         WHERE id = ?1 AND is_deleted = 0 AND updated_at = ?13",
                         params![
                             task.id.as_ref(),
                             &task.name,
@@ -130,16 +133,21 @@ impl ScheduledTaskRepository for SqliteScheduledTaskRepository {
                             approval_policy,
                             approval_consented_at,
                             task.audit_fields.updated_at,
+                            expected_updated_at,
                         ],
                     )
                     .map(|rows| rows > 0)
                     .map_err(Into::into)
             })
             .map_err(scheduled_task_repository_error_from_database)?;
-        if !updated {
-            return Ok(None);
-        }
+        // `updated == false` means no row matched the expected snapshot: the definition is either
+        // gone (NotFound) or concurrently moved on (Conflict).
         self.find_scheduled_task(&task_id)
+            .map(|found| match (updated, found) {
+                (true, Some(task)) => ScheduledTaskUpdateResolution::Updated(Box::new(task)),
+                (false, Some(_)) => ScheduledTaskUpdateResolution::Conflict,
+                (_, None) => ScheduledTaskUpdateResolution::NotFound,
+            })
     }
 
     fn soft_delete_scheduled_task(
@@ -276,7 +284,9 @@ fn scheduled_task_repository_error_from_database(error: crate::DatabaseError) ->
 mod tests {
     use std::collections::BTreeSet;
 
-    use ora_application::{ProjectRepository, ScheduledTaskRepository};
+    use ora_application::{
+        ProjectRepository, ScheduledTaskRepository, ScheduledTaskUpdateResolution,
+    };
     use ora_domain::{
         AgentRef, AuditFields, Project, ProjectId, ScheduledTask, ScheduledTaskApproval,
         ScheduledTaskExecutionLocation, ScheduledTaskId, ScheduledTaskSchedule,
@@ -322,9 +332,23 @@ mod tests {
         replacement.audit_fields.updated_at = 20;
         assert_eq!(
             repository
-                .update_scheduled_task(replacement.clone())
+                .update_scheduled_task(replacement.clone(), /*expected_updated_at*/ 10)
                 .expect("update task"),
-            Some(replacement.clone())
+            ScheduledTaskUpdateResolution::Updated(Box::new(replacement.clone()))
+        );
+        assert_eq!(
+            repository.list_scheduled_tasks().expect("list tasks"),
+            vec![replacement.clone()]
+        );
+
+        // A writer holding a stale snapshot must lose against the committed replacement.
+        let mut stale = replacement.clone();
+        stale.name = "Stale overwrite".to_string();
+        assert_eq!(
+            repository
+                .update_scheduled_task(stale, /*expected_updated_at*/ 10)
+                .expect("detect stale update"),
+            ScheduledTaskUpdateResolution::Conflict
         );
         assert_eq!(
             repository.list_scheduled_tasks().expect("list tasks"),
@@ -341,6 +365,12 @@ mod tests {
                 .find_scheduled_task(&replacement.id)
                 .expect("find deleted task"),
             None
+        );
+        assert_eq!(
+            repository
+                .update_scheduled_task(replacement, /*expected_updated_at*/ 20)
+                .expect("update deleted task"),
+            ScheduledTaskUpdateResolution::NotFound
         );
         assert!(
             repository

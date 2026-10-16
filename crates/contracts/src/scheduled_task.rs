@@ -59,6 +59,23 @@ pub enum ScheduledTaskApprovalPolicy {
     FullAutoInWorktree,
 }
 
+/// States how an edit changes the persisted unattended-execution consent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+#[ts(export_to = "scheduled-task.ts")]
+pub enum ScheduledTaskApprovalChange {
+    /// Leaves the current consent fact unchanged unless another edit invalidates it.
+    Keep,
+    /// Records a fresh, explicit consent fact for the selected policy.
+    Grant { policy: ScheduledTaskApprovalPolicy },
+    /// Removes consent and requires the task to be disabled.
+    Revoke,
+}
+
 /// Returns the persisted consent fact without exposing runtime implementation details.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -227,6 +244,8 @@ pub struct ListScheduledTaskHistoryResponse {
 #[ts(export_to = "scheduled-task.ts")]
 pub struct UpdateScheduledTaskRequest {
     pub task_id: String,
+    /// Snapshot version observed by the caller before this replacement was prepared.
+    pub expected_updated_at: i64,
     pub name: String,
     pub enabled: bool,
     pub schedule: ScheduledTaskSchedule,
@@ -234,7 +253,7 @@ pub struct UpdateScheduledTaskRequest {
     pub agent_ref: AgentRef,
     pub model: Option<String>,
     pub prompt: String,
-    pub approval_policy: Option<ScheduledTaskApprovalPolicy>,
+    pub approval_change: ScheduledTaskApprovalChange,
 }
 
 /// Returns the authoritative updated task snapshot.
@@ -283,6 +302,7 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     ScheduledTaskSchedule::export(config)?;
     ScheduledTaskExecutionLocation::export(config)?;
     ScheduledTaskApprovalPolicy::export(config)?;
+    ScheduledTaskApprovalChange::export(config)?;
     ScheduledTaskApproval::export(config)?;
     ScheduledTask::export(config)?;
     CreateScheduledTaskRequest::export(config)?;

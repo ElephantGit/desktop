@@ -30,13 +30,13 @@ pub use repository_error::{BoxRepositorySource, RepositoryError};
 pub use scheduled_task::{
     AdmitScheduledOccurrenceHandler, CreateScheduledTaskHandler, DeleteScheduledTaskHandler,
     GetScheduledTaskHandler, GitScheduledTaskTargetValidator, ListScheduledTaskHistoryHandler,
-    ListScheduledTasksHandler, OfflineRecoveryResolution, RecordOfflineMissedOccurrenceHandler,
-    RevokeScheduledTaskApprovalHandler, ScheduledOccurrenceCandidate,
-    ScheduledOccurrenceRepository, ScheduledOccurrenceResolution, ScheduledRunIdGenerator,
-    ScheduledRunLifecycleRepository, ScheduledRunTransitionResolution,
+    ListScheduledTasksHandler, OfflineRecoveryResolution, PreparedScheduledTaskUpdate,
+    RecordOfflineMissedOccurrenceHandler, RevokeScheduledTaskApprovalHandler,
+    ScheduledOccurrenceCandidate, ScheduledOccurrenceRepository, ScheduledOccurrenceResolution,
+    ScheduledRunIdGenerator, ScheduledRunLifecycleRepository, ScheduledRunTransitionResolution,
     ScheduledTaskHistoryRepository, ScheduledTaskIdGenerator, ScheduledTaskRepository,
-    ScheduledTaskTargetValidator, UpdateScheduledTaskHandler, UuidScheduledRunIdGenerator,
-    UuidScheduledTaskIdGenerator,
+    ScheduledTaskTargetValidator, ScheduledTaskUpdateResolution, UpdateScheduledTaskHandler,
+    UuidScheduledRunIdGenerator, UuidScheduledTaskIdGenerator,
 };
 pub use session::{
     DeleteSessionHandler, GetSessionHandler, ListSessionsHandler, RenameSessionHandler,

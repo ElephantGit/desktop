@@ -152,6 +152,8 @@ pub enum ApplicationError {
     },
     #[error("scheduled task not found: {task_id}")]
     ScheduledTaskNotFound { task_id: String },
+    #[error("scheduled task was modified concurrently: {task_id}")]
+    ScheduledTaskConflict { task_id: String },
     #[error("scheduled task name must not be blank")]
     ScheduledTaskNameBlank,
     #[error("scheduled task prompt must not be blank")]
@@ -571,6 +573,9 @@ impl PartialEq for ApplicationError {
                 true
             }
             (ScheduledTaskNotFound { task_id: left }, ScheduledTaskNotFound { task_id: right }) => {
+                left == right
+            }
+            (ScheduledTaskConflict { task_id: left }, ScheduledTaskConflict { task_id: right }) => {
                 left == right
             }
             (ScheduledTaskNameBlank, ScheduledTaskNameBlank)

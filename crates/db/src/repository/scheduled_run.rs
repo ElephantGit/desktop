@@ -10,7 +10,7 @@ use ora_domain::{
     ScheduledRunTransition, ScheduledTaskApproval, ScheduledTaskHistoryEntry, ScheduledTaskId,
     SessionId,
 };
-use rusqlite::{Row, Transaction, params};
+use rusqlite::{Row, Transaction, TransactionBehavior, params};
 
 use crate::repository::RepositoryPool;
 
@@ -35,7 +35,10 @@ impl ScheduledOccurrenceRepository for SqliteScheduledRunRepository {
         let occurrence = candidate.occurrence().clone();
         self.pool
             .with_connection_mut(|connection| {
-                let transaction = connection.transaction()?;
+                // Immediate locks the write snapshot up front so the insert-or-resolve decision can
+                // never race another connection between its read and write phases.
+                let transaction =
+                    connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
                 let (outcome, missed_reason, observed_at) = candidate_columns(&candidate);
                 let inserted = transaction.execute(
                     "INSERT INTO scheduled_occurrences (
@@ -118,7 +121,11 @@ impl ScheduledRunLifecycleRepository for SqliteScheduledRunRepository {
     ) -> Result<ScheduledRunTransitionResolution, RepositoryError> {
         self.pool
             .with_connection_mut(|connection| {
-                let transaction = connection.transaction()?;
+                // Immediate prevents the read-then-write lifecycle check from racing another
+                // connection, which under WAL would abort with SQLITE_BUSY_SNAPSHOT and strand the
+                // run in an active state forever.
+                let transaction =
+                    connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
                 let resolution = match load_scheduled_run_by_id(&transaction, run_id)? {
                     None => ScheduledRunTransitionResolution::NotFound,
                     Some(mut run) => {

@@ -132,7 +132,8 @@ impl ScheduledTaskApi {
         &self,
         request: UpdateScheduledTaskRequest,
     ) -> Result<UpdateScheduledTaskResponse, BackendError> {
-        let task = self.update.prepare(request)?;
+        let prepared = self.update.prepare(request)?;
+        let task = prepared.task();
         if task.enabled && task.execution_location == ScheduledTaskExecutionLocation::Local {
             self.validate_agent_model(
                 task.project_id.as_ref(),
@@ -141,7 +142,7 @@ impl ScheduledTaskApi {
             )
             .await?;
         }
-        self.update.persist(task).map_err(BackendError::from)
+        self.update.persist(prepared).map_err(BackendError::from)
     }
 
     async fn validate_agent_model(

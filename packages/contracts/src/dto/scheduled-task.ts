@@ -128,6 +128,14 @@ export type ScheduledTaskApproval = {
 };
 
 /**
+ * States how an edit changes the persisted unattended-execution consent.
+ */
+export type ScheduledTaskApprovalChange = { "kind": "keep" } | {
+  "kind": "grant";
+  policy: ScheduledTaskApprovalPolicy;
+} | { "kind": "revoke" };
+
+/**
  * Names an unattended execution policy the user has explicitly accepted.
  */
 export type ScheduledTaskApprovalPolicy = "full_auto_in_worktree";
@@ -188,6 +196,10 @@ export type ScheduledTaskWeekday =
  */
 export type UpdateScheduledTaskRequest = {
   taskId: string;
+  /**
+   * Snapshot version observed by the caller before this replacement was prepared.
+   */
+  expectedUpdatedAt: bigint;
   name: string;
   enabled: boolean;
   schedule: ScheduledTaskSchedule;
@@ -195,7 +207,7 @@ export type UpdateScheduledTaskRequest = {
   agentRef: string;
   model: string | null;
   prompt: string;
-  approvalPolicy: ScheduledTaskApprovalPolicy | null;
+  approvalChange: ScheduledTaskApprovalChange;
 };
 
 /**

@@ -5,8 +5,9 @@ use ora_contracts::{
     DeleteScheduledTaskResponse, GetScheduledTaskRequest, GetScheduledTaskResponse,
     ListScheduledTaskHistoryRequest, ListScheduledTaskHistoryResponse, ListScheduledTasksRequest,
     ListScheduledTasksResponse, RevokeScheduledTaskApprovalRequest,
-    RevokeScheduledTaskApprovalResponse, ScheduledTaskExecutionLocation as ContractLocation,
-    UpdateScheduledTaskRequest, UpdateScheduledTaskResponse,
+    RevokeScheduledTaskApprovalResponse, ScheduledTaskApprovalChange,
+    ScheduledTaskExecutionLocation as ContractLocation, UpdateScheduledTaskRequest,
+    UpdateScheduledTaskResponse,
 };
 use ora_domain::{
     AgentRef, AuditFields, ProjectId, ScheduledTask, ScheduledTaskExecutionLocation,
@@ -16,7 +17,7 @@ use ora_domain::{
 use super::mapper::{approval_from_policy, map_history_entry, map_task, parse_schedule};
 use super::{
     ScheduledTaskHistoryRepository, ScheduledTaskIdGenerator, ScheduledTaskRepository,
-    ScheduledTaskTargetValidator,
+    ScheduledTaskTargetValidator, ScheduledTaskUpdateResolution,
 };
 use crate::{
     ApplicationError, Clock, ProjectRepository, TaskWorktreeProvisionerError, WorkspaceRepository,
@@ -246,6 +247,19 @@ pub struct UpdateScheduledTaskHandler<
     clock: ClockSource,
 }
 
+/// Carries the validated replacement and the exact snapshot token it must replace.
+pub struct PreparedScheduledTaskUpdate {
+    task: ScheduledTask,
+    expected_updated_at: i64,
+}
+
+impl PreparedScheduledTaskUpdate {
+    /// Returns the replacement for runtime eligibility checks before persistence.
+    pub fn task(&self) -> &ScheduledTask {
+        &self.task
+    }
+}
+
 impl<Repository, Projects, Workspaces, TargetValidator, ClockSource>
     UpdateScheduledTaskHandler<Repository, Projects, Workspaces, TargetValidator, ClockSource>
 {
@@ -288,14 +302,22 @@ where
     pub fn prepare(
         &self,
         request: UpdateScheduledTaskRequest,
-    ) -> Result<ScheduledTask, ApplicationError> {
+    ) -> Result<PreparedScheduledTaskUpdate, ApplicationError> {
         let task_id = ScheduledTaskId::new(request.task_id);
         let existing = find_task(self.repository.as_ref(), &task_id)?;
+        if request.expected_updated_at != existing.audit_fields.updated_at {
+            return Err(ApplicationError::ScheduledTaskConflict {
+                task_id: task_id.to_string(),
+            });
+        }
         if existing.execution_location == ScheduledTaskExecutionLocation::Cloud {
             return Err(ApplicationError::ScheduledTaskCloudUnavailable);
         }
 
-        let now = self.clock.now_timestamp_millis();
+        let now = self
+            .clock
+            .now_timestamp_millis()
+            .max(existing.audit_fields.updated_at.saturating_add(1));
         let project_id = ProjectId::new(request.project_id);
         require_git_project(self.projects.as_ref(), &project_id)?;
         let project_changed = project_id != existing.project_id;
@@ -308,10 +330,13 @@ where
             || agent_ref != existing.agent_ref
             || request.model != existing.model
             || prompt != existing.prompt;
-        let approval = match request.approval_policy {
-            Some(policy) => Some(approval_from_policy(policy, now)),
-            None if project_changed => None,
-            None => existing.approval.clone(),
+        let approval = match request.approval_change {
+            ScheduledTaskApprovalChange::Keep if project_changed => None,
+            ScheduledTaskApprovalChange::Keep => existing.approval.clone(),
+            ScheduledTaskApprovalChange::Grant { policy } => {
+                Some(approval_from_policy(policy, now))
+            }
+            ScheduledTaskApprovalChange::Revoke => None,
         };
         let mut replacement = ScheduledTask::new(
             task_id,
@@ -339,22 +364,35 @@ where
             &self.target_validator,
         )?;
 
-        Ok(replacement)
+        Ok(PreparedScheduledTaskUpdate {
+            task: replacement,
+            expected_updated_at: request.expected_updated_at,
+        })
     }
 
     /// Persists a replacement returned by [`Self::prepare`].
     pub fn persist(
         &self,
-        replacement: ScheduledTask,
+        replacement: PreparedScheduledTaskUpdate,
     ) -> Result<UpdateScheduledTaskResponse, ApplicationError> {
-        let task_id = replacement.id.clone();
-        let task = self
+        let task_id = replacement.task.id.clone();
+        let task = match self
             .repository
-            .update_scheduled_task(replacement)
+            .update_scheduled_task(replacement.task, replacement.expected_updated_at)
             .map_err(ApplicationError::from_scheduled_task_repository_error)?
-            .ok_or_else(|| ApplicationError::ScheduledTaskNotFound {
-                task_id: task_id.to_string(),
-            })?;
+        {
+            ScheduledTaskUpdateResolution::Updated(task) => *task,
+            ScheduledTaskUpdateResolution::NotFound => {
+                return Err(ApplicationError::ScheduledTaskNotFound {
+                    task_id: task_id.to_string(),
+                });
+            }
+            ScheduledTaskUpdateResolution::Conflict => {
+                return Err(ApplicationError::ScheduledTaskConflict {
+                    task_id: task_id.to_string(),
+                });
+            }
+        };
         Ok(UpdateScheduledTaskResponse {
             task: map_task(task),
         })
@@ -421,16 +459,30 @@ where
     ) -> Result<RevokeScheduledTaskApprovalResponse, ApplicationError> {
         let task_id = ScheduledTaskId::new(request.task_id);
         let mut task = find_task(self.repository.as_ref(), &task_id)?;
+        let expected_updated_at = task.audit_fields.updated_at;
         task.enabled = false;
         task.approval = None;
-        task.audit_fields.updated_at = self.clock.now_timestamp_millis();
-        let task = self
+        task.audit_fields.updated_at = self
+            .clock
+            .now_timestamp_millis()
+            .max(expected_updated_at.saturating_add(1));
+        let task = match self
             .repository
-            .update_scheduled_task(task)
+            .update_scheduled_task(task, expected_updated_at)
             .map_err(ApplicationError::from_scheduled_task_repository_error)?
-            .ok_or_else(|| ApplicationError::ScheduledTaskNotFound {
-                task_id: task_id.to_string(),
-            })?;
+        {
+            ScheduledTaskUpdateResolution::Updated(task) => *task,
+            ScheduledTaskUpdateResolution::NotFound => {
+                return Err(ApplicationError::ScheduledTaskNotFound {
+                    task_id: task_id.to_string(),
+                });
+            }
+            ScheduledTaskUpdateResolution::Conflict => {
+                return Err(ApplicationError::ScheduledTaskConflict {
+                    task_id: task_id.to_string(),
+                });
+            }
+        };
         Ok(RevokeScheduledTaskApprovalResponse {
             task: map_task(task),
         })

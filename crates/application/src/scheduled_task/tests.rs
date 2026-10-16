@@ -1,8 +1,9 @@
 use std::sync::{Arc, Mutex};
 
 use ora_contracts::{
-    CreateScheduledTaskRequest, RevokeScheduledTaskApprovalRequest, ScheduledTaskApprovalPolicy,
-    ScheduledTaskExecutionLocation, ScheduledTaskSchedule, UpdateScheduledTaskRequest,
+    CreateScheduledTaskRequest, RevokeScheduledTaskApprovalRequest, ScheduledTaskApprovalChange,
+    ScheduledTaskApprovalPolicy, ScheduledTaskExecutionLocation, ScheduledTaskSchedule,
+    UpdateScheduledTaskRequest,
 };
 use ora_domain::{
     AuditFields, Project, ProjectId, ScheduledTask, ScheduledTaskId, Workspace, WorkspaceId,
@@ -12,7 +13,8 @@ use pretty_assertions::assert_eq;
 
 use super::{
     CreateScheduledTaskHandler, RevokeScheduledTaskApprovalHandler, ScheduledTaskIdGenerator,
-    ScheduledTaskRepository, ScheduledTaskTargetValidator, UpdateScheduledTaskHandler,
+    ScheduledTaskRepository, ScheduledTaskTargetValidator, ScheduledTaskUpdateResolution,
+    UpdateScheduledTaskHandler,
 };
 use crate::{
     ApplicationError, Clock, ProjectRepository, RepositoryError, TaskWorktreeProvisionerError,
@@ -78,7 +80,7 @@ fn prompt_and_schedule_changes_increment_revision_without_reconsent() {
         .handle(create_request())
         .expect("create task")
         .task;
-    let consented_at = created.approval.expect("approval").consented_at;
+    let consented_at = created.approval.clone().expect("approval").consented_at;
     let handler = UpdateScheduledTaskHandler::new(
         repository,
         projects(),
@@ -87,22 +89,13 @@ fn prompt_and_schedule_changes_increment_revision_without_reconsent() {
         FixedClock(NOW + 1_000),
     );
 
-    let response = handler
-        .handle(UpdateScheduledTaskRequest {
-            task_id: created.id,
-            name: created.name,
-            enabled: true,
-            schedule: ScheduledTaskSchedule::Daily {
-                hour: 9,
-                minute: 30,
-            },
-            project_id: created.project_id,
-            agent_ref: created.agent_ref,
-            model: created.model,
-            prompt: "Run the full quality gate".to_string(),
-            approval_policy: None,
-        })
-        .expect("update task");
+    let mut request = keep_consent_request(&created);
+    request.schedule = ScheduledTaskSchedule::Daily {
+        hour: 9,
+        minute: 30,
+    };
+    request.prompt = "Run the full quality gate".to_string();
+    let response = handler.handle(request).expect("update task");
 
     assert_eq!(response.task.revision, 2);
     assert_eq!(
@@ -132,19 +125,161 @@ fn changing_project_requires_fresh_consent_before_remaining_enabled() {
         FixedClock(NOW + 1_000),
     );
 
-    let result = handler.handle(UpdateScheduledTaskRequest {
-        task_id: created.id,
-        name: created.name,
-        enabled: true,
-        schedule: created.schedule,
-        project_id: "project-2".to_string(),
-        agent_ref: created.agent_ref,
-        model: created.model,
-        prompt: created.prompt,
-        approval_policy: None,
-    });
+    let mut request = keep_consent_request(&created);
+    request.project_id = "project-2".to_string();
+    let result = handler.handle(request);
 
     assert_eq!(result, Err(ApplicationError::ScheduledTaskApprovalRequired));
+}
+
+#[test]
+fn changing_project_with_an_explicit_grant_consents_for_the_new_project() {
+    let repository = Arc::new(MemoryScheduledTaskRepository::default());
+    let created = create_handler(repository.clone())
+        .handle(create_request())
+        .expect("create task")
+        .task;
+    let handler = UpdateScheduledTaskHandler::new(
+        repository,
+        Arc::new(MemoryProjectRepository::with_projects(vec![
+            git_project("project-1"),
+            git_project("project-2"),
+        ])),
+        Arc::new(MemoryWorkspaceRepository::with_workspaces(vec![
+            main_workspace("project-1"),
+            main_workspace("project-2"),
+        ])),
+        AcceptingTargetValidator,
+        FixedClock(NOW + 1_000),
+    );
+
+    let mut request = keep_consent_request(&created);
+    request.project_id = "project-2".to_string();
+    request.approval_change = ScheduledTaskApprovalChange::Grant {
+        policy: ScheduledTaskApprovalPolicy::FullAutoInWorktree,
+    };
+    let response = handler.handle(request).expect("update task");
+
+    assert_eq!(response.task.project_id, "project-2");
+    assert_eq!(
+        response.task.approval.expect("approval").consented_at,
+        NOW + 1_000
+    );
+}
+
+#[test]
+fn an_explicit_grant_refreshes_the_consent_fact() {
+    let repository = Arc::new(MemoryScheduledTaskRepository::default());
+    let created = create_handler(repository.clone())
+        .handle(create_request())
+        .expect("create task")
+        .task;
+    let handler = UpdateScheduledTaskHandler::new(
+        repository,
+        projects(),
+        workspaces(),
+        AcceptingTargetValidator,
+        FixedClock(NOW + 1_000),
+    );
+
+    let mut request = keep_consent_request(&created);
+    request.approval_change = ScheduledTaskApprovalChange::Grant {
+        policy: ScheduledTaskApprovalPolicy::FullAutoInWorktree,
+    };
+    let response = handler.handle(request).expect("update task");
+
+    assert_eq!(response.task.revision, 1);
+    assert_eq!(
+        response.task.approval.expect("approval").consented_at,
+        NOW + 1_000
+    );
+}
+
+#[test]
+fn an_explicit_revoke_clears_consent_for_a_disabled_task() {
+    let repository = Arc::new(MemoryScheduledTaskRepository::default());
+    let created = create_handler(repository.clone())
+        .handle(create_request())
+        .expect("create task")
+        .task;
+    let handler = UpdateScheduledTaskHandler::new(
+        repository,
+        projects(),
+        workspaces(),
+        AcceptingTargetValidator,
+        FixedClock(NOW + 1_000),
+    );
+
+    let mut request = keep_consent_request(&created);
+    request.enabled = false;
+    request.approval_change = ScheduledTaskApprovalChange::Revoke;
+    let response = handler.handle(request).expect("update task");
+
+    assert!(!response.task.enabled);
+    assert_eq!(response.task.approval, None);
+}
+
+#[test]
+fn a_stale_expected_update_is_rejected_as_a_conflict() {
+    let repository = Arc::new(MemoryScheduledTaskRepository::default());
+    let created = create_handler(repository.clone())
+        .handle(create_request())
+        .expect("create task")
+        .task;
+    let handler = UpdateScheduledTaskHandler::new(
+        repository,
+        projects(),
+        workspaces(),
+        AcceptingTargetValidator,
+        FixedClock(NOW + 1_000),
+    );
+
+    let mut request = keep_consent_request(&created);
+    request.expected_updated_at = created.updated_at - 1;
+    let result = handler.handle(request);
+
+    assert_eq!(
+        result,
+        Err(ApplicationError::ScheduledTaskConflict {
+            task_id: created.id.to_string(),
+        })
+    );
+}
+
+#[test]
+fn a_concurrent_edit_between_prepare_and_persist_loses_the_stale_write() {
+    let repository = Arc::new(MemoryScheduledTaskRepository::default());
+    let created = create_handler(repository.clone())
+        .handle(create_request())
+        .expect("create task")
+        .task;
+    let handler = UpdateScheduledTaskHandler::new(
+        repository.clone(),
+        projects(),
+        workspaces(),
+        AcceptingTargetValidator,
+        FixedClock(NOW + 1_000),
+    );
+
+    let prepared = handler
+        .prepare(keep_consent_request(&created))
+        .expect("prepare update");
+    // Another writer commits while the first update is between prepare and persist; the stale
+    // write must surface as a conflict instead of overwriting it.
+    let mut tasks = repository.tasks.lock().expect("lock tasks");
+    let stored = tasks.last_mut().expect("stored task");
+    stored.name = "Concurrent edit".to_string();
+    stored.audit_fields.updated_at = NOW + 500;
+    drop(tasks);
+
+    let result = handler.persist(prepared);
+
+    assert_eq!(
+        result,
+        Err(ApplicationError::ScheduledTaskConflict {
+            task_id: created.id.to_string(),
+        })
+    );
 }
 
 #[test]
@@ -241,6 +376,22 @@ fn create_request() -> CreateScheduledTaskRequest {
     }
 }
 
+/// Builds an update that keeps the observed consent and the snapshot it was read from.
+fn keep_consent_request(task: &ora_contracts::ScheduledTask) -> UpdateScheduledTaskRequest {
+    UpdateScheduledTaskRequest {
+        task_id: task.id.clone(),
+        expected_updated_at: task.updated_at,
+        name: task.name.clone(),
+        enabled: task.enabled,
+        schedule: task.schedule.clone(),
+        project_id: task.project_id.clone(),
+        agent_ref: task.agent_ref.clone(),
+        model: task.model.clone(),
+        prompt: task.prompt.clone(),
+        approval_change: ScheduledTaskApprovalChange::Keep,
+    }
+}
+
 fn projects() -> Arc<MemoryProjectRepository> {
     Arc::new(MemoryProjectRepository::with_projects(vec![git_project(
         "project-1",
@@ -313,16 +464,21 @@ impl ScheduledTaskRepository for MemoryScheduledTaskRepository {
     fn update_scheduled_task(
         &self,
         task: ScheduledTask,
-    ) -> Result<Option<ScheduledTask>, RepositoryError> {
+        expected_updated_at: i64,
+    ) -> Result<ScheduledTaskUpdateResolution, RepositoryError> {
         let mut tasks = self.tasks.lock().expect("lock tasks");
         let Some(existing) = tasks
             .iter_mut()
             .find(|existing| existing.id == task.id && !existing.audit_fields.is_deleted)
         else {
-            return Ok(None);
+            return Ok(ScheduledTaskUpdateResolution::NotFound);
         };
+        // Mirror the conditional SQLite write: a stale snapshot must lose.
+        if existing.audit_fields.updated_at != expected_updated_at {
+            return Ok(ScheduledTaskUpdateResolution::Conflict);
+        }
         *existing = task.clone();
-        Ok(Some(task))
+        Ok(ScheduledTaskUpdateResolution::Updated(Box::new(task)))
     }
 
     fn soft_delete_scheduled_task(
