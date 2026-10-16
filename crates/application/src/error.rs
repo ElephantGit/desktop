@@ -125,6 +125,11 @@ pub enum ApplicationError {
         #[source]
         source: BoxRepositorySource,
     },
+    #[error("workspace repository operation failed")]
+    WorkspaceRepository {
+        #[source]
+        source: RepositoryError,
+    },
     #[error("workspace diff commit message must not be blank")]
     WorkspaceDiffCommitMessageBlank,
     #[error("worktree not found for workspace: {workspace_id}")]
@@ -419,6 +424,11 @@ impl ApplicationError {
         Self::WorkflowRunRepository { source: error }
     }
 
+    /// Maps workspace repository failures into stable application errors.
+    pub(crate) fn from_workspace_repository_error(error: RepositoryError) -> Self {
+        Self::WorkspaceRepository { source: error }
+    }
+
     /// Maps run-engine failures into stable application errors.
     pub(crate) fn from_workflow_engine_error(error: EngineError) -> Self {
         match error {
@@ -556,6 +566,7 @@ impl PartialEq for ApplicationError {
                 TaskBaseBranchNotFound { branch_name: right },
             ) => left == right,
             (WorkspaceDiff { .. }, WorkspaceDiff { .. }) => true,
+            (WorkspaceRepository { .. }, WorkspaceRepository { .. }) => true,
             (
                 TaskWorkspaceIdExhausted { attempts: left },
                 TaskWorkspaceIdExhausted { attempts: right },

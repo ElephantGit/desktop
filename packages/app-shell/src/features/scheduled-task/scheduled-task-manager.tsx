@@ -1,36 +1,12 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type {
-  Project,
-  ScheduledTask,
-  ScheduledTaskHistoryEntry,
-  ScheduledTaskSchedule,
-  ScheduledTaskWeekday,
-} from "@ora/contracts";
-import {
-  Button,
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  Input,
-  Label,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  Spinner,
-  Switch,
-  Textarea,
-  cn,
-} from "@ora/ui";
+import type { ScheduledTask } from "@ora/contracts";
+import { Button, Spinner, Switch, cn } from "@ora/ui";
 import {
   IconCalendarClock,
   IconEdit,
   IconHistory,
+  IconLayoutSidebarLeftExpand,
   IconPlus,
   IconShieldX,
   IconTrash,
@@ -39,514 +15,21 @@ import { localizeContractError } from "../../i18n/contract-error";
 import { useAvailableAgents } from "../../state/hooks/use-available-agents";
 import { useProjects } from "../../state/hooks/use-projects";
 import {
-  useCreateScheduledTask,
   useDeleteScheduledTask,
   useRevokeScheduledTaskApproval,
-  useScheduledTaskHistory,
   useScheduledTasks,
   useUpdateScheduledTask,
 } from "../../state/hooks/use-scheduled-tasks";
-import type { AgentEntry } from "../../state/hooks/use-agent-catalog";
+import { useUiStore } from "../../state/stores/ui-store";
+import { ScheduledTaskConfirmDialog } from "./scheduled-task-confirm-dialog";
+import { ScheduledTaskForm } from "./scheduled-task-form";
+import { ScheduledTaskHistoryDialog } from "./scheduled-task-history-dialog";
+import { scheduleLabel } from "./scheduled-task-format";
 
-const WEEKDAYS: ReadonlyArray<{
-  value: ScheduledTaskWeekday;
-  key: string;
-}> = [
-  { value: "monday", key: "scheduledTask.weekday.mon" },
-  { value: "tuesday", key: "scheduledTask.weekday.tue" },
-  { value: "wednesday", key: "scheduledTask.weekday.wed" },
-  { value: "thursday", key: "scheduledTask.weekday.thu" },
-  { value: "friday", key: "scheduledTask.weekday.fri" },
-  { value: "saturday", key: "scheduledTask.weekday.sat" },
-  { value: "sunday", key: "scheduledTask.weekday.sun" },
-];
-
-function twoDigits(value: number): string {
-  return value.toString().padStart(2, "0");
-}
-
-function scheduleTime(schedule: ScheduledTaskSchedule): string {
-  if (schedule.kind === "every_hours") return "09:00";
-  return `${twoDigits(schedule.hour)}:${twoDigits(schedule.minute)}`;
-}
-
-function scheduleLabel(
-  schedule: ScheduledTaskSchedule,
-  t: ReturnType<typeof useTranslation>["t"],
-): string {
-  if (schedule.kind === "every_hours") {
-    return t("scheduledTask.scheduleEvery", { count: schedule.interval });
-  }
-  const time = scheduleTime(schedule);
-  if (schedule.kind === "daily") {
-    return t("scheduledTask.scheduleDaily", { time });
-  }
-  const labels = new Map(WEEKDAYS.map((day) => [day.value, t(day.key)]));
-  return t("scheduledTask.scheduleWeekly", {
-    days: schedule.weekdays.map((day) => labels.get(day) ?? day).join(", "),
-    time,
-  });
-}
-
-function historyStatusLabel(
-  entry: ScheduledTaskHistoryEntry,
-  t: ReturnType<typeof useTranslation>["t"],
-): string {
-  if (entry.kind === "missed") {
-    return t(`scheduledTask.historyReason.${entry.reason}`);
-  }
-  if (entry.failureReason !== null) {
-    return t(`scheduledTask.failureReason.${entry.failureReason}`);
-  }
-  return t(`scheduledTask.historyStatus.${entry.status}`);
-}
-
-function formatTimestamp(timestamp: bigint): string {
-  return new Date(Number(timestamp)).toLocaleString();
-}
-
-function ScheduledTaskHistoryDialog({
-  task,
-  onOpenChange,
-}: {
+/** Names one pending destructive action awaiting explicit confirmation. */
+interface PendingConfirm {
+  kind: "delete" | "revoke";
   task: ScheduledTask;
-  onOpenChange(open: boolean): void;
-}) {
-  const { t } = useTranslation();
-  const history = useScheduledTaskHistory(task.id);
-
-  return (
-    <Dialog open onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle>{t("scheduledTask.history")}</DialogTitle>
-          <DialogDescription>{task.name}</DialogDescription>
-        </DialogHeader>
-        {history.isPending && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Spinner className="size-4" />
-            {t("scheduledTask.historyLoading")}
-          </div>
-        )}
-        {history.error && (
-          <p data-selectable className="text-sm text-destructive">
-            {localizeContractError(history.error, t)}
-          </p>
-        )}
-        {!history.isPending && !history.error && history.data?.length === 0 && (
-          <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-            {t("scheduledTask.historyEmpty")}
-          </p>
-        )}
-        <div className="grid gap-2">
-          {history.data?.map((entry) => (
-            <article
-              key={
-                entry.kind === "run"
-                  ? entry.id
-                  : `missed-${entry.scheduledAt.toString()}`
-              }
-              className="rounded-lg border p-3"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm font-medium">
-                  {historyStatusLabel(entry, t)}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  {formatTimestamp(entry.scheduledAt)}
-                </span>
-              </div>
-              {entry.kind === "run" && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {t("scheduledTask.historyRevision", {
-                    revision: entry.revision.toString(),
-                  })}
-                  {entry.sessionId === null
-                    ? ""
-                    : ` · ${t("scheduledTask.historySession", {
-                        session: entry.sessionId,
-                      })}`}
-                  {entry.worktreePath === null
-                    ? ""
-                    : ` · ${t("scheduledTask.historyWorktree", {
-                        worktree: entry.worktreePath,
-                      })}`}
-                </p>
-              )}
-            </article>
-          ))}
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-interface ScheduledTaskFormProps {
-  open: boolean;
-  task: ScheduledTask | null;
-  projects: Project[];
-  agents: AgentEntry[];
-  onOpenChange(open: boolean): void;
-}
-
-/** Creates or edits the bounded local Scheduled Task definition shape. */
-function ScheduledTaskForm({
-  open,
-  task,
-  projects,
-  agents,
-  onOpenChange,
-}: ScheduledTaskFormProps) {
-  const { t } = useTranslation();
-  const createTask = useCreateScheduledTask();
-  const updateTask = useUpdateScheduledTask();
-  const initialSchedule = task?.schedule ?? {
-    kind: "every_hours" as const,
-    interval: 24,
-  };
-  const [name, setName] = useState(task?.name ?? "");
-  const [prompt, setPrompt] = useState(task?.prompt ?? "");
-  const [projectId, setProjectId] = useState(
-    task?.projectId ?? projects[0]?.id ?? "",
-  );
-  const [agentRef, setAgentRef] = useState(
-    task?.agentRef ?? agents[0]?.agentRef ?? "",
-  );
-  const [model, setModel] = useState(task?.model ?? "");
-  const [scheduleKind, setScheduleKind] = useState(initialSchedule.kind);
-  const [interval, setInterval] = useState(
-    initialSchedule.kind === "every_hours" ? initialSchedule.interval : 24,
-  );
-  const [time, setTime] = useState(scheduleTime(initialSchedule));
-  const [weekdays, setWeekdays] = useState<ScheduledTaskWeekday[]>(
-    initialSchedule.kind === "weekly" ? initialSchedule.weekdays : ["monday"],
-  );
-  const [enabled, setEnabled] = useState(task?.enabled ?? false);
-  // A new definition never ships with pre-checked unattended consent: the user must opt in.
-  const [approved, setApproved] = useState(
-    task !== null && task.approval !== null,
-  );
-  const [validationError, setValidationError] = useState(false);
-  const [submissionError, setSubmissionError] = useState<string | null>(null);
-  const pending = createTask.isPending || updateTask.isPending;
-  const agentOptions = useMemo(
-    () =>
-      task !== null && !agents.some((agent) => agent.agentRef === task.agentRef)
-        ? [
-            ...agents,
-            { agentRef: task.agentRef, label: task.agentRef, logo: null },
-          ]
-        : agents,
-    [agents, task],
-  );
-
-  const toggleWeekday = (weekday: ScheduledTaskWeekday) => {
-    setWeekdays((current) =>
-      current.includes(weekday)
-        ? current.filter((candidate) => candidate !== weekday)
-        : [...current, weekday],
-    );
-  };
-
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    const [hourText, minuteText] = time.split(":");
-    const hour = Number(hourText);
-    const minute = Number(minuteText);
-    const invalid =
-      name.trim() === "" ||
-      prompt.trim() === "" ||
-      projectId === "" ||
-      agentRef === "" ||
-      (enabled && !approved) ||
-      (scheduleKind === "every_hours" && interval < 1) ||
-      (scheduleKind === "weekly" && weekdays.length === 0) ||
-      (scheduleKind !== "every_hours" &&
-        (!Number.isInteger(hour) || !Number.isInteger(minute)));
-    if (invalid) {
-      setValidationError(true);
-      return;
-    }
-    const schedule: ScheduledTaskSchedule =
-      scheduleKind === "every_hours"
-        ? { kind: "every_hours", interval }
-        : scheduleKind === "daily"
-          ? { kind: "daily", hour, minute }
-          : { kind: "weekly", weekdays, hour, minute };
-    setValidationError(false);
-    setSubmissionError(null);
-    try {
-      const common = {
-        name: name.trim(),
-        enabled,
-        schedule,
-        projectId,
-        agentRef,
-        model: model.trim() || null,
-        prompt: prompt.trim(),
-      };
-      if (task === null) {
-        await createTask.mutateAsync({
-          ...common,
-          executionLocation: "local",
-          approvalPolicy: approved ? ("full_auto_in_worktree" as const) : null,
-        });
-      } else {
-        await updateTask.mutateAsync({
-          ...common,
-          taskId: task.id,
-          expectedUpdatedAt: task.updatedAt,
-          // Only an active re-check is a new consent fact. Echoing the stored
-          // approval must neither refresh its consentedAt nor resurrect a
-          // revoked one, and unchecking revokes it explicitly.
-          approvalChange: approved
-            ? task.approval !== null
-              ? ({ kind: "keep" } as const)
-              : ({ kind: "grant", policy: "full_auto_in_worktree" } as const)
-            : ({ kind: "revoke" } as const),
-        });
-      }
-      onOpenChange(false);
-    } catch (error) {
-      setSubmissionError(localizeContractError(error, t));
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={(next) => !pending && onOpenChange(next)}>
-      <DialogContent className="max-h-[86vh] overflow-y-auto sm:max-w-xl">
-        <form onSubmit={submit} className="contents">
-          <DialogHeader>
-            <DialogTitle>
-              {task === null ? t("scheduledTask.new") : t("scheduledTask.edit")}
-            </DialogTitle>
-            <DialogDescription>
-              {t("scheduledTask.description")}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4">
-            <div className="grid gap-1.5">
-              <Label htmlFor="scheduled-task-name">
-                {t("scheduledTask.name")}
-              </Label>
-              <Input
-                id="scheduled-task-name"
-                value={name}
-                disabled={pending}
-                onChange={(event) => setName(event.target.value)}
-                autoFocus
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="scheduled-task-prompt">
-                {t("scheduledTask.prompt")}
-              </Label>
-              <Textarea
-                id="scheduled-task-prompt"
-                value={prompt}
-                disabled={pending}
-                rows={5}
-                onChange={(event) => setPrompt(event.target.value)}
-              />
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="grid gap-1.5">
-                <Label>{t("scheduledTask.project")}</Label>
-                <Select
-                  value={projectId}
-                  disabled={pending}
-                  onValueChange={(value) => setProjectId(value ?? "")}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {projects.map((project) => (
-                      <SelectItem key={project.id} value={project.id}>
-                        {project.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-1.5">
-                <Label>{t("scheduledTask.agent")}</Label>
-                <Select
-                  value={agentRef}
-                  disabled={pending}
-                  onValueChange={(value) => setAgentRef(value ?? "")}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {agentOptions.map((agent) => (
-                      <SelectItem key={agent.agentRef} value={agent.agentRef}>
-                        {agent.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="scheduled-task-model">
-                {t("scheduledTask.model")}
-              </Label>
-              <Input
-                id="scheduled-task-model"
-                value={model}
-                disabled={pending}
-                onChange={(event) => setModel(event.target.value)}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label>{t("scheduledTask.schedule")}</Label>
-              <Select
-                value={scheduleKind}
-                disabled={pending}
-                onValueChange={(value) =>
-                  value &&
-                  setScheduleKind(value as ScheduledTaskSchedule["kind"])
-                }
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="every_hours">
-                    {t("scheduledTask.everyHours")}
-                  </SelectItem>
-                  <SelectItem value="daily">
-                    {t("scheduledTask.daily")}
-                  </SelectItem>
-                  <SelectItem value="weekly">
-                    {t("scheduledTask.weekly")}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              {scheduleKind === "every_hours" ? (
-                <div className="grid gap-1.5">
-                  <Label htmlFor="scheduled-task-interval">
-                    {t("scheduledTask.interval")}
-                  </Label>
-                  <Input
-                    id="scheduled-task-interval"
-                    type="number"
-                    min={1}
-                    value={interval}
-                    disabled={pending}
-                    onChange={(event) =>
-                      setInterval(Number(event.target.value))
-                    }
-                  />
-                </div>
-              ) : (
-                <div className="grid gap-1.5">
-                  <Label htmlFor="scheduled-task-time">
-                    {t("scheduledTask.time")}
-                  </Label>
-                  <Input
-                    id="scheduled-task-time"
-                    type="time"
-                    value={time}
-                    disabled={pending}
-                    onChange={(event) => setTime(event.target.value)}
-                  />
-                </div>
-              )}
-              {scheduleKind === "weekly" && (
-                <div className="grid gap-1.5">
-                  <Label>{t("scheduledTask.weekdays")}</Label>
-                  <div className="flex flex-wrap gap-1.5">
-                    {WEEKDAYS.map((day) => {
-                      const selected = weekdays.includes(day.value);
-                      return (
-                        <Button
-                          key={day.value}
-                          type="button"
-                          size="sm"
-                          variant={selected ? "secondary" : "outline"}
-                          disabled={pending}
-                          aria-pressed={selected}
-                          onClick={() => toggleWeekday(day.value)}
-                        >
-                          {t(day.key)}
-                        </Button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-            <div className="grid gap-2 rounded-lg border p-3">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm font-medium">
-                  {t("scheduledTask.local")}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  {t("scheduledTask.cloud")}
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <Label
-                  htmlFor="scheduled-task-approval"
-                  className="leading-snug"
-                >
-                  {t("scheduledTask.approval")}
-                </Label>
-                <Switch
-                  id="scheduled-task-approval"
-                  checked={approved}
-                  disabled={pending}
-                  onCheckedChange={setApproved}
-                />
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {t("scheduledTask.approvalHelp")}
-              </p>
-              <div className="flex items-center justify-between gap-3">
-                <Label htmlFor="scheduled-task-enabled">
-                  {t("scheduledTask.enabled")}
-                </Label>
-                <Switch
-                  id="scheduled-task-enabled"
-                  checked={enabled}
-                  disabled={pending}
-                  onCheckedChange={setEnabled}
-                />
-              </div>
-            </div>
-            {validationError && (
-              <p className="text-sm text-destructive">
-                {t("scheduledTask.validation")}
-              </p>
-            )}
-            {submissionError && (
-              <p data-selectable className="text-sm text-destructive">
-                {submissionError}
-              </p>
-            )}
-          </div>
-          <DialogFooter>
-            <Button
-              type="submit"
-              disabled={
-                pending ||
-                projects.length === 0 ||
-                (task === null && agents.length === 0)
-              }
-            >
-              {pending && <Spinner className="size-4" />}
-              {task === null
-                ? t("scheduledTask.create")
-                : t("scheduledTask.save")}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
 }
 
 /** First-release Scheduled Task definition list and editor. */
@@ -558,8 +41,13 @@ export function ScheduledTaskManager() {
   const updateTask = useUpdateScheduledTask();
   const deleteTask = useDeleteScheduledTask();
   const revokeApproval = useRevokeScheduledTaskApproval();
+  const sidebarCollapsed = useUiStore((state) => state.sidebarCollapsed);
+  const setSidebarCollapsed = useUiStore((state) => state.setSidebarCollapsed);
   const [editing, setEditing] = useState<ScheduledTask | null | undefined>();
   const [historyTask, setHistoryTask] = useState<ScheduledTask | null>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(
+    null,
+  );
   const projects = useMemo(
     () => projectsQuery.data ?? [],
     [projectsQuery.data],
@@ -604,6 +92,16 @@ export function ScheduledTaskManager() {
   return (
     <section className="flex size-full min-w-0 flex-col bg-background">
       <header className="flex items-center gap-4 border-b px-6 py-5">
+        {sidebarCollapsed && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setSidebarCollapsed(false)}
+            aria-label={t("sidebar.expand")}
+          >
+            <IconLayoutSidebarLeftExpand />
+          </Button>
+        )}
         <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
           <IconCalendarClock className="size-5" />
         </div>
@@ -724,11 +222,7 @@ export function ScheduledTaskManager() {
                     size="sm"
                     variant="ghost"
                     disabled={revokeApproval.isPending}
-                    onClick={() =>
-                      window.confirm(
-                        t("scheduledTask.revokeConfirm", { name: task.name }),
-                      ) && revokeApproval.mutate(task)
-                    }
+                    onClick={() => setPendingConfirm({ kind: "revoke", task })}
                   >
                     <IconShieldX />
                     {t("scheduledTask.revoke")}
@@ -748,11 +242,7 @@ export function ScheduledTaskManager() {
                   size="sm"
                   variant="ghost"
                   disabled={deleteTask.isPending}
-                  onClick={() =>
-                    window.confirm(
-                      t("scheduledTask.deleteConfirm", { name: task.name }),
-                    ) && deleteTask.mutate(task)
-                  }
+                  onClick={() => setPendingConfirm({ kind: "delete", task })}
                 >
                   <IconTrash />
                   {t("scheduledTask.delete")}
@@ -776,6 +266,36 @@ export function ScheduledTaskManager() {
         <ScheduledTaskHistoryDialog
           task={historyTask}
           onOpenChange={(open) => !open && setHistoryTask(null)}
+        />
+      )}
+      {pendingConfirm !== null && (
+        <ScheduledTaskConfirmDialog
+          title={
+            pendingConfirm.kind === "delete"
+              ? t("scheduledTask.deleteTitle")
+              : t("scheduledTask.revoke")
+          }
+          description={t(
+            pendingConfirm.kind === "delete"
+              ? "scheduledTask.deleteConfirm"
+              : "scheduledTask.revokeConfirm",
+            { name: pendingConfirm.task.name },
+          )}
+          confirmLabel={
+            pendingConfirm.kind === "delete"
+              ? t("common.delete")
+              : t("scheduledTask.revoke")
+          }
+          busy={deleteTask.isPending || revokeApproval.isPending}
+          onConfirm={() => {
+            if (pendingConfirm.kind === "delete") {
+              deleteTask.mutate(pendingConfirm.task);
+            } else {
+              revokeApproval.mutate(pendingConfirm.task);
+            }
+            setPendingConfirm(null);
+          }}
+          onOpenChange={(open) => !open && setPendingConfirm(null)}
         />
       )}
     </section>

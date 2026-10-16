@@ -1,10 +1,11 @@
 use ora_application::{RepositoryError, ScheduledTaskRepository, ScheduledTaskUpdateResolution};
 use ora_domain::{
-    AgentRef, AuditFields, FULL_AUTO_IN_WORKTREE_POLICY, ProjectId, ScheduledTask,
-    ScheduledTaskApproval, ScheduledTaskExecutionLocation, ScheduledTaskId, ScheduledTaskSchedule,
+    AgentRef, AuditFields, ProjectId, ScheduledTask, ScheduledTaskExecutionLocation,
+    ScheduledTaskId, ScheduledTaskSchedule,
 };
 use rusqlite::{Row, params};
 
+use crate::repository::scheduled_approval::{approval_columns, map_approval_columns};
 use crate::repository::{RepositoryPool, connection::bool_to_sqlite};
 
 /// Persists Scheduled Task definitions through the shared SQLite pool.
@@ -252,27 +253,6 @@ fn execution_location_column(location: ScheduledTaskExecutionLocation) -> &'stat
     match location {
         ScheduledTaskExecutionLocation::Local => "local",
         ScheduledTaskExecutionLocation::Cloud => "cloud",
-    }
-}
-
-fn approval_columns(approval: Option<&ScheduledTaskApproval>) -> (Option<String>, Option<i64>) {
-    approval
-        .map(|approval| (Some(approval.policy.clone()), Some(approval.consented_at)))
-        .unwrap_or((None, None))
-}
-
-fn map_approval_columns(
-    policy: Option<String>,
-    consented_at: Option<i64>,
-) -> Result<Option<ScheduledTaskApproval>, crate::DatabaseError> {
-    match (policy, consented_at) {
-        (None, None) => Ok(None),
-        (Some(policy), Some(consented_at)) if policy == FULL_AUTO_IN_WORKTREE_POLICY => Ok(Some(
-            ScheduledTaskApproval::full_auto_in_worktree(consented_at),
-        )),
-        (policy, consented_at) => Err(crate::DatabaseError::CorruptScheduledTaskApproval(format!(
-            "policy={policy:?}, consented_at={consented_at:?}"
-        ))),
     }
 }
 

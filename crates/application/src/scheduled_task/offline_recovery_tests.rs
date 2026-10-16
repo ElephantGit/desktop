@@ -13,12 +13,18 @@ use super::{
 use crate::RepositoryError;
 
 #[test]
-fn offline_interval_records_only_its_latest_due_point() {
+fn offline_interval_records_only_its_latest_expired_point() {
     let repository = RecordingOccurrenceRepository::default();
     let handler = RecordOfflineMissedOccurrenceHandler::new(&repository);
 
+    // 100_000 and 200_000 are past their ten-minute window at 800_001; 300_000 and 700_000 are
+    // still inside theirs, so only the latest expired point may be recorded.
     let result = handler
-        .handle(&scheduled_task(), [100, 200, 300, 500], 400)
+        .handle(
+            &scheduled_task(),
+            [100_000, 200_000, 300_000, 700_000],
+            800_001,
+        )
         .expect("record offline interval");
 
     let OfflineRecoveryResolution::Recorded(resolution) = result else {
@@ -27,20 +33,50 @@ fn offline_interval_records_only_its_latest_due_point() {
     let ScheduledOccurrenceResolution::Missed(missed) = *resolution else {
         panic!("offline recovery must persist a missed outcome");
     };
-    assert_eq!(missed.occurrence.scheduled_at, 300);
+    assert_eq!(missed.occurrence.scheduled_at, 200_000);
     assert_eq!(missed.reason, ScheduledMissReason::AppNotRunning);
-    assert_eq!(missed.observed_at, 400);
+    assert_eq!(missed.observed_at, 800_001);
     assert_eq!(repository.calls(), 1);
 }
 
 #[test]
-fn offline_interval_without_a_due_point_records_nothing() {
+fn a_point_inside_its_lateness_window_is_left_for_live_admission() {
+    let repository = RecordingOccurrenceRepository::default();
+    let handler = RecordOfflineMissedOccurrenceHandler::new(&repository);
+
+    // Restarting three minutes after the due time is a normal late trigger per the ADR, not a
+    // missed occurrence; recording it would permanently block the live run.
+    assert_eq!(
+        handler
+            .handle(&scheduled_task(), [1_000_000], 1_180_000)
+            .expect("ignore inside-window point"),
+        OfflineRecoveryResolution::NothingMissed
+    );
+    assert_eq!(repository.calls(), 0);
+}
+
+#[test]
+fn the_exact_window_boundary_still_belongs_to_live_admission() {
     let repository = RecordingOccurrenceRepository::default();
     let handler = RecordOfflineMissedOccurrenceHandler::new(&repository);
 
     assert_eq!(
         handler
-            .handle(&scheduled_task(), [500, 600], 400)
+            .handle(&scheduled_task(), [1_000_000], 1_600_000)
+            .expect("ignore boundary point"),
+        OfflineRecoveryResolution::NothingMissed
+    );
+    assert_eq!(repository.calls(), 0);
+}
+
+#[test]
+fn offline_interval_without_an_expired_point_records_nothing() {
+    let repository = RecordingOccurrenceRepository::default();
+    let handler = RecordOfflineMissedOccurrenceHandler::new(&repository);
+
+    assert_eq!(
+        handler
+            .handle(&scheduled_task(), [500_000, 600_000], 400_000)
             .expect("ignore future points"),
         OfflineRecoveryResolution::NothingMissed
     );

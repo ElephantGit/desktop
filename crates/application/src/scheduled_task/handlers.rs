@@ -544,7 +544,7 @@ where
     }
     let workspace = workspaces
         .find_main_workspace(&task.project_id)
-        .map_err(ApplicationError::from_workflow_run_repository_error)?
+        .map_err(ApplicationError::from_workspace_repository_error)?
         .filter(ora_domain::Workspace::is_admissible)
         .ok_or(ApplicationError::ScheduledTaskRequiresGitProject)?;
     let WorkspaceLocation::LocalFilesystem { path } = workspace.location else {

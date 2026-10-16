@@ -7,12 +7,12 @@ use ora_domain::{
     AgentRef, MAX_CONCURRENT_LOCAL_SCHEDULED_RUNS, MAX_SCHEDULED_TASK_HISTORY_ENTRIES, ProjectId,
     ScheduledMissReason, ScheduledMissedOccurrence, ScheduledOccurrence, ScheduledRun,
     ScheduledRunFailureReason, ScheduledRunId, ScheduledRunSnapshot, ScheduledRunStatus,
-    ScheduledRunTransition, ScheduledTaskApproval, ScheduledTaskHistoryEntry, ScheduledTaskId,
-    SessionId,
+    ScheduledRunTransition, ScheduledTaskHistoryEntry, ScheduledTaskId, SessionId,
 };
 use rusqlite::{Row, Transaction, TransactionBehavior, params};
 
 use crate::repository::RepositoryPool;
+use crate::repository::scheduled_approval::{approval_columns, map_approval_columns};
 
 /// Atomically resolves accepted and missed Scheduled Task occurrences through SQLite.
 #[derive(Clone, Debug)]
@@ -71,7 +71,11 @@ impl ScheduledOccurrenceRepository for SqliteScheduledRunRepository {
                     load_existing_resolution(&transaction, &occurrence)?
                 };
                 if inserted {
-                    prune_oldest_history(&transaction, &occurrence.task_id)?;
+                    prune_oldest_history(
+                        &transaction,
+                        &occurrence.task_id,
+                        occurrence.scheduled_at,
+                    )?;
                 }
                 transaction.commit()?;
                 Ok(resolution)
@@ -189,25 +193,31 @@ fn map_history_row(row: &Row<'_>) -> Result<ScheduledTaskHistoryEntry, crate::Da
 fn prune_oldest_history(
     transaction: &Transaction<'_>,
     task_id: &ScheduledTaskId,
+    just_inserted_at: i64,
 ) -> Result<(), crate::DatabaseError> {
+    // The occurrence persisted by this transaction must never prune itself: deleting the
+    // just-written identity would break replay idempotency for late (offline-recovery) points
+    // that land behind a full history. The retention bound stays exact by keeping only the
+    // newest `bound - 1` older facts plus the just-inserted one.
     let retained_offset = MAX_SCHEDULED_TASK_HISTORY_ENTRIES;
+    let retained_others = retained_offset - 1;
     transaction.execute(
         "DELETE FROM scheduled_runs
          WHERE task_id = ?1 AND scheduled_at IN (
              SELECT scheduled_at
              FROM scheduled_occurrences
-             WHERE task_id = ?1
+             WHERE task_id = ?1 AND scheduled_at != ?3
              ORDER BY scheduled_at DESC
              LIMIT -1 OFFSET ?2
          ) AND status NOT IN ('accepted', 'running')",
-        params![task_id.as_ref(), retained_offset],
+        params![task_id.as_ref(), retained_others, just_inserted_at],
     )?;
     transaction.execute(
         "DELETE FROM scheduled_occurrences
          WHERE task_id = ?1 AND scheduled_at IN (
              SELECT scheduled_at
              FROM scheduled_occurrences
-             WHERE task_id = ?1
+             WHERE task_id = ?1 AND scheduled_at != ?3
              ORDER BY scheduled_at DESC
              LIMIT -1 OFFSET ?2
          ) AND NOT EXISTS (
@@ -216,7 +226,7 @@ fn prune_oldest_history(
                AND scheduled_runs.scheduled_at = scheduled_occurrences.scheduled_at
                AND scheduled_runs.status IN ('accepted', 'running')
          )",
-        params![task_id.as_ref(), retained_offset],
+        params![task_id.as_ref(), retained_others, just_inserted_at],
     )?;
     Ok(())
 }
@@ -468,31 +478,6 @@ fn parse_missed_reason(value: &str) -> Result<ScheduledMissReason, crate::Databa
         _ => Err(crate::DatabaseError::CorruptScheduledMissReason(
             value.to_string(),
         )),
-    }
-}
-
-fn approval_columns(approval: Option<&ScheduledTaskApproval>) -> (Option<String>, Option<i64>) {
-    approval
-        .map(|approval| (Some(approval.policy.clone()), Some(approval.consented_at)))
-        .unwrap_or((None, None))
-}
-
-fn map_approval_columns(
-    policy: Option<String>,
-    consented_at: Option<i64>,
-) -> Result<Option<ScheduledTaskApproval>, crate::DatabaseError> {
-    match (policy, consented_at) {
-        (None, None) => Ok(None),
-        (Some(policy), Some(consented_at))
-            if policy == ora_domain::FULL_AUTO_IN_WORKTREE_POLICY =>
-        {
-            Ok(Some(ScheduledTaskApproval::full_auto_in_worktree(
-                consented_at,
-            )))
-        }
-        (policy, consented_at) => Err(crate::DatabaseError::CorruptScheduledTaskApproval(format!(
-            "policy={policy:?}, consented_at={consented_at:?}"
-        ))),
     }
 }
 
@@ -862,6 +847,58 @@ mod tests {
 
         assert_eq!(active_count, 1);
         assert_eq!(occurrence_count, 101);
+    }
+
+    #[test]
+    fn a_late_point_behind_a_full_history_never_prunes_itself() {
+        let (temp_dir, pool) = bootstrapped_pool();
+        seed_definition(&pool, temp_dir.path());
+        let repository = SqliteScheduledRunRepository::new(pool.clone());
+        for scheduled_at in 1_000_000_i64..=1_000_099 {
+            repository
+                .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Missed(
+                    ScheduledMissedOccurrence {
+                        occurrence: occurrence(scheduled_at),
+                        reason: ScheduledMissReason::AppNotRunning,
+                        observed_at: scheduled_at,
+                    },
+                ))
+                .expect("fill history");
+        }
+
+        // Offline recovery of a far older point must keep its identity even though it lands
+        // behind 100 newer facts; replaying it must return the same missed outcome.
+        let late = ScheduledMissedOccurrence {
+            occurrence: occurrence(1),
+            reason: ScheduledMissReason::AppNotRunning,
+            observed_at: 2_000_000,
+        };
+        assert_eq!(
+            repository
+                .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Missed(late.clone()))
+                .expect("persist late offline point"),
+            ScheduledOccurrenceResolution::Missed(late.clone())
+        );
+        assert_eq!(
+            repository
+                .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Missed(late.clone()))
+                .expect("replay late offline point"),
+            ScheduledOccurrenceResolution::ExistingMissed(late)
+        );
+        let (history_count, oldest): (i64, i64) = pool
+            .with_connection(|connection| {
+                connection
+                    .query_row(
+                        "SELECT COUNT(*), MIN(scheduled_at) FROM scheduled_occurrences
+                     WHERE task_id = 'scheduled-task-1'",
+                        [],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .map_err(Into::into)
+            })
+            .expect("read retained history");
+        assert_eq!(history_count, 100);
+        assert_eq!(oldest, 1);
     }
 
     #[test]

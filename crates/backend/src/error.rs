@@ -543,6 +543,7 @@ impl From<ApplicationError> for BackendError {
             | ApplicationError::TaskFilesystem { .. }
             | ApplicationError::TaskWorktreeProvisioner { .. }
             | ApplicationError::WorkspaceDiff { .. }
+            | ApplicationError::WorkspaceRepository { .. }
             | ApplicationError::WorktreeRepository { .. }
             | ApplicationError::SessionRepository { .. }
             | ApplicationError::UserConfigRepository { .. }

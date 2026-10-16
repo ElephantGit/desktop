@@ -1,5 +1,6 @@
 use ora_domain::{
-    ScheduledMissReason, ScheduledMissedOccurrence, ScheduledOccurrence, ScheduledTask,
+    MAX_SCHEDULED_OCCURRENCE_LATENESS_MILLIS, ScheduledMissReason, ScheduledMissedOccurrence,
+    ScheduledOccurrence, ScheduledTask,
 };
 
 use super::{
@@ -30,6 +31,12 @@ where
     Repository: ScheduledOccurrenceRepository,
 {
     /// Persists only the latest due point so a long shutdown never creates an unbounded history.
+    ///
+    /// Per the approved ADR, a point whose ten-minute lateness window is still open at startup is
+    /// not missed: Desktop was merely late, so the live scheduler may still run it normally.
+    /// Recording such a point as `app_not_running` would poison the occurrence identity and
+    /// permanently block that future admission, so only points whose window has already expired
+    /// are persisted here.
     pub fn handle(
         &self,
         task: &ScheduledTask,
@@ -38,7 +45,11 @@ where
     ) -> Result<OfflineRecoveryResolution, ApplicationError> {
         let Some(scheduled_at) = scheduled_times
             .into_iter()
-            .filter(|scheduled_at| *scheduled_at <= observed_at)
+            .filter(|scheduled_at| {
+                *scheduled_at <= observed_at
+                    && observed_at.saturating_sub(*scheduled_at)
+                        > MAX_SCHEDULED_OCCURRENCE_LATENESS_MILLIS
+            })
             .max()
         else {
             return Ok(OfflineRecoveryResolution::NothingMissed);

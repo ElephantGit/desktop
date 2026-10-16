@@ -6,6 +6,7 @@ mod git_cleanup_job;
 mod marketplace_source;
 mod pack_installation;
 mod project;
+mod scheduled_approval;
 mod scheduled_run;
 mod scheduled_task;
 mod session;
