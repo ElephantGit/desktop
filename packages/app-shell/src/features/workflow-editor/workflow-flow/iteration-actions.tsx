@@ -1,4 +1,10 @@
-import { type CSSProperties, type ReactNode, useMemo } from "react";
+import {
+  type CSSProperties,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { IconPlus } from "@tabler/icons-react";
 import type { Edge, Node } from "@xyflow/react";
@@ -24,6 +30,35 @@ import {
   WorkflowIterationActionsContext,
 } from "./iteration-actions-context";
 
+/** Topology that decides insert affordances. Card titles and case text are omitted. */
+function iterationActionsStructureKey(
+  nodes: readonly Node<WorkflowNodeData, "workflow">[],
+  edges: readonly Edge[],
+): string {
+  const nodePart = nodes
+    .map((node) =>
+      [
+        node.id,
+        node.parentId ?? "",
+        node.data.kind,
+        node.data.containerId ?? "",
+      ].join("\u001f"),
+    )
+    .join("\u001e");
+  const edgePart = edges
+    .map((edge) =>
+      [
+        edge.id,
+        edge.source,
+        edge.sourceHandle ?? "",
+        edge.target,
+        edge.targetHandle ?? "",
+      ].join("\u001f"),
+    )
+    .join("\u001e");
+  return `${nodePart}\u0000${edgePart}`;
+}
+
 /** Provides graph-aware iteration authoring actions to custom nodes and edges. */
 export function WorkflowIterationActionsProvider({
   capabilities,
@@ -45,10 +80,26 @@ export function WorkflowIterationActionsProvider({
   onToggleCollapsed: (iterationId: string) => void;
   children: ReactNode;
 }) {
+  const onInsertRef = useRef(onInsert);
+  const onToggleCollapsedRef = useRef(onToggleCollapsed);
+  useEffect(() => {
+    onInsertRef.current = onInsert;
+    onToggleCollapsedRef.current = onToggleCollapsed;
+  });
+  // Node config edits replace the nodes array but do not change where a card
+  // can be inserted. Reuse the last topology so every other card stays put.
+  const structureKey = iterationActionsStructureKey(nodes, edges);
+  const graph = useMemo(
+    () => ({ nodes, edges }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- topology only; config edits must not refresh every card
+    [structureKey],
+  );
   const value = useMemo<WorkflowIterationActions>(() => {
-    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    const currentNodes = graph.nodes;
+    const currentEdges = graph.edges;
+    const nodeById = new Map(currentNodes.map((node) => [node.id, node]));
     const iterationIds = new Set(
-      nodes
+      currentNodes
         .filter((node) => node.data.kind === "iteration")
         .map((node) => node.id),
     );
@@ -104,7 +155,7 @@ export function WorkflowIterationActionsProvider({
         if (iterationId === null) {
           return null;
         }
-        const occupied = edges.some(
+        const occupied = currentEdges.some(
           (edge) =>
             edge.source === nodeId &&
             (sourceHandle == null
@@ -115,17 +166,14 @@ export function WorkflowIterationActionsProvider({
           ? null
           : { type: "output", iterationId, sourceId: nodeId, sourceHandle };
       },
-      insert: onInsert,
-      toggleCollapsed: onToggleCollapsed,
+      insert: (kind, insertion) => {
+        onInsertRef.current(kind, insertion);
+      },
+      toggleCollapsed: (iterationId) => {
+        onToggleCollapsedRef.current(iterationId);
+      },
     };
-  }, [
-    capabilities.nodeTypes,
-    edges,
-    nodes,
-    onInsert,
-    onToggleCollapsed,
-    readOnly,
-  ]);
+  }, [capabilities.nodeTypes, graph, readOnly]);
   return (
     <WorkflowIterationActionsContext.Provider value={value}>
       {children}

@@ -42,5 +42,10 @@ export function useWorkflowAnalysis(ownerId: string, graph: string) {
     gcTime: 0,
     retry: false,
     enabled: ownerId !== "",
+    // A config edit changes the document key before the next membership
+    // arrives. Keep this workflow's previous result so unused badges and the
+    // status line do not blank out and repaint every card.
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey[2] === ownerId ? previousData : undefined,
   });
 }

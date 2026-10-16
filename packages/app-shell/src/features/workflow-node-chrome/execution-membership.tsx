@@ -1,6 +1,9 @@
-import type { ReactNode } from "react";
-import { UnusedNodes } from "./execution-membership-context";
+import { useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import {
+  UnusedMembershipContext,
+  createWorkflowUnusedMembership,
+} from "./execution-membership-context";
 
 /** Carries backend-derived participation without mutating persisted node data. */
 export function WorkflowMembershipProvider({
@@ -10,10 +13,16 @@ export function WorkflowMembershipProvider({
   unusedNodeIds: readonly string[];
   children: ReactNode;
 }) {
+  const [membership] = useState(createWorkflowUnusedMembership);
+  useEffect(() => {
+    if (membership.replace(unusedNodeIds)) {
+      membership.emit();
+    }
+  }, [membership, unusedNodeIds]);
   return (
-    <UnusedNodes.Provider value={unusedNodeIds}>
+    <UnusedMembershipContext.Provider value={membership}>
       {children}
-    </UnusedNodes.Provider>
+    </UnusedMembershipContext.Provider>
   );
 }
 
