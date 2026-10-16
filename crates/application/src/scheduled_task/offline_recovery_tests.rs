@@ -65,7 +65,7 @@ impl ScheduledOccurrenceRepository for &RecordingOccurrenceRepository {
     ) -> Result<ScheduledOccurrenceResolution, RepositoryError> {
         let resolution = match &candidate {
             ScheduledOccurrenceCandidate::Run(run) => {
-                ScheduledOccurrenceResolution::Admitted(run.clone())
+                ScheduledOccurrenceResolution::Admitted((**run).clone())
             }
             ScheduledOccurrenceCandidate::Missed(missed) => {
                 ScheduledOccurrenceResolution::Missed(missed.clone())

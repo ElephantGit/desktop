@@ -54,7 +54,7 @@ impl ScheduledOccurrenceRepository for SqliteScheduledRunRepository {
                 let resolution = if inserted {
                     match &candidate {
                         ScheduledOccurrenceCandidate::Run(run) => {
-                            let mut admitted = run.clone();
+                            let mut admitted = (**run).clone();
                             admitted.status =
                                 admission_status(&transaction, &admitted.occurrence.task_id)?;
                             insert_scheduled_run(&transaction, &admitted)?;
@@ -529,7 +529,7 @@ mod tests {
             91,
         );
         repository
-            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Run(run))
+            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::run(run))
             .expect("admit run");
 
         let running = repository
@@ -602,7 +602,7 @@ mod tests {
             ScheduledRun::accepted(ScheduledRunId::new("run-1"), occurrence.clone(), &task, 101);
         assert_eq!(
             repository
-                .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Run(first.clone()))
+                .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::run(first.clone()))
                 .expect("admit first run"),
             ScheduledOccurrenceResolution::Admitted(first.clone())
         );
@@ -614,7 +614,7 @@ mod tests {
             ScheduledRun::accepted(ScheduledRunId::new("run-2"), occurrence, &edited_task, 102);
         assert_eq!(
             repository
-                .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Run(replay))
+                .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::run(replay))
                 .expect("replay occurrence"),
             ScheduledOccurrenceResolution::ExistingRun(first)
         );
@@ -646,7 +646,7 @@ mod tests {
         );
         assert_eq!(
             repository
-                .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Run(run))
+                .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::run(run))
                 .expect("replay missed occurrence"),
             ScheduledOccurrenceResolution::ExistingMissed(missed)
         );
@@ -672,7 +672,7 @@ mod tests {
             301,
         );
         let first = repository
-            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Run(first))
+            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::run(first))
             .expect("admit active run");
         assert!(matches!(
             first,
@@ -689,7 +689,7 @@ mod tests {
             401,
         );
         let second = repository
-            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Run(second))
+            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::run(second))
             .expect("record busy skip");
         assert!(matches!(
             second,
@@ -724,7 +724,7 @@ mod tests {
                 2_000 + index,
             );
             let resolution = repository
-                .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Run(run))
+                .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::run(run))
                 .expect("admit within capacity");
             assert!(matches!(
                 resolution,
@@ -747,7 +747,7 @@ mod tests {
         );
         assert!(matches!(
             repository
-                .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Run(fifth))
+                .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::run(fifth))
                 .expect("record capacity skip"),
             ScheduledOccurrenceResolution::Admitted(ScheduledRun {
                 status: ora_domain::ScheduledRunStatus::SkippedCapacity,
@@ -765,7 +765,7 @@ mod tests {
 
         for scheduled_at in 1_i64..=101 {
             let candidate = if scheduled_at % 2 == 0 {
-                ScheduledOccurrenceCandidate::Run(ScheduledRun::accepted(
+                ScheduledOccurrenceCandidate::run(ScheduledRun::accepted(
                     ScheduledRunId::new(format!("run-{scheduled_at}")),
                     occurrence(scheduled_at),
                     &scheduled_task(),
@@ -814,7 +814,7 @@ mod tests {
         seed_definition(&pool, temp_dir.path());
         let repository = SqliteScheduledRunRepository::new(pool.clone());
         repository
-            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Run(
+            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::run(
                 ScheduledRun::accepted(
                     ScheduledRunId::new("run-active"),
                     occurrence(1),
@@ -869,7 +869,7 @@ mod tests {
             11,
         );
         repository
-            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Run(run.clone()))
+            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::run(run.clone()))
             .expect("persist run");
         let missed = ScheduledMissedOccurrence {
             occurrence: occurrence(20),

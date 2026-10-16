@@ -45,7 +45,7 @@ where
                 return Ok(ScheduledOccurrenceResolution::NotDue);
             }
             ScheduledOccurrenceTiming::Due => {
-                ScheduledOccurrenceCandidate::Run(ScheduledRun::accepted(
+                ScheduledOccurrenceCandidate::run(ScheduledRun::accepted(
                     self.id_generator.generate_scheduled_run_id(),
                     occurrence,
                     task,

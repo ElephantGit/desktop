@@ -52,11 +52,16 @@ pub trait ScheduledTaskTargetValidator {
 /// Supplies the fact a scheduler wants to persist for one planned occurrence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScheduledOccurrenceCandidate {
-    Run(ScheduledRun),
+    Run(Box<ScheduledRun>),
     Missed(ScheduledMissedOccurrence),
 }
 
 impl ScheduledOccurrenceCandidate {
+    /// Stores a scheduled run behind one pointer so the short missed fact stays compact.
+    pub fn run(run: ScheduledRun) -> Self {
+        Self::Run(Box::new(run))
+    }
+
     /// Returns the stable planned identity shared by run and missed facts.
     pub fn occurrence(&self) -> &ScheduledOccurrence {
         match self {

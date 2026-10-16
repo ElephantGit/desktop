@@ -104,7 +104,7 @@ impl ScheduledOccurrenceRepository for MemoryScheduledOccurrenceRepository {
         if let Some(existing) = stored.as_ref() {
             return Ok(match existing {
                 ScheduledOccurrenceCandidate::Run(run) => {
-                    ScheduledOccurrenceResolution::ExistingRun(run.clone())
+                    ScheduledOccurrenceResolution::ExistingRun((**run).clone())
                 }
                 ScheduledOccurrenceCandidate::Missed(missed) => {
                     ScheduledOccurrenceResolution::ExistingMissed(missed.clone())
@@ -113,7 +113,7 @@ impl ScheduledOccurrenceRepository for MemoryScheduledOccurrenceRepository {
         }
         let resolution = match &candidate {
             ScheduledOccurrenceCandidate::Run(run) => {
-                ScheduledOccurrenceResolution::Admitted(run.clone())
+                ScheduledOccurrenceResolution::Admitted((**run).clone())
             }
             ScheduledOccurrenceCandidate::Missed(missed) => {
                 ScheduledOccurrenceResolution::Missed(missed.clone())
