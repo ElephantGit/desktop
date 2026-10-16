@@ -67,7 +67,10 @@ function scheduledTaskHandlers(
 ): TestHandlers {
   return {
     listProjects: async () => ({
-      projects: [{ id: "project-1", name: "Ora Desktop" }],
+      projects: [
+        { id: "project-1", name: "Ora Desktop" },
+        { id: "project-2", name: "Another project" },
+      ],
     }),
     listInstalledPlugins: async () => ({ plugins: seededAgentPackages() }),
     getAgentRuntimeStatus: async () => ({
@@ -216,6 +219,38 @@ describe("ScheduledTaskManager consent handling", () => {
     expect(updates[0]?.approvalChange).toEqual({
       kind: "grant",
       policy: "full_auto_in_worktree",
+    });
+  });
+
+  it("requires a fresh consent after changing the target project", async () => {
+    const user = userEvent.setup();
+    const tasks = [CONSENTED_TASK];
+    const updates: UpdateScheduledTaskRequest[] = [];
+    renderManager(scheduledTaskHandlers(tasks, updates));
+
+    await user.click(
+      await screen.findByRole("button", { name: "编辑定时任务" }),
+    );
+    const approval = await screen.findByRole("switch", {
+      name: APPROVAL_LABEL,
+    });
+    expect(approval).toBeChecked();
+    await user.click(screen.getAllByRole("combobox")[0]!);
+    await user.click(
+      await screen.findByRole("option", { name: "Another project" }),
+    );
+    expect(approval).not.toBeChecked();
+
+    await user.click(approval);
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(updates).toHaveLength(1));
+    expect(updates[0]).toMatchObject({
+      projectId: "project-2",
+      approvalChange: {
+        kind: "grant",
+        policy: "full_auto_in_worktree",
+      },
     });
   });
 

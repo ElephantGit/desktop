@@ -152,7 +152,7 @@ export function ScheduledTaskForm({
           // approval must neither refresh its consentedAt nor resurrect a
           // revoked one, and unchecking revokes it explicitly.
           approvalChange: approved
-            ? task.approval !== null
+            ? task.approval !== null && projectId === task.projectId
               ? ({ kind: "keep" } as const)
               : ({ kind: "grant", policy: "full_auto_in_worktree" } as const)
             : ({ kind: "revoke" } as const),
@@ -207,7 +207,15 @@ export function ScheduledTaskForm({
                 <Select
                   value={projectId}
                   disabled={pending}
-                  onValueChange={(value) => setProjectId(value ?? "")}
+                  onValueChange={(value) => {
+                    const nextProjectId = value ?? "";
+                    setProjectId(nextProjectId);
+                    // Consent is scoped to the selected project. Switching a
+                    // project therefore requires an intentional new opt-in.
+                    if (task !== null && nextProjectId !== task.projectId) {
+                      setApproved(false);
+                    }
+                  }}
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue />
