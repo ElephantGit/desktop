@@ -160,7 +160,9 @@ impl ScheduledRunLifecycleRepository for SqliteScheduledRunRepository {
 
 fn map_history_row(row: &Row<'_>) -> Result<ScheduledTaskHistoryEntry, crate::DatabaseError> {
     match row.get::<_, String>("outcome")?.as_str() {
-        "accepted" => Ok(ScheduledTaskHistoryEntry::Run(map_scheduled_run_row(row)?)),
+        "accepted" => Ok(ScheduledTaskHistoryEntry::Run(Box::new(
+            map_scheduled_run_row(row)?,
+        ))),
         "missed" => Ok(ScheduledTaskHistoryEntry::Missed(
             ScheduledMissedOccurrence {
                 occurrence: ScheduledOccurrence {
@@ -888,7 +890,7 @@ mod tests {
                 .expect("list retained history"),
             vec![
                 ScheduledTaskHistoryEntry::Missed(missed),
-                ScheduledTaskHistoryEntry::Run(run),
+                ScheduledTaskHistoryEntry::Run(Box::new(run)),
             ]
         );
     }

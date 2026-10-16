@@ -62,7 +62,7 @@ pub struct ScheduledMissedOccurrence {
 /// Presents one persisted run or missed fact in task history order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ScheduledTaskHistoryEntry {
-    Run(ScheduledRun),
+    Run(Box<ScheduledRun>),
     Missed(ScheduledMissedOccurrence),
 }
 
