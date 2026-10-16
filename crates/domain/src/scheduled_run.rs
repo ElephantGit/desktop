@@ -215,8 +215,10 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use crate::{
-        ScheduledMissReason, ScheduledOccurrence, ScheduledOccurrenceTiming, ScheduledRunStatus,
-        ScheduledRunTransition, ScheduledTaskId, SessionId,
+        AgentRef, AuditFields, ProjectId, ScheduledMissReason, ScheduledOccurrence,
+        ScheduledOccurrenceTiming, ScheduledRun, ScheduledRunId, ScheduledRunStatus,
+        ScheduledRunTransition, ScheduledTask, ScheduledTaskApproval,
+        ScheduledTaskExecutionLocation, ScheduledTaskId, ScheduledTaskSchedule, SessionId,
     };
 
     #[test]
@@ -267,5 +269,51 @@ mod tests {
         assert!(ScheduledRunTransition::Succeed.is_allowed_from(ScheduledRunStatus::Running));
         assert!(!ScheduledRunTransition::Succeed.is_allowed_from(ScheduledRunStatus::Accepted));
         assert!(!ScheduledRunTransition::Cancel.is_allowed_from(ScheduledRunStatus::Succeeded));
+    }
+
+    #[test]
+    fn admitted_run_freezes_execution_inputs_at_its_task_revision() {
+        let approval = ScheduledTaskApproval::full_auto_in_worktree(10);
+        let mut task = ScheduledTask::new(
+            ScheduledTaskId::new("task-1"),
+            "Code quality",
+            true,
+            ScheduledTaskSchedule::daily(9, 30).expect("valid schedule"),
+            ScheduledTaskExecutionLocation::Local,
+            ProjectId::new("project-1"),
+            AgentRef::parse("ora-space/codex").expect("valid agent"),
+            Some("model-1".to_string()),
+            "Run the current checks",
+            Some(approval.clone()),
+            AuditFields::new(1, 1, false),
+        )
+        .expect("valid task");
+        task.revision = 3;
+
+        let run = ScheduledRun::accepted(
+            ScheduledRunId::new("run-1"),
+            ScheduledOccurrence {
+                task_id: task.id.clone(),
+                scheduled_at: 1_000,
+            },
+            &task,
+            1_001,
+        );
+
+        task.revision = 4;
+        task.project_id = ProjectId::new("project-2");
+        task.model = Some("model-2".to_string());
+        task.prompt = "Run a different task".to_string();
+        task.approval = None;
+
+        assert_eq!(run.snapshot.revision, 3);
+        assert_eq!(run.snapshot.project_id, ProjectId::new("project-1"));
+        assert_eq!(
+            run.snapshot.agent_ref,
+            AgentRef::parse("ora-space/codex").unwrap()
+        );
+        assert_eq!(run.snapshot.model.as_deref(), Some("model-1"));
+        assert_eq!(run.snapshot.prompt, "Run the current checks");
+        assert_eq!(run.snapshot.approval, Some(approval));
     }
 }
