@@ -352,7 +352,6 @@ fn run_scenario<Fut: Future<Output = ()>>(requested_ref: &str, test: impl FnOnce
                     endpoint: served.endpoint.clone(),
                     claim_interval_ms: 100,
                     substrate: Some(SubstrateConfig {
-                        direct_node_port: None,
                         effects_url,
                         router_url,
                         atespace: "local".into(),
