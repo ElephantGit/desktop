@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Edge, Node } from "@xyflow/react";
@@ -20,6 +21,21 @@ function EdgeInsertionProbe({ edge }: { edge: Edge }) {
     <output data-testid="edge-insertion">{JSON.stringify(insertion)}</output>
   );
 }
+
+const StructureProbe = memo(function StructureProbe({
+  id,
+  renders,
+}: {
+  id: string;
+  renders: { current: Record<string, number> };
+}) {
+  const count = renders.current;
+  // Render counter: the assertion is that memo skips this component.
+  // eslint-disable-next-line react-hooks/immutability -- test probe, not component state
+  count[id] = (count[id] ?? 0) + 1;
+  useWorkflowIterationActions();
+  return null;
+});
 
 describe("iteration insert actions", () => {
   beforeEach(async () => {
@@ -100,5 +116,46 @@ describe("iteration insert actions", () => {
     );
 
     expect(screen.getByTestId("edge-insertion")).toHaveTextContent("null");
+  });
+
+  it("keeps other cards from redrawing when only node config changes", () => {
+    const renders = { current: {} as Record<string, number> };
+    const capabilities = createMockWorkflowCapabilities("en-US");
+    const node = (title: string): Node<WorkflowNodeData, "workflow"> => ({
+      id: "agent",
+      type: "workflow",
+      position: { x: 0, y: 0 },
+      data: { kind: "agent", title, description: "" },
+    });
+    const view = (title: string) => (
+      <WorkflowIterationActionsProvider
+        capabilities={capabilities}
+        nodes={[node(title)]}
+        edges={[]}
+        readOnly={false}
+        onInsert={vi.fn()}
+        onToggleCollapsed={vi.fn()}
+      >
+        <StructureProbe id="card" renders={renders} />
+      </WorkflowIterationActionsProvider>
+    );
+    const { rerender } = render(view("Case"));
+    const afterMount = renders.current.card ?? 0;
+    rerender(view("Case with another branch"));
+    expect(renders.current.card).toBe(afterMount);
+
+    rerender(
+      <WorkflowIterationActionsProvider
+        capabilities={capabilities}
+        nodes={[node("Case with another branch")]}
+        edges={[{ id: "e1", source: "agent", target: "out" }]}
+        readOnly={false}
+        onInsert={vi.fn()}
+        onToggleCollapsed={vi.fn()}
+      >
+        <StructureProbe id="card" renders={renders} />
+      </WorkflowIterationActionsProvider>,
+    );
+    expect(renders.current.card).toBeGreaterThan(afterMount);
   });
 });

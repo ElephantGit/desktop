@@ -83,6 +83,49 @@ describe("workflow execution analysis", () => {
     hook.unmount();
   });
 
+  it("keeps the previous membership while the same workflow is reanalyzed", async () => {
+    const requests: Array<{
+      resolve: (value: AnalyzeWorkflowResponse) => void;
+    }> = [];
+    const client = createTestClient({
+      analyzeWorkflow: () =>
+        new Promise((resolve) => {
+          requests.push({ resolve });
+        }),
+    });
+    let document = "first";
+    const hook = renderHookWithClient(
+      () => useWorkflowAnalysis("workflow", document),
+      client,
+    );
+    await waitFor(() => expect(requests).toHaveLength(1));
+    await act(async () =>
+      requests[0].resolve({
+        unusedNodeIds: ["spare"],
+        unrecognizedNodes: [],
+      }),
+    );
+    await waitFor(() =>
+      expect(hook.result.current.data?.unusedNodeIds).toEqual(["spare"]),
+    );
+    document = "second";
+    hook.rerender();
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(hook.result.current.data?.unusedNodeIds).toEqual(["spare"]);
+    expect(hook.result.current.isPlaceholderData).toBe(true);
+    await act(async () =>
+      requests[1].resolve({
+        unusedNodeIds: ["spare"],
+        unrecognizedNodes: [],
+      }),
+    );
+    await waitFor(() =>
+      expect(hook.result.current.isPlaceholderData).toBe(false),
+    );
+    expect(hook.result.current.data?.unusedNodeIds).toEqual(["spare"]);
+    hook.unmount();
+  });
+
   it("aborts analysis when its owner unmounts", async () => {
     let signal: AbortSignal | undefined;
     const client = createTestClient({
