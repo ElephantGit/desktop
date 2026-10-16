@@ -377,7 +377,6 @@ mod tests {
         let address = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await });
         let substrate = Substrate::new(&SubstrateConfig {
-            direct_node_port: None,
             effects_url: format!("http://{address}"),
             router_url: "ws://127.0.0.1:1/ora-node/v1".into(),
             atespace: "local".into(),

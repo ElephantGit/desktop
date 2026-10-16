@@ -43,9 +43,6 @@ pub struct SubstrateConfig {
     pub atespace: String,
     /// Deadline of one effect call; an elapsed call is queried again, never assumed absent.
     pub request_timeout_ms: u64,
-    /// Direct sandbox TLS endpoint. Certificate DNS names bind this to its stable external ID.
-    #[serde(default)]
-    pub direct_node_port: Option<u16>,
 }
 
 /// Shared deployment configuration for the standalone executable and embedded compositions.

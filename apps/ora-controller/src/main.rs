@@ -46,12 +46,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     .into(),
             );
         }
-        if substrate
-            .as_ref()
-            .is_some_and(|s| s.direct_node_port.is_none() || !s.effects_url.starts_with("https://"))
-        {
+        if substrate.as_ref().is_some_and(|s| {
+            !s.effects_url.starts_with("https://") || !s.router_url.starts_with("wss://")
+        }) {
             return Err(
-                "Cloud sandboxes require authenticated HTTPS effects and direct Node TLS endpoints"
+                "Cloud sandboxes require authenticated HTTPS effects and a WSS sandbox router"
                     .into(),
             );
         }

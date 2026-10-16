@@ -41,7 +41,6 @@ pub(super) struct SandboxDeployment {
     /// The static Node of tenant clones; a sandbox claiming the same NodeId is refused.
     static_node: Option<NodeId>,
     tls: Option<ora_node_transport::mtls::MutualTlsFiles>,
-    direct_node_port: Option<u16>,
 }
 
 impl SandboxDeployment {
@@ -54,7 +53,7 @@ impl SandboxDeployment {
             ));
         }
         let probe = WsEndpoint {
-            tls: None,
+            tls: runtime.management_tls.clone(),
             url: config.router_url.clone(),
             headers: BTreeMap::from([(TARGET_HEADER.to_owned(), format!("{atespace}/probe"))]),
         };
@@ -69,7 +68,6 @@ impl SandboxDeployment {
             reconnect: Duration::from_millis(runtime.reconnect_ms),
             static_node: runtime.nodes.first().map(|node| node.node_id.clone()),
             tls: runtime.management_tls.clone(),
-            direct_node_port: config.direct_node_port,
         })
     }
 
@@ -78,15 +76,7 @@ impl SandboxDeployment {
         NodeTarget {
             node_id: binding.node_id.clone(),
             endpoint: NodeEndpoint::WebSocket(WsEndpoint {
-                url: self.direct_node_port.map_or_else(
-                    || self.router_url.clone(),
-                    |port| {
-                        format!(
-                            "wss://ora-sandbox-{}:{port}/ora-node/v1",
-                            binding.sandbox_id
-                        )
-                    },
-                ),
+                url: self.router_url.clone(),
                 tls: self.tls.clone(),
                 headers: BTreeMap::from([(
                     TARGET_HEADER.to_owned(),
@@ -441,7 +431,6 @@ mod tests {
 
     fn substrate(atespace: &str) -> SubstrateConfig {
         SubstrateConfig {
-            direct_node_port: None,
             effects_url: "http://sandbox-server:18001".into(),
             router_url: "ws://sandbox-server:18000/ora-node/v1".into(),
             atespace: atespace.into(),
@@ -470,6 +459,65 @@ mod tests {
                 headers: BTreeMap::from([("ate-target-actor".into(), "local/external".into())]),
             })
         );
+    }
+
+    /// Management TLS authenticates the shared router; sandbox identities stay in routing headers.
+    #[test]
+    fn tls_targets_share_the_router_without_deriving_node_hostnames() {
+        let root = tempfile::tempdir().unwrap();
+        let key = rcgen::KeyPair::generate().unwrap();
+        let mut parameters = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        parameters.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        parameters.key_usages = vec![rcgen::KeyUsagePurpose::KeyCertSign];
+        let ca = rcgen::CertifiedIssuer::self_signed(parameters, key).unwrap();
+        let key = rcgen::KeyPair::generate().unwrap();
+        let mut parameters = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        parameters.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
+        let certificate = parameters.signed_by(&key, &ca).unwrap();
+        let files = ora_node_transport::mtls::MutualTlsFiles {
+            certificate_file: root.path().join("controller.pem"),
+            private_key_file: root.path().join("controller.key"),
+            ca_file: root.path().join("ca.pem"),
+            peer_certificate_file: None,
+        };
+        std::fs::write(&files.certificate_file, certificate.pem()).unwrap();
+        std::fs::write(&files.private_key_file, key.serialize_pem()).unwrap();
+        std::fs::write(&files.ca_file, ca.pem()).unwrap();
+        let mut runtime = runtime();
+        runtime.management_tls = Some(files.clone());
+        let config = SubstrateConfig {
+            effects_url: "https://platform:18001".into(),
+            router_url: "wss://platform:18000/ora-node/v1".into(),
+            ..substrate("local")
+        };
+        let deployment = SandboxDeployment::new(&config, &runtime).unwrap();
+        for sandbox in ["first", "second"] {
+            let target = deployment.target(&Binding {
+                sandbox_id: sandbox.into(),
+                generation: 1,
+                node_id: NodeId::new(format!("workspace-{sandbox}")),
+                external_id: sandbox.into(),
+            });
+            assert_eq!(
+                target.endpoint,
+                NodeEndpoint::WebSocket(WsEndpoint {
+                    url: config.router_url.clone(),
+                    tls: Some(files.clone()),
+                    headers: BTreeMap::from([(
+                        "ate-target-actor".into(),
+                        format!("local/{sandbox}")
+                    )]),
+                })
+            );
+        }
+        let plain = SubstrateConfig {
+            router_url: "ws://platform/ora-node/v1".into(),
+            ..config
+        };
+        assert!(matches!(
+            SandboxDeployment::new(&plain, &runtime),
+            Err(Error::Configuration(_))
+        ));
     }
 
     /// An atespace that would change the header's shape is a deployment error.
