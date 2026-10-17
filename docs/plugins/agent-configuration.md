@@ -4,9 +4,10 @@ English | [中文](agent-configuration.zh.md)
 
 `ora-plugin-config::compile_agent_configuration` validates an immutable Agent declaration without
 reading user configuration, running a process, or making a network request. It is a separate
-compiler API: the installed configuration dispatcher rejects this shape, and the existing
-configuration store does not accept it. Successful compilation is not installation, authorization,
-or runtime readiness.
+compiler API. The installed configuration dispatcher also recognizes this shape, and package
+validation compiles it for `agent`-kind packages. The local configuration store and its editor
+serve the version-one shapes. Successful compilation is not installation, authorization, or
+runtime readiness.
 
 ## Input
 
@@ -67,6 +68,24 @@ The [shared vectors](../../crates/plugin-config/tests/fixtures/agent-configurati
 literal `source` strings and expected compiled objects or error categories. Source strings keep
 the same bytes on LF and CRLF checkouts, so consumers can compare declaration identities without
 depending on the checkout platform.
+
+## Release association and install verification
+
+A marketplace release manifest carries the publication association in a release-form-only
+`[agent_configuration]` section: `schema_version`, `declaration_sha256` (the SHA-256 of the exact
+declaration bytes every package of the release must contain), and `copy` (the registry-entry-relative
+path of the static declaration copy). Only an `agent` listing with a release source may carry it;
+the installed manifest form rejects it, as does a section with unknown keys. The copy path consists
+of `/`-separated ASCII segments matching `[A-Za-z0-9][A-Za-z0-9._-]*`; empty or parent segments,
+backslashes, escapes and absolute paths are rejected.
+
+Both install paths verify the association against the package's own bytes before committing the
+installation. The marketplace path derives the expectation from the listing; the Node path receives
+it frozen on the install plan. The Controller preserves the plan's declaration version and digest
+when mapping the Cloud contract into the Node protocol. The package's `assets/config.json` must
+compile to the associated schema version and exact-byte digest, or the installer rejects the package
+in staging. An Agent package may carry a declaration without an association as inert package metadata;
+the declaration alone grants no personal configuration or model access.
 
 ## Decisions
 
