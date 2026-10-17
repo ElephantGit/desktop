@@ -42,7 +42,7 @@ Scope 的代就是收敛纪元：投影以 `(target_id, generation, consumer_rev
 
 文件系统 Resource 是 Workspace 根目录加上经过校验的可移植相对路径；适配器拒绝逃出 Workspace 的链接或祖先目录。每个受管目录包含 `.ora-managed.json`。变更要求数据库账本、标记身份、原生身份和上次应用的指纹完全一致。缺失的受管目录可以重建；无主、标记不匹配或已漂移的目录从不被默默覆盖或删除。
 
-每次变更都有持久的 `Prepared → Applied → Finalized` 日志，带有精确的预期状态和计划状态。日志存在之前的瞬时失败进入计数的重试计划。日志一旦存在，被中断或结果不明的操作会在 worker 租约过期后，让它的 Attempt、Target 和 Resource 进入 `RecoveryRequired`，并带上阻塞性的人工 Condition；仍然有效的 worker 从不被隔离。调度器排除正在恢复的 Target，而不是猜测或规划第二个操作；暂存和备份 Artifact 一直保留到获得精确的清理授权。目前没有任何自动或面向用户的操作能清除 `RecoveryRequired`。
+每次变更都有持久的 `Prepared → Applied → Finalized` 日志，带有精确的预期状态和计划状态。日志存在之前的瞬时失败进入计数的重试计划。日志一旦存在，被中断或结果不明的操作会在 worker 租约过期后，让它的 Attempt、Target 和 Resource 进入 `RecoveryRequired`，并带上阻塞性的人工 Condition；仍然有效的 worker 从不被隔离。调度器排除正在恢复的 Target，而不是猜测或规划第二个操作；暂存和备份 Artifact 一直保留到获得精确的清理授权。没有任何机制会自动清除 `RecoveryRequired`；它唯一的出口是受控的 `recoverEffectTarget` 命令：在关闭之前，它用适配器逐个证明被隔离的操作。外部状态恰好等于其精确计划状态的操作被终结并保留其所有权账本行；仍等于其精确预期基线的操作以 `FinalizedWithoutEffect` 关闭且不授予任何所有权，因为它的变更可证明从未落地。两个状态都证明不了的操作让 Target 保持隔离——恢复从不重放变更、从不授予未经证明的所有权、也从不改写不可变的投影历史。关闭最后一个日志会清除该 Target 的人工 Condition、让其请求回到待处理，由普通收敛对着当前 Desired State 继续推进；退役中的 Target 还会推进其 Scope 纪元，让空的退役投影落在新的不可变身份上。恢复一个 Target 从不清除共享 Resource 上另一个 Target 的隔离；该 Resource 的证据仍指向一个仍被隔离的操作。
 
 ## 审计时间与业务时间
 
@@ -53,8 +53,9 @@ reconciler 在准备时、应用后和就绪后取样业务时间；同一个 At
 ## 接口
 
 - `getEffectTargetStatus` 向前端暴露 Target 的 desired、observed、applied 和 ready 代，恢复身份和当前的 Condition。
+- `recoverEffectTarget` 是 `RecoveryRequired` 的受控出口；当发送门控被恢复隔离阻塞时，对话界面提供这个入口，拒绝恢复时隔离保持不变。
 - 插件注册暴露 `effectResources`。Agent Consumer 实现 `effect/coordinate`、`effect/reactivate` 和 `effect/verify_ready`；这些载荷留在 `ConsumerAdapter` 边界之后，不给通用机制增加 Agent 专有的阶段。
 - 包适配器在发布之前计算不可变的指纹；SQLite 保存摘要和指纹，但从不通过 Resource 适配器读取包目录。
 - Skill Effect 变更与 MCP 刷新共用 Agent Session Barrier，见 [Session MCP](session-mcp.zh.md#实时刷新)。
 
-Schema：迁移 `0006`（Scope、Source 与 Revision、Desired State、Consumer 与 Target、Resource 与绑定、投影、所有权、状态、Condition、请求与 claim、Attempt、Operation 与 Artifact、回执、审计事件）和 `0010`（独立的恢复检测时间）。见[持久化](../core/persistence.zh.md)。
+Schema：迁移 `0006`（Scope、Source 与 Revision、Desired State、Consumer 与 Target、Resource 与绑定、投影、所有权、状态、Condition、请求与 claim、Attempt、Operation 与 Artifact、回执、审计事件）、`0010`（独立的恢复检测时间）和 `0016`（`finalized_without_effect` 关闭阶段，通过暂存副本重建操作日志引入）。见[持久化](../core/persistence.zh.md)。
