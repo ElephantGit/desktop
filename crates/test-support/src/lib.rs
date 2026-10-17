@@ -1,5 +1,8 @@
 //! Shared fixtures for integration tests that exercise real Git repositories.
 
+#[cfg(feature = "git-server")]
+pub mod git_server;
+
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};

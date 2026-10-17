@@ -4295,6 +4295,8 @@ name = "ora-test-support"
 version = "0.0.0"
 dependencies = [
  "pretty_assertions",
+ "rcgen",
+ "rustls",
  "tempfile",
 ]
 
