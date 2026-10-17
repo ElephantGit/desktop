@@ -7,6 +7,7 @@ members = [
     "apps/ora-process-host",
     "crates/process-client",
     "apps/ora-node",
+    "apps/ora-git",
     "apps/ora-controller",
     "crates/controller-proto",
     "crates/application",
@@ -56,6 +57,7 @@ default-members = [
     "apps/ora-process-host",
     "crates/process-client",
     "apps/ora-node",
+    "apps/ora-git",
     "crates/application",
     "crates/acp",
     "crates/agent-runtime",
@@ -144,6 +146,7 @@ ora-scheduler = { path = "crates/scheduler" }
 ora-skill-package = { path = "crates/skill-package" }
 ora-surface = { path = "crates/surface" }
 ora-test-support = { path = "crates/test-support" }
+ora-git = { path = "apps/ora-git" }
 ora-utils = { path = "crates/utils" }
 ora-user-config = { path = "crates/user-config" }
 

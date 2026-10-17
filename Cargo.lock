@@ -3845,6 +3845,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ora-git"
+version = "0.0.0"
+dependencies = [
+ "ora-node-protocol",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ora-history"
 version = "0.0.0"
 dependencies = [
