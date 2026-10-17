@@ -827,3 +827,46 @@ fn branch_heads_record_the_last_known_value_per_checkout() {
     );
     assert_eq!(db.branch_heads(checkout).unwrap(), vec![later]);
 }
+
+/// Snapshot clone records exactly one Run per durable workload step and never overlaps cleanup.
+#[test]
+fn clone_records_next_step_only_after_the_previous_run_is_cleaned() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = NodeDatabase::open(&dir.path().join("node.db"), NodeIdentity::Discover).unwrap();
+    let (command, target) = clone_fixture(db.node_id(), dir.path());
+    let accepted = db.accept_clone(&command, &target).unwrap();
+    let (mut record, mut attempt) = dispatch(&mut db, &accepted);
+    let journal = db.process_journal().unwrap();
+    for step in 1..3 {
+        let CloneProgress::Pending(ClonePhase::Dispatched { identity, .. }) = &record.progress
+        else {
+            panic!("expected dispatched")
+        };
+        record = db
+            .advance_clone(
+                &record,
+                CloneProgress::Pending(ClonePhase::Dispatched {
+                    identity: identity.clone(),
+                    step,
+                }),
+            )
+            .unwrap();
+        let previous = attempt.intent.run;
+        attempt.intent.run = RunId::new();
+        attempt.intent.scope = ScopeId::new();
+        assert!(matches!(
+            journal.record(&attempt),
+            Err(Error::InvalidTransition)
+        ));
+        journal.record_outcome(previous, /*exit_code*/ 0).unwrap();
+        journal.cleaned(previous).unwrap();
+        journal.record(&attempt).unwrap();
+        let mut duplicate = attempt.clone();
+        duplicate.intent.run = RunId::new();
+        assert!(matches!(
+            journal.record(&duplicate),
+            Err(Error::InvalidTransition)
+        ));
+    }
+    assert_eq!(journal.attempts(&command.execution_id).unwrap().len(), 3);
+}
