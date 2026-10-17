@@ -99,9 +99,10 @@ where
     P: PluginCatalog,
     R: PriorRevisionRestore,
 {
-    let Some(checkout) = shared.checkouts.checkout(&spec.checkout_execution_id) else {
+    let Some(cloned) = shared.checkouts.checkout(&spec.checkout_execution_id) else {
         return SessionEnd::agent_failed("checkout_unavailable");
     };
+    let checkout = cloned.path.clone();
     // The lease comes first, so the version checked below cannot be replaced before it runs.
     let _lease = shared.catalog.lease(&spec.agent_plugin_id);
     let Some(package_root) = shared
@@ -119,9 +120,10 @@ where
         &shared.restorer,
         operation,
         execution,
-        &checkout,
+        &cloned,
         &mut spec,
         stopping,
+        ended_before_start(&shared.ledger, execution, wake),
     );
     if let Err(end) = restored.await {
         return end;
@@ -344,6 +346,36 @@ fn settle<L: SessionLedger>(
         Err(error) => {
             ora_warn!(execution_id = %execution, command_id = %command_id, error = %error, "session command was not settled");
             false
+        }
+    }
+}
+
+/// Resolves once an `EndSession` is queued for a session whose agent has not started: turns
+/// queued ahead of it are discarded, and the command is executed by ending the session.
+async fn ended_before_start<L: SessionLedger>(
+    ledger: &L,
+    execution: &ExecutionId,
+    wake: &Notify,
+) -> SessionEnd {
+    loop {
+        match ledger.queued_commands(execution).map(plan) {
+            Ok(Plan::End {
+                command_id,
+                reason,
+                discarded,
+            }) => {
+                for discarded in &discarded {
+                    settle(ledger, execution, discarded, CommandSettlement::Discarded);
+                }
+                settle(ledger, execution, &command_id, CommandSettlement::Executed);
+                return SessionEnd::requested(reason);
+            }
+            // A turn waits for the agent; the conversation reads the queue again once it starts.
+            Ok(Plan::Turn { .. } | Plan::Wait) => wake.notified().await,
+            Err(error) => {
+                ora_warn!(execution_id = %execution, error = %error, "session queue unreadable");
+                return SessionEnd::agent_failed("ledger_unavailable");
+            }
         }
     }
 }

@@ -19,8 +19,8 @@ mod workload;
 
 pub use ports::{
     CheckoutResolver, CommandSettlement, HistoryUnavailable, PluginCatalog, PriorRevisionRestore,
-    QueuedCommand, RestoreFailure, RestoreRequest, Restored, SessionCommand, SessionHost,
-    SessionLedger,
+    QueuedCommand, RestoreCancel, RestoreFailure, RestoreRequest, Restored, SessionCommand,
+    SessionHost, SessionLedger,
 };
 pub use workload::SessionWorkload;
 pub(crate) use workload::purge_workload_directory;

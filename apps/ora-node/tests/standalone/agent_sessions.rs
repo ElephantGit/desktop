@@ -20,8 +20,8 @@ use support::*;
 fn session_commands_use_the_production_ledger_and_installer_catalog() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        fixture.git(&["update-server-info"]);
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let config = configuration(&fixture, &server);
         let root = prepare(&fixture, &config, &server);
         let mut child = launch(&fixture, &config);
