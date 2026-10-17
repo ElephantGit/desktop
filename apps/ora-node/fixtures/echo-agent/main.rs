@@ -3,9 +3,10 @@
 //! It speaks the plugin protocol on stdio and a minimal ACP agent inside `agent/acp`. A prompt is
 //! echoed back, except for these markers:
 //!
+//! - `[write]`, `[commit]`, `[push]`, `[fetch <ws>]` execute Git collaboration in task order;
 //! - `[hold]` streams one message and completes only when the host cancels the prompt;
 //! - `[request-failed]` returns an ACP error with a private diagnostic for failure-path tests;
-//! - `[commit]` asks the host to run `git commit --allow-empty` in the session's directory through
+//! - `[commit-host]` asks the host to run `git commit --allow-empty` in the session's directory through
 //!   `ora/childprocess/spawn`, and completes when that process exits;
 //! - `[commit-direct]` runs the same commit as its own child process, inheriting its environment;
 //! - `[env]` answers with its working directory and `HOME`, showing where and as what it runs;

@@ -476,7 +476,7 @@ async fn agent_commits_carry_the_session_identity_without_touching_git_config() 
     let fixture = Fixture::new();
     let config = std::fs::read(fixture.checkout().join(".git").join("config")).unwrap();
     let sessions = fixture.sessions(PLUGIN_VERSION);
-    fixture.start(&sessions, PLUGIN_VERSION, "[commit]");
+    fixture.start(&sessions, PLUGIN_VERSION, "[commit-host]");
     fixture.command(
         &sessions,
         "command-2",
