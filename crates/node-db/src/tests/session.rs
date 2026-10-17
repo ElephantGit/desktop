@@ -28,6 +28,7 @@ pub(super) fn command() -> StartAgentSessionMessage {
                     }],
                 },
                 prior_revision: None,
+                workspace_directory: Vec::new(),
             },
         },
     }
