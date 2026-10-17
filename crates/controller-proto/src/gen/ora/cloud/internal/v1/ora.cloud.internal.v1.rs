@@ -175,7 +175,8 @@ pub struct RevisionDelivered {
     pub history: ::core::option::Option<StoredObject>,
 }
 /// The final commit equals the base commit, or the delivery spec's prior_revision final commit (a
-/// resumed run that added nothing): nothing is pushed, only the session history is uploaded.
+/// resumed run that added nothing). It still pushes its own delivery_ref and attempts to fast-forward
+/// workspace_ref before uploading only the session history.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RevisionUnchanged {
     #[prost(string, tag="1")]
@@ -1192,17 +1193,13 @@ pub struct Operation {
     #[prost(string, optional, tag="9")]
     pub error_code: ::core::option::Option<::prost::alloc::string::String>,
 }
+/// The Project an operation belongs to. Its external repository, branch and credential reference
+/// never reach a Controller: a Workspace clones only the Git Server snapshot its clone step was
+/// handed (clone_input).
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct OperationProject {
     #[prost(string, tag="1")]
     pub id: ::prost::alloc::string::String,
-    #[prost(string, tag="2")]
-    pub repository_url: ::prost::alloc::string::String,
-    #[prost(string, tag="3")]
-    pub default_branch: ::prost::alloc::string::String,
-    /// Infrastructure reference to the repository credential; never the credential itself.
-    #[prost(string, optional, tag="4")]
-    pub credential_ref: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct OperationWorkspace {
@@ -1222,7 +1219,8 @@ pub struct OperationWorkspace {
     pub admission_open: bool,
     #[prost(int64, tag="7")]
     pub admission_epoch: i64,
-    /// The ref the Workspace's Node clones.
+    /// The short name of the Workspace's branch on the Git Server
+    /// (refs/heads/workspaces/<id>/<requested_ref>) and of the checkout's local branch.
     #[prost(string, tag="8")]
     pub requested_ref: ::prost::alloc::string::String,
     /// Commit of the Workspace's successful clone.
@@ -1425,6 +1423,12 @@ pub struct OperationSnapshot {
     /// case the step advances without an execution.
     #[prost(message, optional, tag="9")]
     pub plugin_input: ::core::option::Option<ExecutionInput>,
+    /// The input the clone step's execution must carry, frozen by Cloud from the Binding's current
+    /// snapshot before the step was handed out and identical for every attempt of the operation. Set
+    /// whenever the operation is in the clone step; the Controller forwards it verbatim to
+    /// RecordDispatch and the Node, and does not dispatch a clone step without it.
+    #[prost(message, optional, tag="10")]
+    pub clone_input: ::core::option::Option<CloneSpec>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ClaimOperationRequest {
