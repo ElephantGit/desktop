@@ -41,6 +41,7 @@ mod managed;
 #[cfg(target_os = "linux")]
 mod model_proxy;
 #[cfg(target_os = "linux")]
+mod ora_git;
 #[cfg(target_os = "linux")]
 mod revision;
 #[cfg(target_os = "linux")]

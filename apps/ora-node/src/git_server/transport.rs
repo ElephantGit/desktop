@@ -129,6 +129,44 @@ impl TransportRepository {
             .map(CommitId::new))
     }
 
+    /// Lists this repository's refs under `prefix` as `(ref, commit)` pairs.
+    pub(crate) fn refs<R: GitRunner>(
+        &self,
+        runner: &R,
+        prefix: &str,
+    ) -> io::Result<Vec<(String, CommitId)>> {
+        let listed = self.git(
+            runner,
+            &["for-each-ref", "--format=%(refname) %(objectname)", prefix],
+        )?;
+        Ok(listed
+            .lines()
+            .filter_map(|line| {
+                let (name, commit) = line.split_once(' ')?;
+                Some((name.to_owned(), CommitId::new(commit)))
+            })
+            .collect())
+    }
+
+    /// Whether `ancestor` is an ancestor of `descendant` in this repository's objects.
+    pub(crate) fn is_ancestor<R: GitRunner>(
+        &self,
+        runner: &R,
+        ancestor: &CommitId,
+        descendant: &CommitId,
+    ) -> bool {
+        self.git(
+            runner,
+            &[
+                "merge-base",
+                "--is-ancestor",
+                ancestor.as_str(),
+                descendant.as_str(),
+            ],
+        )
+        .is_ok()
+    }
+
     /// Gives the repository to the workload user, whose Git reads the fetched objects from it.
     pub(crate) fn hand_over(&self, owner: Option<u32>) -> io::Result<()> {
         if let Some(owner) = owner {

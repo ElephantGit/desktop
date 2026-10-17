@@ -79,6 +79,7 @@ pub(super) fn run(
             &config.timezone,
             plugins.catalog.clone(),
             restorer,
+            &shutdown,
         )
         .map_err(|e| e.to_string())?;
         Ok::<_, String>((node, controller, clones, plugins, agents, grants, revisions))

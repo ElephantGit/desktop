@@ -3902,6 +3902,7 @@ dependencies = [
  "ora-controller",
  "ora-domain",
  "ora-effect",
+ "ora-git",
  "ora-history",
  "ora-logging",
  "ora-node-db",

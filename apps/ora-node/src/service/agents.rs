@@ -144,8 +144,14 @@ pub(super) fn open(
     timezone: &str,
     catalog: DirectoryPluginCatalog,
     restorer: Option<Restorer>,
+    shutdown: &crate::Shutdown,
 ) -> Result<Option<SessionHost>, crate::Error> {
     let journal = node.database.session_journal()?;
+    let ora_git = config
+        .and_then(|config| config.ora_git_directory.as_deref())
+        .map(|directory| ora_git(node, directory, journal.clone(), shutdown.clone()))
+        .transpose()?
+        .flatten();
     let host = config
         .map(|config| {
             let timezone = timezone
@@ -167,7 +173,11 @@ pub(super) fn open(
                 restorer,
             ))
         })
-        .transpose()?;
+        .transpose()?
+        .map(|host| match ora_git {
+            Some(broker) => host.with_ora_git(broker),
+            None => host,
+        });
     for record in node.database.recoverable_sessions()? {
         let ended = match &host {
             Some(host) => host.recover_interrupted(&record.command.execution_id),
@@ -184,6 +194,45 @@ pub(super) fn open(
         crate::session::purge_workload_directory(directory).map_err(ora_node_db::Error::from)?;
     }
     Ok(host)
+}
+
+/// Composes the `ora-git` service when the Node can reach the Git Server: Node-identity access
+/// from transport repositories, checkout Git as the workload user with delivery's policy.
+fn ora_git(
+    node: &ManagedNode,
+    directory: &std::path::Path,
+    ledger: SessionJournal,
+    shutdown: crate::Shutdown,
+) -> Result<Option<std::sync::Arc<dyn crate::ora_git::OraGitBroker>>, crate::Error> {
+    let (Some(policy), Some(access), Some(config)) = (
+        node.delivery_git_policy()?,
+        node.git_server(),
+        node.clone_config(),
+    ) else {
+        return Ok(None);
+    };
+    let host = || {
+        node.git
+            .runner()
+            .detached_clone_host()
+            .map_err(ora_node_db::Error::from)
+    };
+    let owner = node.git.runner().process_config().workload_uid;
+    // SAFETY: geteuid only reads the process identity.
+    let peer_uid = owner.unwrap_or_else(|| unsafe { libc::geteuid() });
+    let service = crate::ora_git::OraGitService::new(crate::ora_git::OraGitParts {
+        directory: directory.to_path_buf(),
+        peer_uid,
+        workload: DeliveryGit::new(host()?, policy),
+        node: AsNode(host()?),
+        access,
+        repository_root: config.repository_root.clone(),
+        owner,
+        ledger,
+        shutdown,
+    })
+    .map_err(ora_node_db::Error::from)?;
+    Ok(Some(std::sync::Arc::new(std::sync::Arc::new(service))))
 }
 
 /// A repeated start only reports durable state; it never relaunches an existing session.

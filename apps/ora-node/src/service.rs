@@ -108,6 +108,11 @@ pub struct AgentConfig {
     /// it; the Node only validates it and manages its children.
     #[serde(default)]
     pub workload_directory: Option<PathBuf>,
+    /// Directory for the per-session `ora-git` sockets, normally `/run/ora-git`. The Node owns it
+    /// (`0711`) and clears it when it starts; without it, or without git-access, sessions get no
+    /// `ora-git`.
+    #[serde(default)]
+    pub ora_git_directory: Option<PathBuf>,
 }
 
 /// Requests waiting for the blocking worker, across message handling and the replay pass.
