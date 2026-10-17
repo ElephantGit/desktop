@@ -9,6 +9,7 @@ use ora_node_protocol::{is_canonical_uuid, is_workspace_branch};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::Path;
+use std::process::ExitCode;
 
 /// Environment variable holding the session's socket path.
 pub const SOCKET_ENV: &str = "ORA_GIT_SOCKET";
@@ -83,6 +84,34 @@ impl Request {
             );
         }
         Ok(())
+    }
+}
+
+/// Runs the `ora-git` command line (the arguments after the program name): validates it, sends
+/// it on the session's socket, prints the result on stdout or `ora-git: <code>: <hint>` on stderr,
+/// and returns the stable exit code. The binary is only this call, so a test fixture that calls it
+/// runs exactly what an Agent runs.
+pub fn run(args: &[String]) -> ExitCode {
+    let result = Request::parse(args)
+        .map_err(|message| (ErrorCode::Usage, message))
+        .and_then(|request| {
+            let socket = std::env::var_os(SOCKET_ENV).ok_or_else(|| {
+                (
+                    ErrorCode::NoSession,
+                    format!("{SOCKET_ENV} is not set; ora-git works only inside an Agent session"),
+                )
+            })?;
+            send(Path::new(&socket), &request, &mut std::io::stderr())
+        });
+    match result {
+        Ok(output) => {
+            print!("{output}");
+            ExitCode::SUCCESS
+        }
+        Err((code, message)) => {
+            eprintln!("ora-git: {}: {message}", code.as_str());
+            ExitCode::from(u8::try_from(code.exit_code()).unwrap_or(1))
+        }
     }
 }
 

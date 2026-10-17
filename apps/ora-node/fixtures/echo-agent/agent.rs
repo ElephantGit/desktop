@@ -418,10 +418,12 @@ fn git_command(cwd: &std::path::Path, args: &[&str]) -> std::io::Result<std::pro
         .output()
 }
 
-/// Uses the CLI built beside the fixture executable; its session socket is inherited unchanged.
+/// Runs the `ora-git` CLI through this fixture's own executable, which is always built with the
+/// tests; the session socket in the environment is inherited unchanged.
 fn ora_git_command(cwd: &std::path::Path, args: &[&str]) -> std::io::Result<std::process::Output> {
-    std::process::Command::new(std::env::current_exe()?.with_file_name("ora-git"))
+    std::process::Command::new(std::env::current_exe()?)
         .current_dir(cwd)
+        .arg("ora-git")
         .args(args)
         .output()
 }
