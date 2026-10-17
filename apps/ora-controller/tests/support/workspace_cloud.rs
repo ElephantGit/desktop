@@ -874,6 +874,16 @@ impl WorkspaceOperationService for WorkspaceCloud {
         }))
     }
 
+    /// The Controller does not submit late provisioning facts yet, so the fake never expects one.
+    async fn record_provisioning_fact(
+        &self,
+        _request: Request<proto::RecordProvisioningFactRequest>,
+    ) -> Result<Response<proto::RecordProvisioningFactResponse>, Status> {
+        Err(Status::unimplemented(
+            "the fake Cloud records no provisioning facts",
+        ))
+    }
+
     async fn list_live_sandboxes(
         &self,
         request: Request<proto::ListLiveSandboxesRequest>,
