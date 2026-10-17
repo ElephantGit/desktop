@@ -7,8 +7,7 @@
 
 use ora_node_protocol::{is_canonical_uuid, is_workspace_branch};
 use serde::{Deserialize, Serialize};
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
+use std::io::Write;
 use std::path::Path;
 
 /// Environment variable holding the session's socket path.
@@ -92,11 +91,15 @@ impl Request {
 ///
 /// The Node closes a session's socket when the session ends, even under a request it has not
 /// answered yet; a connection that ends without an answer therefore means the session is gone.
+#[cfg(unix)]
 pub fn send(
     socket: &Path,
     request: &Request,
     progress: &mut impl Write,
 ) -> Result<String, (ErrorCode, String)> {
+    use std::io::{BufRead, BufReader};
+    use std::os::unix::net::UnixStream;
+
     let closed = || {
         (
             ErrorCode::NoSession,
@@ -137,6 +140,22 @@ pub fn send(
         }
     }
     Err(closed())
+}
+
+/// The session socket is a Unix socket and the Node serves it only in Linux Agent sandboxes, so a
+/// build for another platform can only say that it cannot reach a Node; the request types stay
+/// available because the Node's protocol crates compile everywhere.
+#[cfg(not(unix))]
+pub fn send(
+    _socket: &Path,
+    _request: &Request,
+    _progress: &mut impl Write,
+) -> Result<String, (ErrorCode, String)> {
+    Err((
+        ErrorCode::Internal,
+        "ora-git needs the session's Unix socket; it runs only inside a Linux Agent sandbox"
+            .to_owned(),
+    ))
 }
 
 /// The usage summary printed for any malformed command line.
@@ -279,10 +298,13 @@ mod tests {
 
     /// Reads one request line from a connection accepted on `listener`, then lets `answer`
     /// finish the connection.
+    #[cfg(unix)]
     fn serve_once(
         listener: std::os::unix::net::UnixListener,
-        answer: impl FnOnce(UnixStream) + Send + 'static,
+        answer: impl FnOnce(std::os::unix::net::UnixStream) + Send + 'static,
     ) -> std::thread::JoinHandle<()> {
+        use std::io::{BufRead, BufReader};
+
         std::thread::spawn(move || {
             let (stream, _) = listener.accept().unwrap_or_else(|_| panic!("accept"));
             let mut request = String::new();
@@ -293,6 +315,7 @@ mod tests {
 
     /// Progress is relayed and the result returned; a socket that closes before answering, or
     /// that is gone, means the session ended.
+    #[cfg(unix)]
     #[test]
     fn answers_and_closed_sockets_map_to_results() {
         let directory = std::env::temp_dir().join(format!("ora-git-test-{}", std::process::id()));
