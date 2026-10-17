@@ -47,7 +47,7 @@ jobs:
           # Older LTS keeps the glibc floor low for AppImage/deb consumers.
           - os: ubuntu-22.04
           # arm64 (Apple Silicon); add macos-13 if Intel builds are needed.
-          - os: macos-14
+          - os: macos-15
           - os: windows-2022
     runs-on: ${{ matrix.os }}
     steps:
