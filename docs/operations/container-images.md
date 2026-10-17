@@ -54,6 +54,10 @@ ships `/opt/ora/bin/deno`, the runtime every plugin runs on: its version is `.de
 build verifies the archive and executable against `scripts/sidecar-checksums.json` (Linux x64 and arm64),
 failing on an architecture without a pin. Agent sessions use it through `agent.deno_path`.
 
+`ora-git` is installed at `/usr/local/bin/ora-git`, on the workload `PATH`, so the Agent's processes
+find it. It only sends fixed requests to the current session's `ORA_GIT_SOCKET`, whose directory is
+`agent.ora_git_directory`; Git Server credentials stay with the Node. See [ora-git](../node/ora-git.md).
+
 ## Controller image
 
 Runs `ora-controller` as the unprivileged `controller` user (UID 10001) with `/var/lib/ora-controller`
