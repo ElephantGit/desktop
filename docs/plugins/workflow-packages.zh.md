@@ -1,0 +1,57 @@
+# 工作流包
+
+[English](workflow-packages.md) | 中文
+
+`kind = "workflow"` 的插件包用来交付工作流文档。导入一个这样的包会安装插件，并把它携带的每份文档变成一个带有一个发布快照的工作流，用户一步就能拿到一组可运行的工作流。导入的工作流是用户数据：卸载插件从不删除它们。决策是[工作流包格式](https://github.com/ora-space/specs/blob/main/decisions/desktop/plugin/category/workflow/0-workflow-package-format.md) ADR。
+
+## 包结构
+
+```text
+my-workflows/
+├── orax.toml            kind = "workflow"；没有种类专属的小节
+├── assets/workflows/
+│   ├── 1.0.0.json
+│   └── release.reactflow.json
+└── logo.svg             可选
+```
+
+- `assets/workflows/` 是必需的，包含 1 到 256 份 `*.json` 文档。只有直接位于该目录下的普通 `.json` 文件才算；README、子目录或符号链接会被忽略而不是拒绝。
+- 包没有进程：没有 `main.js`，不启动 Deno，没有种类专属的 manifest 小节；`[workbench]` 和 `[webview]` 像在其他不定义它们的种类上一样被拒绝。
+
+## 文档格式
+
+文档就是编辑器导出的工作流文件，原样存储：从工作流库导出一个工作流，把文件放进 `assets/workflows/` 即可。
+
+```json
+{
+  "id": "d90c3588-1238-444d-afb4-908091277789",
+  "name": "发布流程",
+  "version": "1.0.0",
+  "viewport": { "x": 0, "y": 0, "zoom": 1 },
+  "nodes": [{ "id": "start", "type": "workflow", "position": { "x": 120, "y": 260 }, "data": { "kind": "start" } }],
+  "edges": [],
+  "annotations": [],
+  "globalVariables": []
+}
+```
+
+- `name` 是必需的，成为工作流名称。名称必须唯一，所以名称已存在的文档会被拒绝，而不是加后缀。
+- `version` 是可选的（见下文）。
+- 其他所有内容，包括 React Flow 的运行时字段以及导出时的 `id` 和 `updatedAt`，都原样存入快照的 `graph`，不做解释；编辑器在第一次保存时去掉运行时字段。正因如此，导出的文件可以原封不动地往返。
+- 导入不筛查节点种类。编辑器加载工作流时会丢弃它无法渲染的种类（见[工作流](../workflows/workflows.zh.md#图存储)），所以要按目标 Ora 版本的节点目录来写文档。
+
+## 导入
+
+工作流包通过普通的本地归档导入（`importPlugin`）导入，没有单独的入口，由包的 `kind` 决定发生什么。通过 marketplace 安装工作流包不会导入文档。
+
+1. 归档被校验、解压并提交到 `local` 命名空间。安装失败的包不创建任何工作流。
+2. 然后逐份读取并独立导入文档：解析 JSON，取 `name` 和可选的 `version`，用运行引擎的解析器校验图，创建工作流，发布一个快照并激活它。
+3. 响应为每份文档报告一个结果（`imported`，带工作流 id、名称和版本；或 `failed`，带原因）。
+
+因为校验复用运行引擎的解析器，导入的工作流遵循与运行完全相同的规则；永远无法执行的文档在导入时就被拒绝。一份坏文档只影响它自己，每份文档要么变成一个带一个发布快照的工作流，要么完全不变成工作流。
+
+## 版本
+
+发布的版本取下列来源中第一个可用的：文档的 `version`、去掉 `.reactflow.json` 或 `.json` 后的文件名、工作流标题，最后是自动的 `v{timestamp_millis}`。候选值为空、超过 128 字节、是 `.`、`..`、`draft`，或包含路径分隔符或控制字符时会被跳过，而不是清洗。所以对声明了版本的文档，改文件名不会改变版本。
+
+裸的 `.json` 工作流文件由工作流编辑器自己的导入功能导入，不走这里；也没有任何东西会把工作流写回包里。
