@@ -106,6 +106,7 @@ mod tests {
 pub(super) struct StoreSink<S>(pub(super) S);
 
 impl<S: CoordinationStore> PreviewSink for StoreSink<S> {
+    /// Keeps storage authority checks in its adapter while the connection owns lossy delivery.
     fn publish(
         &self,
         node: &NodeRuntimeIdentity,

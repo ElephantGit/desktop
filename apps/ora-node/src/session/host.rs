@@ -225,6 +225,7 @@ pub(super) struct ThreadMirror<L> {
 }
 
 impl<L: SessionLedger> ThreadMirror<L> {
+    /// Couples one reliable ledger stream with an independently bounded optional preview cache.
     pub(super) fn new(
         ledger: L,
         operation: OperationId,
@@ -266,10 +267,12 @@ impl<L: SessionLedger> ThreadMirror<L> {
 }
 
 impl<L: SessionLedger> RuntimeEvents for ThreadMirror<L> {
+    /// Only Node hosts mirror pending records; other runtime hosts keep the default off.
     fn wants_record_previews(&self) -> bool {
         true
     }
 
+    /// A failed durable mirror cannot keep publishing content as if its history were healthy.
     fn record_preview(&self, _session_id: &SessionId, records: &[ora_history::AssembledRecord]) {
         if self.is_broken() {
             return;
