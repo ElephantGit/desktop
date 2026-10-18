@@ -350,7 +350,7 @@ mod tests {
         cases
     }
 
-    /// Maps each classification to the level documented in `docs/runtime-logging.md`.
+    /// Maps each classification to the level documented in `docs/core/logging.md`.
     fn expected_level(classification: ErrorClassification) -> Level {
         match classification {
             ErrorClassification::Internal => Level::ERROR,

@@ -12,4 +12,4 @@ This module implements transport-independent CRUD use cases for workflow runs: e
 
 `WorkspaceRepository`, `WorkflowRunRepository`, `WorkflowRunIdGenerator`, `WorkflowRunWorkspaceInitializer`, and `Clock` isolate storage, identity, workspace preparation, and time from the handlers. Creation parses the frozen graph to validate deployment prerequisites, capture the materialization receipt, and resolve the default kickoff input, but this module does not execute workflows or choose transport semantics — those belong to the [execution engine](engine/README.md) and transport adapters. `ora-backend` implements `NodeExecutor` as `WorkflowRunNodeExecutor` and wires it in `Backend::open`.
 
-See the [ora-application overview](../../README.md) and [Workflow architecture doc](../../../../docs/workflow.md).
+See the [ora-application overview](../../README.md) and [Workflow architecture doc](../../../../docs/workflows/workflows.md).

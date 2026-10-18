@@ -21,4 +21,4 @@ Use cases execute in a `Repository` or `WorktreeHandle` context so callers canno
 
 Diff output is bounded before it reaches application memory, and an oversized patch is reported as `GitlancerError::DiffTooLarge`. This module does not persist Ora tasks or worktrees, choose user-confirmation policy, retry commands, or clean up database state after Git failure.
 
-See the [gitlancer overview](../../README.md) and [Gitlancer Architecture](../../../../docs/gitlancer-architecture.md).
+See the [gitlancer overview](../../README.md) and [Gitlancer Architecture](../../../../docs/workspaces/gitlancer.md).

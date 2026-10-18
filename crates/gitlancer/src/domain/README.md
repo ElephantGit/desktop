@@ -15,4 +15,4 @@ This module models the repository and worktree facts required by typed Git opera
 
 Constructors for repository and worktree roots assume their callers already validated Git identity. Discovery and validation belong to the `git` module; CLI invocation belongs to `exec`.
 
-See the [gitlancer overview](../../README.md) and [Gitlancer Architecture](../../../../docs/gitlancer-architecture.md).
+See the [gitlancer overview](../../README.md) and [Gitlancer Architecture](../../../../docs/workspaces/gitlancer.md).

@@ -16,4 +16,4 @@ A missing executable, spawn failure, non-zero exit, output-reader failure, or bo
 
 This module does not validate repository semantics, assemble use-case-specific arguments, parse Git output, or decide whether a mutating/network command is authorized. Those concerns belong to the domain, `git`, `parse`, and application policy layers respectively.
 
-See the [gitlancer overview](../../README.md) and [Gitlancer Architecture](../../../../docs/gitlancer-architecture.md).
+See the [gitlancer overview](../../README.md) and [Gitlancer Architecture](../../../../docs/workspaces/gitlancer.md).

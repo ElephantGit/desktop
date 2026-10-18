@@ -13,7 +13,7 @@ changing its contents. It primarily contains ADRs, core test cases, and domain d
 
 ## Feature changes
 
-Before adding or removing a feature, read and follow [the feature change guide](docs/feature-change-guide.zh.md).
+Before adding or removing a feature, read and follow [the feature change guide](docs/development/changing-the-code.zh.md).
 
 - **Single source of truth**: Keep contracts, logical operations, Desktop bindings, and business
   implementations in their respective owners. Derive generated wiring from those declarations rather

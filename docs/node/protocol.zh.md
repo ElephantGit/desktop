@@ -1,0 +1,111 @@
+# Controller–Node 协议
+
+[English](protocol.md) | 中文
+
+`ora-node-protocol`（`crates/node-protocol`）定义 Controller 和 Node 之间版本 1 的线上契约：有类型的消息和经过
+校验的异步帧编解码器。传输、会话、Git 和持久执行属于它的使用方（[控制会话](control-session.zh.md)、Node 和
+Controller）。这个 crate 不依赖任何领域、插件、文件系统或持久化 crate；公开 API 从 `lib.rs` 导出。根决策是
+[Controller–Node 协议](https://github.com/ora-space/specs/blob/main/decisions/node/protocol/0-controller-node-protocol.md)
+ADR。
+
+## 线上格式
+
+```text
+4 字节大端长度 | 1 字节帧类型 | JSON 信封
+```
+
+长度覆盖类型字节和 JSON，不含长度前缀本身。`MAX_FRAME_LENGTH` 为 16 MiB。每条消息都使用
+`NODE_MESSAGE_FRAME_TYPE = 0x01`，由 JSON 中的 `message_type` 选择具体消息。在 WebSocket 上，一条二进制消息承载
+类型字节和 JSON，不带长度前缀。
+
+每个信封都有 `protocol_version`、`message_type` 和 `payload`，以及随消息而定的关联字段：命令带 `operation_id` 和
+`execution_id`（可选 `request_id`），事件再加 `sequence`，`EventAck` 指明 `(operation_id, execution_id, sequence)`。
+名称和标签使用 snake_case：
+
+```json
+{ "protocol_version": 1, "message_type": "hello", "payload": { "controller_id": "controller-1", "supported_versions": [1] } }
+```
+
+`Hello` 声明一个非空、无重复且包含信封版本的版本列表；`HelloAccepted` 选定一个版本，并声明一个非空、无重复的能力
+集合。把响应与之前的 Hello 对应起来以及强制握手顺序，属于会话的职责。
+
+## 能力
+
+| 能力 | Controller → Node | Node → Controller |
+|---|---|---|
+| `worktree_execution` | `ensure_worktree`、`remove_worktree` | `worktree_ready`、`worktree_failed`、`worktree_removed`、`worktree_removal_failed` |
+| `repository_clone` | `clone_repository` | `clone_result` |
+| `runtime_control` | `bind_runtime` 和各个 `controlled_*` 信封 | `runtime_control_state` |
+| `plugin_install` | `install_plugins`、`remove_plugins` | `plugins_result` |
+| `agent_session` | `start_agent_session`、`submit_user_turn`、`end_session` | `thread_event`、`agent_session_ended`、`session_command_accepted`、`session_command_rejected` |
+| `model_proxy` | 绑定了模型的会话启动 | |
+| `revision_delivery` | `deliver_revision`、`upload_grant` | `revision_result`、`upload_grant_needed` |
+| `revision_restore` | 带 `prior_revision` 的 `start_agent_session`、`download_grant` | `download_grant_needed` |
+
+始终可用：`hello`、`heartbeat`、`get_execution_status` / `execution_status` 和 `event_ack`。编解码器只校验声明；
+会话在派发之前仍要检查选定 Node 的能力。
+
+### 运行时控制
+
+有了 `runtime_control`，Cloud 授权的工作会包在一个 `RuntimeBinding` 里到达：租户、Workspace、沙盒和运行时代次；
+Node id、incarnation 和实例；Controller、控制 epoch 和版本；控制会话和操作的用户；operation、execution 和 Node
+operation id；`input_closed`；以及签发和过期时间。`ControlledClone`、`ControlledPlugins`、
+`ControlledStartAgentSession` 和 `ControlledDeliverRevision` 把一个绑定和一条命令配成一对，在受理之前就拒绝属于
+其他执行、operation 或目标的许可。`RuntimeControlState` 确认输入已关闭，并附上未完成的 execution id 列表（空列表
+也是观察到的事实）。见[运行时控制](../controller/runtime-control.zh.md)。
+
+### 消息契约
+
+- **Clone。** `clone_repository` 只带 `node_id`、`repository` 和 `branch`。URL 必须是显式的小写 `https://` 或
+  `ssh://`，带主机和路径；空白、反斜杠、query、fragment、密码和 HTTPS userinfo 都会被拒绝（允许 SSH 用户名），
+  `Debug` 会隐去地址，解析错误从不回显输入。分支用 `ora-utils::GitBranchName` 校验，拒绝 `HEAD`。未知的 spec 字段
+  （目标位置、凭据、Git 选项）会被拒绝。`clone_ready` 带原始 spec、发起时的 incarnation、`RepositoryId`、Node 范围内
+  的路径和完整的 commit id；`clone_failed` 带结构化的错误码，以及 `no_directory` 或
+  `retained { repository_id, path }` 残留。从不携带原始诊断信息。
+- **插件。** 输入中每个规范的 `<namespace>/<identifier>` 只出现一次，带一个通用的 HTTP(S) 下载地址或按目标平台区分
+  的多个下载地址，每个都带小写的 SHA-256。单项失败按插件报告；`plugins_failed` 表示整个执行无法运行。
+- **Agent 会话。** 会话指明 Agent 插件和版本、它所用 checkout 对应的 clone 执行（从不是 Node 路径）、一个不会破坏
+  签名行的 Git 身份，以及第一个用户轮次（文本，最多 64 KiB），可选 `model_binding_id` 和 `prior_revision`。
+  `thread_event` 携带一条已定稿的 `ora-history` 记录，作为最多 256 KiB 的不透明 JSON 对象（`truncated` 标记被截短的
+  记录），并与终止的 `agent_session_ended` 共享该执行无间隙的序号，后者的 `detail` 是一个简短的 snake_case 代码。
+  命令带 `command_id`；它们的回复没有序号，不需要确认，丢失的回复靠重发找回。
+- **Revision。** 交付指明已结束的会话、clone、基础 commit、`refs/ora/revisions/` 下的一个 ref 和两个不同的对象 key。
+  `revision_delivered` 要求最终 commit 与基础 commit 不同；`revision_unchanged` 允许等于基础 commit，或在有
+  `prior_revision` 时等于上一个最终 commit。会话的 `prior_revision { revision_id, final_commit, bundle { key, size, sha256 } }`
+  指明它要恢复的 Revision；交付中的 `prior_revision` 不带 bundle。恢复失败时，会话以 `agent_failed` 结束，带
+  `prior_revision_unavailable` 或 `prior_revision_base_unavailable`。
+- **授权。** `upload_grant`、`upload_grant_needed`、`download_grant` 和 `download_grant_needed` 只存在于内存：没有
+  序号，不需要确认，从不持久化或记录日志，`PresignedUrl` 在 `Debug` 中会隐去自己。
+- **Worktree。** 两条命令都带一个 `WorktreeExecutionSpec`（资源身份、不透明的 `RepositoryRef`、Main Workspace 绑定、
+  基础 ref、期望的分支和 `NodeManaged { directory_name }` 路径策略）。编解码器只检查值非空；Node 在使用前校验路径。
+  见 [Worktree 执行](worktree-execution.zh.md)。
+
+各结果族在无标签的 `ExecutionResult` 内使用互不相交的 `kind` 标签；Revision 族被装箱，以保持 `ExecutionState` 较小。
+
+## 身份、状态与确认
+
+身份序列化为不透明字符串；编解码器拒绝空值或只有空白的值，接受的值原样保留。`ControllerId` 和 `NodeId` 是持久的
+对端，`NodeIncarnationId` 是一个运行中的 Node，`OperationId` 是 Controller 拥有的业务操作，`ExecutionId` 是对它的一次
+尝试，`Sequence` 是事件在一个执行内的位置。未知的结果从不授权新的执行身份；编解码器既不生成身份，也不检查序号是否
+单调。
+
+`ExecutionStatus` 是 `Unknown`、`Accepted`、`Running`，或带着保留的终止结果的 `Completed`。`Unknown` 表示证据不足，
+从不意味着可以重复一个副作用。外层的报告者是当前的运行时；已完成的结果保留它原来的运行时身份，两者之间只要求持久的
+NodeId 相同（更新的 incarnation 可以报告更早的结果）。状态回复不带序号，从不确认事件；`EventAck` 指明确切的事件。
+持久受理先于确认，未确认的事件会主动重放，与查询无关。
+
+## 使用编解码器
+
+| 调用方 | 发送 | 接收 |
+|---|---|---|
+| Controller | `write_controller_message(ControllerToNodeMessage)` | `read_node_message` → `NodeToControllerMessage` |
+| Node | `write_node_message(NodeToControllerMessage)` | `read_controller_message` → `ControllerToNodeMessage` |
+
+每次读取返回一条经过校验的消息，或在帧开始之前遇到干净的 EOF 时返回 `None`。每次写入校验、序列化、检查大小、写入并
+flush 一条消息，在写出任何字节之前就拒绝无效消息；flush 成功并不意味着对方收到或执行了。在传输边界使用这些函数，
+因为构造函数和直接的 serde 转换不会运行语义校验。每个流方向只有一个 owner，并把整次写入串行化；编解码器在取消时不保留
+半帧的进度，出错后也无法重新同步，所以连接的 owner 丢弃这个流，让会话恢复去对账。`FrameError` 区分 `Io`、
+`InvalidLength`、`UnsupportedFrameType`、`EncodeJson`、`DecodeJson` 和 `InvalidMessage`。编解码器不输出日志。
+
+测试入口是 `crates/node-protocol/tests/protocol.rs`，每个消息族都有夹具，在两个方向上比较独立的线上 JSON 和有类型的
+消息；运行 `cargo test -p ora-node-protocol`。

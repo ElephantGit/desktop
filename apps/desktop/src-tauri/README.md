@@ -38,7 +38,7 @@ The shared developer preferences are exposed through `get_developer_mode`, `set_
 ## Plugin surfaces
 
 `src/surface/` hosts the webviews contributed by workbench and webview plugins (see its README
-and `docs/surface.md`). The pure state machine and registry live in `ora-surface`; this crate
+and `docs/plugins/surfaces.md`). The pure state machine and registry live in `ora-surface`; this crate
 executes their effects with Tauri, resolves per-plugin web data isolation, lands webview-plugin
 downloads in `<data-dir>/plugins/data/<namespace>/<name>/webview/downloads/`, and runs the
 host-owned download actions (skill import, save-as). The `embedded-surfaces` Cargo feature (off by default) enables child

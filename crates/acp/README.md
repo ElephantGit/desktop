@@ -24,4 +24,4 @@ ACP wire values come from the official `agent-client-protocol-schema` crate. `or
 - The connection-to-router inbound channel is intentionally unbounded and preserves the reader's order. Per-session bounds and overflow policy belong to the backend runtime, where one noisy session can be isolated from others.
 - Write serialization is the transport's guarantee: `send` must deliver whole messages in call order so concurrent JSON-RPC frames cannot interleave.
 
-This crate does not spawn provider processes, supervise reconnects, route updates to Ora sessions, or enforce session lifecycle policy. Those responsibilities belong to `ora-backend`. See [ACP Agent Runtime](../../docs/agent-runtime.md).
+This crate does not spawn provider processes, supervise reconnects, route updates to Ora sessions, or enforce session lifecycle policy. Those responsibilities belong to `ora-backend`. See [ACP Agent Runtime](../../docs/agents/agent-runtime.md).
