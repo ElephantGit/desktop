@@ -38,6 +38,13 @@ session keeps querying. Query completion and event delivery share one takeover t
 a received event produces an Ack, after its receipt commits. Duplicate content is idempotent;
 conflicting content is rejected without acknowledgement.
 
+Optional Agent previews use connection-owned `session/previews.rs`: one latest snapshot per
+execution, up to 64 workers, bounded downstream calls and cancellation with the connection. This
+path writes no durable coordination data, produces no Node Ack and cannot fail reliable Thread
+takeover. A store advertises `supports_thread_previews=true` only when it implements the downstream
+publisher. `CloudStore` and `SqliteStore` use the default disabled capability; the Cloud adapter does
+not forward previews or the optional assistant-text projection.
+
 ## Running the executable
 
 ```text

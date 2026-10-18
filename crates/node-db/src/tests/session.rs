@@ -56,6 +56,7 @@ fn event() -> ThreadEvent {
         truncated: false,
         visible_text: None,
         visible_text_truncated: false,
+        history_sequence: None,
     }
 }
 

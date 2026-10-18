@@ -201,6 +201,11 @@ resources). An empty list or only blank text is rejected.
 
 ## Hosts
 
+Hosts may opt into `RuntimeEvents::record_preview` to observe assembled pending records before
+settlement. Notifications are capped at ten per second, and a turn boundary sends an empty
+replacement. The callback is best effort, produces no acknowledgement and does not change the
+`record_settled` durability order. Hosts that do not opt in incur no pending-snapshot copy.
+
 A host composes the runtime through `AgentRuntimeHost`, whose associated types supply five
 interfaces; they are generic parameters, so each host gets its own monomorphized runtime.
 

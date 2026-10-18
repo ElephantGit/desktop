@@ -4,6 +4,8 @@
 
 [English](README.en.md)
 
+Hello／HelloAccepted 的可选 `thread_previews` 字段协商实时旁路；未协商时不发送 `ThreadPreview`。该消息是有界的 execution/version 完整替换，没有持久事件 sequence 或 Ack。稳定历史位置由定型 `ThreadEvent.history_sequence` 关联，旧消息缺失时仍可解码。
+
 RuntimeControl 能力代表用户控制约束；单连接和心跳不能替代它。RuntimeBinding 显式区分用户代次、Controller 代次、运行时代次、Node incarnation、业务 operation、Node operation 和 execution。Cloud 旧组件不支持时拒绝，不忽略字段。
 
 ## 验证与边界

@@ -72,6 +72,14 @@ Deno 路径必须是绝对路径，超时必须为正数。有这个配置段时
 只有 ACP 成功完成才允许下一个轮次。prompt 出错或流意外关闭时，会话以 `agent_failed` 结束，带 `agent_turn_failed` 或
 `agent_stream_closed`；原始的服务商诊断信息从不进入历史或日志，已经排队的 `EndSession` 保留它显式的原因。
 
+## 实时预览
+
+实时预览通过 Hello／HelloAccepted 的可选 `thread_previews` 双方协商。运行时最多每 100 ms 通知一次尚未定型的正文、
+思考与工具快照。Node 只保留每个 execution 的最新版本，每批最多 32 个块、256 KiB，总共最多 64 个会话。块使用分配时
+就确定的历史位置，定型 `ThreadEvent.history_sequence` 覆盖同位置预览。预览不进入 SQLite、没有事件序号和 Ack，慢消费者
+或断线不会终止 Agent；重连从当前完整快照恢复。缺少协商的对端继续只发送持久记录。存储能力选择见
+[Controller](../controller/controller.zh.md#协调存储)。
+
 ## 记录顺序与崩溃
 
 定型的 Agent 正文在 Node 协议中另外带一份可选纯文本投影，供后续任务交接使用。Node 从类型化的

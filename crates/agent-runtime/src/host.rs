@@ -172,6 +172,13 @@ pub trait SessionSetup: Clone + Send + Sync + 'static {
 ///
 /// Delivery is best effort and must not block: the runtime publishes from inside session actors.
 pub trait RuntimeEvents: Clone + Send + Sync + 'static {
+    /// Opts a host into bounded-rate pending snapshots, independent of durable history callbacks.
+    fn wants_record_previews(&self) -> bool {
+        false
+    }
+
+    /// Replaces the host's still-open records. This callback is optional, lossy and memory-only.
+    fn record_preview(&self, _session_id: &SessionId, _records: &[ora_history::AssembledRecord]) {}
     /// A session's persisted title changed.
     fn session_title_updated(&self, session_id: &SessionId);
 

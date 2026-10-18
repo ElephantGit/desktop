@@ -4,6 +4,8 @@
 
 [中文](README.md)
 
+Optional Hello/HelloAccepted `thread_previews` negotiates the live path; `ThreadPreview` is never sent without it. Messages are bounded execution/version replacements with no durable event sequence or Ack. Settled `ThreadEvent.history_sequence` links stable positions; older messages remain decodable when the field is absent.
+
 RuntimeControl capability represents user control fencing, independently of a single connection or heartbeat. RuntimeBinding separates user epoch, Controller epoch, runtime generation, Node incarnation, business operation, Node operation and execution. Unsupported cloud peers fail explicitly rather than ignoring new constraints.
 
 ## Verification boundary

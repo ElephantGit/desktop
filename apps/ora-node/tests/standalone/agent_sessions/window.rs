@@ -28,6 +28,7 @@ fn window_bounds_delivery_without_blocking_queries_and_reconnect_replays_exactly
                             truncated: false,
                             visible_text: None,
                             visible_text_truncated: false,
+                            history_sequence: None,
                         },
                     )
                     .unwrap();

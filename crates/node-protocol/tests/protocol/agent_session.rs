@@ -77,6 +77,7 @@ fn thread_event() -> Case {
                 truncated: false,
                 visible_text: None,
                 visible_text_truncated: false,
+                history_sequence: None,
             },
         })),
         wire: json!({"message_type": "thread_event", "protocol_version": 1,

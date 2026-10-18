@@ -92,6 +92,17 @@ Only a successful ACP completion admits another turn. A prompt error or unexpect
 the session as `agent_failed` with `agent_turn_failed` or `agent_stream_closed`; no raw provider
 diagnostic enters history or logs, and an `EndSession` already queued keeps its explicit reason.
 
+## Live previews
+
+Live previews require both peers to opt into the optional Hello/HelloAccepted `thread_previews`
+field. Runtime emits pending prose, thought and tool replacements at most every 100 ms. Node retains
+only the latest version per execution: at most 32 blocks and 256 KiB per snapshot, up to 64 sessions.
+Blocks keep their assigned history position; settled `ThreadEvent.history_sequence` supersedes
+that position. Previews never enter SQLite, carry no event sequence or Ack, and disconnects or slow
+consumers never end the Agent. Reconnect reads a full current snapshot. Peers without negotiation
+retain durable-only delivery. Store capability selection is described in
+[Controller](../controller/controller.md#coordination-store).
+
 ## Record order and crashes
 
 A settled assistant message carries an optional plain-text projection in the Node protocol for a

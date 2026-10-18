@@ -26,6 +26,7 @@ pub(super) fn thread_event(
             truncated: false,
             visible_text,
             visible_text_truncated,
+            history_sequence: Some(line.seq),
         });
     }
     let record = record
@@ -38,6 +39,7 @@ pub(super) fn thread_event(
         truncated: true,
         visible_text,
         visible_text_truncated,
+        history_sequence: Some(line.seq),
     })
 }
 
@@ -103,6 +105,7 @@ mod tests {
                 truncated: false,
                 visible_text: Some("hello".to_owned()),
                 visible_text_truncated: false,
+                history_sequence: Some(4),
             }
         );
     }
@@ -127,6 +130,7 @@ mod tests {
                 truncated: true,
                 visible_text: Some("x".repeat(MAX_VISIBLE_TEXT_BYTES)),
                 visible_text_truncated: true,
+                history_sequence: Some(4),
             }
         );
     }

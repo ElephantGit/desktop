@@ -222,6 +222,9 @@ pub struct ThreadEvent {
     /// The projection was clipped without changing the original history record.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub visible_text_truncated: bool,
+    /// Stable history position used to replace an earlier live preview.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_sequence: Option<u32>,
 }
 
 impl ThreadEvent {

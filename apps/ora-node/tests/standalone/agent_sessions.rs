@@ -5,6 +5,8 @@ use pretty_assertions::assert_eq;
 mod authority;
 #[path = "agent_sessions/delivery.rs"]
 mod delivery;
+#[path = "agent_sessions/previews.rs"]
+mod previews;
 #[path = "agent_sessions/recovery.rs"]
 mod recovery;
 #[path = "agent_sessions/resume.rs"]

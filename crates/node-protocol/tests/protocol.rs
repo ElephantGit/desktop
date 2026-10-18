@@ -20,5 +20,7 @@ mod revision_restore;
 mod session;
 #[path = "protocol/support.rs"]
 mod support;
+#[path = "protocol/thread_preview.rs"]
+mod thread_preview;
 #[path = "protocol/worktree.rs"]
 mod worktree;

@@ -7,6 +7,7 @@ mod domain;
 mod frame;
 mod identity;
 mod message;
+pub use message::{ThreadPreview, ThreadPreviewBlock, ThreadPreviewMessage};
 
 pub use domain::{
     AgentSessionEndReason, AgentSessionEnded, AgentSessionResult, AgentSessionSpec, BranchName,

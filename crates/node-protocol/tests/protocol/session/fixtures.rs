@@ -6,6 +6,7 @@ pub(super) fn hello() -> Case {
         message: Message::Controller(ControllerToNodeMessage::Hello(HelloMessage {
             protocol_version: CURRENT_PROTOCOL_VERSION,
             payload: Hello {
+                thread_previews: false,
                 controller_id: ControllerId::new("controller-1"),
                 supported_versions: vec![CURRENT_PROTOCOL_VERSION],
             },
@@ -30,6 +31,7 @@ pub(super) fn hello_accepted() -> Case {
             HelloAcceptedMessage {
                 protocol_version: CURRENT_PROTOCOL_VERSION,
                 payload: HelloAccepted {
+                    thread_previews: false,
                     selected_version: CURRENT_PROTOCOL_VERSION,
                     node: node(),
                     capabilities: vec![NodeCapability::WorktreeExecution],

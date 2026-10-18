@@ -57,6 +57,7 @@ pub(super) struct SessionRecorder<E, C: HistoryClock = LocalHistoryClock> {
     assembler: HistoryAssembler,
     state: RecorderState,
     events: E,
+    last_preview: Option<std::time::Instant>,
 }
 
 enum RecorderState {
@@ -86,6 +87,7 @@ impl<E: RuntimeEvents, C: HistoryClock> SessionRecorder<E, C> {
                 HistoryState::Degraded { .. } => RecorderState::Stopped,
             },
             events,
+            last_preview: None,
         })
     }
 
@@ -145,7 +147,9 @@ impl<E: RuntimeEvents, C: HistoryClock> SessionRecorder<E, C> {
     /// Folds one streamed update in and writes whatever settled because of it.
     pub(super) fn record_update(&mut self, update: &SessionUpdate) -> RecordOutcome {
         let records = self.assembler.push_update(update);
-        self.append(&records)
+        let outcome = self.append(&records);
+        self.preview_pending();
+        outcome
     }
 
     /// Records a tool update with timing supplied by the session-local runtime tracker.
@@ -161,7 +165,9 @@ impl<E: RuntimeEvents, C: HistoryClock> SessionRecorder<E, C> {
                 duration_ms: timing.duration_ms,
             },
         );
-        self.append(&records)
+        let outcome = self.append(&records);
+        self.preview_pending();
+        outcome
     }
 
     /// Freezes open tool timing before the ordinary turn-boundary flush.
@@ -179,7 +185,33 @@ impl<E: RuntimeEvents, C: HistoryClock> SessionRecorder<E, C> {
     /// Closes the turn, flushing every item still open.
     pub(super) fn record_turn_end(&mut self, stop_reason: StopReason) -> RecordOutcome {
         let records = self.assembler.end_turn(stop_reason);
-        self.append(&records)
+        let outcome = self.append(&records);
+        if self.events.wants_record_previews() {
+            self.events.record_preview(&self.session_id, &[]);
+        }
+        self.last_preview = None;
+        outcome
+    }
+
+    /// Snapshot assembly is capped at ten times per second; token rate cannot amplify history IO
+    /// or host allocations. A turn boundary always clears the last preview without waiting.
+    fn preview_pending(&mut self) {
+        if !self.events.wants_record_previews() || matches!(self.state, RecorderState::Stopped) {
+            return;
+        }
+        let now = std::time::Instant::now();
+        if self
+            .last_preview
+            .is_some_and(|last| now.duration_since(last) < std::time::Duration::from_millis(100))
+        {
+            return;
+        }
+        let pending = self.assembler.pending_records();
+        if pending.is_empty() {
+            return;
+        }
+        self.last_preview = Some(now);
+        self.events.record_preview(&self.session_id, &pending);
     }
 
     /// Records that the conversation moved to another agent.
