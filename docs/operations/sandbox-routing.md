@@ -21,4 +21,4 @@ must be removed from configuration.
 Upgrade the Controller configuration and the Sandbox Server together. Because Nodes pin the relay
 certificate, drain old sandboxes through normal lifecycle operations before creating replacements;
 preserve Workspace data and never rewrite journals or weaken certificate checks to reuse old instances.
-The coordinated procedure is in the cluster repository's `docs/sandbox-routing.md`.
+The coordinated procedure is in the cluster repository's [Sandbox routing](https://github.com/ora-space/cluster/blob/main/docs/sandbox/routing.en.md).
