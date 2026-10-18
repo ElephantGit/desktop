@@ -40,6 +40,7 @@ impl<G: WriteGuard> NodeDatabase<G> {
     pub fn session_journal(&self) -> Result<SessionJournal<G>, Error> {
         let connection =
             rusqlite::Connection::open(self.connection.path().ok_or(Error::InvalidSchema)?)?;
+        connection.busy_timeout(SQLITE_BUSY_TIMEOUT)?;
         connection.pragma_update(/*schema_name*/ None, "foreign_keys", "ON")?;
         connection.pragma_update(/*schema_name*/ None, "synchronous", "FULL")?;
         Ok(SessionJournal {
