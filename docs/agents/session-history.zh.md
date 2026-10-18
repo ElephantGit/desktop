@@ -1,0 +1,60 @@
+# 会话历史
+
+[English](session-history.md) | 中文
+
+Ora 自己记录每个对话，每个会话一个只追加的 JSONL 文件，位于 `<数据根目录>/sessions/`。正因如此，对话可以比某个 provider 活得更久：回放时不需要让 Agent 复述，也可以整个交给另一个 Agent。文件格式、顺序规则和失败语义归 [`ora-history`](../../crates/history/README.md)；本文说明 [Agent 运行时](agent-runtime.zh.md)如何使用它们。
+
+Ora 拥有 transcript，Agent 拥有模型上下文。transcript 可以在 Agent 之间移植，上下文不能，所以切换时不回放，而是注入。
+
+## 记录
+
+- 运行时记录的是它选择保留的内容，而不是它发送的内容。prompt 在调用 Agent 之前按请求内容块记录，provider 回显的 `user_message_chunk` 被忽略，所以 Ora 注入的上下文从不进入记录。
+- 流式更新先记录再转发，所以客户端在回合中途断开只丢失流，从不丢失记录。
+- 每个 prompt 回合以它的 `stopReason` 收尾，这也让从未完成的工具调用得以还原。
+- 响应是回合的分界：在它之前观察到的更新和权限请求属于同一次操作，回合在分界结算之后才记录。取消期间，actor 在宽限期内持续消费直到匹配的响应；如果 provider 不结算，它记录已接受的部分，然后隔离路由。
+- 每个已结算的条目被追加并 flush（不 sync），并在写下一行之前交给宿主的 `RuntimeEvents::record_settled`，所以崩溃最多丢失正在写的那一条，做镜像的宿主按顺序恰好看到每一行一次。
+
+### 工具与回合计时
+
+工具计时跟随 ACP 生命周期，而不是收到消息的时间。第一个 `pending` 或 `in_progress` 更新锚定 `startedAt`；`completed`、`failed` 或回合边界用单调时钟冻结 `durationMs`。一出现就已终止的工具没有计时，因为 Ora 从未看到它开始。计时只随最终的工具快照持久化，所以旧历史仍可读取，缺失的计时也不会被编造。
+
+回合时长由记录的用户消息和匹配的 `TurnEnded` 重建。渲染器拿到锚点和最终时长，用一个本地的每秒时钟刷新可见的标签，不轮询 backend。
+
+### 未结束的工具调用
+
+ACP 不要求 Agent 报告工具的终止状态。只有 Agent 自己正常结束的回合，才把它留下的未结束调用记为已完成；其他所有结束方式（取消、token 用尽、拒绝，以及连接丢失、prompt 失败、队列溢出、客户端断开，这些都记为取消）都让它们保持未完成，因为它们可能是被打断的。对话视图把这类调用显示为已中断，交接的 transcript 把它们的结果写为"未报告"。
+
+### 完整性提示
+
+无法解码的完整 JSONL 行会从回放中省略，以 `unreadable_records` 提示报告数量，不猜测它在哪个回合。对话仍然可写。记录中的 `Gap` 条目回放为 `unrecorded_content` 提示。UI 在对话上方保留一个不阻塞的警告，交接时把 transcript 标记为不完整。
+
+## 切换 Agent
+
+`switchSessionAgent` 把对话换到另一个 Agent 上。会话保留 id、Workspace 和历史，只改变绑定。
+
+- 在拆除任何东西之前，先完成新 provider session 的握手（可选地配置），所以 Agent 不可用时对话原地不动。切换到当前 Agent 报告 `session_agent_unchanged`；历史已降级报告 `session_history_degraded`。
+- 客户端在下一条消息时才提交切换，而不是选中 Agent 时；切回当前 Agent 会撤销待定的切换。
+- 旧绑定会被释放，不为以后切回而保留：它的上下文停在离开的那一刻，把完整 transcript 注入一个新会话比和过时的会话对账更简单。
+- transcript 是延迟注入的：已记录的对话作为第一个内容块加在下一个 prompt 前面。ACP 没有安装对话的方法，所以每个记录的回合都折叠进一条展示给接收方 Agent 的用户消息，并有一段前言说明这一点。
+- 绑定是否还欠着 transcript 从记录推导（末尾有 `AgentSwitched` 而其后没有 `HandoffDelivered`），所以丢了 actor、重启之后都不会丢。
+- 只有 provider 接受了携带 transcript 的 prompt，这笔欠账才算结清。在那之前的任何步骤都可能失败，欠账留给下一个 prompt。接受之后连接丢失算作已交付；记录交付失败会再交一次 transcript，这是犯错也无害的方向。
+- 响应携带新握手的 `availableCommands` 和 `configOptions`。
+- transcript 没有大小预算；超出接收模型上下文的对话会在 provider 那里失败。
+
+Ora 因为 Agent 无法恢复而重建的 provider session（见 [Agent 运行时](agent-runtime.zh.md#会话生命周期)）走同样的注入流程。重建的绑定在携带 transcript 的 prompt 被接受之前不写入行。
+
+## 历史降级
+
+跳过记录的历史比停止的历史更危险，因为回放它的人看不到那个缺口。所以一次写入失败会让该会话停止记录：
+
+- 已经在流式输出的回合继续完成；不管文件有没有保存下来，Agent 做的工作都是真的。
+- 自己的 prompt 都没能记录的回合，会在调用 Agent 之前被拒绝。
+- 会话进入 `historyState: degraded` 并带上操作系统给出的原因，之后的 prompt 以 `session_history_degraded` 失败，直到恢复为止。
+- `resumeSessionHistory` 在接受新内容之前追加一条 `Gap` 记录，写明是什么中断了文件，然后让会话重新可写。它记录损失，但不恢复丢失的内容。
+- 完全无法读取的历史文件会以同样方式让会话降级，因为不知道哪些位置已被使用就追加会覆盖它们。历史无法读取的 load 直接失败，而不是显示一个空对话。
+
+## 删除
+
+软删除就是用户感受到的删除，所以对话也随之消失：删除会话会删除它的历史文件，任务和项目的级联删除会删除它们带走的每个会话的文件。会话 id 在级联之前收集，因为之后没有任何东西能把文件和任务联系起来。删除是尽力而为的：行已经没了，孤立的文件也无法访问。
+
+会话删除与新的 actor 操作串行化，卸载路由，软删除行，然后删除文件。ACP `session/delete` 只用于回滚从未对外可见的 provider session；对用户可见的 provider session 只关闭不删除，所以 provider 一侧的历史会保留。读取对话不会让它变成 `Running`，所以只有真正附着的会话才会阻止任务或项目的删除。
