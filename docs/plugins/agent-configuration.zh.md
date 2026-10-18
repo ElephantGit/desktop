@@ -1,9 +1,9 @@
 # Agent 配置声明编译器
 
-[English](agent-configuration-declarations.md) | 中文
+[English](agent-configuration.md) | 中文
 
 `ora-plugin-config::compile_agent_configuration` 校验不可变 Agent 声明，不读取用户配置、启动进程
-或发送网络请求。这是独立编译入口：现有安装配置分发器和配置存储暂不接受该形态。编译成功不等于
+或发送网络请求。这是独立编译入口：现有安装配置分发器拒绝该形态，配置存储不接受它。编译成功不等于
 安装成功、获得授权或运行就绪。
 
 ## 输入
@@ -53,12 +53,12 @@
 列表为空、重复或未支持。错误文本不包含被拒字符串或源片段。编译不证明来源 namespace、发行
 版本/target、包摘要、包内路径、个人归属或实际模型访问能力。
 
-## 验证
+## 契约样例
 
-[共享样例](../crates/plugin-config/tests/fixtures/agent-configuration-contract.json) 保存字面的
-`source` 字符串以及编译结果或错误分类，LF/CRLF checkout 不改变 source 字节。Rust 测试调用公开
-编译入口，另覆盖原始字节和 Setting 数量边界、嵌套重复键、非法 UTF-8、安全诊断、旧指纹语义，
-以及旧安装配置分发器继续拒绝新版形态。
+[共享样例](../../crates/plugin-config/tests/fixtures/agent-configuration-contract.json) 保存字面的
+`source` 字符串以及编译结果或错误分类，LF/CRLF checkout 不改变 source 字节，消费端可以跨平台
+比对同一声明的身份。
 
-该 crate 的验证入口为 `cargo test -p ora-plugin-config --locked` 和
-`cargo clippy -p ora-plugin-config --locked -- -D warnings`。
+## 决策
+
+- [Agent 配置声明](https://github.com/ora-space/specs/blob/main/decisions/desktop/plugin/manifest/20261017-agent-configuration-declarations.md)

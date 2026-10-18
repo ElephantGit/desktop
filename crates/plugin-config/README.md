@@ -47,7 +47,7 @@ The byte-stable JSON input/output vectors in
 [`tests/fixtures/agent-configuration-contract.json`](tests/fixtures/agent-configuration-contract.json)
 are consumed by the Rust tests and can be reused by other language implementations. Each `source`
 is a JSON string so checkout line-ending conversion cannot change its declaration fingerprint.
-See the [declaration format](../../docs/agent-configuration-declarations.md) for the supported
+See the [declaration format](../../docs/plugins/agent-configuration.md) for the supported
 shape, version and error boundaries.
 
 Declaration parsing is strict and bounded. A missing declaration file, or a package root that

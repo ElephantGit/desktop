@@ -1,11 +1,12 @@
 # Agent configuration declaration compiler
 
-English | [中文](agent-configuration-declarations.zh.md)
+English | [中文](agent-configuration.zh.md)
 
 `ora-plugin-config::compile_agent_configuration` validates an immutable Agent declaration without
 reading user configuration, running a process, or making a network request. It is a separate
-compiler API: the installed configuration dispatcher and the existing configuration store do not
-accept this shape yet. Successful compilation is not installation, authorization, or runtime readiness.
+compiler API: the installed configuration dispatcher rejects this shape, and the existing
+configuration store does not accept it. Successful compilation is not installation, authorization,
+or runtime readiness.
 
 ## Input
 
@@ -60,13 +61,13 @@ unsupported schema/contract versions, and empty, repeated or unsupported protoco
 does not include rejected strings or source snippets. Compilation does not prove source namespace,
 release version/target, archive digest, package containment, personal ownership or live model access.
 
-## Verification
+## Contract vectors
 
-The [shared vectors](../crates/plugin-config/tests/fixtures/agent-configuration-contract.json) carry
+The [shared vectors](../../crates/plugin-config/tests/fixtures/agent-configuration-contract.json) carry
 literal `source` strings and expected compiled objects or error categories. Source strings keep
-the same bytes on LF and CRLF checkouts. The Rust tests use the public compiler and additionally
-check raw-byte and Setting-count boundaries, nested duplicate keys, invalid UTF-8, safe diagnostics,
-legacy fingerprint behavior and rejection by the old installed configuration dispatcher.
+the same bytes on LF and CRLF checkouts, so consumers can compare declaration identities without
+depending on the checkout platform.
 
-Run `cargo test -p ora-plugin-config --locked` and
-`cargo clippy -p ora-plugin-config --locked -- -D warnings` for this crate.
+## Decisions
+
+- [Agent configuration declarations](https://github.com/ora-space/specs/blob/main/decisions/desktop/plugin/manifest/20261017-agent-configuration-declarations.md)
