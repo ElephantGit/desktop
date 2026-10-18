@@ -1,8 +1,8 @@
 # node-protocol
 
-`ThreadEvent` may carry a bounded assistant-text projection and truncation mark beside the original settled record. Old messages without either field remain valid. The projection does not replace the original record, Thread acknowledgement, or terminal result.
-
 [中文](README.md)
+
+`ThreadEvent` may carry a bounded assistant-text projection and truncation mark beside the original settled record. Old messages without either field remain valid. The projection does not replace the original record, Thread acknowledgement, or terminal result.
 
 Optional Hello/HelloAccepted `thread_previews` negotiates the live path; `ThreadPreview` is never sent without it. Messages are bounded execution/version replacements with no durable event sequence or Ack. Settled `ThreadEvent.history_sequence` links stable positions; older messages remain decodable when the field is absent.
 
