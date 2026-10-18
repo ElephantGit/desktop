@@ -1,0 +1,67 @@
+# Scheduled Tasks
+
+English | [中文](scheduled-tasks.zh.md)
+
+A scheduled task is a persisted, revisioned definition that runs a prompt against a project on a
+schedule: a daily report, a recurring code-quality check, a to-do sweep. The governing decision is
+the [local and cloud execution ownership](https://github.com/ora-space/specs/blob/main/decisions/desktop/core/scheduled-task/0-local-and-cloud-execution-ownership.md)
+ADR (`approved`). Code lives in `crates/domain/src/scheduled_task.rs` and `scheduled_run.rs`,
+`crates/application/src/scheduled_task`, `crates/backend/src/scheduled_task.rs` and the
+`scheduled_tasks`, `scheduled_runs` and `scheduled_occurrences` tables (migration `0015`).
+
+## What is delivered
+
+The definition use cases and history reads are wired into Desktop. Occurrence admission
+(`AdmitScheduledOccurrenceHandler`) and offline-gap recording
+(`RecordOfflineMissedOccurrenceHandler`) exist in `ora-application` but are not yet composed into the
+Backend, so Desktop does not trigger scheduled runs yet. Creating or updating a `cloud` task is
+rejected as an invalid request.
+
+| Operation | Effect |
+|---|---|
+| `createScheduledTask` | Validate and persist a new `local` task |
+| `getScheduledTask`, `listScheduledTasks` | Read visible definitions |
+| `updateScheduledTask` | Replace editable fields, guarded by the exact snapshot it replaces |
+| `deleteScheduledTask` | Soft-delete the definition; run and missed history is kept |
+| `revokeScheduledTaskApproval` | Withdraw unattended consent and disable the task |
+| `listScheduledTaskHistory` | Newest-first runs and missed occurrences |
+
+## Definition
+
+A `ScheduledTask` has a name, an `enabled` flag, a schedule, an execution location, a target project,
+an agent (`AgentRef`) with an optional model, a prompt, a revision and an optional approval.
+
+- **Schedule.** `EveryHours { interval }` (at least 1), `Daily { hour, minute }` or
+  `Weekly { weekdays, hour, minute }` with at least one weekday, all in local wall-clock time.
+- **Execution location.** `local` or `cloud`, fixed at creation; to move a task, copy it and disable
+  the old one.
+- **Target.** An enabled task's project needs an admissible local Main Workspace that is a Git
+  repository, checked with the same probe interactive task creation uses. Validation failures are
+  invalid requests, and a concurrent modification returns `scheduled_task_conflict`.
+- **Approval.** Unattended local execution requires explicit consent to the only supported policy,
+  `full_auto_in_worktree`, recorded with its consent time. A task can be enabled only with that
+  consent; revoking it disables the task.
+- **Revision.** Every update that changes the frozen inputs increments `revision`, so a run can always
+  name the definition it executed.
+
+Creation and update validate and freeze the definition first (`prepare`) and persist it separately,
+so the adapter can check live runtime eligibility (such as agent availability) before committing.
+
+## Runs and history
+
+The domain fixes the semantics the scheduler will follow:
+
+- Each planned trigger is a `ScheduledOccurrence` identified by task and scheduled time,
+  independently of the revision that produced it. Admitting it is idempotent and freezes a
+  `ScheduledRunSnapshot` (revision, project, agent, model, prompt, approval).
+- A live observation may arrive at most ten minutes late. A later observation, or a time that passed
+  while Desktop was not running, is recorded as a missed occurrence (`late_trigger`,
+  `app_not_running`) rather than a failed run. After a long shutdown only the latest due time per task
+  is recorded, and a time whose ten-minute window is still open at startup is left for the live
+  scheduler.
+- A run moves forward through `accepted`, `running`, `succeeded`, `failed` or `cancelled`. An
+  occurrence that cannot start because the task is still running or because four local runs are
+  already active becomes `skipped_busy` or `skipped_capacity`. Failure reasons are
+  `target_unavailable`, `model_unavailable`, `worktree_failed`, `approval_policy_invalid`, `timeout`
+  and `execution_error`.
+- History keeps at most 100 run and missed entries per task, and deleting a task does not delete them.
