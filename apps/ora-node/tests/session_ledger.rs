@@ -71,6 +71,8 @@ fn runtime_ports_use_durable_ledger() {
         turn_id: None,
         record: serde_json::Map::new(),
         truncated: false,
+        visible_text: None,
+        visible_text_truncated: false,
     };
     assert_eq!(
         SessionLedger::append_thread_event(&ledger, &input.execution_id, event.clone()).unwrap(),

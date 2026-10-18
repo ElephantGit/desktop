@@ -94,6 +94,13 @@ diagnostic enters history or logs, and an `EndSession` already queued keeps its 
 
 ## Record order and crashes
 
+A settled assistant message carries an optional plain-text projection in the Node protocol for a
+later task handoff. Node derives it from typed `AgentMessageChunk` content; thoughts, tools and
+non-text blocks produce none. Each projection is bounded to 64 KiB and clipped at a UTF-8 boundary
+with an explicit truncation flag. The original JSONL and Thread record remain unchanged. Consumers
+must treat an absent projection as unavailable history instead of guessing from tool or thought
+records.
+
 The runtime calls `record_settled` synchronously after a line is in the file and before the next is
 written, and the Node appends the Thread event there, so every Thread record is in the JSONL in the same
 order and a crash leaves the JSONL at most one line ahead. Once a Thread append fails, the mirror stops

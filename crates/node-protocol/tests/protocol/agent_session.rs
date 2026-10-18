@@ -75,6 +75,8 @@ fn thread_event() -> Case {
                 turn_id: Some(TurnId::new("turn-1")),
                 record,
                 truncated: false,
+                visible_text: None,
+                visible_text_truncated: false,
             },
         })),
         wire: json!({"message_type": "thread_event", "protocol_version": 1,
@@ -212,6 +214,35 @@ async fn thread_events_round_trip_and_bound_the_record() -> Result<(), TestError
     payload.remove("turn_id");
     payload.insert("truncated".to_owned(), json!(true));
     truncated.assert_wire().await?;
+
+    let mut projected = thread_event();
+    let Message::Node(NodeToControllerMessage::ThreadEvent(message)) = &mut projected.message
+    else {
+        panic!("expected thread event")
+    };
+    message.payload.visible_text = Some("assistant answer".to_owned());
+    projected.wire["payload"]["visible_text"] = json!("assistant answer");
+    projected.assert_wire().await?;
+    projected.assert_round_trip().await?;
+
+    let mut oversized_projection = thread_event().wire;
+    oversized_projection["payload"]["visible_text"] = json!("x".repeat(MAX_VISIBLE_TEXT_BYTES + 1));
+    reject_semantics(
+        Peer::Node,
+        &oversized_projection,
+        "oversized assistant text",
+        MessageValidationError::VisibleTextTooLarge,
+    )
+    .await?;
+    let mut missing_projection = thread_event().wire;
+    missing_projection["payload"]["visible_text_truncated"] = json!(true);
+    reject_semantics(
+        Peer::Node,
+        &missing_projection,
+        "truncated assistant text with no text",
+        MessageValidationError::VisibleTextTooLarge,
+    )
+    .await?;
 
     let mut wire = thread_event().wire;
     replace(&mut wire, "/payload/record", json!(["not", "an", "object"]));

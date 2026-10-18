@@ -54,6 +54,8 @@ fn event() -> ThreadEvent {
         turn_id: None,
         record: serde_json::Map::new(),
         truncated: false,
+        visible_text: None,
+        visible_text_truncated: false,
     }
 }
 

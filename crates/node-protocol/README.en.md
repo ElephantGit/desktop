@@ -1,5 +1,7 @@
 # node-protocol
 
+`ThreadEvent` may carry a bounded assistant-text projection and truncation mark beside the original settled record. Old messages without either field remain valid. The projection does not replace the original record, Thread acknowledgement, or terminal result.
+
 [中文](README.md)
 
 RuntimeControl capability represents user control fencing, independently of a single connection or heartbeat. RuntimeBinding separates user epoch, Controller epoch, runtime generation, Node incarnation, business operation, Node operation and execution. Unsupported cloud peers fail explicitly rather than ignoring new constraints.

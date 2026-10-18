@@ -48,6 +48,8 @@ pub enum MessageValidationError {
     InvalidGitIdentity,
     #[error("user turn must carry non-empty text within the size limit")]
     InvalidUserTurn,
+    #[error("assistant text projection is oversized or missing after truncation")]
+    VisibleTextTooLarge,
     #[error("session end detail must be a short snake_case code")]
     InvalidDetailCode,
     #[error("thread record exceeds the encoded size limit")]

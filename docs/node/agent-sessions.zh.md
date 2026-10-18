@@ -74,6 +74,10 @@ Deno 路径必须是绝对路径，超时必须为正数。有这个配置段时
 
 ## 记录顺序与崩溃
 
+定型的 Agent 正文在 Node 协议中另外带一份可选纯文本投影，供后续任务交接使用。Node 从类型化的
+`AgentMessageChunk` 提取投影；思考、工具与非文本块不产生投影。单条最多 64 KiB，在 UTF-8 边界截断并设置显式截断标记。
+原始 JSONL 和 Thread 记录保持完整且不改写。使用方必须把缺少投影视为不可用的历史，而不能从工具或思考记录猜测回复。
+
 运行时在一行写入文件之后、写下一行之前同步调用 `record_settled`，Node 就在这里追加 Thread 事件，所以每条 Thread 记录都
 以同样的顺序存在于 JSONL 中，崩溃时 JSONL 最多领先一行。一旦 Thread 追加失败，镜像就永久停止，会话以
 `agent_failed{thread_unavailable}` 结束。

@@ -9,7 +9,8 @@ mod worktree;
 
 pub use agent_session::{
     AgentSessionEndReason, AgentSessionEnded, AgentSessionResult, AgentSessionSpec, ContentBlock,
-    GitIdentity, MAX_THREAD_RECORD_BYTES, MAX_USER_TURN_TEXT_BYTES, ThreadEvent, UserTurn,
+    GitIdentity, MAX_THREAD_RECORD_BYTES, MAX_USER_TURN_TEXT_BYTES, MAX_VISIBLE_TEXT_BYTES,
+    ThreadEvent, UserTurn,
 };
 pub use execution::ExecutionResult;
 pub use plugin::{
