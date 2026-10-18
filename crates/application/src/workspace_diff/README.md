@@ -29,4 +29,4 @@ The diff reader enforces a bounded patch response. Oversized patches become the 
 - The `Branch`/`Committed` diff scopes require a recorded baseline commit; requesting them without one is rejected before Git ever runs.
 - The application module does not choose adapter status, Tauri behavior, public error codes, or log levels.
 
-See [Application and Contracts Boundary](../../../../docs/application-contracts-boundary.md) and [Task Worktrees](../../../../docs/task-worktrees.md).
+See [Application and Contracts Boundary](../../../../docs/core/application-boundary.md) and [Task Worktrees](../../../../docs/workspaces/tasks-and-worktrees.md).

@@ -36,7 +36,7 @@ pub enum DesktopBootstrapError {
 /// Deliberately has no `From<BackendError>` impl, and one must not be added. Such an impl makes
 /// `?` compile inside commands that already own a `RequestLifecycle`, and the conversion has no
 /// lifecycle to reach, so it must mint a throwaway one to complete against. That silently breaks
-/// both request invariants documented in `docs/runtime-logging.md`: the request records two
+/// both request invariants documented in `docs/core/logging.md`: the request records two
 /// completion events instead of one (a `failure` under the throwaway id, plus an `abandoned` one
 /// at `DEBUG` when the real lifecycle drops unclaimed), and the id handed to the frontend stops
 /// matching the request span, so the id the user is asked to quote for support resolves to a

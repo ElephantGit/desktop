@@ -15,4 +15,4 @@ The crate deliberately does not use `libgit2`, manage Ora database records, or d
 
 Errors remain separated into domain validation, process execution, output parsing, and bounded diff-size failures before being wrapped as `GitlancerError`. Bounded commands drain both child-process pipes concurrently and terminate Git when a configured output budget is exceeded.
 
-See [Gitlancer Architecture](../../docs/gitlancer-architecture.md) for the detailed design.
+See [Gitlancer Architecture](../../docs/workspaces/gitlancer.md) for the detailed design.

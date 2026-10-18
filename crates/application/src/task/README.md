@@ -11,7 +11,7 @@ backend-owned Git worktree provisioning.
   to an immutable commit id, creates the linked worktree from that commit, persists only that
   commit id in the `Worktree` record, and then persists the user-facing `Task` projection.
 - Worktree paths are composed only during creation from the configured worktree root and full Workspace id. Existing paths are resolved from persisted Workspace location evidence and Git metadata elsewhere.
-- If persistence fails after Git resources are created, the handler attempts compensating soft deletion and forced worktree cleanup while preserving the original stable application error.
+- A write-ahead provisioning lease (`WorktreeProvisioningLeaseStore`) is persisted before any Git mutation and renewed during slow Git work. If creation fails after Git provisioning, the lease is released atomically into a pending durable cleanup job that removes both the worktree and the branch, while the handler preserves the original stable application error.
 
 ## Boundaries and invariants
 
@@ -23,4 +23,4 @@ Branch creation uses a short Workspace-id prefix, so creation checks both existi
 
 The frontend lists local project refs before creation. Ora-managed `ora/<prefix>` branches retain their Git identity in requests but use the owning task title as their display label, so an existing worktree can seed another one without any implicit remote refresh.
 
-See the [ora-application overview](../../README.md) and [Application and Contracts Boundary](../../../../docs/application-contracts-boundary.md).
+See the [ora-application overview](../../README.md) and [Application and Contracts Boundary](../../../../docs/core/application-boundary.md).

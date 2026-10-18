@@ -29,4 +29,4 @@ appender's daily boundary, while event timestamps remain authoritative local tim
 
 Test helpers install a thread-scoped TRACE dispatcher so shared tracing callsite interest cannot make structured-log tests order-dependent.
 
-See [Runtime Logging](../../docs/runtime-logging.md) for configuration and the JSON event contract.
+See [Runtime Logging](../../docs/core/logging.md) for configuration and the JSON event contract.

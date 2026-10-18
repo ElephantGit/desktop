@@ -16,4 +16,4 @@ Callers must stop and unload a running session before using the deletion handler
 
 Session mutations are intentionally split into `update_session_title`, `update_session_status`, `update_session_binding`, and `update_session_history_state`. This prevents an actor or connection supervisor holding an older snapshot from overwriting a newer title or lifecycle state. None of these operations moves a session to another task.
 
-See the [ora-application overview](../../README.md) and [ACP Agent Runtime](../../../../docs/agent-runtime.md).
+See the [ora-application overview](../../README.md) and [ACP Agent Runtime](../../../../docs/agents/agent-runtime.md).

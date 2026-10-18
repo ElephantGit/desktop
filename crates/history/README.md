@@ -50,7 +50,7 @@ Agent identities are stored as the same namespaced text the database uses, not a
 - A final line left unterminated by an interrupted write is discarded silently — that is the expected shape of a crash. Any other unparseable line is omitted and returns `HistoryIntegrity::Damaged` with its count. Its logical position is deliberately not guessed: append order is not timeline order, and an unreadable line may have corrected a position that still has an older valid record.
 - Writes are flushed, not synced. Losing the last records to a power cut is an accepted trade for keeping a long turn's appends off the disk's latency path.
 - Deleting a session's history removes its file and leaves its two shard directories in place. They are shared with every other session whose identifier starts the same way, so removing one that looks empty would race a session being created alongside it.
-- Every write error is a reason to stop writing that session, never to retry silently. A history that skips records is more dangerous than one that stops, because the gap is invisible to whoever replays it — see the degraded-write handling in [ACP Agent Runtime](../../docs/agent-runtime.md).
+- Every write error is a reason to stop writing that session, never to retry silently. A history that skips records is more dangerous than one that stops, because the gap is invisible to whoever replays it — see the degraded-write handling in [ACP Agent Runtime](../../docs/agents/agent-runtime.md).
 
 ## Handoff rendering
 
@@ -64,4 +64,4 @@ There is no size budget. A long conversation can exceed the receiving model's co
 
 ## Interactions
 
-`ora-backend`'s agent runtime owns every instance of these types, supplies the clock, and decides when to write, replay, hand off, or delete. The official `agent-client-protocol-schema` crate supplies the ACP vocabulary the records are built from, `ora-contracts` supplies Ora's application events, and `ora-domain` supplies the CLI identity. See [ACP Agent Runtime](../../docs/agent-runtime.md).
+`ora-backend`'s agent runtime owns every instance of these types, supplies the clock, and decides when to write, replay, hand off, or delete. The official `agent-client-protocol-schema` crate supplies the ACP vocabulary the records are built from, `ora-contracts` supplies Ora's application events, and `ora-domain` supplies the CLI identity. See [ACP Agent Runtime](../../docs/agents/agent-runtime.md).

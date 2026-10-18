@@ -4,7 +4,7 @@
 #   docker build -f docker/Dockerfile --target node -t ora-node:local .
 #   docker build -f docker/Dockerfile --target controller -t ora-controller:local .
 #
-# See docs/deployment/container-images.md for the runtime contract of each image.
+# See docs/operations/container-images.md for the runtime contract of each image.
 
 # Same compiler as rust-toolchain.toml. RUSTUP_TOOLCHAIN selects the image's toolchain directly, so
 # rustup does not download the rustfmt/clippy components the file lists for the lint tasks.
@@ -52,7 +52,8 @@ RUN apt-get update && \
 
 # Sandbox image started by the Sandbox Server, one container per Workspace. The Sandbox Server passes
 # the Node service configuration in ORA_NODE_CONFIG and mounts the Workspace volume on /var/lib/ora;
-# the entrypoint runs the process host and the Node as the unprivileged `node` user.
+# the entrypoint runs the process host and the Node as root, and Git workloads and agent plugins run
+# as the unprivileged `node` user (UID 1000).
 FROM runtime AS node
 RUN apt-get update && \
     apt-get install -y --no-install-recommends git jq tini util-linux && \

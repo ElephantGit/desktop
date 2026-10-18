@@ -18,4 +18,4 @@ This module implements transport-independent CRUD and lifecycle use cases for wo
 
 `WorkflowRepository`, `WorkflowIdGenerator`, and `Clock` isolate storage, identity, and time from the handlers. The module maps domain entities to contract DTOs and validates publishable graph structure, but does not execute workflows or choose transport semantics.
 
-See the [ora-application overview](../../README.md) and [Workflow architecture doc](../../../../docs/workflow.md).
+See the [ora-application overview](../../README.md) and [Workflow architecture doc](../../../../docs/workflows/workflows.md).

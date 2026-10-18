@@ -34,4 +34,4 @@ SQL details remain internal to this module; lifecycle policy and public error ma
 
 Repository failures preserve their concrete SQLite errors behind application-owned source-chain wrappers. Skill package promotion and compensation are outside this module, so SQLite never coordinates source copies or filesystem renames. This module does not stringify or log failures that the outer request lifecycle will complete.
 
-See the [ora-db overview](../../README.md) and [Application and Contracts Boundary](../../../../docs/application-contracts-boundary.md).
+See the [ora-db overview](../../README.md) and [Application and Contracts Boundary](../../../../docs/core/application-boundary.md).

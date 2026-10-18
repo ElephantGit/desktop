@@ -49,7 +49,7 @@ This module owns Ora's linear, reversible SQLite schema history. Application boo
 - Migration `0012` adds foreach iteration indices to node runs.
 - Migration `0013` adds workflow root/round identities and scoped node uniqueness. Its downgrade
   preserves scope/node evidence in an append-only archive while terminalizing active Loop runs;
-  the archive survives re-upgrade. See [execution scope storage](../../../../docs/workflow-execution-scopes.md).
+  the archive survives re-upgrade. See [execution scope storage](../../../../docs/workflows/loops-and-iterations.md).
 - The unpublished Loop branch previously used `0011`. Startup recognizes its exact SQL snapshot,
   installs upstream `0011`/`0012`, and adopts it as `0013` atomically, preserving live scope history.
 - Every Workspace has one Scope. Publishing a new Skill Source seeds existing Scopes; creating a
@@ -92,4 +92,4 @@ The prototype catalog describes only the current schema. It does not carry migra
 
 Rolling back `0006` removes only Generic Effect state and durable Effect work, leaving the earlier workspace, catalog, workflow, and Git lifecycle schemas intact.
 
-See the [ora-db overview](../../README.md) and [Database Migrations](../../../../docs/database-migrations.md).
+See the [ora-db overview](../../README.md) and [Database Migrations](../../../../docs/core/persistence.md).

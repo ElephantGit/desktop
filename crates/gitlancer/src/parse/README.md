@@ -12,4 +12,4 @@ An empty or structurally incomplete required payload returns `ParseError`; parse
 
 The module assumes command builders requested the documented stable formats. It does not execute Git, interpret localized human messages, apply application policy, or validate filesystem existence.
 
-See the [gitlancer overview](../../README.md) and [Gitlancer Architecture](../../../../docs/gitlancer-architecture.md).
+See the [gitlancer overview](../../README.md) and [Gitlancer Architecture](../../../../docs/workspaces/gitlancer.md).
