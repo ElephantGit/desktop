@@ -51,7 +51,7 @@ across module boundaries. Implementation details inside a crate or package live 
 **Plugins**
 
 - [Plugin system](plugins/plugin-system.md): kinds, layout, lifecycle, protocol and SDK, configuration, Hooks
-- [Agent configuration](plugins/agent-configuration.md): static declarations, model capabilities, byte identity and compiler boundaries
+- [Agent configuration](plugins/agent-configuration.md): static declarations, model capabilities, release association and install checks
 - [Marketplace](plugins/marketplace.md): sources, sync and the index, installation, packs
 - [Surfaces](plugins/surfaces.md): workbench and webview plugin UIs
 - [Plugin logging](plugins/plugin-logging.md): host-owned per-plugin logs

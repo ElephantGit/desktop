@@ -42,9 +42,11 @@ forms accept an optional human-readable `title` that falls back to the identifie
   listings that declare a release source: the declaration schema version, the SHA-256 of the exact
   declaration bytes every package of the release must contain, and the registry-entry-relative
   path of the static copy a marketplace sync reads. The installed form never carries it, unknown
-  keys inside the section fail the listing, and the copy-path grammar excludes separators,
-  escapes, absolute locations, parent segments and non-ASCII so a validated path resolves
-  containably inside the publishing checkout. The declaration version is data, not policy: the
+  keys inside the section fail the listing. The copy path uses `/`-separated ASCII segments matching
+  `[A-Za-z0-9][A-Za-z0-9._-]*`, excluding empty or parent segments, backslashes, escapes and absolute
+  locations so a validated path resolves containably inside the publishing checkout. See
+  [Agent configuration declarations](../../docs/plugins/agent-configuration.md) for the
+  publication and install boundary. The declaration version is data, not policy: the
   manifest resolver does not own the declaration version domain, and consumers with the compiler
   at hand reject versions they cannot compile instead of treating the section as absent.
 - Report structural failures with the TOML path of the offending value and semantic failures with

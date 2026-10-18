@@ -1,4 +1,4 @@
-# Agent 配置声明编译器
+# Agent 配置声明
 
 [English](agent-configuration.md) | 中文
 

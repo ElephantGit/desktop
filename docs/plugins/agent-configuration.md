@@ -1,4 +1,4 @@
-# Agent configuration declaration compiler
+# Agent configuration declarations
 
 English | [中文](agent-configuration.zh.md)
 
