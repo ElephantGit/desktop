@@ -38,7 +38,7 @@ responses hide marked values and defaults; MCP settings retain their existing al
 `resolve_skill_environment` atomically resolves a complete configuration into canonical encoded
 environment names, omitting absent optional values and rejecting the whole package on NUL or
 invalid values. Backend owns installed Skill selection and startup snapshot lifetime. See
-[Skill configuration](../../docs/skill-configuration.md) for the script-facing contract.
+[Skill configuration](../../docs/agents/skill-configuration.md) for the script-facing contract.
 
 Declaration parsing is strict and bounded. A missing declaration file, or a package root that
 cannot be traversed as a directory (`NotADirectory`), is reported as undeclared rather than as a
