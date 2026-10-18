@@ -14,4 +14,4 @@ cloud 形态的 Controller 通过 `substrate.router_url` 访问每个沙盒 Node
 - 本地集群适配器和真实的沙盒适配器暴露同样的目标路由；它们在生产中的认证策略属于部署的范畴。
 
 Controller 配置和 Sandbox Server 要一起升级。因为 Node 固定了中继证书，在创建替代实例之前，先通过正常的生命周期操作排空旧沙盒；
-保留 Workspace 数据，永远不要为了复用旧实例而改写日志或放松证书检查。协调升级的步骤见 cluster 仓库的 `docs/sandbox-routing.md`。
+保留 Workspace 数据，永远不要为了复用旧实例而改写日志或放松证书检查。协调升级的步骤见 cluster 仓库的 [沙盒路由](https://github.com/ora-space/cluster/blob/main/docs/sandbox/routing.md)。
