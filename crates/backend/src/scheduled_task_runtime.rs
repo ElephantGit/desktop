@@ -3,8 +3,8 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
-use chrono::{TimeZone, Utc};
+use agent_client_protocol_schema::v1::{ContentBlock, StopReason, TextContent};
+use chrono::{Duration as ChronoDuration, TimeZone, Utc};
 use cron::Schedule;
 use ora_application::{
     AdmitScheduledOccurrenceHandler, Clock, RecordOfflineMissedOccurrenceHandler,
@@ -13,7 +13,7 @@ use ora_application::{
 };
 use ora_contracts::{
     CreateTaskRequest, GetTaskWorkspaceRequest, PromptSessionEvent, PromptSessionRequest,
-    StartSessionRequest,
+    StartSessionRequest, StopSessionRequest,
 };
 use ora_db::{RepositoryPool, SqliteScheduledRunRepository, SqliteScheduledTaskRepository};
 use ora_domain::{
@@ -25,6 +25,8 @@ use ora_logging::ora_warn;
 use ora_scheduler::{BoxFuture, CronHandle, DelayHandle, Job, Scheduler};
 
 use crate::{Sessions, TaskApi, clock::SystemClock};
+
+const SCHEDULED_RUN_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
 /// Owns the in-process handles for persisted local scheduled-task definitions.
 ///
@@ -231,6 +233,39 @@ impl ScheduledTaskRuntime {
             }
         }
     }
+
+    fn enqueue_calendar_trigger(self: &Arc<Self>, task_id: ScheduledTaskId) {
+        let runtime = Arc::clone(self);
+        match self.scheduler.schedule_after(Duration::ZERO, async move {
+            runtime.trigger_calendar(task_id).await;
+        }) {
+            Ok(handle) => handle.detach(),
+            Err(error) => {
+                ora_warn!(error = %error, "scheduled task calendar trigger could not be queued")
+            }
+        }
+    }
+
+    async fn trigger_calendar(self: Arc<Self>, task_id: ScheduledTaskId) {
+        let task = match self.tasks.find_scheduled_task(&task_id) {
+            Ok(Some(task)) => task,
+            Ok(None) => return,
+            Err(error) => {
+                ora_warn!(task_id = %task_id, error = %error, "scheduled task calendar trigger could not reload definition");
+                return;
+            }
+        };
+        let observed_at = self.clock.now_timestamp_millis();
+        let Some(scheduled_at) = latest_calendar_occurrence_at_or_before(
+            &task.schedule,
+            observed_at,
+            self.scheduler.timezone(),
+        ) else {
+            ora_warn!(task_id = %task_id, "scheduled task calendar trigger had no due occurrence");
+            return;
+        };
+        self.trigger(task_id, scheduled_at).await;
+    }
 }
 
 struct CalendarScheduledTaskJob {
@@ -253,8 +288,9 @@ impl Job for CalendarScheduledTaskJob {
         let runtime = Arc::clone(&self.runtime);
         let task_id = self.task_id.clone();
         Box::pin(async move {
-            let scheduled_at = runtime.clock.now_timestamp_millis();
-            runtime.trigger(task_id, scheduled_at).await;
+            // A cron callback only queues execution. The queued path derives the stable planned
+            // tick before admission, so a long-running agent cannot stall later cron ticks.
+            runtime.enqueue_calendar_trigger(task_id);
         })
     }
 }
@@ -275,7 +311,7 @@ impl DesktopScheduledRunExecutor {
             .as_deref()
             .filter(|branch| !branch.trim().is_empty())
         else {
-            self.fail(&run, ScheduledRunFailureReason::ApprovalPolicyInvalid);
+            self.fail(&run, ScheduledRunFailureReason::WorktreeFailed);
             return;
         };
         let created = match self.tasks.create(CreateTaskRequest {
@@ -345,21 +381,37 @@ impl DesktopScheduledRunExecutor {
                 return;
             }
         };
-        while let Some(event) = stream.recv().await {
-            match event {
-                Ok(PromptSessionEvent::Completed { .. }) => {
-                    self.transition(&run, ScheduledRunTransition::Succeed);
+        let timeout = tokio::time::sleep(SCHEDULED_RUN_TIMEOUT);
+        tokio::pin!(timeout);
+        loop {
+            tokio::select! {
+                _ = &mut timeout => {
+                    if let Err(error) = self.sessions.stop(StopSessionRequest {
+                        session_id: session_id.to_string(),
+                    }).await {
+                        ora_warn!(run_id = %run.id, error = %error, "scheduled run timeout could not stop session");
+                    }
+                    self.fail(&run, ScheduledRunFailureReason::Timeout);
                     return;
                 }
-                Ok(_) => {}
-                Err(error) => {
-                    ora_warn!(run_id = %run.id, error = %error, "scheduled run prompt failed");
-                    self.fail(&run, ScheduledRunFailureReason::ExecutionError);
-                    return;
-                }
+                event = stream.recv() => match event {
+                    Some(Ok(PromptSessionEvent::Completed { stop_reason, .. })) => {
+                        self.transition(&run, scheduled_run_completion_transition(stop_reason));
+                        return;
+                    }
+                    Some(Ok(_)) => {}
+                    Some(Err(error)) => {
+                        ora_warn!(run_id = %run.id, error = %error, "scheduled run prompt failed");
+                        self.fail(&run, ScheduledRunFailureReason::ExecutionError);
+                        return;
+                    }
+                    None => {
+                        self.fail(&run, ScheduledRunFailureReason::ExecutionError);
+                        return;
+                    }
+                },
             }
         }
-        self.fail(&run, ScheduledRunFailureReason::ExecutionError);
     }
 
     fn fail(&self, run: &ScheduledRun, reason: ScheduledRunFailureReason) {
@@ -382,6 +434,21 @@ impl DesktopScheduledRunExecutor {
                 false
             }
         }
+    }
+}
+
+fn scheduled_run_completion_transition(stop_reason: StopReason) -> ScheduledRunTransition {
+    match stop_reason {
+        StopReason::EndTurn => ScheduledRunTransition::Succeed,
+        StopReason::Cancelled => ScheduledRunTransition::Cancel,
+        StopReason::MaxTokens | StopReason::MaxTurnRequests | StopReason::Refusal => {
+            ScheduledRunTransition::Fail {
+                reason: ScheduledRunFailureReason::ExecutionError,
+            }
+        }
+        _ => ScheduledRunTransition::Fail {
+            reason: ScheduledRunFailureReason::ExecutionError,
+        },
     }
 }
 
@@ -459,6 +526,28 @@ fn recent_scheduled_occurrences(
     }
 }
 
+/// Maps a calendar callback to the most recent planned tick rather than the wall-clock callback
+/// time. The bounded lookback covers every daily or weekly schedule while keeping admission
+/// identity stable across a late callback and startup recovery.
+fn latest_calendar_occurrence_at_or_before(
+    schedule: &ScheduledTaskSchedule,
+    observed_at: i64,
+    timezone: chrono_tz::Tz,
+) -> Option<i64> {
+    let expression = calendar_cron_expression(schedule)?;
+    let schedule = Schedule::from_str(&expression).ok()?;
+    let observed = Utc
+        .timestamp_millis_opt(observed_at)
+        .single()?
+        .with_timezone(&timezone);
+    let lookback = observed - ChronoDuration::days(8);
+    schedule
+        .after(&lookback)
+        .take_while(|occurrence| *occurrence <= observed)
+        .last()
+        .map(|occurrence| occurrence.timestamp_millis())
+}
+
 fn is_schedulable(task: &ScheduledTask) -> bool {
     task.enabled
         && task.execution_location == ScheduledTaskExecutionLocation::Local
@@ -509,9 +598,17 @@ fn weekday_cron_name(day: ScheduledTaskWeekday) -> &'static str {
 mod tests {
     use std::collections::BTreeSet;
 
-    use ora_domain::{AgentRef, AuditFields, ProjectId, ScheduledTaskApproval, ScheduledTaskId};
+    use agent_client_protocol_schema::v1::StopReason;
+    use chrono::{TimeZone, Utc};
+    use ora_domain::{
+        AgentRef, AuditFields, ProjectId, ScheduledRunFailureReason, ScheduledRunTransition,
+        ScheduledTaskApproval, ScheduledTaskId,
+    };
 
-    use super::{calendar_cron_expression, is_schedulable, recent_scheduled_occurrences};
+    use super::{
+        calendar_cron_expression, is_schedulable, latest_calendar_occurrence_at_or_before,
+        recent_scheduled_occurrences, scheduled_run_completion_transition,
+    };
     use ora_domain::{
         ScheduledTask, ScheduledTaskExecutionLocation, ScheduledTaskSchedule, ScheduledTaskWeekday,
     };
@@ -578,5 +675,55 @@ mod tests {
             recent_scheduled_occurrences(&hourly, 14_401_000, chrono_tz::UTC),
             vec![7_201_000, 14_401_000]
         );
+    }
+
+    #[test]
+    fn calendar_live_trigger_and_recovery_use_the_same_planned_occurrence() {
+        let observed_at = Utc
+            .with_ymd_and_hms(2026, 10, 19, 9, 5, 0)
+            .single()
+            .expect("timestamp")
+            .timestamp_millis();
+        let scheduled_at = Utc
+            .with_ymd_and_hms(2026, 10, 19, 9, 0, 0)
+            .single()
+            .expect("timestamp")
+            .timestamp_millis();
+        let mut daily = approved_task(ScheduledTaskSchedule::daily(9, 0).expect("daily"));
+        daily.audit_fields =
+            AuditFields::new(observed_at - 86_400_000, observed_at - 86_400_000, false);
+
+        assert_eq!(
+            latest_calendar_occurrence_at_or_before(&daily.schedule, observed_at, chrono_tz::UTC),
+            Some(scheduled_at)
+        );
+        assert_eq!(
+            recent_scheduled_occurrences(&daily, observed_at, chrono_tz::UTC).last(),
+            Some(&scheduled_at)
+        );
+    }
+
+    #[test]
+    fn completion_stop_reasons_preserve_scheduled_run_terminal_state() {
+        assert_eq!(
+            scheduled_run_completion_transition(StopReason::EndTurn),
+            ScheduledRunTransition::Succeed
+        );
+        assert_eq!(
+            scheduled_run_completion_transition(StopReason::Cancelled),
+            ScheduledRunTransition::Cancel
+        );
+        for reason in [
+            StopReason::MaxTokens,
+            StopReason::MaxTurnRequests,
+            StopReason::Refusal,
+        ] {
+            assert_eq!(
+                scheduled_run_completion_transition(reason),
+                ScheduledRunTransition::Fail {
+                    reason: ScheduledRunFailureReason::ExecutionError,
+                }
+            );
+        }
     }
 }
