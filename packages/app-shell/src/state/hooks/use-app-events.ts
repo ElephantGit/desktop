@@ -7,7 +7,10 @@ import { invalidateAgentModels } from "../data/agent-runtime";
 import { invalidateMcpHealth } from "../data/mcp-health";
 import { invalidateWorkflowRun } from "../data/workflow-runs";
 import { surfaceScheduledTaskEvent } from "../data/scheduled-task-events";
-import { surfaceStartupScheduledFacts } from "../data/scheduled-task-startup-surface";
+import {
+  markScheduledTaskHistorySeen,
+  surfaceStartupScheduledFacts,
+} from "../data/scheduled-task-startup-surface";
 import { useOptionalPlatform } from "../../platform/use-platform";
 
 const INITIAL_RECONNECT_DELAY_MS = 1_000;
@@ -71,13 +74,27 @@ export function useAppEvents(client: ContractsClient) {
             invalidateWorkflowRun(queryClient, event.run_id);
           } else if (event.type === "scheduled_task") {
             // The event announces a persisted fact; navigation and OS notifications are
-            // handled together with the history invalidation.
-            void surfaceScheduledTaskEvent(
-              platform,
-              event,
-              queryClient,
-              client,
-            );
+            // handled together with the history invalidation. Persist the dedupe baseline
+            // before showing durable failure or missed facts, so a stream reconnect cannot
+            // replay the same fact through the startup recovery surface.
+            void (async () => {
+              if (
+                event.kind === "occurrence_missed" ||
+                (event.kind === "run_finished" && event.failureReason !== null)
+              ) {
+                await markScheduledTaskHistorySeen(
+                  client,
+                  queryClient,
+                  event.taskId,
+                );
+              }
+              await surfaceScheduledTaskEvent(
+                platform,
+                event,
+                queryClient,
+                client,
+              );
+            })();
           }
         }
         handleDisconnect();

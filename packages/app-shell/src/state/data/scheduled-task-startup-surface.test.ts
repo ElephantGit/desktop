@@ -8,7 +8,10 @@ import {
 import { createTestQueryClient } from "../../test/hook-harness";
 import type { PlatformAdapter } from "../../platform";
 import { useUiStore } from "../stores/ui-store";
-import { surfaceStartupScheduledFacts } from "./scheduled-task-startup-surface";
+import {
+  markScheduledTaskHistorySeen,
+  surfaceStartupScheduledFacts,
+} from "./scheduled-task-startup-surface";
 
 const TASK: ScheduledTask = {
   id: "scheduled-1",
@@ -135,6 +138,27 @@ describe("startup surface of persisted scheduled task facts", () => {
     );
     expect(window.localStorage.getItem("ora.scheduledTaskFactsSeenAt")).toBe(
       "4000",
+    );
+  });
+
+  it("records a live fact before a reconnect can replay it from history", async () => {
+    const { platform } = createPlatform();
+    const storage = harness([failedRun(5_000n)]);
+
+    await markScheduledTaskHistorySeen(
+      storage.client,
+      storage.queryClient,
+      TASK.id,
+    );
+    await surfaceStartupScheduledFacts(
+      storage.client,
+      storage.queryClient,
+      platform,
+    );
+
+    expect(errorToast).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem("ora.scheduledTaskFactsSeenAt")).toBe(
+      "5000",
     );
   });
 

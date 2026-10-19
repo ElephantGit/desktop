@@ -428,7 +428,9 @@ impl DesktopScheduledRunExecutor {
             },
         ) {
             // The run row already reached a terminal state (startup recovery won the race),
-            // so the freshly provisioned worktree is discarded directly.
+            // so the freshly provisioned worktree is discarded directly. Stop the session
+            // first: the normal task cascade refuses to remove an active workspace.
+            self.stop_session_quietly(&session_id).await;
             self.janitor
                 .run_finished(&run, &worktree_task_id, None)
                 .await;
@@ -458,6 +460,7 @@ impl DesktopScheduledRunExecutor {
             Ok(stream) => stream,
             Err(error) => {
                 ora_warn!(run_id = %run.id, error = %error, "scheduled run prompt start failed");
+                self.stop_session_quietly(&session_id).await;
                 self.finish(
                     &run,
                     Some(&worktree_task_id),

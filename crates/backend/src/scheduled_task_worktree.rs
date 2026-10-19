@@ -108,14 +108,20 @@ impl ScheduledWorktreeJanitor {
                 continue;
             };
             let task_exists = self.task_exists(&task_id);
-            let (in_use, has_changes) = if task_exists {
-                (
-                    self.task_in_use(&task_id),
-                    self.classify_worktree(&run, &task_id, &worktree_path),
-                )
-            } else {
-                (false, Some(false))
-            };
+            if !task_exists {
+                // History actions may delete a retained worktree through the ordinary Task API.
+                // Treat the missing row as an already-completed discard so this run can be pruned.
+                if let Err(error) = self.runs.clear_retained_worktree_link(&run.id) {
+                    ora_logging::ora_warn!(
+                        run_id = %run.id,
+                        error = %error,
+                        "scheduled run kept a stale worktree link after its task was deleted"
+                    );
+                }
+                continue;
+            }
+            let in_use = self.task_in_use(&task_id);
+            let has_changes = self.classify_worktree(&run, &task_id, &worktree_path);
             candidates.push(RetentionCandidate {
                 run_id: run.id.clone(),
                 task_id,
@@ -253,7 +259,15 @@ pub(super) fn retention_discards(
     candidates: &[RetentionCandidate],
     max_retained: usize,
 ) -> Vec<(TaskId, ScheduledRunId)> {
-    let mut retained = 0usize;
+    // The repository supplies candidates oldest-first. Keep the newest `max_retained`
+    // changed worktrees, therefore discard the oldest overflow before walking the list.
+    let mut remaining_overflow = candidates
+        .iter()
+        .filter(|candidate| {
+            candidate.task_exists && !candidate.in_use && candidate.has_changes != Some(false)
+        })
+        .count()
+        .saturating_sub(max_retained);
     let mut discards = Vec::new();
     for candidate in candidates {
         if !candidate.task_exists || candidate.in_use {
@@ -261,12 +275,11 @@ pub(super) fn retention_discards(
         }
         match candidate.has_changes {
             Some(false) => discards.push((candidate.task_id.clone(), candidate.run_id.clone())),
-            Some(true) | None => {
-                retained += 1;
-                if retained > max_retained {
-                    discards.push((candidate.task_id.clone(), candidate.run_id.clone()));
-                }
+            Some(true) | None if remaining_overflow > 0 => {
+                remaining_overflow -= 1;
+                discards.push((candidate.task_id.clone(), candidate.run_id.clone()));
             }
+            Some(true) | None => {}
         }
     }
     discards
@@ -324,7 +337,7 @@ mod tests {
 
         assert_eq!(
             discards(&candidates, 2),
-            vec!["task-2".to_string(), "task-4".to_string()]
+            vec!["task-1".to_string(), "task-2".to_string()]
         );
     }
 
@@ -336,7 +349,7 @@ mod tests {
             candidate("run-3", "task-3", true, Some(true)),
         ];
 
-        assert_eq!(discards(&candidates, 2), vec!["task-3".to_string()]);
+        assert_eq!(discards(&candidates, 2), vec!["task-1".to_string()]);
     }
 
     #[test]
@@ -356,7 +369,7 @@ mod tests {
             candidate("run-2", "task-2", true, None),
         ];
 
-        assert_eq!(discards(&candidates, 1), vec!["task-2".to_string()]);
+        assert_eq!(discards(&candidates, 1), vec!["task-1".to_string()]);
         assert_eq!(discards(&candidates, 2), Vec::<String>::new());
     }
 
@@ -377,7 +390,7 @@ mod tests {
             candidate("run-3", "task-3", true, Some(true)),
             candidate("run-4", "task-4", true, Some(true)),
         ];
-        assert_eq!(discards(&unused_only, 1), vec!["task-4".to_string()]);
+        assert_eq!(discards(&unused_only, 1), vec!["task-3".to_string()]);
     }
 
     /// Builds a repository with one commit and a linked worktree created from that commit.

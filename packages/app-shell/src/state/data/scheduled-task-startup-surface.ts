@@ -33,6 +33,11 @@ function writeSeenBaseline(at: number): void {
   }
 }
 
+/** Advances the durable notification baseline without allowing a concurrent path to regress it. */
+function advanceSeenBaseline(at: number): void {
+  if (at > readSeenBaseline()) writeSeenBaseline(at);
+}
+
 function asMillis(value: bigint): number {
   return Number(value);
 }
@@ -45,12 +50,57 @@ function surfaceableFactAt(entry: ScheduledTaskHistoryEntry): number | null {
 }
 
 /**
+ * Records the newest persisted failure or missed fact for one task after its live event was
+ * delivered. This prevents a reconnect from replaying a toast that the event stream already
+ * surfaced, and a live fact also establishes a sensible baseline after an upgrade.
+ */
+export async function markScheduledTaskHistorySeen(
+  client: ContractsClient,
+  queryClient: QueryClient,
+  taskId: string,
+): Promise<void> {
+  try {
+    const entries = await client.scheduledTask
+      .listHistory({ taskId })
+      .then((response) => response.entries);
+    queryClient.setQueryData(scheduledTaskKeys.history(taskId), entries);
+    const newest = entries.reduce((latest, entry) => {
+      const factAt = surfaceableFactAt(entry);
+      return factAt === null ? latest : Math.max(latest, factAt);
+    }, readSeenBaseline());
+    advanceSeenBaseline(newest);
+  } catch {
+    // The event remains actionable even when its history refresh is temporarily unavailable.
+  }
+}
+
+let startupSurfaceInFlight: Promise<void> | null = null;
+
+/**
  * Surfaces persisted Scheduled Task facts that were recorded while the shell could not
  * receive application events: startup-recovered missed occurrences and interrupted failed
  * runs. Facts newer than the persisted baseline are surfaced once, then the baseline
  * advances; notifications stay best-effort and never rewrite run facts.
  */
-export async function surfaceStartupScheduledFacts(
+export function surfaceStartupScheduledFacts(
+  client: ContractsClient,
+  queryClient: QueryClient,
+  platform: PlatformAdapter | null,
+): Promise<void> {
+  if (startupSurfaceInFlight !== null) return startupSurfaceInFlight;
+  const surface = surfaceStartupScheduledFactsOnce(
+    client,
+    queryClient,
+    platform,
+  );
+  startupSurfaceInFlight = surface;
+  void surface.finally(() => {
+    if (startupSurfaceInFlight === surface) startupSurfaceInFlight = null;
+  });
+  return surface;
+}
+
+async function surfaceStartupScheduledFactsOnce(
   client: ContractsClient,
   queryClient: QueryClient,
   platform: PlatformAdapter | null,
@@ -84,7 +134,7 @@ export async function surfaceStartupScheduledFacts(
     }
     for (const entry of entries) {
       const factAt = surfaceableFactAt(entry);
-      if (factAt === null || factAt <= baseline) continue;
+      if (factAt === null || factAt <= readSeenBaseline()) continue;
       newest = Math.max(newest, factAt);
       const title =
         entry.kind === "missed"
@@ -104,5 +154,5 @@ export async function surfaceStartupScheduledFacts(
     }
   }
 
-  if (newest > baseline) writeSeenBaseline(newest);
+  if (newest > baseline) advanceSeenBaseline(newest);
 }
