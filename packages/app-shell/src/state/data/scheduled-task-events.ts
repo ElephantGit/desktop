@@ -49,31 +49,68 @@ function openRunSession(
     .selectSession(sessionId, worktreeTaskId, projectId);
 }
 
-/** Shows one OS notification while the window cannot show an actionable toast. */
-async function showOsNotification(
-  platform: PlatformAdapter | null,
-  title: string,
-  body: string,
-): Promise<void> {
-  if (document.visibilityState === "visible") return;
-  try {
-    await platform?.desktopNotifications?.show({ title, body });
-  } catch {
-    // A notification failure never rewrites run facts; the next refresh shows history.
-  }
+/** One fact whose navigation entry waits for the window to become visible again. */
+interface PendingFact {
+  variant: "success" | "error";
+  title: string;
+  body: string;
+  onClick?: () => void;
 }
 
 /**
- * Surfaces one failed or missed Scheduled Task fact: an actionable in-app toast while the
- * window is visible, plus a best-effort OS notification while it is hidden.
+ * Facts notified while the window was hidden. The OS notification cannot navigate on
+ * desktop, so each one keeps its in-app entry here until the window is visible again;
+ * without this queue a hidden-window notification would lose its navigation path.
  */
-export async function notifyFailedScheduledFact(
+const pendingFacts: PendingFact[] = [];
+const MAX_PENDING_FACTS = 20;
+let focusFlushRegistered = false;
+
+function flushPendingFacts(): void {
+  while (pendingFacts.length > 0) {
+    const fact = pendingFacts.shift()!;
+    const action = fact.onClick
+      ? { label: appI18n.t("scheduledTask.view"), onClick: fact.onClick }
+      : undefined;
+    if (fact.variant === "success") {
+      toast.success(fact.title, { description: fact.body, action });
+    } else {
+      toast.error(fact.title, { description: fact.body, action });
+    }
+  }
+}
+
+function registerFocusFlush(): void {
+  if (focusFlushRegistered || typeof document === "undefined") return;
+  focusFlushRegistered = true;
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") flushPendingFacts();
+  });
+}
+
+/**
+ * Sends one OS notification while the window cannot show a toast, and retains the fact's
+ * navigation entry until the window becomes visible again.
+ */
+async function showOsNotification(
   platform: PlatformAdapter | null,
-  title: string,
-  body: string,
-  onClick?: () => void,
+  fact: PendingFact,
 ): Promise<void> {
-  await showOsNotification(platform, title, body);
+  try {
+    await platform?.desktopNotifications?.show({
+      title: fact.title,
+      body: fact.body,
+    });
+  } catch {
+    // A notification failure never rewrites run facts; the next refresh shows history.
+  }
+  pendingFacts.push(fact);
+  if (pendingFacts.length > MAX_PENDING_FACTS) pendingFacts.shift();
+  registerFocusFlush();
+}
+
+/** Renders one failed-or-missed fact as an actionable in-app toast right now. */
+function toastFailedFact(title: string, body: string, onClick?: () => void): void {
   toast.error(title, {
     description: body,
     action: onClick
@@ -83,11 +120,35 @@ export async function notifyFailedScheduledFact(
 }
 
 /**
+ * Surfaces one failed or missed Scheduled Task fact: an actionable in-app toast while the
+ * window is visible; while it is hidden, a best-effort OS notification plus a retained
+ * entry that renders the same toast when the window is visible again.
+ */
+export async function notifyFailedScheduledFact(
+  platform: PlatformAdapter | null,
+  title: string,
+  body: string,
+  onClick?: () => void,
+): Promise<void> {
+  if (document.visibilityState === "visible") {
+    toastFailedFact(title, body, onClick);
+    return;
+  }
+  await showOsNotification(platform, {
+    variant: "error",
+    title,
+    body,
+    onClick,
+  });
+}
+
+/**
  * Surfaces one persisted Scheduled Task fact to the user.
  *
- * Facts arrive only after the backend committed them. When the window is visible an
- * actionable toast offers navigation; otherwise a best-effort OS notification is sent,
- * because the desktop notification plugin cannot navigate on click.
+ * Facts arrive only after the backend committed them. While the window is visible an
+ * actionable toast offers navigation; while it is hidden a best-effort OS notification is
+ * sent — the desktop notification plugin cannot navigate on click — and the navigation
+ * entry is retained until the window is visible again.
  */
 export async function surfaceScheduledTaskEvent(
   platform: PlatformAdapter | null,
@@ -102,24 +163,16 @@ export async function surfaceScheduledTaskEvent(
   const name = await taskName(queryClient, client, event.taskId);
 
   if (event.kind === "run_started") {
-    await showOsNotification(
-      platform,
-      t("scheduledTask.notificationStartedTitle"),
-      t("scheduledTask.notificationStartedBody", { name }),
-    );
     invalidateSessions(queryClient);
-    toast.success(t("scheduledTask.notificationStartedTitle"), {
-      description: t("scheduledTask.notificationStartedBody", { name }),
-      action: {
-        label: t("scheduledTask.view"),
-        onClick: () =>
-          openRunSession(
-            event.sessionId,
-            event.worktreeTaskId,
-            event.projectId,
-          ),
-      },
-    });
+    const title = t("scheduledTask.notificationStartedTitle");
+    const body = t("scheduledTask.notificationStartedBody", { name });
+    const onClick = () =>
+      openRunSession(event.sessionId, event.worktreeTaskId, event.projectId);
+    if (document.visibilityState === "visible") {
+      toast.success(title, { description: body, action: { label: t("scheduledTask.view"), onClick } });
+      return;
+    }
+    await showOsNotification(platform, { variant: "success", title, body, onClick });
     return;
   }
 
@@ -131,32 +184,20 @@ export async function surfaceScheduledTaskEvent(
     const reason = event.failureReason
       ? t(`scheduledTask.failureReason.${event.failureReason}`)
       : t("scheduledTask.failureReason.execution_error");
-    await showOsNotification(
+    await notifyFailedScheduledFact(
       platform,
       t("scheduledTask.notificationFailedTitle"),
       `${name} · ${reason}`,
+      () => openTaskHistory(event.taskId),
     );
-    toast.error(t("scheduledTask.notificationFailedTitle"), {
-      description: `${name} · ${reason}`,
-      action: {
-        label: t("scheduledTask.view"),
-        onClick: () => openTaskHistory(event.taskId),
-      },
-    });
     return;
   }
 
   const reason = t(`scheduledTask.historyReason.${event.reason}`);
-  await showOsNotification(
+  await notifyFailedScheduledFact(
     platform,
     t("scheduledTask.notificationMissedTitle"),
     `${name} · ${reason}`,
+    () => openTaskHistory(event.taskId),
   );
-  toast.error(t("scheduledTask.notificationMissedTitle"), {
-    description: `${name} · ${reason}`,
-    action: {
-      label: t("scheduledTask.view"),
-      onClick: () => openTaskHistory(event.taskId),
-    },
-  });
 }

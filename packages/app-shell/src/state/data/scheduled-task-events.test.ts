@@ -109,6 +109,42 @@ describe("scheduled task event surfacing", () => {
 
     expect(show).toHaveBeenCalledTimes(1);
     expect(show.mock.calls[0]?.[0]?.title).toContain("定时任务已开始");
+    // The hidden-window toast must not fire yet, or it would expire unseen.
+    expect(successToast).not.toHaveBeenCalled();
+
+    // Regaining focus still yields the navigation entry the OS notification cannot carry.
+    setVisibility("visible");
+    document.dispatchEvent(new Event("visibilitychange"));
+    await Promise.resolve();
+    expect(successToast).toHaveBeenCalledTimes(1);
+    const action = successToast.mock.calls[0]?.[1]?.action;
+    action?.onClick();
+    expect(useWorkspaceSelectionStore.getState().selection).toMatchObject({
+      sessionId: "session-1",
+      taskId: "worktree-task-1",
+      projectId: "project-1",
+    });
+  });
+
+  it("keeps a failed fact's navigation entry until the window is visible again", async () => {
+    setVisibility("hidden");
+    const { platform, show } = createPlatform();
+
+    await surface(platform, {
+      kind: "run_finished",
+      taskId: "scheduled-1",
+      status: "failed",
+      failureReason: "timeout",
+    });
+
+    expect(show).toHaveBeenCalledTimes(1);
+    expect(errorToast).not.toHaveBeenCalled();
+
+    setVisibility("visible");
+    document.dispatchEvent(new Event("visibilitychange"));
+    await Promise.resolve();
+    expect(errorToast).toHaveBeenCalledTimes(1);
+    expect(errorToast.mock.calls[0]?.[1]?.description).toContain("失败：运行超时");
   });
 
   it("announces a failed run without notifying successful or cancelled runs", async () => {
