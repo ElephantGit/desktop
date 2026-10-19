@@ -197,7 +197,7 @@ export const workflowEditorTranslations = {
     "settings.workflow.resetView": "重置画布视图",
     "settings.workflow.minimap": "工作流小地图",
     "settings.workflow.canvasHint":
-      "指针模式左拖框选 · 手型模式左拖平移 · 中键平移 · 滚轮缩放 · 节点自动对齐网格",
+      "指针模式左拖框选 · 手型模式左拖平移 · 中键平移 · 滚轮缩放 · 节点对齐网格，靠近时贴齐其他节点",
     "settings.workflow.connectTo": "连接到{{name}}",
     "settings.workflow.connectFrom": "从{{name}}开始连接",
     "settings.workflow.selectConnection": "选择从{{source}}到{{target}}的连线",
@@ -751,7 +751,7 @@ export const workflowEditorTranslations = {
     "settings.workflow.resetView": "Reset canvas view",
     "settings.workflow.minimap": "Workflow minimap",
     "settings.workflow.canvasHint":
-      "Pointer mode: left-drag to box-select · Hand mode: left-drag to pan · Middle-drag to pan · Scroll to zoom · Nodes snap to grid",
+      "Pointer mode: left-drag to box-select · Hand mode: left-drag to pan · Middle-drag to pan · Scroll to zoom · Nodes snap to the grid and to nearby nodes",
     "settings.workflow.connectTo": "Connect to {{name}}",
     "settings.workflow.connectFrom": "Connect from {{name}}",
     "settings.workflow.selectConnection":
