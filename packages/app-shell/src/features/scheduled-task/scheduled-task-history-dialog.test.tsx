@@ -1,9 +1,9 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ScheduledTask, ScheduledTaskHistoryEntry } from "@ora/contracts";
 import { createChatStore } from "@ora/chat";
-import { TooltipProvider } from "@ora/ui";
+import { TooltipProvider, toast } from "@ora/ui";
 import { AppI18nProvider } from "../../i18n/i18n";
 import { PlatformProvider } from "../../platform";
 import {
@@ -58,6 +58,7 @@ function historyEntry(overrides: {
 
 interface Harness {
   deletedTaskIds: string[];
+  failDiscards?: boolean;
 }
 
 function renderDialog(
@@ -67,7 +68,9 @@ function renderDialog(
   const worktreeTasks = [
     {
       id: "worktree-task-1",
-      projectId: "project-1",
+      // Deliberately different from the definition's project: an old run keeps the
+      // project it executed in even after the definition was re-targeted.
+      projectId: "project-9",
       workspaceId: "workspace-1",
       title: "Scheduled run run-1",
     },
@@ -76,6 +79,9 @@ function renderDialog(
     listScheduledTaskHistory: async () => ({ entries: [...entries] }),
     listTasks: async () => ({ tasks: [...worktreeTasks] }),
     deleteTask: async ({ taskId }) => {
+      if (harness.failDiscards) {
+        throw new Error("scheduled_task_not_found");
+      }
       harness.deletedTaskIds.push(taskId);
       const index = worktreeTasks.findIndex((task) => task.id === taskId);
       if (index >= 0) worktreeTasks.splice(index, 1);
@@ -169,7 +175,8 @@ describe("ScheduledTaskHistoryDialog retained worktrees", () => {
     expect(selection).toMatchObject({
       sessionId: "session-1",
       taskId: "worktree-task-1",
-      projectId: "project-1",
+      // The run's own project, not the definition's current project.
+      projectId: "project-9",
     });
     expect(useUiStore.getState().scheduledTasksOpen).toBe(false);
   });
@@ -195,5 +202,25 @@ describe("ScheduledTaskHistoryDialog retained worktrees", () => {
       expect(harness.deletedTaskIds).toEqual(["worktree-task-1"]),
     );
     expect(screen.queryByRole("button", { name: "打开" })).toBeNull();
+  });
+
+  it("surfaces a failed discard instead of closing silently", async () => {
+    const user = userEvent.setup();
+    const errorToast = vi.spyOn(toast, "error").mockImplementation(() => "id");
+    renderDialog(
+      [
+        historyEntry({
+          id: "run-1",
+          status: "succeeded",
+          worktreeTaskId: "worktree-task-1",
+        }),
+      ],
+      { deletedTaskIds: [], failDiscards: true },
+    );
+
+    await user.click(await screen.findByRole("button", { name: "丢弃" }));
+    await user.click(await screen.findByRole("button", { name: "丢弃" }));
+
+    await waitFor(() => expect(errorToast).toHaveBeenCalledTimes(1));
   });
 });

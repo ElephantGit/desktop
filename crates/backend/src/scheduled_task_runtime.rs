@@ -7,9 +7,9 @@ use agent_client_protocol_schema::v1::{ContentBlock, StopReason, TextContent};
 use chrono::{Duration as ChronoDuration, TimeZone, Utc};
 use cron::Schedule;
 use ora_application::{
-    AdmitScheduledOccurrenceHandler, Clock, OfflineRecoveryResolution,
-    RecordOfflineMissedOccurrenceHandler, ScheduledOccurrenceResolution,
-    ScheduledRunLifecycleRepository, ScheduledTaskRepository, UuidScheduledRunIdGenerator,
+    AdmitScheduledOccurrenceHandler, Clock, RecordOfflineMissedOccurrenceHandler,
+    ScheduledOccurrenceResolution, ScheduledRunLifecycleRepository, ScheduledTaskRepository,
+    UuidScheduledRunIdGenerator,
 };
 use ora_contracts::{
     CreateTaskRequest, GetTaskWorkspaceRequest, PromptSessionEvent, PromptSessionRequest,
@@ -60,7 +60,11 @@ impl ScheduledTaskRuntime {
         clock: SystemClock,
         events: AppEventPublisher,
     ) -> Arc<Self> {
-        let janitor = ScheduledWorktreeJanitor::new(tasks_api.clone(), pool.clone());
+        let janitor = ScheduledWorktreeJanitor::new(
+            tasks_api.clone(),
+            pool.clone(),
+            tasks_api.relative_path_base().to_path_buf(),
+        );
         let runtime = Arc::new(Self {
             scheduler,
             tasks: SqliteScheduledTaskRepository::new(pool.clone()),
@@ -122,29 +126,17 @@ impl ScheduledTaskRuntime {
         let Some(&latest) = occurrences.last() else {
             return;
         };
-        match RecordOfflineMissedOccurrenceHandler::new(self.runs.clone()).handle(
+        // Startup recovery facts (offline misses, interrupted runs) are recorded before any
+        // webview can subscribe to the event stream, so publishing them here would always
+        // drop. The frontend surfaces these persisted facts on stream `ready` instead; the
+        // live trigger path below publishes while subscribers exist.
+        if let Err(error) = RecordOfflineMissedOccurrenceHandler::new(self.runs.clone()).handle(
             task,
             occurrences.iter().copied(),
             observed_at,
         ) {
-            Ok(OfflineRecoveryResolution::Recorded(resolution)) => {
-                if let ScheduledOccurrenceResolution::Missed(missed) = *resolution {
-                    self.executor
-                        .events
-                        .try_publish(ora_contracts::AppEvent::ScheduledTask(
-                            ora_contracts::ScheduledTaskEvent::OccurrenceMissed {
-                                task_id: missed.occurrence.task_id.to_string(),
-                                scheduled_at: missed.occurrence.scheduled_at,
-                                reason: contract_miss_reason(missed.reason),
-                            },
-                        ));
-                }
-            }
-            Ok(_) => {}
-            Err(error) => {
-                ora_warn!(task_id = %task.id, error = %error, "scheduled task offline recovery failed");
-                return;
-            }
+            ora_warn!(task_id = %task.id, error = %error, "scheduled task offline recovery failed");
+            return;
         }
         if observed_at.saturating_sub(latest) <= MAX_SCHEDULED_OCCURRENCE_LATENESS_MILLIS {
             let runtime = Arc::clone(self);
@@ -501,6 +493,10 @@ impl DesktopScheduledRunExecutor {
                 }
                 event = stream.recv() => match event {
                     Some(Ok(PromptSessionEvent::Completed { stop_reason, .. })) => {
+                        // The prompt finished its turn, but the session stays attached and
+                        // Running; stop it so the worktree cleanup path cannot hit the
+                        // ActiveSession conflict on every terminal branch.
+                        self.stop_session_quietly(&session_id).await;
                         self.finish(
                             &run,
                             Some(&worktree_task_id),
@@ -513,6 +509,7 @@ impl DesktopScheduledRunExecutor {
                     Some(Ok(_)) => {}
                     Some(Err(error)) => {
                         ora_warn!(run_id = %run.id, error = %error, "scheduled run prompt failed");
+                        self.stop_session_quietly(&session_id).await;
                         self.finish(
                             &run,
                             Some(&worktree_task_id),
@@ -525,6 +522,7 @@ impl DesktopScheduledRunExecutor {
                         return;
                     }
                     None => {
+                        self.stop_session_quietly(&session_id).await;
                         self.finish(
                             &run,
                             Some(&worktree_task_id),
@@ -538,6 +536,20 @@ impl DesktopScheduledRunExecutor {
                     }
                 },
             }
+        }
+    }
+
+    /// Stops the run's session without failing the run: a failed stop only means the
+    /// worktree cleanup will meet the ActiveSession conflict and be retried by the sweep.
+    async fn stop_session_quietly(&self, session_id: &SessionId) {
+        if let Err(error) = self
+            .sessions
+            .stop(StopSessionRequest {
+                session_id: session_id.to_string(),
+            })
+            .await
+        {
+            ora_warn!(error = %error, "scheduled run could not stop its session before cleanup");
         }
     }
 

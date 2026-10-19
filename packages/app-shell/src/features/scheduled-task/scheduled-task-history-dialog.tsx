@@ -52,25 +52,30 @@ export function ScheduledTaskHistoryDialog({
     entry: Extract<ScheduledTaskHistoryEntry, { kind: "run" }>,
   ) => {
     if (entry.worktreeTaskId === null) return;
+    // The worktree task carries the project the run actually executed in; the definition's
+    // project is editable and later runs may target a different one.
+    const worktreeProjectId =
+      (tasksQuery.data ?? []).find(
+        (worktreeTask) => worktreeTask.id === entry.worktreeTaskId,
+      )?.projectId ?? task.projectId;
     const ui = useUiStore.getState();
     ui.setScheduledTasksOpen(false);
-    ui.expandProject(task.projectId);
+    ui.expandProject(worktreeProjectId);
     ui.expandTask(entry.worktreeTaskId);
     const selection = useWorkspaceSelectionStore.getState();
     if (entry.sessionId !== null) {
       selection.selectSession(
         entry.sessionId,
         entry.worktreeTaskId,
-        task.projectId,
+        worktreeProjectId,
       );
     } else {
-      selection.selectTask(entry.worktreeTaskId, task.projectId);
+      selection.selectTask(entry.worktreeTaskId, worktreeProjectId);
     }
     close();
   };
 
   const discardWorktree = (worktreeTaskId: string) => {
-    setDiscardTaskId(null);
     deleteWorktreeTask.mutate(
       { taskId: worktreeTaskId },
       {
@@ -80,6 +85,12 @@ export function ScheduledTaskHistoryDialog({
             queryKey: scheduledTaskKeys.history(task.id),
           });
         },
+        onError: (error) => {
+          toast.error(t("scheduledTask.discardTitle"), {
+            description: localizeContractError(error, t),
+          });
+        },
+        onSettled: () => setDiscardTaskId(null),
       },
     );
   };

@@ -7,6 +7,7 @@ import { invalidateAgentModels } from "../data/agent-runtime";
 import { invalidateMcpHealth } from "../data/mcp-health";
 import { invalidateWorkflowRun } from "../data/workflow-runs";
 import { surfaceScheduledTaskEvent } from "../data/scheduled-task-events";
+import { surfaceStartupScheduledFacts } from "../data/scheduled-task-startup-surface";
 import { useOptionalPlatform } from "../../platform/use-platform";
 
 const INITIAL_RECONNECT_DELAY_MS = 1_000;
@@ -51,6 +52,9 @@ export function useAppEvents(client: ContractsClient) {
             setReady(true);
             // The initial refetch closes the gap between database changes and stream subscription.
             void refetchSessions(queryClient);
+            // Facts recorded while no subscriber existed (startup recovery of missed
+            // occurrences and interrupted runs) live in persistence; surface them once.
+            void surfaceStartupScheduledFacts(client, queryClient, platform);
           } else if (event.type === "session_title_updated") {
             void invalidateSessions(queryClient);
           } else if (event.type === "plugin_status_changed") {
@@ -68,7 +72,12 @@ export function useAppEvents(client: ContractsClient) {
           } else if (event.type === "scheduled_task") {
             // The event announces a persisted fact; navigation and OS notifications are
             // handled together with the history invalidation.
-            void surfaceScheduledTaskEvent(platform, event, queryClient);
+            void surfaceScheduledTaskEvent(
+              platform,
+              event,
+              queryClient,
+              client,
+            );
           }
         }
         handleDisconnect();

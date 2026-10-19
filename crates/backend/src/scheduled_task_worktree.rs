@@ -5,15 +5,16 @@ use gitlancer::git::diff::{DiffRequest, DiffScope};
 use gitlancer::git::status::StatusEntriesRequest;
 use gitlancer::git::worktree::FindWorktreeRequest;
 use gitlancer::{CliGitRunner, CommitId, Git, RepoRoot, Repository};
-use ora_application::{ScheduledRunLifecycleRepository, TaskRepository, WorktreeRepository};
+use ora_application::{
+    ScheduledRunLifecycleRepository, TaskActivityRepository, TaskRepository, WorktreeRepository,
+};
 use ora_contracts::DeleteTaskRequest;
 use ora_db::{
-    SqliteScheduledRunRepository, SqliteTaskRepository, SqliteWorkspaceRepository,
-    SqliteWorktreeRepository,
+    RepositoryPool, SqliteScheduledRunRepository, SqliteTaskRepository, SqliteWorktreeRepository,
 };
-use ora_domain::{ProjectId, ScheduledRun, ScheduledRunId, TaskId, WorkspaceLocation};
+use ora_domain::{ScheduledRun, ScheduledRunId, TaskId};
 
-use crate::TaskApi;
+use crate::task::{TaskApi, resolve_project_cwd};
 
 /// Upper bound on Scheduled Run worktrees kept across every task, chosen per the approved
 /// ADR's implementation-stage freedom (specs `decisions/desktop/core/scheduled-task` D4).
@@ -26,6 +27,9 @@ pub(super) struct RetentionCandidate {
     pub task_id: TaskId,
     /// Whether the task-owned worktree is still a visible task row.
     pub task_exists: bool,
+    /// Whether a live session or workflow run still occupies the worktree. In-use worktrees
+    /// are never cleaned automatically; the user closes them through the normal stop flows.
+    pub in_use: bool,
     /// `Some(true)` when the worktree carries any change against its provisioned baseline,
     /// `Some(false)` when it is provably unmodified, and `None` when it cannot be classified
     /// and must therefore be kept.
@@ -37,38 +41,44 @@ pub(super) struct RetentionCandidate {
 /// Unmodified worktrees are deleted through the regular task cascade so Git cleanup removes
 /// the checkout and branch exactly like an interactive discard. Worktrees with changes are
 /// retained for the user, bounded by [`MAX_RETAINED_SCHEDULED_WORKTREES`] with oldest-finished
-/// runs deleted first.
+/// runs deleted first. Worktrees still in use are skipped entirely.
 #[derive(Clone)]
 pub(super) struct ScheduledWorktreeJanitor {
     tasks: Arc<TaskApi>,
+    pool: RepositoryPool,
+    relative_path_base: PathBuf,
     runs: SqliteScheduledRunRepository,
     task_rows: SqliteTaskRepository,
-    workspaces: SqliteWorkspaceRepository,
     worktrees: SqliteWorktreeRepository,
 }
 
 impl ScheduledWorktreeJanitor {
-    pub(super) fn new(tasks: Arc<TaskApi>, pool: ora_db::RepositoryPool) -> Self {
+    pub(super) fn new(
+        tasks: Arc<TaskApi>,
+        pool: RepositoryPool,
+        relative_path_base: PathBuf,
+    ) -> Self {
         Self {
             tasks,
+            relative_path_base,
             runs: SqliteScheduledRunRepository::new(pool.clone()),
             task_rows: SqliteTaskRepository::new(pool.clone()),
-            workspaces: SqliteWorkspaceRepository::new(pool.clone()),
-            worktrees: SqliteWorktreeRepository::new(pool),
+            worktrees: SqliteWorktreeRepository::new(pool.clone()),
+            pool,
         }
     }
 
     /// Decides keep-versus-delete for one finished run, then keeps the retention bound.
     ///
     /// A run that never started still owns a freshly provisioned worktree; it cannot carry
-    /// changes and is discarded directly.
+    /// changes and is discarded directly. A worktree whose task is still in use is untouched.
     pub(super) async fn run_finished(
         &self,
         run: &ScheduledRun,
         worktree_task_id: &TaskId,
         worktree_path: Option<&str>,
     ) {
-        if !self.task_exists(worktree_task_id) {
+        if !self.task_exists(worktree_task_id) || self.task_in_use(worktree_task_id) {
             return;
         }
         let classification = match worktree_path {
@@ -83,7 +93,8 @@ impl ScheduledWorktreeJanitor {
 
     /// Enforces the retained-worktree bound across every task, deleting the oldest kept
     /// worktrees first. Also discards worktrees that provably carry no changes, which
-    /// covers runs a previous process finished without cleanup.
+    /// covers runs a previous process finished without cleanup. In-use worktrees are
+    /// excluded from both deletion and the retained count, so the cap governs the unused set.
     pub(super) async fn enforce_retention(&self) {
         let Ok(runs) = self.runs.list_scheduled_runs_with_retained_worktrees() else {
             return;
@@ -97,15 +108,19 @@ impl ScheduledWorktreeJanitor {
                 continue;
             };
             let task_exists = self.task_exists(&task_id);
-            let has_changes = if task_exists {
-                self.classify_worktree(&run, &task_id, &worktree_path)
+            let (in_use, has_changes) = if task_exists {
+                (
+                    self.task_in_use(&task_id),
+                    self.classify_worktree(&run, &task_id, &worktree_path),
+                )
             } else {
-                Some(false)
+                (false, Some(false))
             };
             candidates.push(RetentionCandidate {
                 run_id: run.id.clone(),
                 task_id,
                 task_exists,
+                in_use,
                 has_changes,
             });
         }
@@ -119,6 +134,15 @@ impl ScheduledWorktreeJanitor {
             .find_task(task_id)
             .map(|task| task.is_some())
             .unwrap_or(false)
+    }
+
+    /// Reports whether a live session or workflow run still occupies the task workspace.
+    /// A failed probe counts as in use so a transient database error never deletes a
+    /// worktree that might be occupied.
+    fn task_in_use(&self, task_id: &TaskId) -> bool {
+        self.task_rows
+            .task_has_running_activity(task_id)
+            .unwrap_or(true)
     }
 
     /// Reports whether one run's worktree differs from its provisioned baseline.
@@ -138,21 +162,20 @@ impl ScheduledWorktreeJanitor {
         };
         let worktree = self.worktrees.find_worktree(&task.workspace_id).ok()??;
         let baseline = worktree.baseline.commit_id().map(str::to_string);
-        let repository_root = self.project_repository_root(&run.snapshot.project_id)?;
+        let repository_root = resolve_project_cwd(
+            &self.pool,
+            &run.snapshot.project_id,
+            &self.relative_path_base,
+        )
+        .ok()?;
         git_worktree_has_changes(&repository_root, worktree_path, baseline)
     }
 
-    fn project_repository_root(&self, project_id: &ProjectId) -> Option<PathBuf> {
-        let workspace = self.workspaces.find_main_workspace(project_id).ok()??;
-        match workspace.location {
-            WorkspaceLocation::LocalFilesystem { path } => Some(PathBuf::from(path)),
-            _ => None,
-        }
-    }
-
-    /// Discards one run's retained worktree through the regular task cascade.
+    /// Discards one run's retained worktree through the regular task cascade and clears the
+    /// run's retained-worktree link once the task row is gone, so the retention sweep and
+    /// history pruning stop tracking it. A failed discard keeps the link for later sweeps.
     async fn discard_task(&self, task_id: &TaskId, run_id: &ScheduledRunId) {
-        if let Err(error) = self
+        match self
             .tasks
             .clone()
             .delete(DeleteTaskRequest {
@@ -160,12 +183,23 @@ impl ScheduledWorktreeJanitor {
             })
             .await
         {
-            ora_logging::ora_warn!(
-                run_id = %run_id,
-                task_id = %task_id,
-                error = %error,
-                "scheduled run worktree discard failed; the worktree is kept"
-            );
+            Ok(_) => {
+                if let Err(error) = self.runs.clear_retained_worktree_link(run_id) {
+                    ora_logging::ora_warn!(
+                        run_id = %run_id,
+                        error = %error,
+                        "scheduled run kept its worktree link after a successful discard"
+                    );
+                }
+            }
+            Err(error) => {
+                ora_logging::ora_warn!(
+                    run_id = %run_id,
+                    task_id = %task_id,
+                    error = %error,
+                    "scheduled run worktree discard failed; the worktree is kept"
+                );
+            }
         }
     }
 }
@@ -213,7 +247,8 @@ fn git_worktree_has_changes(
 ///
 /// Unmodified worktrees always go; modified ones fill the retained bound and anything past it
 /// is discarded oldest-first. Unclassifiable worktrees count as modified. Candidates whose
-/// task row already disappeared are skipped because nothing remains to discard.
+/// task row already disappeared have nothing to discard, and in-use worktrees are excluded
+/// from both deletion and the retained count, so the cap governs the unused set.
 pub(super) fn retention_discards(
     candidates: &[RetentionCandidate],
     max_retained: usize,
@@ -221,7 +256,7 @@ pub(super) fn retention_discards(
     let mut retained = 0usize;
     let mut discards = Vec::new();
     for candidate in candidates {
-        if !candidate.task_exists {
+        if !candidate.task_exists || candidate.in_use {
             continue;
         }
         match candidate.has_changes {
@@ -254,7 +289,20 @@ mod tests {
             run_id: ScheduledRunId::new(run),
             task_id: TaskId::new(task),
             task_exists: exists,
+            in_use: false,
             has_changes,
+        }
+    }
+
+    fn candidate_in_use(
+        run: &str,
+        task: &str,
+        exists: bool,
+        has_changes: Option<bool>,
+    ) -> RetentionCandidate {
+        RetentionCandidate {
+            in_use: true,
+            ..candidate(run, task, exists, has_changes)
         }
     }
 
@@ -310,6 +358,26 @@ mod tests {
 
         assert_eq!(discards(&candidates, 1), vec!["task-2".to_string()]);
         assert_eq!(discards(&candidates, 2), Vec::<String>::new());
+    }
+
+    #[test]
+    fn in_use_worktrees_are_neither_discarded_nor_counted_toward_the_bound() {
+        let candidates = vec![
+            candidate_in_use("run-1", "task-1", true, Some(false)),
+            candidate_in_use("run-2", "task-2", true, Some(true)),
+            candidate("run-3", "task-3", true, Some(true)),
+        ];
+
+        // In-use worktrees survive a user's live session even at bound zero; the bound
+        // counts only the unused set, so the single unused retained worktree exceeds it.
+        assert_eq!(discards(&candidates, 0), vec!["task-3".to_string()]);
+        assert_eq!(discards(&candidates, 2), Vec::<String>::new());
+
+        let unused_only = vec![
+            candidate("run-3", "task-3", true, Some(true)),
+            candidate("run-4", "task-4", true, Some(true)),
+        ];
+        assert_eq!(discards(&unused_only, 1), vec!["task-4".to_string()]);
     }
 
     /// Builds a repository with one commit and a linked worktree created from that commit.
@@ -400,5 +468,229 @@ mod tests {
             None,
             "without a recorded baseline the worktree must be kept"
         );
+    }
+
+    /// Drives bootstrap, repository setup, and asynchronous cleanup under one scoped TRACE
+    /// subscriber with a current-thread Tokio runtime.
+    fn run_integration(test: impl std::future::Future<Output = ()>) {
+        ora_logging::with_trace_logging(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("test runtime")
+                .block_on(test);
+        });
+    }
+
+    fn integration_scheduled_task(project_id: &str) -> ora_domain::ScheduledTask {
+        let mut task = ora_domain::ScheduledTask::new(
+            ora_domain::ScheduledTaskId::new("scheduled-task-it"),
+            "Integration task",
+            true,
+            ora_domain::ScheduledTaskSchedule::daily(9, 0).expect("daily schedule"),
+            ora_domain::ScheduledTaskExecutionLocation::Local,
+            ora_domain::ProjectId::new(project_id),
+            ora_domain::AgentRef::parse("ora/agent").expect("agent ref"),
+            Some("default".to_string()),
+            "Run the integration prompt",
+            Some(ora_domain::ScheduledTaskApproval::full_auto_in_worktree(10)),
+            ora_domain::AuditFields::new(10, 10, false),
+        )
+        .expect("task");
+        task.freeze_worktree_base_branch("main");
+        task
+    }
+
+    /// A finished run whose worktree is still in use keeps it; once the session stops, the
+    /// unmodified worktree is discarded through the task cascade and its cleanup job is
+    /// enqueued, and the run stops being tracked as retained.
+    #[test]
+    fn finished_run_discards_a_clean_worktree_only_after_its_session_stops() {
+        run_integration(async {
+            use ora_application::{
+                ScheduledOccurrenceRepository, ScheduledRunLifecycleRepository,
+                ScheduledTaskRepository, SessionRepository, TaskActivityRepository,
+            };
+            use ora_contracts::{
+                CreateProjectRequest, CreateTaskRequest, EmptyErrorParams, GetTaskRequest,
+                GetTaskWorkspaceRequest, PublicError,
+            };
+            use ora_db::{
+                DatabaseBootstrapper, DatabaseLocation, SqliteGitCleanupJobRepository,
+                SqliteScheduledRunRepository, SqliteScheduledTaskRepository,
+                SqliteSessionRepository, SqliteTaskRepository, SqliteWorkspaceRepository,
+                default_migration_catalog,
+            };
+            use ora_domain::{
+                ScheduledOccurrence, ScheduledRun, ScheduledRunId, ScheduledRunTransition, Session,
+                SessionId, SessionMcpSelection, SessionStatus, WorkspaceId,
+            };
+            use tempfile::TempDir;
+
+            let temporary = TempDir::new().expect("backend fixture");
+            let git = GitTestScaffold::new("scheduled-worktree-cleanup").expect("Git fixture");
+            git.write_file(git.repo_path(), "README.md", "fixture\n")
+                .expect("seed repository");
+            git.stage_all_and_commit("initial").expect("initial commit");
+            let backend = crate::Backend::open(crate::test_backend::backend_paths(
+                temporary.path(),
+                temporary.path(),
+            ))
+            .expect("backend");
+            let tasks = backend.tasks();
+            let project = backend
+                .projects()
+                .create(CreateProjectRequest {
+                    name: "Scheduled cleanup fixture".to_string(),
+                    main_workspace_path: git.repo_path().to_string_lossy().into_owned(),
+                })
+                .expect("project")
+                .project;
+            let worktree_task = tasks
+                .create(CreateTaskRequest {
+                    project_id: project.id.clone(),
+                    title: "Scheduled run run-it".to_string(),
+                    base_branch: Some("main".to_string()),
+                })
+                .expect("worktree task")
+                .task;
+            let worktree_root = tasks
+                .workspace(GetTaskWorkspaceRequest {
+                    task_id: worktree_task.id.clone(),
+                })
+                .expect("worktree workspace")
+                .workspace
+                .root_path;
+
+            let database_path = temporary.path().join("ora.sqlite3");
+            let pool = DatabaseBootstrapper::system()
+                .bootstrap_repository_pool(
+                    &DatabaseLocation::path(&database_path),
+                    &default_migration_catalog().expect("migration catalog"),
+                )
+                .expect("reopen database pool");
+            let definition = integration_scheduled_task(&project.id);
+            SqliteScheduledTaskRepository::new(pool.clone())
+                .create_scheduled_task(definition.clone())
+                .expect("create definition");
+            let runs = SqliteScheduledRunRepository::new(pool.clone());
+            let worktree_task_id = ora_domain::TaskId::new(&worktree_task.id);
+            let run = ScheduledRun::accepted(
+                ScheduledRunId::new("run-it"),
+                ScheduledOccurrence {
+                    task_id: definition.id.clone(),
+                    scheduled_at: 1_000,
+                },
+                &definition,
+                1_001,
+            );
+            runs.resolve_scheduled_occurrence(ora_application::ScheduledOccurrenceCandidate::run(
+                run,
+            ))
+            .expect("admit run");
+            let session_id = SessionId::new("session-it");
+            runs.transition_scheduled_run(
+                &ScheduledRunId::new("run-it"),
+                ScheduledRunTransition::Start {
+                    session_id: session_id.clone(),
+                    worktree_path: worktree_root.clone(),
+                    worktree_task_id: worktree_task_id.clone(),
+                },
+                1_002,
+            )
+            .expect("start run");
+            runs.transition_scheduled_run(
+                &ScheduledRunId::new("run-it"),
+                ScheduledRunTransition::Succeed,
+                1_003,
+            )
+            .expect("finish run");
+
+            let sessions = SqliteSessionRepository::new(pool.clone());
+            let now = <crate::clock::SystemClock as ora_application::Clock>::now_timestamp_millis(
+                &crate::clock::SystemClock,
+            );
+            sessions
+                .create_session(Session::new(
+                    session_id.clone(),
+                    WorkspaceId::new(&worktree_task.workspace_id),
+                    ora_domain::AgentRef::parse("ora-space.fixture").expect("agent identity"),
+                    "provider-session",
+                    SessionStatus::Running,
+                    SessionMcpSelection::Automatic,
+                    ora_domain::AuditFields::new(now, now, false),
+                ))
+                .expect("running session");
+            assert!(
+                SqliteTaskRepository::new(pool.clone())
+                    .task_has_running_activity(&worktree_task_id)
+                    .expect("activity probe")
+            );
+
+            let janitor = super::ScheduledWorktreeJanitor::new(
+                tasks.clone(),
+                pool.clone(),
+                temporary.path().to_path_buf(),
+            );
+            let run_row = runs
+                .list_scheduled_runs_with_retained_worktrees()
+                .expect("list retained runs")
+                .into_iter()
+                .next()
+                .expect("retained run row");
+            janitor
+                .run_finished(&run_row, &worktree_task_id, Some(&worktree_root))
+                .await;
+            assert!(
+                tasks
+                    .get(GetTaskRequest {
+                        task_id: worktree_task.id.clone()
+                    })
+                    .is_ok(),
+                "an in-use worktree is not cleaned up"
+            );
+
+            sessions
+                .update_session_status(&session_id, SessionStatus::Stopped, now)
+                .expect("stop the run session");
+            // The cascade soft-deletes the workspace row, so capture its locator before the
+            // discard; the cleanup job records the same path as its checkout root.
+            let locator_path = match SqliteWorkspaceRepository::new(pool.clone())
+                .find_workspace(&WorkspaceId::new(&worktree_task.workspace_id))
+                .expect("workspace lookup")
+                .map(|workspace| workspace.location)
+            {
+                Some(ora_domain::WorkspaceLocation::LocalFilesystem { path }) => path,
+                _ => panic!("the retained worktree task owns a local filesystem workspace"),
+            };
+            janitor
+                .run_finished(&run_row, &worktree_task_id, Some(&worktree_root))
+                .await;
+
+            let delete_error = tasks
+                .get(GetTaskRequest {
+                    task_id: worktree_task.id.clone(),
+                })
+                .expect_err("the clean worktree task is deleted");
+            assert_eq!(
+                delete_error.public_error(),
+                &PublicError::TaskNotFound(EmptyErrorParams {})
+            );
+            assert!(
+                runs.list_scheduled_runs_with_retained_worktrees()
+                    .expect("list retained runs after discard")
+                    .is_empty(),
+                "the discarded run no longer counts as retained"
+            );
+            let cleanup_jobs = SqliteGitCleanupJobRepository::new(pool)
+                .list_jobs()
+                .expect("list cleanup jobs");
+            assert!(
+                cleanup_jobs
+                    .iter()
+                    .any(|job| job.checkout_root.as_deref() == Some(locator_path.as_str())),
+                "the worktree cleanup is enqueued for the durable worker"
+            );
+        });
     }
 }

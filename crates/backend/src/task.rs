@@ -154,6 +154,11 @@ impl TaskApi {
         get_task_workspace(&self.pool, &request.task_id, &self.relative_path_base)
     }
 
+    /// Runtime path base used to resolve relative main Workspace locations.
+    pub(crate) fn relative_path_base(&self) -> &Path {
+        &self.relative_path_base
+    }
+
     /// Soft-deletes the task and Ora worktree record without touching Git state.
     fn delete_persisted(
         &self,

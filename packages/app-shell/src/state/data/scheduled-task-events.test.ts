@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "@ora/ui";
 import type { ScheduledTask, ScheduledTaskEvent } from "@ora/contracts";
+import { createTestClient } from "../../test/contracts-transport";
 import { createTestQueryClient } from "../../test/hook-harness";
 import type { PlatformAdapter } from "../../platform";
 import { scheduledTaskKeys } from "../hooks/use-scheduled-tasks";
@@ -43,7 +44,10 @@ async function surface(
 ): Promise<void> {
   const queryClient = createTestQueryClient();
   queryClient.setQueryData(scheduledTaskKeys.all, [TASK]);
-  await surfaceScheduledTaskEvent(platform, event, queryClient);
+  const client = createTestClient({
+    listScheduledTasks: async () => ({ tasks: [TASK] }),
+  });
+  await surfaceScheduledTaskEvent(platform, event, queryClient, client);
 }
 
 function setVisibility(state: DocumentVisibilityState): void {

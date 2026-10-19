@@ -1,4 +1,8 @@
-import type { ScheduledTask, ScheduledTaskEvent } from "@ora/contracts";
+import type {
+  ContractsClient,
+  ScheduledTask,
+  ScheduledTaskEvent,
+} from "@ora/contracts";
 import type { QueryClient } from "@tanstack/react-query";
 import { appI18n } from "../../i18n/i18n-instance";
 import type { PlatformAdapter } from "../../platform";
@@ -9,9 +13,19 @@ import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store"
 import { invalidateSessions } from "./sessions";
 
 /** Reads the scheduled task name from the definition cache without re-querying. */
-function taskName(queryClient: QueryClient, taskId: string): string {
+async function taskName(
+  queryClient: QueryClient,
+  client: ContractsClient,
+  taskId: string,
+): Promise<string> {
   const tasks =
-    queryClient.getQueryData<ScheduledTask[]>(scheduledTaskKeys.all) ?? [];
+    queryClient.getQueryData<ScheduledTask[]>(scheduledTaskKeys.all) ??
+    (await queryClient
+      .fetchQuery({
+        queryKey: scheduledTaskKeys.all,
+        queryFn: () => client.scheduledTask.list({}).then((r) => r.tasks),
+      })
+      .catch(() => []));
   return tasks.find((task) => task.id === taskId)?.name ?? taskId;
 }
 
@@ -50,6 +64,25 @@ async function showOsNotification(
 }
 
 /**
+ * Surfaces one failed or missed Scheduled Task fact: an actionable in-app toast while the
+ * window is visible, plus a best-effort OS notification while it is hidden.
+ */
+export async function notifyFailedScheduledFact(
+  platform: PlatformAdapter | null,
+  title: string,
+  body: string,
+  onClick?: () => void,
+): Promise<void> {
+  await showOsNotification(platform, title, body);
+  toast.error(title, {
+    description: body,
+    action: onClick
+      ? { label: appI18n.t("scheduledTask.view"), onClick }
+      : undefined,
+  });
+}
+
+/**
  * Surfaces one persisted Scheduled Task fact to the user.
  *
  * Facts arrive only after the backend committed them. When the window is visible an
@@ -60,12 +93,13 @@ export async function surfaceScheduledTaskEvent(
   platform: PlatformAdapter | null,
   event: ScheduledTaskEvent,
   queryClient: QueryClient,
+  client: ContractsClient,
 ): Promise<void> {
   queryClient.invalidateQueries({
     queryKey: scheduledTaskKeys.history(event.taskId),
   });
   const t = appI18n.t.bind(appI18n);
-  const name = taskName(queryClient, event.taskId);
+  const name = await taskName(queryClient, client, event.taskId);
 
   if (event.kind === "run_started") {
     await showOsNotification(
