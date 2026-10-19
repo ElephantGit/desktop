@@ -7,6 +7,8 @@ use ora_effect_skill::{SkillDirectoryResourceAdapter, SkillPlanner};
 use pretty_assertions::assert_eq;
 use rusqlite::params;
 
+mod paths;
+
 /// Writes one Skill package directory and returns its validated projection.
 fn skill_package(
     directory: &std::path::Path,

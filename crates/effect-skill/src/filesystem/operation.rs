@@ -118,7 +118,7 @@ pub(super) fn state_matches_expected(
     match operation.expected() {
         ExactPreviousState::Missing => {
             let path = planned_path(operation, plan)?;
-            Ok(!path.exists())
+            state_is_missing(&path)
         }
         ExactPreviousState::Present { .. } => state_matches_path(
             operation.expected(),
@@ -136,7 +136,7 @@ pub(super) fn state_matches_planned(
     match operation.planned() {
         ExactPlannedState::Missing => {
             let path = expected_path(operation, plan)?;
-            Ok(!path.exists())
+            state_is_missing(&path)
         }
         ExactPlannedState::Present { .. } => state_matches_path(
             operation.planned(),
@@ -153,7 +153,7 @@ fn state_matches_path(
     resource: &EffectResourceId,
 ) -> Result<bool, SkillDirectoryError> {
     let Some((fingerprint_expected, managed_identity)) = state.present() else {
-        return Ok(!path.exists());
+        return state_is_missing(path);
     };
     if !path.exists() || fingerprint(path)? != *fingerprint_expected {
         return Ok(false);
@@ -163,6 +163,18 @@ fn state_matches_path(
             && marker.resource == *resource
             && marker.managed_identity == *managed_identity
     }))
+}
+
+/// Missing proof requires an absent entry, not a dangling link or an unreadable path.
+fn state_is_missing(path: &Path) -> Result<bool, SkillDirectoryError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(source) => Err(SkillDirectoryError::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
 }
 
 /// Supplies shared present-state access without collapsing the distinct expected/planned types.

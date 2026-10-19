@@ -25,7 +25,7 @@ use operation::{
 };
 use path::{
     RootAccess, ensure_operation_paths_are_scoped, resolve_declared_root, resolve_resource_root,
-    resource_root,
+    resource_root, verify_operation_root,
 };
 
 pub const MARKER_FILE_NAME: &str = ".ora-managed.json";
@@ -295,6 +295,7 @@ impl SkillDirectoryResourceAdapter {
         let VersionedAdapterPlan::FilesystemDirectoryV1(plan) = operation.payload() else {
             return Err(SkillDirectoryError::UnsupportedAdapterPlan);
         };
+        verify_operation_root(plan)?;
         if !state_matches_planned(operation, plan)? {
             return Err(SkillDirectoryError::VerificationFailed {
                 operation: operation.identity().clone(),
@@ -317,6 +318,7 @@ impl SkillDirectoryResourceAdapter {
         let VersionedAdapterPlan::FilesystemDirectoryV1(plan) = operation.payload() else {
             return Err(SkillDirectoryError::UnsupportedAdapterPlan);
         };
+        verify_operation_root(plan)?;
         if !state_matches_expected(operation, plan)? {
             return Err(SkillDirectoryError::ExpectedVerificationFailed {
                 operation: operation.identity().clone(),
