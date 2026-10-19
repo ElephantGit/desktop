@@ -69,6 +69,25 @@ impl ScheduledTaskSchedule {
             minute,
         })
     }
+
+    /// Returns the first hourly occurrence strictly after `after`, retaining the enable-time
+    /// anchor instead of deriving an alignment from a later process restart.
+    ///
+    /// Calendar schedules intentionally return `None`: their next occurrence depends on the
+    /// configured timezone and belongs to the scheduler adapter rather than the domain model.
+    pub fn next_hourly_occurrence_after(&self, anchor_at: i64, after: i64) -> Option<i64> {
+        let Self::EveryHours { interval } = self else {
+            return None;
+        };
+        let interval_millis = i64::from(*interval).checked_mul(60 * 60 * 1_000)?;
+        let elapsed = after.saturating_sub(anchor_at);
+        let completed_intervals = elapsed.div_euclid(interval_millis);
+        anchor_at.checked_add(
+            completed_intervals
+                .checked_add(1)?
+                .checked_mul(interval_millis)?,
+        )
+    }
 }
 
 /// Freezes where future occurrences are owned for the lifetime of a task.
@@ -115,6 +134,17 @@ pub struct ScheduledTask {
     pub prompt: String,
     pub revision: u64,
     pub approval: Option<ScheduledTaskApproval>,
+    /// Records the most recent enable time for an anchored hourly schedule.
+    ///
+    /// Calendar schedules intentionally leave this empty because their wall-clock shape is their
+    /// complete identity. An enabled `EveryHours` task receives this fact from the application
+    /// layer when it is enabled, rather than deriving it from a later process start.
+    pub schedule_anchor_at: Option<i64>,
+    /// Freezes the project default branch used to create every unattended worktree.
+    ///
+    /// This remains optional only so migrations can safely load definitions created before the
+    /// scheduler existed. New and retargeted definitions must set it before they can run.
+    pub worktree_base_branch: Option<String>,
     pub audit_fields: AuditFields,
 }
 
@@ -154,8 +184,31 @@ impl ScheduledTask {
             prompt,
             revision: 1,
             approval,
+            schedule_anchor_at: None,
+            worktree_base_branch: None,
             audit_fields,
         })
+    }
+
+    /// Records the enable-time anchor only for an active hourly schedule.
+    pub fn reanchor_on_enable(&mut self, enabled_at: i64) {
+        self.schedule_anchor_at = match self.schedule {
+            ScheduledTaskSchedule::EveryHours { .. } if self.enabled => Some(enabled_at),
+            _ => None,
+        };
+    }
+
+    /// Preserves an existing hourly anchor while clearing anchors that cannot apply to the task.
+    pub fn preserve_schedule_anchor(&mut self, existing: &Self) {
+        self.schedule_anchor_at = match self.schedule {
+            ScheduledTaskSchedule::EveryHours { .. } if self.enabled => existing.schedule_anchor_at,
+            _ => None,
+        };
+    }
+
+    /// Freezes the branch from which unattended worktrees must be provisioned.
+    pub fn freeze_worktree_base_branch(&mut self, branch: impl AsRef<str>) {
+        self.worktree_base_branch = Some(branch.as_ref().trim().to_string());
     }
 
     /// Determines whether the task may be activated by the local scheduler.

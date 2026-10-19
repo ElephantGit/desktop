@@ -96,7 +96,7 @@ impl ScheduledTaskHistoryRepository for SqliteScheduledRunRepository {
                             o.scheduled_at AS occurrence_scheduled_at,
                             o.outcome, o.missed_reason, o.observed_at,
                             r.id, r.task_id, r.scheduled_at, r.task_revision, r.project_id,
-                            r.agent_ref, r.model, r.prompt, r.approval_policy,
+                            r.worktree_base_branch, r.agent_ref, r.model, r.prompt, r.approval_policy,
                             r.approval_consented_at, r.status, r.session_id,
                             r.worktree_path, r.failure_reason, r.created_at, r.updated_at
                      FROM scheduled_occurrences o
@@ -117,6 +117,25 @@ impl ScheduledTaskHistoryRepository for SqliteScheduledRunRepository {
 }
 
 impl ScheduledRunLifecycleRepository for SqliteScheduledRunRepository {
+    fn fail_interrupted_scheduled_runs(
+        &self,
+        interrupted_at: i64,
+    ) -> Result<usize, RepositoryError> {
+        self.pool
+            .with_connection_mut(|connection| {
+                Ok(connection.execute(
+                    "UPDATE scheduled_runs
+                     SET status = 'failed', failure_reason = ?1, updated_at = ?2
+                     WHERE status IN ('accepted', 'running')",
+                    params![
+                        failure_reason_column(ScheduledRunFailureReason::ExecutionError),
+                        interrupted_at,
+                    ],
+                )?)
+            })
+            .map_err(repository_error_from_database)
+    }
+
     fn transition_scheduled_run(
         &self,
         run_id: &ScheduledRunId,
@@ -279,11 +298,11 @@ fn insert_scheduled_run(
     let (approval_policy, approval_consented_at) = approval_columns(run.snapshot.approval.as_ref());
     transaction.execute(
         "INSERT INTO scheduled_runs (
-            id, task_id, scheduled_at, task_revision, project_id, agent_ref,
+            id, task_id, scheduled_at, task_revision, project_id, worktree_base_branch, agent_ref,
             model, prompt, approval_policy, approval_consented_at, status,
             session_id, worktree_path, failure_reason, created_at, updated_at
          ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17
          )",
         params![
             run.id.as_ref(),
@@ -291,6 +310,7 @@ fn insert_scheduled_run(
             run.occurrence.scheduled_at,
             revision,
             run.snapshot.project_id.as_ref(),
+            run.snapshot.worktree_base_branch.as_deref(),
             run.snapshot.agent_ref.as_str(),
             run.snapshot.model.as_deref(),
             &run.snapshot.prompt,
@@ -343,7 +363,7 @@ fn load_scheduled_run(
     occurrence: &ScheduledOccurrence,
 ) -> Result<ScheduledRun, crate::DatabaseError> {
     let mut statement = transaction.prepare(
-        "SELECT id, task_id, scheduled_at, task_revision, project_id, agent_ref,
+        "SELECT id, task_id, scheduled_at, task_revision, project_id, worktree_base_branch, agent_ref,
                 model, prompt, approval_policy, approval_consented_at, status,
                 session_id, worktree_path, failure_reason, created_at, updated_at
          FROM scheduled_runs
@@ -362,7 +382,7 @@ fn load_scheduled_run_by_id(
     run_id: &ScheduledRunId,
 ) -> Result<Option<ScheduledRun>, crate::DatabaseError> {
     let mut statement = transaction.prepare(
-        "SELECT id, task_id, scheduled_at, task_revision, project_id, agent_ref,
+        "SELECT id, task_id, scheduled_at, task_revision, project_id, worktree_base_branch, agent_ref,
                 model, prompt, approval_policy, approval_consented_at, status,
                 session_id, worktree_path, failure_reason, created_at, updated_at
          FROM scheduled_runs
@@ -393,6 +413,7 @@ fn map_scheduled_run_row(row: &Row<'_>) -> Result<ScheduledRun, crate::DatabaseE
         snapshot: ScheduledRunSnapshot {
             revision,
             project_id: ProjectId::new(row.get::<_, String>("project_id")?),
+            worktree_base_branch: row.get("worktree_base_branch")?,
             agent_ref: AgentRef::parse(row.get::<_, String>("agent_ref")?)?,
             model: row.get("model")?,
             prompt: row.get("prompt")?,
@@ -584,6 +605,70 @@ mod tests {
     }
 
     #[test]
+    fn startup_recovery_finishes_interrupted_accepted_and_running_runs() {
+        let (temp_dir, pool) = bootstrapped_pool();
+        seed_definition(&pool, temp_dir.path());
+        let repository = SqliteScheduledRunRepository::new(pool);
+        let task = scheduled_task();
+        let accepted = ScheduledRun::accepted(
+            ScheduledRunId::new("run-interrupted-accepted"),
+            occurrence(100),
+            &task,
+            101,
+        );
+        repository
+            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::run(accepted))
+            .expect("admit accepted run");
+        assert_eq!(
+            repository
+                .fail_interrupted_scheduled_runs(200)
+                .expect("finish accepted run"),
+            1
+        );
+
+        let running = ScheduledRun::accepted(
+            ScheduledRunId::new("run-interrupted-running"),
+            occurrence(300),
+            &task,
+            301,
+        );
+        repository
+            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::run(running))
+            .expect("admit running run");
+        repository
+            .transition_scheduled_run(
+                &ScheduledRunId::new("run-interrupted-running"),
+                ScheduledRunTransition::Start {
+                    session_id: SessionId::new("session-interrupted"),
+                    worktree_path: "worktrees/interrupted".to_string(),
+                },
+                302,
+            )
+            .expect("start run");
+        assert_eq!(
+            repository
+                .fail_interrupted_scheduled_runs(400)
+                .expect("finish running run"),
+            1
+        );
+        assert!(matches!(
+            repository
+                .transition_scheduled_run(
+                    &ScheduledRunId::new("run-interrupted-running"),
+                    ScheduledRunTransition::Succeed,
+                    401,
+                )
+                .expect("load terminal run"),
+            ScheduledRunTransitionResolution::InvalidState(ScheduledRun {
+                status: ScheduledRunStatus::Failed,
+                failure_reason: Some(ScheduledRunFailureReason::ExecutionError),
+                updated_at: 400,
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn replay_returns_the_first_run_and_its_frozen_snapshot() {
         let (temp_dir, pool) = bootstrapped_pool();
         seed_definition(&pool, temp_dir.path());
@@ -592,6 +677,7 @@ mod tests {
         let occurrence = occurrence(100);
         let first =
             ScheduledRun::accepted(ScheduledRunId::new("run-1"), occurrence.clone(), &task, 101);
+        assert_eq!(first.snapshot.worktree_base_branch.as_deref(), Some("main"));
         assert_eq!(
             repository
                 .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::run(first.clone()))
@@ -985,7 +1071,7 @@ mod tests {
     }
 
     fn scheduled_task_with_id(task_id: &str) -> ScheduledTask {
-        ScheduledTask::new(
+        let mut task = ScheduledTask::new(
             ScheduledTaskId::new(task_id),
             "Quality report",
             true,
@@ -998,6 +1084,8 @@ mod tests {
             Some(ScheduledTaskApproval::full_auto_in_worktree(10)),
             AuditFields::new(10, 10, false),
         )
-        .expect("task")
+        .expect("task");
+        task.freeze_worktree_base_branch("main");
+        task
     }
 }

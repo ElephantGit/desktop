@@ -46,6 +46,8 @@ similar = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
 chrono-tz = { workspace = true }
+chrono = { workspace = true }
+cron = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "rt", "sync", "time"] }
 tokio-util = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }

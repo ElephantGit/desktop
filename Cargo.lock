@@ -3589,7 +3589,9 @@ name = "ora-backend"
 version = "0.0.0"
 dependencies = [
  "agent-client-protocol-schema",
+ "chrono",
  "chrono-tz",
+ "cron",
  "futures",
  "gitlancer",
  "ora-acp",

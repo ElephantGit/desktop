@@ -10,6 +10,7 @@
 
 - **身份**：会话保存一个 `AgentRef`，即提供它的包的完整规范插件 id（`official/ora-space.claude`）。命名空间是身份的一部分，因为两个 marketplace 源可能发布相同的 identifier。没有 supervisor 认识的身份表示"当前未安装"，报告为 `agent_runtime_unavailable`。以更早、更短写法保存的值按原样携带，在用户重新选择 Agent 之前不匹配任何 Agent；没有任何东西会改写它们。
 - **监管**：受监管的集合恰好等于已安装的 Agent 集合，每次安装、卸载和扫描都会重新协调，所以新装的 Agent 不需要重启。supervisor 通过插件生命周期附着到运行中的插件（`PluginApi::attach_agent`，必要时按需启动），通过无损 tap 读取该代的 `agent/acp` 通知，一代结束时请生命周期停止插件。
+- **替换**：一个 supervisor 句柄只属于单次安装的实例：更新或重装会整个退役旧 supervisor，先前克隆的句柄不会自动跟随共享注册表里的替换。会话重新获取 provider 通道时，actor 按持久化的 `agent_ref` 解析当前 supervisor，并把它用于这次附着和 MCP 检查。因此既有对话无需重启 Ora 或停止会话，就能通过新 supervisor 继续；被卸载的插件继续报告 `agent_runtime_unavailable`。恢复和基于 transcript 的重建经由同一附着路径获取通道。
 - **可执行文件**：操作系统进程归宿主所有：`ora/childprocess/spawn` 接受由操作系统解析的 `command`，或由宿主拼接到插件安装根目录上的 `packageCommand`。Agent 包要么附带 CLI（按目标发布），要么不附带（通用发布，在 `PATH` 中找用户自己装的）；插件先请求包内路径，宿主回答 `package_command_missing` 时再回退到 `PATH`。
 - **失败分类**：机器上没有 CLI 报告 `agent_not_installed`，保持可重试，且不逐次记录日志。附带的可执行文件无法运行报告 `agent_unusable`，该 Agent 在本进程剩余时间内被放弃。
 

@@ -157,7 +157,7 @@ impl Backend {
                 home_directory: paths.home_directory,
                 relative_path_base: relative_path_base.clone(),
                 sessions_root: sessions_root.clone(),
-                scheduler,
+                scheduler: scheduler.clone(),
                 app_events: app_events.publisher(),
             })
             .map_err(BackendBootstrapError::AgentRuntime)?,
@@ -226,29 +226,35 @@ impl Backend {
             app_events.publisher(),
         ));
 
+        let task = Arc::new(TaskApi::new(TaskSetup {
+            pool: pool.clone(),
+            worktree_root: worktree_root.clone(),
+            relative_path_base: relative_path_base.clone(),
+            sessions_root: sessions_root.clone(),
+            repository_gates,
+            clock,
+            effect_reconcile: effect_reconcile.clone(),
+            git_cleanup: git_cleanup.clone(),
+        }));
+        let scheduled_task = Arc::new(ScheduledTaskApi::new(
+            pool.clone(),
+            AgentRuntime::new(agent_runtime.clone()),
+            scheduler,
+            task.clone(),
+            session.clone(),
+            clock,
+        ));
+
         Ok(Self {
-            scheduled_task: Arc::new(ScheduledTaskApi::new(
-                pool.clone(),
-                AgentRuntime::new(agent_runtime.clone()),
-                clock,
-            )),
+            scheduled_task,
             project: Arc::new(ProjectApi::new(
                 pool.clone(),
-                sessions_root.clone(),
+                sessions_root,
                 clock,
                 effect_reconcile.clone(),
                 git_cleanup.clone(),
             )),
-            task: Arc::new(TaskApi::new(TaskSetup {
-                pool: pool.clone(),
-                worktree_root: worktree_root.clone(),
-                relative_path_base: relative_path_base.clone(),
-                sessions_root,
-                repository_gates,
-                clock,
-                effect_reconcile: effect_reconcile.clone(),
-                git_cleanup: git_cleanup.clone(),
-            })),
+            task,
             workspace: WorkspaceApi::new(
                 pool.clone(),
                 git_cleanup,
