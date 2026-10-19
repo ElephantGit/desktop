@@ -40,7 +40,9 @@ Agent declaration. It reuses the scalar Settings compiler, validates the model-a
 and fingerprints the exact input bytes. Its diagnostics do not echo rejected values.
 `compile_configuration_file` routes the Agent shape to this compiler and rejects mixed contribution
 keys. Kind-aware package validation allows the shape only for Agent packages. The local configuration
-store and editor do not consume Agent Settings. Release-associated installs check the declaration's
+store and editor serve the Agent shape's Settings subset under the declaration's raw-byte fingerprint;
+the model-access half has no desktop-local execution semantics, and a settings-free Agent declaration
+has nothing to edit locally. Release-associated installs check the declaration's
 schema version and exact-byte fingerprint against the expected identity before committing; compiling
 or installing a declaration alone does not enable personal configuration or model execution.
 

@@ -5,8 +5,9 @@ English | [中文](agent-configuration.zh.md)
 `ora-plugin-config::compile_agent_configuration` validates an immutable Agent declaration without
 reading user configuration, running a process, or making a network request. It is a separate
 compiler API. The installed configuration dispatcher also recognizes this shape, and package
-validation compiles it for `agent`-kind packages. The local configuration store and its editor
-serve the version-one shapes. Successful compilation is not installation, authorization, or
+validation compiles it for `agent`-kind packages. An Agent declaration's Settings subset feeds the
+local configuration editor like the version-one shapes, with values in the desktop-local store;
+the model-access half has no local execution semantics. Successful compilation is not installation, authorization, or
 runtime readiness.
 
 ## Input

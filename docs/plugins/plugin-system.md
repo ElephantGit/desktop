@@ -191,8 +191,9 @@ references, so credentials cannot be baked into a package.
 The [Agent configuration declaration](agent-configuration.md) records static model-access
 capabilities and optional Settings with an exact-byte identity. Release listings and Node install
 plans may bind that identity to a package; the installer checks the package's declaration before
-committing. The local settings store and editor do not consume Agent Settings, and neither compiling
-nor installing a declaration enables a personal model configuration or authorizes execution.
+committing. The Agent Settings subset feeds the local settings store and editor under the
+declaration's raw-byte fingerprint, while the model-access half has no local execution semantics;
+neither compiling nor installing a declaration enables a personal model configuration or authorizes execution.
 
 ## Hooks
 
