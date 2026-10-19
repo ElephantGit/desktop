@@ -8,8 +8,8 @@ object storage, through a grant Cloud signs. A later run of the same Issue resto
 the Git Server before its agent starts. No bundle is generated, uploaded or downloaded. The decisions
 are the [internal snapshot root decision](https://github.com/ora-space/specs/blob/main/decisions/node/revision/0-internal-snapshot-and-incremental-bundle-upload.md),
 whose snapshot commit still applies, and
-[push the delivery ref and restore from the Git Server](https://github.com/ora-space/specs/blob/main/decisions/node/revision/20261017-push-delivery-ref-and-restore-from-git-server.md),
-which replaces its bundle upload and the bundle restore of
+[push the delivery ref and restore from the Git Server](https://github.com/ora-space/specs/blob/main/decisions/node/revision/20261017-push-delivery-ref-and-restore-from-git-server.md)
+(`approved`; it becomes `implemented` after end-to-end acceptance), which replaces its bundle upload and the bundle restore of
 [restore prior Revision before session](https://github.com/ora-space/specs/blob/main/decisions/node/revision/20261010-restore-prior-revision-before-session.md).
 The Controller's side is in [Agent relay](../controller/agent-relay.md), the grant contract in
 [Cloud contract](../controller/cloud-contract.md#revision-upload-checksums).
@@ -74,8 +74,8 @@ HTTPS command, so checkout configuration cannot redirect it or install credentia
    `x-amz-checksum-sha256`) and never follows redirects. 2xx and 412 count as uploaded; three failed
    attempts end the delivery as `failed{upload_failed}`. Grants live only in memory and are never logged.
 
-Transient Git Server failures get three attempts with 5 and 30 second pauses; 401/403 and refused ref
-updates are not retried. Each push attempt may run 30 minutes, independent of `network_timeout_ms`, and
+Transient Git Server failures get three attempts with 5 and 30 second pauses; 401, 403 and other 4xx
+answers except 429, and refused ref updates are not retried and fail as `push_rejected`. Each push attempt may run 30 minutes, independent of `network_timeout_ms`, and
 aborts below 1 KiB/s for a minute. Cloud verifies the delivery ref and the history outside its
 transaction before registering the Revision.
 
@@ -100,9 +100,13 @@ cloned from.
    the restored commit, its base and the branch, and recommending `ora-git fetch upstream`, is appended to
    the first turn.
 
-The fetch and the import share one 5-minute deadline, retries included. A missing or refused delivery
-ref ends the session as `agent_failed{prior_revision_base_unavailable}`; any other fetch, verification or
-checkout failure, or the deadline, as `agent_failed{prior_revision_unavailable}`. No plugin process is
+The fetch and the import share one 5-minute deadline, retries included. A missing delivery ref, a 403
+or another 4xx other than 401 and 429 ends the session as `agent_failed{prior_revision_base_unavailable}`:
+the prior Revision's Git content is out of reach for good. A 401 only says the Node's own git-access
+identity did not authenticate, so it ends the session as `agent_failed{prior_revision_unavailable}`,
+which a later run may retry, without a retry within the deadline since the same material cannot pass.
+Any other fetch, verification or checkout failure, or the deadline, also ends it as
+`agent_failed{prior_revision_unavailable}`. No plugin process is
 started in either case. A Node stop or an `EndSession` during the restore stops it before its next Git
 command and waits for the running one, so the session ends only once the restore no longer writes the
 checkout. A restart during a restore ends the session `interrupted`. Transport repositories are removed

@@ -8,8 +8,8 @@ family with its own records; it needs no existing Main Workspace. The decisions 
 [clone root decision](https://github.com/ora-space/specs/blob/main/decisions/node/repository/0-clone-selected-repository-branch.md),
 the [minimal clone execution contract](https://github.com/ora-space/specs/blob/main/decisions/node/repository/20260918-minimal-clone-execution-contract.md),
 [a terminated attempt fails as interrupted](https://github.com/ora-space/specs/blob/main/decisions/node/repository/20260925-terminated-clone-attempt-fails-as-interrupted.md)
-and [clone from a Git Server snapshot and ora-git](https://github.com/ora-space/specs/blob/main/decisions/node/repository/20261016-clone-from-git-server-snapshot-and-ora-git.md).
-Agents reach the Git Server during a session through [ora-git](ora-git.md).
+and [clone from a Git Server snapshot and ora-git](https://github.com/ora-space/specs/blob/main/decisions/node/repository/20261016-clone-from-git-server-snapshot-and-ora-git.md)
+(`approved`; it becomes `implemented` after end-to-end acceptance). Agents reach the Git Server during a session through [ora-git](ora-git.md).
 
 ## Input
 
@@ -90,14 +90,17 @@ snapshot fetch, and its Run may still be reading the transport under its guardia
 ## Failures and recovery
 
 The snapshot fetch only changes the private transport repository, so it may simply start again after a
-restart. Its passes are counted durably and bounded at three across restarts; each pass retries
-unreachable-server and 5xx failures three times with 5 and 30 second pauses.
+restart. Retries within a run and fetches after a restart share one durable attempt count: each attempt
+adds one to it before it starts, and after three failed attempts in all the clone ends as
+`source_unavailable`. Unreachable-server and 5xx failures are retried after 5 and then 30 seconds;
+after a restart the next attempt starts at once instead of waiting out the pause. 401, 403 and a
+missing ref are not retried.
 
 | Code | Meaning |
 |---|---|
-| `snapshot_unavailable` | The Git Server says the snapshot ref is missing or not readable (it gives both the same answer) |
+| `snapshot_unavailable` | The Git Server says the snapshot ref is missing or not readable (it gives both the same answer), or refuses the Node's git-access identity (401) |
 | `base_commit_mismatch` | The fetched ref is not a commit, or not `base_commit` |
-| `source_unavailable` | The Git Server stayed unreachable or answered 5xx until the retries ran out |
+| `source_unavailable` | The Git Server stayed unreachable or answered 5xx until the three attempts ran out |
 | `destination_conflict`, `operation_failed`, `interrupted` | As before: a destination clash, a local failure, a terminated attempt with confirmed cleanup |
 
 Each workload command is durably associated before dispatch, and its end (Git exiting, cleanup after
@@ -120,7 +123,7 @@ Clone records live in the Node database:
   path, and the initial reservation; it never creates a directory. Replaying the same input returns the
   original target; changed input or reuse across families fails. A destination cannot overlap any
   active worktree target or retained clone target, and a failure never releases its reservation.
-- Progress records `Reserved`, `DirectoryCreated`, `Fetching` (with the durable pass count) or
+- Progress records `Reserved`, `DirectoryCreated`, `Fetching` (with the durable attempt count) or
   `Dispatched` (with the current workload step). Directory identity is frozen after creation and
   `Unknown` keeps its phase. Each workload step records at most one Run, and earlier Runs must be
   cleaned first.

@@ -5,7 +5,8 @@
 `ora-git`（`apps/ora-git`）是 Agent 在沙盒里从平台 Git Server 拉取和向它推送时使用的命令。它从不对网络运行 Git，也不持有
 任何凭据：它把几个固定动词之一变成一行 JSON 请求，发到会话的 Unix socket 上，由 Node 用自己的 git-access 身份执行。
 相关决策是
-[从 Git Server 快照 clone 与 ora-git](https://github.com/ora-space/specs/blob/main/decisions/node/repository/20261016-clone-from-git-server-snapshot-and-ora-git.md)；
+[从 Git Server 快照 clone 与 ora-git](https://github.com/ora-space/specs/blob/main/decisions/node/repository/20261016-clone-from-git-server-snapshot-and-ora-git.md)
+（`approved`，端到端验收通过后改为 `implemented`）；
 Git Server 允许各执行写什么，见
 [快照 clone 输入与执行 ref 授权](https://github.com/ora-space/specs/blob/main/decisions/cloud/controller-integration/20261016-snapshot-clone-input-and-execution-ref-grants.md)。
 
@@ -33,6 +34,7 @@ socket 无法打开的会话以 `agent_failed{ora_git_unavailable}` 结束。
   任何操作都不会再写它的 checkout 或 Git Server。随后删除 socket 文件。连接在得到回答之前关闭时，客户端报告 `no_session`。
 
 请求以会话执行的 `Ora-Execution-Id` 访问 Git Server；Git Server 根据 Cloud 当前状态判定该执行能读写什么，并以它为准。
+第一阶段只授权 IssueRun 的会话：WorkflowRun 的 Agent 会话中，凡是访问 Git Server 的动词都得到 `denied`。
 
 ## 动词
 
@@ -76,6 +78,6 @@ checkout 自己成功推送或拉取自己 Workspace 之后记录；`refs/remote
 | `not_found` | 6 | 没有匹配的 ref 或本地分支 |
 | `conflict` | 7 | Workspace 分支在本 checkout 上次看到之后移动过 |
 | `not_fast_forward` | 8 | 推送的提交不包含该分支最后已知的值 |
-| `denied` | 9 | Git Server 拒绝了请求 |
+| `denied` | 9 | Git Server 拒绝了请求或 Node 的 git-access 身份（401、403） |
 | `unavailable` | 10 | 无法访问 Git Server |
 | `internal` | 11 | Node 本地失败；原因记在 Node 日志中 |

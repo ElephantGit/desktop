@@ -6,8 +6,8 @@ English | [中文](ora-git.zh.md)
 the platform Git Server. It never runs Git against the network and holds no credential: it turns one of
 a fixed set of verbs into a one-line JSON request on the session's Unix socket, and the Node runs the
 request with its own git-access identity. The decision is
-[clone from a Git Server snapshot and ora-git](https://github.com/ora-space/specs/blob/main/decisions/node/repository/20261016-clone-from-git-server-snapshot-and-ora-git.md);
-what the Git Server lets each execution write is in
+[clone from a Git Server snapshot and ora-git](https://github.com/ora-space/specs/blob/main/decisions/node/repository/20261016-clone-from-git-server-snapshot-and-ora-git.md)
+(`approved`; it becomes `implemented` after end-to-end acceptance); what the Git Server lets each execution write is in
 [snapshot clone input and execution ref grants](https://github.com/ora-space/specs/blob/main/decisions/cloud/controller-integration/20261016-snapshot-clone-input-and-execution-ref-grants.md).
 
 ## Deployment
@@ -41,7 +41,9 @@ be opened ends as `agent_failed{ora_git_unavailable}`.
   A client whose connection closes without an answer reports `no_session`.
 
 Requests reach the Git Server with the session execution's `Ora-Execution-Id`; the Git Server decides
-from Cloud's current state what that execution may read and write and stays authoritative.
+from Cloud's current state what that execution may read and write and stays authoritative. In this
+first phase only IssueRun sessions are granted access: in a WorkflowRun's Agent session every verb that
+reaches the Git Server answers `denied`.
 
 ## Verbs
 
@@ -91,6 +93,6 @@ Failures print `ora-git: <code>: <hint>` on stderr; hints name only refs and com
 | `not_found` | 6 | No matching ref or local branch |
 | `conflict` | 7 | The Workspace branch moved since this checkout last saw it |
 | `not_fast_forward` | 8 | The pushed commit does not contain the branch's last known value |
-| `denied` | 9 | The Git Server refused the request |
+| `denied` | 9 | The Git Server refused the request or the Node's git-access identity (401, 403) |
 | `unavailable` | 10 | The Git Server could not be reached |
 | `internal` | 11 | The Node failed locally; the cause is in the Node log |

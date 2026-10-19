@@ -7,7 +7,8 @@ Node 从平台 Git Server 上的快照把 Workspace 的代码 clone 到它分配
 [clone 根决策](https://github.com/ora-space/specs/blob/main/decisions/node/repository/0-clone-selected-repository-branch.md)、
 [最小 clone 执行契约](https://github.com/ora-space/specs/blob/main/decisions/node/repository/20260918-minimal-clone-execution-contract.md)、
 [被终止的尝试以 interrupted 失败](https://github.com/ora-space/specs/blob/main/decisions/node/repository/20260925-terminated-clone-attempt-fails-as-interrupted.md)
-和[从 Git Server 快照 clone 与 ora-git](https://github.com/ora-space/specs/blob/main/decisions/node/repository/20261016-clone-from-git-server-snapshot-and-ora-git.md)。
+和[从 Git Server 快照 clone 与 ora-git](https://github.com/ora-space/specs/blob/main/decisions/node/repository/20261016-clone-from-git-server-snapshot-and-ora-git.md)
+（`approved`，端到端验收通过后改为 `implemented`）。
 会话期间 Agent 经 [ora-git](ora-git.zh.md) 访问 Git Server。
 
 ## 输入
@@ -72,14 +73,15 @@ checkout 有完整历史和独立的对象，没有 remote、没有凭据配置�
 
 ## 失败与恢复
 
-拉取快照只改动私有的传输仓库，所以重启后可以直接重新开始。拉取的轮数持久记录，跨重启最多三轮；每轮对服务器不可达和
-5xx 失败重试三次，间隔 5 秒和 30 秒。
+拉取快照只改动私有的传输仓库，所以重启后可以直接重新开始。段内重试与重启后的重新拉取共用一个持久的累计次数：每次拉取
+开始前先把它加一，一共失败 3 次后 clone 以 `source_unavailable` 结束。服务器不可达和 5xx 失败先后间隔 5 秒、30 秒重试；
+重启后的下一次拉取立即开始，不再等待剩余的间隔。401、403 和 ref 不存在不重试。
 
 | 代码 | 含义 |
 |---|---|
-| `snapshot_unavailable` | Git Server 表示快照 ref 不存在或不可读（两者回答相同） |
+| `snapshot_unavailable` | Git Server 表示快照 ref 不存在或不可读（两者回答相同），或不接受 Node 的 git-access 身份（401） |
 | `base_commit_mismatch` | 拉到的 ref 不是提交，或不是 `base_commit` |
-| `source_unavailable` | Git Server 一直不可达或返回 5xx，直到重试用尽 |
+| `source_unavailable` | Git Server 一直不可达或返回 5xx，直到 3 次尝试用尽 |
 | `destination_conflict`、`operation_failed`、`interrupted` | 同以往：目标冲突、本地失败、清理已确认的被终止尝试 |
 
 每条工作负载命令在派发前持久关联，它的结束（Git 退出、停止宽限期或截止时间之后的清理，或重启后的恢复）都先关闭原受管
@@ -98,7 +100,7 @@ clone 记录存放在 Node 数据库中：
 
 - `accept_clone` 原子地保存原始命令、生成的仓库身份、根目录和路径以及初始预留；它从不创建目录。重放相同输入返回原目标；
   输入改变或跨执行族复用都会失败。目标不能与任何活动的 worktree 目标或保留的 clone 目标重叠，失败也从不释放其预留。
-- 进度记录 `Reserved`、`DirectoryCreated`、`Fetching`（带持久的轮数）或 `Dispatched`（带当前工作负载步骤）。目录身份在
+- 进度记录 `Reserved`、`DirectoryCreated`、`Fetching`（带持久的累计拉取次数）或 `Dispatched`（带当前工作负载步骤）。目录身份在
   创建后冻结，`Unknown` 保持其阶段。每个工作负载步骤最多记录一个 Run，并且之前的 Run 必须先清理完。
 - 终态结果和它的事件在同一事务中提交，并且必须与原始输入、资源和路径一致。成功要求每个工作负载步骤都以零退出；信号终止
   只能支撑 `interrupted`。

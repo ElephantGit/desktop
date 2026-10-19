@@ -7,7 +7,8 @@ Agent 会话结束时，Node 把它的 checkout 和历史保存为一个 **Revis
 Revision。不生成、不上传也不下载 bundle。相关决策是
 [内部快照根决策](https://github.com/ora-space/specs/blob/main/decisions/node/revision/0-internal-snapshot-and-incremental-bundle-upload.md)
 （其中的快照提交仍然适用），以及
-[推送交付 ref 并从 Git Server 恢复](https://github.com/ora-space/specs/blob/main/decisions/node/revision/20261017-push-delivery-ref-and-restore-from-git-server.md)，
+[推送交付 ref 并从 Git Server 恢复](https://github.com/ora-space/specs/blob/main/decisions/node/revision/20261017-push-delivery-ref-and-restore-from-git-server.md)
+（`approved`，端到端验收通过后改为 `implemented`），
 后者取代了根决策的 bundle 上传和
 [会话之前恢复上一个 Revision](https://github.com/ora-space/specs/blob/main/decisions/node/revision/20261010-restore-prior-revision-before-session.md)
 的 bundle 恢复。Controller 一侧见 [Agent 中继](../controller/agent-relay.zh.md)，授权契约见
@@ -58,7 +59,7 @@ Git 环境运行 Git，并以 git-access 身份推送；当且仅当它同时声
    授权的每个请求头（包括 `If-None-Match: *` 和 `x-amz-checksum-sha256`），从不跟随重定向。2xx 和 412 都算已上传；失败三次
    以 `failed{upload_failed}` 结束交付。授权只存在于内存，从不写日志。
 
-Git Server 的暂时性失败最多尝试三次，间隔 5 秒和 30 秒；401/403 和被拒绝的 ref 更新不重试。每次推送尝试最长 30 分钟，
+Git Server 的暂时性失败最多尝试三次，间隔 5 秒和 30 秒；401、403 和 429 以外的其他 4xx，以及被拒绝的 ref 更新不重试，以 `push_rejected` 失败。每次推送尝试最长 30 分钟，
 与 `network_timeout_ms` 无关，并在一分钟内低于 1 KiB/s 时中止。Cloud 在登记 Revision 之前，于事务外核验交付 ref 和会话历史。
 
 终态 `revision_result`（序号 1）会重放直到被确认；它持久化后冻结的文件即被删除，残留在下次启动时清扫。关闭、Controller
@@ -76,9 +77,10 @@ Git Server 的暂时性失败最多尝试三次，间隔 5 秒和 30 秒；401/4
 3. 如果上一个 Revision 的基础提交不在当前快照的历史中，就在第一轮输入后追加一段固定的英文说明，写明恢复的提交、它的基础
    提交和分支，并建议运行 `ora-git fetch upstream`。
 
-拉取和导入共享一个 5 分钟的截止时间，重试也计算在内。交付 ref 不存在或被拒绝时，会话以
-`agent_failed{prior_revision_base_unavailable}` 结束；其他拉取、校验或检出失败，以及截止时间到期，以
-`agent_failed{prior_revision_unavailable}` 结束。两种情况都不会启动插件进程。恢复期间 Node 停止或收到 `EndSession`，
+拉取和导入共享一个 5 分钟的截止时间，重试也计算在内。交付 ref 不存在、403 或 401 与 429 以外的其他 4xx 时，会话以
+`agent_failed{prior_revision_base_unavailable}` 结束：前序 Revision 的 Git 内容永久取不到。401 只说明 Node 自己的
+git-access 身份没有通过认证，所以会话以可由之后的运行再续的 `agent_failed{prior_revision_unavailable}` 结束；同一材料重试
+不会通过，时限内也不重试。其他拉取、校验或检出失败，以及截止时间到期，同样以 `agent_failed{prior_revision_unavailable}` 结束。两种情况都不会启动插件进程。恢复期间 Node 停止或收到 `EndSession`，
 恢复会在下一条 Git 命令之前停下并等待正在运行的那条，所以会话只在恢复不再写 checkout 之后才结束。恢复期间重启，会话
 以 `interrupted` 结束。传输仓库用完即删，启动时也会清扫。
 
