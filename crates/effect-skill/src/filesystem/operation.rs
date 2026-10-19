@@ -155,7 +155,24 @@ fn state_matches_path(
     let Some((fingerprint_expected, managed_identity)) = state.present() else {
         return state_is_missing(path);
     };
-    if !path.exists() || fingerprint(path)? != *fingerprint_expected {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(source) => {
+            return Err(SkillDirectoryError::Io {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
+    // The fingerprint helper checks tree entries, but its root may itself be a link.
+    // Resource proof must reject that redirection before reading fingerprints or markers.
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(SkillDirectoryError::UnsupportedResourceEntry {
+            path: path.to_path_buf(),
+        });
+    }
+    if fingerprint(path)? != *fingerprint_expected {
         return Ok(false);
     }
     Ok(read_marker(path).is_some_and(|marker| {
