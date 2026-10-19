@@ -53,6 +53,10 @@ pub(crate) fn classify(error: &GitExecError) -> GitServerFailure {
     if lower.contains("could not read username") || lower.contains("authentication failed") {
         return GitServerFailure::Unauthenticated;
     }
+    // A 404 on the ref advertisement is not printed as a status either.
+    if lower.contains("fatal: repository '") && lower.contains("' not found") {
+        return GitServerFailure::Denied;
+    }
     let status = lower
         .split("returned error: ")
         .nth(1)
@@ -110,6 +114,7 @@ mod tests {
             "fatal: could not read Username for 'https://h': terminal prompts disabled",
             "fatal: Authentication failed for 'https://h/r.git/'",
             "fatal: unable to access 'https://h/r.git/': The requested URL returned error: 404",
+            "fatal: repository 'https://h/r.git/' not found",
             "fatal: unable to access 'https://h/r.git/': The requested URL returned error: 503",
             "error: RPC failed; HTTP 429 curl 22 The requested URL returned error: 429",
             "fatal: couldn't find remote ref refs/ora/deliveries/d",
@@ -123,6 +128,7 @@ mod tests {
                 GitServerFailure::Unauthenticated,
                 GitServerFailure::Unauthenticated,
                 GitServerFailure::Unauthenticated,
+                GitServerFailure::Denied,
                 GitServerFailure::Denied,
                 GitServerFailure::Unavailable,
                 GitServerFailure::Unavailable,

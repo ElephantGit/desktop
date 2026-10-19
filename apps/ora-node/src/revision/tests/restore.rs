@@ -254,6 +254,14 @@ async fn restore_failures_follow_the_git_server_answer() {
             RestoreCancel::default(),
         )
         .await;
+    setup.server.answer_always(Some(404));
+    let not_found = setup
+        .restore(
+            &restorer,
+            setup.request(&setup.prior, DELIVERY, &setup.earlier),
+            RestoreCancel::default(),
+        )
+        .await;
     // A 401 only says the Node's git-access material failed; the prior Revision stays resumable.
     setup.server.answer_always(Some(401));
     let unauthenticated = setup
@@ -280,8 +288,16 @@ async fn restore_failures_follow_the_git_server_answer() {
         )
         .await;
     assert_eq!(
-        [missing, denied, unauthenticated, unavailable, mismatch],
         [
+            missing,
+            denied,
+            not_found,
+            unauthenticated,
+            unavailable,
+            mismatch
+        ],
+        [
+            Err(RestoreFailure::BaseUnavailable),
             Err(RestoreFailure::BaseUnavailable),
             Err(RestoreFailure::BaseUnavailable),
             Err(RestoreFailure::Unavailable),
