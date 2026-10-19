@@ -7,6 +7,7 @@ use ora_effect_skill::{SkillDirectoryResourceAdapter, SkillPlanner};
 use pretty_assertions::assert_eq;
 use rusqlite::params;
 
+mod evidence;
 mod paths;
 
 /// Writes one Skill package directory and returns its validated projection.
@@ -196,6 +197,7 @@ fn recovery_replays_a_proven_applied_leftover_and_resumes_scheduling() {
         ("recovery_required".to_string(), "blocked".to_string(), 1, 1)
     );
 
+    let evidence = evidence::capture(&pool, &target);
     // The materialized package proves the exact planned state, so the journal finalizes.
     let outcome = recover_target(&repository, &clock, &target)
         .unwrap_or_else(|e| panic!("recover Target: {e:?}"));
@@ -207,6 +209,7 @@ fn recovery_replays_a_proven_applied_leftover_and_resumes_scheduling() {
             closed_without_effect: 0,
         }
     );
+    evidence::assert_preserved(&pool, &target, "finalized", &evidence);
     let state = quarantine_state(&pool, &target);
     assert_eq!(state.0, "finalized", "the journal closed as finalized");
     assert_eq!(state.1, "pending", "the request returned to scheduling");
@@ -354,6 +357,10 @@ fn recovery_closes_a_prepared_journal_without_effect_and_reconverges() {
 
     // The worker lease expires before explicit recovery runs, exactly like a restart.
     clock.set(200);
+    repository
+        .quarantine_unfinished_operations(LocalTimestamp::from_millis(200))
+        .unwrap();
+    let evidence = evidence::capture(&pool, &target);
 
     let outcome = recover_target(&repository, &clock, &target)
         .unwrap_or_else(|e| panic!("recover Target: {e:?}"));
@@ -365,6 +372,7 @@ fn recovery_closes_a_prepared_journal_without_effect_and_reconverges() {
             closed_without_effect: 1,
         }
     );
+    evidence::assert_preserved(&pool, &target, "finalized_without_effect", &evidence);
     let state = quarantine_state(&pool, &target);
     assert_eq!(
         state.0, "finalized,finalized_without_effect",

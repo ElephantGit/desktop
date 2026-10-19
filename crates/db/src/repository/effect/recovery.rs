@@ -452,6 +452,7 @@ pub(super) fn finalize_target_recovery<Clock: TimestampSource>(
         })?;
 
         let mut affected_resources = BTreeSet::new();
+        let mut operation_evidence = Vec::new();
         for closure in attempts {
             let expected_operations: BTreeSet<_> = closure.attempt.operations().iter().collect();
             let supplied_operations: BTreeSet<_> = closure
@@ -483,6 +484,20 @@ pub(super) fn finalize_target_recovery<Clock: TimestampSource>(
                     ));
                 }
                 affected_resources.insert(operation.resource().clone());
+                // detected_at belongs only to RecoveryRequired progress. Preserve the exact
+                // stored detection before update_operation clears it, in the same transaction
+                // as the closure and its audit event; row audit time cannot reconstruct it.
+                let detected_at: i64 = transaction.query_row(
+                    "SELECT detected_at FROM effect_operations
+                     WHERE id = ?1 AND attempt_id = ?2 AND phase = 'recovery_required'",
+                    params![operation.identity().as_str(), operation.attempt().as_str()],
+                    |row| row.get(0),
+                )?;
+                operation_evidence.push(serde_json::json!({
+                    "operation_id": operation.identity().as_str(),
+                    "detected_at": detected_at,
+                    "outcome": if effect_landed { "finalized" } else { "finalized_without_effect" },
+                }));
                 update_operation(&transaction, operation, written_at)?;
                 // Only a planned-state proof may advance ownership: a closed-without-effect
                 // journal grants nothing because its effect never became durable.
@@ -601,6 +616,7 @@ pub(super) fn finalize_target_recovery<Clock: TimestampSource>(
                 effect_json(&serde_json::json!({
                     "finalized_operations": finalized_operations,
                     "closed_without_effect_operations": closed_without_effect_operations,
+                    "operations": operation_evidence,
                 }))?,
                 written_at.millis(),
             ],
