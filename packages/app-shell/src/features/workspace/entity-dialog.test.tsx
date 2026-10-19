@@ -283,11 +283,9 @@ describe("EntityDialog searchable select", () => {
 
   async function openBranchMenu() {
     const user = userEvent.setup();
-    await user.click(screen.getByRole("combobox", { name: "Base branch" }));
-    return {
-      user,
-      search: await screen.findByPlaceholderText(/Search branches|搜索分支/),
-    };
+    const search = screen.getByRole("combobox", { name: "Base branch" });
+    await user.click(search);
+    return { user, search };
   }
 
   it("wraps a long branch name inside the menu", async () => {
@@ -296,6 +294,7 @@ describe("EntityDialog searchable select", () => {
 
     const option = await screen.findByRole("option", { name: longName });
     expect(option.textContent).toBe(longName);
+    expect(option.className).not.toContain("last-child]:hidden");
     expect(option.querySelector("span")?.className).toContain("wrap-break-word");
     expect(option.querySelector("span")?.className).toContain("whitespace-normal");
   });
@@ -303,6 +302,7 @@ describe("EntityDialog searchable select", () => {
   it("filters by the git branch name behind a task title", async () => {
     renderSubmitDialog({ onSubmit: async () => {}, fields: branchFields });
     const { user, search } = await openBranchMenu();
+    await user.clear(search);
     await user.type(search, "6f9888a9");
 
     expect(await screen.findByRole("option", { name: "213124" })).toBeTruthy();
@@ -313,6 +313,7 @@ describe("EntityDialog searchable select", () => {
   it("shows an empty state when nothing matches", async () => {
     renderSubmitDialog({ onSubmit: async () => {}, fields: branchFields });
     const { user, search } = await openBranchMenu();
+    await user.clear(search);
     await user.type(search, "missing-branch");
 
     expect(
@@ -325,6 +326,7 @@ describe("EntityDialog searchable select", () => {
     const onSubmit = vi.fn(async () => {});
     renderSubmitDialog({ onSubmit, fields: branchFields });
     const { user, search } = await openBranchMenu();
+    await user.clear(search);
     await user.type(search, "6f9888a9");
     await user.click(await screen.findByRole("option", { name: "213124" }));
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -334,5 +336,34 @@ describe("EntityDialog searchable select", () => {
         baseBranch: "refs/heads/ora/6f9888a9",
       }),
     );
+  });
+
+  it("shows the full branch name when the selected text overflows", async () => {
+    const user = userEvent.setup();
+    renderSubmitDialog({
+      onSubmit: async () => {},
+      fields: [{ ...branchFields[0]!, value: "refs/heads/long" }],
+    });
+    const input = screen.getByRole("combobox", { name: "Base branch" });
+    Object.defineProperty(input, "scrollWidth", { configurable: true, value: 400 });
+    Object.defineProperty(input, "clientWidth", { configurable: true, value: 80 });
+
+    await user.hover(input);
+
+    expect(await screen.findByText(longName)).toBeTruthy();
+  });
+
+  it("leaves a fitting branch name without a preview", async () => {
+    const user = userEvent.setup();
+    renderSubmitDialog({ onSubmit: async () => {}, fields: branchFields });
+    const input = screen.getByRole("combobox", { name: "Base branch" });
+    Object.defineProperty(input, "scrollWidth", { configurable: true, value: 40 });
+    Object.defineProperty(input, "clientWidth", { configurable: true, value: 80 });
+
+    await user.hover(input);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    expect(screen.queryByRole("dialog", { name: "main" })).toBeNull();
+    expect(document.querySelector("[data-slot=popover-content]")).toBeNull();
   });
 });

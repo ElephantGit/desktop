@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, type FormEvent } from "react";
-import { IconFolderOpen } from "@tabler/icons-react";
+import { IconFolderOpen, IconSearch } from "@tabler/icons-react";
 import { usePlatform, type PathSelectionKind } from "../../platform";
 import {
   Button,
@@ -9,8 +9,6 @@ import {
   ComboboxInput,
   ComboboxItem,
   ComboboxList,
-  ComboboxTrigger,
-  ComboboxValue,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -19,6 +17,9 @@ import {
   DialogTitle,
   Input,
   Label,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
   Select,
   SelectContent,
   SelectItem,
@@ -378,7 +379,14 @@ export function EntityDialog({
   );
 }
 
-/** Branch picker: the closed control stays one line, the menu wraps names and filters them. */
+/** True when the selected label is clipped inside the search input. */
+function inputOverflows(root: HTMLElement | null): boolean {
+  const input = root?.querySelector("input");
+  if (!input) return false;
+  return input.scrollWidth - input.clientWidth > 1;
+}
+
+/** Branch picker: the field itself is the search box, and the list hangs under it at the same width. */
 function SearchableSelectField({
   field,
   value,
@@ -391,53 +399,116 @@ function SearchableSelectField({
   onValueChange: (value: string) => void;
 }) {
   const { t } = useTranslation();
+  const fieldRef = useRef<HTMLDivElement>(null);
+  const menuOpenRef = useRef(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const selected = field.options.find((option) => option.value === value) ?? null;
 
   return (
-    <Combobox
-      items={field.options}
-      value={selected}
-      disabled={disabled}
-      isItemEqualToValue={(item, current) => item.value === current.value}
-      itemToStringLabel={(item) => item.label}
-      filter={(item, query) =>
-        optionMatchesQuery(item, query, selected?.label ?? "")
-      }
-      onValueChange={(next) => onValueChange(next?.value ?? "")}
+    <Popover
+      open={previewOpen && !menuOpen}
+      onOpenChange={(next, details) => {
+        // Clicking the field opens the branch list. The preview is hover-only.
+        if (details.reason === "trigger-press") {
+          details.cancel();
+          return;
+        }
+        if (
+          next &&
+          (menuOpenRef.current || !inputOverflows(fieldRef.current))
+        ) {
+          details.cancel();
+          return;
+        }
+        setPreviewOpen(next);
+      }}
     >
-      <ComboboxTrigger
-        id={`entity-${field.name}`}
-        type="button"
-        aria-busy={field.loading === true}
-        className="flex h-8 w-full min-w-0 items-center justify-between gap-1.5 rounded-lg border border-input bg-transparent py-2 pr-2 pl-2.5 text-left text-sm whitespace-nowrap outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:shrink-0"
-      >
-        {field.loading === true ? (
-          <Spinner
-            className="size-3.5 text-muted-foreground"
-            aria-hidden="true"
+      <PopoverTrigger
+        nativeButton={false}
+        openOnHover
+        delay={300}
+        render={
+          <div
+            ref={fieldRef}
+            role="presentation"
+            tabIndex={-1}
+            className="min-w-0 w-full"
           />
-        ) : (
-          <ComboboxValue className="min-w-0 flex-1 truncate" />
-        )}
-      </ComboboxTrigger>
-      <ComboboxContent side="top" align="start" className="min-w-(--anchor-width)">
-        <ComboboxInput
-          showTrigger={false}
-          placeholder={t("dialog.searchBranch")}
-          aria-label={t("dialog.searchBranch")}
-          className="w-full"
-        />
-        <ComboboxEmpty>{t("dialog.noMatchingBranches")}</ComboboxEmpty>
-        <ComboboxList>
-          {(option: SelectOption) => (
-            <ComboboxItem key={option.value} value={option} className="items-start">
-              <span className="min-w-0 flex-1 text-left wrap-break-word whitespace-normal">
-                {option.label}
-              </span>
-            </ComboboxItem>
-          )}
-        </ComboboxList>
-      </ComboboxContent>
-    </Combobox>
+        }
+      >
+        <Combobox
+          items={field.options}
+          value={selected}
+          disabled={disabled}
+          isItemEqualToValue={(item, current) => item.value === current.value}
+          itemToStringLabel={(item) => item.label}
+          filter={(item, query) =>
+            optionMatchesQuery(item, query, selected?.label ?? "")
+          }
+          onOpenChange={(open) => {
+            menuOpenRef.current = open;
+            setMenuOpen(open);
+            if (open) setPreviewOpen(false);
+          }}
+          onValueChange={(next, details) => {
+            // Emptying the box is how you search. The chosen branch stays until another is picked.
+            if (details.reason === "input-clear") {
+              details.cancel();
+              return;
+            }
+            onValueChange(next?.value ?? "");
+          }}
+        >
+          <ComboboxInput
+            id={`entity-${field.name}`}
+            showTrigger={false}
+            placeholder={t("dialog.searchBranch")}
+            aria-busy={field.loading === true}
+            className="w-full bg-transparent shadow-none [&_[data-slot=input-group-addon]]:hidden [&_[data-slot=input-group-control]]:pr-8!"
+            onFocus={(event) => {
+              event.currentTarget.select();
+            }}
+          >
+            <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-muted-foreground">
+              {field.loading === true ? (
+                <Spinner className="size-3.5" aria-hidden="true" />
+              ) : (
+                <IconSearch className="size-4" aria-hidden="true" />
+              )}
+            </span>
+          </ComboboxInput>
+          <ComboboxContent
+            align="start"
+            sideOffset={4}
+            className="w-(--anchor-width)! min-w-(--anchor-width)! max-w-(--anchor-width)! p-1"
+          >
+            <ComboboxEmpty>{t("dialog.noMatchingBranches")}</ComboboxEmpty>
+            <ComboboxList className="max-h-52 p-0">
+              {(option: SelectOption) => (
+                <ComboboxItem
+                  key={option.value}
+                  value={option}
+                  className="items-start py-1.5 pr-2 pl-2 leading-5 [&>span.absolute]:hidden"
+                >
+                  <span className="min-w-0 flex-1 text-left wrap-break-word whitespace-normal">
+                    {option.label}
+                  </span>
+                </ComboboxItem>
+              )}
+            </ComboboxList>
+          </ComboboxContent>
+        </Combobox>
+      </PopoverTrigger>
+      {selected ? (
+        <PopoverContent
+          side="top"
+          align="start"
+          className="w-auto max-w-sm text-left wrap-break-word whitespace-normal"
+        >
+          {selected.label}
+        </PopoverContent>
+      ) : null}
+    </Popover>
   );
 }
