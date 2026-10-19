@@ -2050,6 +2050,9 @@ mod tests {
     /// One valid Agent declaration whose bytes are the package's `assets/config.json`.
     const AGENT_DECLARATION: &[u8] = br#"{"schemaVersion":2,"agent":{"modelAccess":{"contractVersion":1,"protocols":["anthropic-messages"],"modelCardinality":"single"}}}"#;
 
+    /// One valid Agent declaration that also carries an editable Settings subset.
+    const AGENT_DECLARATION_WITH_SETTINGS: &[u8] = br#"{"schemaVersion":2,"agent":{"modelAccess":{"contractVersion":1,"protocols":["anthropic-messages"],"modelCardinality":"single"}},"settings":{"verbose":{"type":"boolean","title":"Verbose output","description":"Include additional detail","default":false}}}"#;
+
     /// Builds an installed-form agent package whose declaration bytes are `declaration`.
     fn agent_package_files(declaration: Option<&[u8]>) -> Vec<(String, Vec<u8>)> {
         let mut files = vec![
@@ -2193,5 +2196,49 @@ mod tests {
             "the rejection names the kind mismatch: {error:?}"
         );
         assert_no_install_residue(temp_dir.path(), "official", "weather", "1.0.0");
+    }
+
+    /// An Agent declaration's Settings subset drives the Configure validity exactly like the
+    /// MCP and Hook subsets: Settings offer desktop-local editing, a model-access-only
+    /// declaration does not.
+    #[test]
+    fn agent_settings_subset_drives_the_configure_validity() {
+        let with_settings = TempDir::new().unwrap();
+        install_weather_release(
+            with_settings.path(),
+            "agent",
+            &files_as_refs(&agent_package_files(Some(AGENT_DECLARATION_WITH_SETTINGS))),
+        )
+        .unwrap();
+        let discovered = crate::PluginManager::discover(with_settings.path());
+        let [plugin] = discovered.installed_plugins() else {
+            panic!(
+                "expected the installed package, got {:?}",
+                discovered.installed_plugins()
+            )
+        };
+        assert_eq!(
+            plugin.configuration_declaration,
+            crate::PluginConfigurationDeclarationValidity::Valid
+        );
+
+        let without_settings = TempDir::new().unwrap();
+        install_weather_release(
+            without_settings.path(),
+            "agent",
+            &files_as_refs(&agent_package_files(Some(AGENT_DECLARATION))),
+        )
+        .unwrap();
+        let discovered = crate::PluginManager::discover(without_settings.path());
+        let [plugin] = discovered.installed_plugins() else {
+            panic!(
+                "expected the installed package, got {:?}",
+                discovered.installed_plugins()
+            )
+        };
+        assert_eq!(
+            plugin.configuration_declaration,
+            crate::PluginConfigurationDeclarationValidity::NotDeclared
+        );
     }
 }

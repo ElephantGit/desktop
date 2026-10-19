@@ -8,7 +8,7 @@
 mod tests;
 
 use crate::declaration::{
-    CompileDeclarationError, MAX_DECLARATION_BYTES, SettingDeclaration,
+    CompileDeclarationError, CompiledDeclaration, MAX_DECLARATION_BYTES, SettingDeclaration,
     compile_declaration_from_value, parse_strict_json,
 };
 use ora_utils::hash::sha256_hex;
@@ -28,6 +28,23 @@ pub struct CompiledAgentConfiguration {
     pub model_access: AgentModelAccess,
     /// SHA-256 of the exact input bytes, including whitespace; release copies must match the package.
     pub fingerprint: String,
+}
+
+impl CompiledAgentConfiguration {
+    /// The Settings subset this declaration contributes to the desktop-local value editor.
+    ///
+    /// The subset reuses the version-one Settings semantics the editor already serves, while
+    /// the fingerprint stays the declaration's raw-byte digest: any change to the declaration
+    /// — not only its Settings — fails a page saved against an older fingerprint. A declaration
+    /// without Settings contributes nothing to edit locally; its model-access half has no
+    /// desktop-local execution semantics.
+    pub fn settings_declaration(&self) -> Option<CompiledDeclaration> {
+        (!self.settings.is_empty()).then(|| CompiledDeclaration {
+            schema_version: 1,
+            settings: self.settings.clone(),
+            fingerprint: self.fingerprint.clone(),
+        })
+    }
 }
 
 /// What a plugin can consume; actual protocol availability and authorization remain host-owned.

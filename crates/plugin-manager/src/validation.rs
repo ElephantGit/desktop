@@ -271,11 +271,16 @@ pub(crate) fn validate(
                 PluginConfigurationDeclarationValidity::NotDeclared
             }
         }
-        // The Agent shape is a valid, installable declaration of personal-model access: it gates
-        // activation the same way a valid v1 declaration does. Whether a user has configured the
-        // connection it requires is a separate fact no package validity can prove.
-        Ok(Some(CompiledConfigurationFile::Agent(_))) => {
-            PluginConfigurationDeclarationValidity::Valid
+        // An Agent declaration's Settings subset feeds the desktop-local editor, so Configure
+        // follows the subset's presence exactly as it does for MCP and Hook. The model-access
+        // half has no desktop-local execution semantics and never offers Configure on its own;
+        // a file that failed the shape's own compilation is reported as Invalid below.
+        Ok(Some(CompiledConfigurationFile::Agent(agent))) => {
+            if agent.settings.is_empty() {
+                PluginConfigurationDeclarationValidity::NotDeclared
+            } else {
+                PluginConfigurationDeclarationValidity::Valid
+            }
         }
         Err(error) => PluginConfigurationDeclarationValidity::Invalid {
             reason: error.to_string(),
