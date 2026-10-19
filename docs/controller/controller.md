@@ -39,7 +39,10 @@ a received event produces an Ack, after its receipt commits. Duplicate content i
 conflicting content is rejected without acknowledgement.
 
 Optional Agent previews use connection-owned `session/previews.rs`: one latest snapshot per
-execution, up to 64 workers, bounded downstream calls and cancellation with the connection. This
+execution, up to 64 concurrent workers, bounded downstream calls and cancellation with the connection.
+Successful reliable terminal takeover removes that execution's snapshot and cancels its worker;
+late previews cannot recreate its relay, while other live executions remain independent. The limit
+does not accumulate across completed executions on a long-lived connection. This
 path writes no durable coordination data, produces no Node Ack and cannot fail reliable Thread
 takeover. A store advertises `supports_thread_previews=true` only when it implements the downstream
 publisher. `CloudStore` and `SqliteStore` use the default disabled capability; the Cloud adapter does

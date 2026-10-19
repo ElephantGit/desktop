@@ -14,7 +14,7 @@
 `accept_request(request_id, spec)` 在返回稳定的 operation id 和 execution id 之前，写入完整的输入和目标 Node；重复调用返回原来的命令，改变的输入被拒绝。`result(execution_id)` 读取持久化的终止 `ExecutionOutcome`（`ready { path, commit }` 或 `failed { reason, retained_path }`，加上 Node incarnation）；没有结果不代表失败。`pending_dispatches(node)` 列出没有持久结果的执行，重新连上的会话会持续查询它们。查询完成和事件交付共享一个接管事务，只有收到的事件才会产生 Ack，并且是在它的回执提交之后。重复的内容是幂等的；冲突的内容被拒绝，不予确认。
 
 可选 Agent 实时预览由连接所有的 `session/previews.rs` 中继：每个 execution 只有一个最新快照，最多 64 个工作者，单次
-下游调用有界等待，退出连接时一并取消。该旁路不写持久协调数据、不产生 Node Ack、失败不影响可靠 Thread 接管。存储适配器
+下游调用有界等待，退出连接时一并取消。64 个名额限制并发执行，不是连接累计执行次数；可靠终态成功接管后，立即移除该执行的快照并取消工作者，迟到预览不能重建已结束执行的中继，其他活跃执行不受影响。该旁路不写持久协调数据、不产生 Node Ack、失败不影响可靠 Thread 接管。存储适配器
 只有实现实际下游发布能力后才返回 `supports_thread_previews=true`。`CloudStore` 和 `SqliteStore` 均使用默认关闭的能力；
 Cloud 适配器不转发预览或可选的 Agent 正文投影。
 

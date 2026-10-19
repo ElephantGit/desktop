@@ -374,7 +374,11 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
                 Some(reply) = relay.outgoing.recv() => {
                     let ack = match reply {
                         relay::Receipt::Thread(ack) => ack,
-                        relay::Receipt::Terminal(ack) => { settled.insert(ack.execution_id.clone()); ack },
+                        relay::Receipt::Terminal(ack) => {
+                            settled.insert(ack.execution_id.clone());
+                            previews.finish(&ack.execution_id);
+                            ack
+                        },
                     };
                     observer.answered(&ack.execution_id);
                     bounded(deadline, transmit(writer, &ControllerToNodeMessage::EventAck(ack))).await?;
@@ -411,6 +415,11 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
                     && hello.payload.thread_previews
                     && agent_capable =>
             {
+                // Reliable terminal takeover retires optional state; a delayed preview must
+                // not recreate the worker or consume a newly freed execution slot.
+                if settled.contains(&preview.execution_id) {
+                    continue;
+                }
                 previews.push(
                     &previews::StoreSink(store.clone()),
                     &identity,

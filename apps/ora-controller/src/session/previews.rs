@@ -1,7 +1,10 @@
 //! Connection-owned lossy relays. One latest snapshot replaces any backlog for each execution.
 use super::*;
 use std::collections::HashMap;
-use tokio::{sync::watch, task::JoinSet};
+use tokio::{
+    sync::watch,
+    task::{AbortHandle, JoinSet},
+};
 
 /// Narrow lossy boundary so a blocked publisher can be tested independently of durable storage.
 pub(super) trait PreviewSink: Clone + Send + Sync + 'static {
@@ -48,6 +51,101 @@ mod tests {
             self.gate.acquire().await.unwrap().forget();
             Ok(())
         }
+    }
+
+    /// Reliable completion must free the concurrent preview slot on a long-lived connection.
+    #[tokio::test]
+    async fn completed_executions_do_not_exhaust_preview_capacity() {
+        let (observed, mut received) = mpsc::unbounded_channel();
+        let sink = BlockedSink {
+            observed,
+            gate: Arc::new(Semaphore::new(128)),
+            completed: Arc::new(AtomicUsize::new(0)),
+        };
+        let node = NodeRuntimeIdentity {
+            node_id: NodeId::new("node"),
+            incarnation_id: NodeIncarnationId::new("incarnation"),
+        };
+        let mut relay = Relay::new();
+        for version in 1..=128 {
+            let execution = ExecutionId::new(format!("execution-{version}"));
+            relay.push(
+                &sink,
+                &node,
+                ThreadPreviewMessage {
+                    protocol_version: CURRENT_PROTOCOL_VERSION,
+                    operation_id: OperationId::new("run"),
+                    execution_id: execution.clone(),
+                    payload: ThreadPreview {
+                        version,
+                        blocks: Vec::new(),
+                        incomplete: false,
+                    },
+                },
+            );
+            assert_eq!(
+                tokio::time::timeout(Duration::from_secs(1), received.recv())
+                    .await
+                    .unwrap(),
+                Some(version)
+            );
+            relay.finish(&execution);
+        }
+        assert!(relay.queues.is_empty());
+    }
+
+    /// Terminal takeover cancels a blocked optional publish without touching another live execution.
+    #[tokio::test]
+    async fn terminal_takeover_cancels_only_its_in_flight_publisher() {
+        let (observed, mut received) = mpsc::unbounded_channel();
+        let sink = BlockedSink {
+            observed,
+            gate: Arc::new(Semaphore::new(0)),
+            completed: Arc::new(AtomicUsize::new(0)),
+        };
+        let node = NodeRuntimeIdentity {
+            node_id: NodeId::new("node"),
+            incarnation_id: NodeIncarnationId::new("incarnation"),
+        };
+        let mut relay = Relay::new();
+        let first = ExecutionId::new("first");
+        let second = ExecutionId::new("second");
+        for (execution, version) in [(first.clone(), 1), (second.clone(), 2)] {
+            relay.push(
+                &sink,
+                &node,
+                ThreadPreviewMessage {
+                    protocol_version: CURRENT_PROTOCOL_VERSION,
+                    operation_id: OperationId::new("run"),
+                    execution_id: execution,
+                    payload: ThreadPreview {
+                        version,
+                        blocks: Vec::new(),
+                        incomplete: false,
+                    },
+                },
+            );
+        }
+        for _ in 0..2 {
+            tokio::time::timeout(Duration::from_secs(1), received.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        relay.finish(&first);
+        relay.finish(&first);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while sink.completed.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(sink.completed.load(Ordering::SeqCst), 1);
+        assert_eq!(relay.queues.keys().collect::<Vec<_>>(), vec![&second]);
+        sink.gate.add_permits(1);
+        relay.finish(&second);
+        assert!(relay.queues.is_empty());
     }
 
     /// A blocked network call retains only the latest replacement, and disconnect aborts it.
@@ -117,11 +215,27 @@ impl<S: CoordinationStore> PreviewSink for StoreSink<S> {
 }
 
 pub(super) struct Relay {
-    queues: HashMap<ExecutionId, watch::Sender<Option<ThreadPreviewMessage>>>,
+    queues: HashMap<ExecutionId, Queue>,
     tasks: JoinSet<()>,
 }
 
+/// The connection owns both the replaceable snapshot and the publisher consuming it.
+struct Queue {
+    sender: watch::Sender<Option<ThreadPreviewMessage>>,
+    worker: AbortHandle,
+}
+
 impl Relay {
+    /// Retires optional state only after reliable terminal takeover has succeeded.
+    pub(super) fn finish(&mut self, execution: &ExecutionId) {
+        if let Some(queue) = self.queues.remove(execution) {
+            // A publish already in flight is optional too; do not retain its snapshot until
+            // its network deadline after reliable terminal evidence made it obsolete.
+            queue.worker.abort();
+        }
+        while self.tasks.try_join_next().is_some() {}
+    }
+
     /// No worker or content exists until the negotiated Node sends a preview.
     pub(super) fn new() -> Self {
         Self {
@@ -137,6 +251,7 @@ impl Relay {
         node: &NodeRuntimeIdentity,
         preview: ThreadPreviewMessage,
     ) {
+        while self.tasks.try_join_next().is_some() {}
         if self.queues.len() >= 64 && !self.queues.contains_key(&preview.execution_id) {
             return;
         }
@@ -147,7 +262,7 @@ impl Relay {
                 let (send, mut receive) = watch::channel::<Option<ThreadPreviewMessage>>(None);
                 let store = store.clone();
                 let node = node.clone();
-                self.tasks.spawn(async move {
+                let worker = self.tasks.spawn(async move {
                     while receive.changed().await.is_ok() {
                         let Some(snapshot) = receive.borrow_and_update().clone() else {
                             continue;
@@ -160,8 +275,11 @@ impl Relay {
                         .await;
                     }
                 });
-                send
+                Queue {
+                    sender: send,
+                    worker,
+                }
             });
-        sender.send_replace(Some(preview));
+        sender.sender.send_replace(Some(preview));
     }
 }
