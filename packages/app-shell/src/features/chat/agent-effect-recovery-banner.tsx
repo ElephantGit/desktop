@@ -1,16 +1,8 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { IconRefresh } from "@tabler/icons-react";
-import { useContractsClient } from "../../contracts-client-context";
+import { useRecoverEffectTarget } from "../../state/hooks/use-recover-effect-target";
 import { localizeContractError } from "../../i18n/contract-error";
 import type { AgentEffectReadiness } from "../../state/hooks/use-agent-effect-readiness";
-
-/** Refreshes every persisted Effect Target status the send gate may be waiting on. */
-function invalidateEffectTargetStatus(queryClient: ReturnType<typeof useQueryClient>) {
-  // The readiness query keys are prefixed by workspace and agent identity, so one
-  // prefix invalidation refreshes whichever Target this banner was rendered for.
-  queryClient.invalidateQueries({ queryKey: ["agent-effect-status"] });
-}
 
 /**
  * Offers the controlled recovery exit while chat is gated by an Effect quarantine.
@@ -25,15 +17,7 @@ export function AgentEffectRecoveryBanner({
   readiness: AgentEffectReadiness;
 }) {
   const { t } = useTranslation();
-  const client = useContractsClient();
-  const queryClient = useQueryClient();
-  const recovery = useMutation({
-    mutationFn: (targetId: string) =>
-      client.effect.recoverTarget({ targetId }),
-    onSuccess: () => {
-      invalidateEffectTargetStatus(queryClient);
-    },
-  });
+  const recovery = useRecoverEffectTarget();
 
   if (
     readiness.kind !== "failed" ||
@@ -52,7 +36,11 @@ export function AgentEffectRecoveryBanner({
       // Names the state without depending on the localized sentence, so tests and
       // bug reports can tell a refused recovery apart from a pending one.
       data-effect-recovery={
-        recovery.isPending ? "pending" : recovery.isError ? "failed" : "required"
+        recovery.isPending
+          ? "pending"
+          : recovery.isError
+            ? "failed"
+            : "required"
       }
       className="mx-3 mb-2 flex items-start gap-2 rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs sm:mx-4"
     >
