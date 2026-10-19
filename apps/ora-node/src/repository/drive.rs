@@ -5,12 +5,13 @@
 //! host and returns what it observed; the owner persists the observation and decides what follows.
 //! Every step's input is durable before it leaves, so an executor that disappears mid-step leaves
 //! nothing a restart cannot rebuild from the database.
-use super::snapshot::{self, Fetched, MAX_FETCH_PASSES, WORKLOAD_STEPS};
+use super::snapshot::{self, Fetched, MAX_FETCH_ATTEMPTS, WORKLOAD_STEPS};
 use super::*;
 use crate::git_server::GitServerAccess;
 use crate::managed::CloneHost;
 use ora_node_db::ProcessAttempt;
 use std::io;
+use std::time::Duration;
 
 /// One host interaction a clone needs next; everything it depends on is already durable.
 pub(crate) struct CloneStep {
@@ -19,14 +20,25 @@ pub(crate) struct CloneStep {
 }
 
 enum CloneEffect {
-    /// Fetch the snapshot into the transport repository as the Node and verify it.
+    /// Make one attempt to fetch the snapshot into the transport repository as the Node and
+    /// verify it.
     Fetch(Box<(GitServerAccess, CloneConfig)>),
+    /// Wait before the next fetch attempt. Nothing is recorded for the wait: a restart skips
+    /// what is left of it and starts the next attempt at once (Node clone ADR D4).
+    Backoff(Duration),
     /// Start the recorded attempt and settle it.
     Dispatch(ProcessAttempt),
     /// Settle an attempt an earlier pass or process recorded, without starting anything.
     Settle(ProcessAttempt),
     /// Read the checkout facts after Git exited successfully.
     Inspect(CloneConfig),
+}
+
+/// How the pause before another fetch attempt ended.
+enum Waited {
+    Elapsed,
+    /// The Node began stopping; the next start fetches without waiting.
+    Stopped,
 }
 
 /// A performed step, carrying the host's answer back to the database owner.
@@ -37,6 +49,7 @@ pub(crate) struct CloneStepResult {
 
 enum StepOutcome {
     Fetched(Fetched),
+    Waited(Waited),
     Dispatched(ProcessAttempt, io::Result<AttemptSettlement>),
     Settled(ProcessAttempt, io::Result<AttemptSettlement>),
     Inspected(io::Result<CommitId>),
@@ -54,6 +67,13 @@ impl CloneStep {
             CloneEffect::Fetch(inputs) => {
                 let (access, config) = *inputs;
                 StepOutcome::Fetched(snapshot::fetch(host, &access, &config, &self.record))
+            }
+            CloneEffect::Backoff(delay) => {
+                StepOutcome::Waited(if crate::git_server::pause(delay, &|| host.stopping()) {
+                    Waited::Elapsed
+                } else {
+                    Waited::Stopped
+                })
             }
             CloneEffect::Dispatch(attempt) => {
                 let settlement = host.dispatch(&attempt);
@@ -191,6 +211,8 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
         let CloneStepResult { record, outcome } = result;
         match outcome {
             StepOutcome::Fetched(fetched) => self.fetched(record, fetched),
+            StepOutcome::Waited(Waited::Elapsed) => self.continue_clone(record, None),
+            StepOutcome::Waited(Waited::Stopped) => Ok(None),
             StepOutcome::Dispatched(attempt, settlement) => {
                 let settlement = self.persist_settlement(&attempt, settlement);
                 self.settle_clone(record, settlement)
@@ -308,20 +330,21 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
             ClonePhase::Reserved => Ok(None),
             ClonePhase::DirectoryCreated { identity } => {
                 // DirectoryCreated has no network effects; a journal write failure is safely
-                // retryable. Responsibility is managed before the first pass is counted.
+                // retryable. Responsibility is managed before the first attempt is counted.
                 self.git.runner().prepare_clone(&record)?;
-                self.fetch_pass(record, identity, /*attempts*/ 1)
+                self.fetch_attempt(record, identity, /*attempts*/ 1)
             }
-            // Only a restart or a later pass re-enters a fetching clone: its transport
-            // repository is gone, so another pass starts while passes remain (ADR D4).
+            // A restart, or the end of the pause after an unavailable Git Server, re-enters a
+            // fetching clone: its transport repository is gone, so another attempt starts while
+            // the shared count allows one (ADR D4).
             ClonePhase::Fetching { identity, attempts } => {
-                if attempts >= MAX_FETCH_PASSES {
+                if attempts >= MAX_FETCH_ATTEMPTS {
                     let residual = retained(&record)?;
                     return self
                         .fail_clone(&record, CloneFailureCode::SourceUnavailable, residual)
                         .map(|()| None);
                 }
-                self.fetch_pass(record, identity, attempts + 1)
+                self.fetch_attempt(record, identity, attempts + 1)
             }
             ClonePhase::Dispatched { step, .. } => {
                 if let Some(settlement) = recovered {
@@ -332,8 +355,10 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
         }
     }
 
-    /// Counts one more snapshot fetch pass durably, then hands the fetch to the host side.
-    fn fetch_pass(
+    /// Counts one more snapshot fetch attempt durably, then hands that one attempt to the host
+    /// side. Retries happen here rather than inside the fetch, so every attempt is counted
+    /// before it starts and a restart cannot add attempts beyond the shared limit.
+    fn fetch_attempt(
         &mut self,
         record: CloneExecution,
         identity: String,
@@ -349,7 +374,7 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
         )?;
         Ok(Some(CloneStep {
             record,
-            effect: CloneEffect::Fetch(Box::new((access, config))),
+            effect: CloneEffect::Fetch(Box::new((access.single_attempt(), config))),
         }))
     }
 
@@ -370,6 +395,7 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
                 let residual = retained(&record)?;
                 return self.fail_clone(&record, failure, residual).map(|()| None);
             }
+            Fetched::Unavailable => return self.after_unavailable(record),
             Fetched::Stopped => return Ok(None),
         }
         if !matches_directory(&record.target, &identity) {
@@ -380,6 +406,28 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
             CloneProgress::Pending(ClonePhase::Dispatched { identity, step: 0 }),
         )?;
         self.dispatch_step(record, &config, /*step*/ 0)
+    }
+
+    /// Ends the clone once the shared attempt count is spent; otherwise waits the retry policy's
+    /// pause, after which the fetching phase starts the next attempt.
+    fn after_unavailable(&mut self, record: CloneExecution) -> Result<Option<CloneStep>, Error> {
+        let attempts = match &record.progress {
+            CloneProgress::Pending(ClonePhase::Fetching { attempts, .. }) => *attempts,
+            CloneProgress::Pending(_) | CloneProgress::Unknown(_) | CloneProgress::Completed(_) => {
+                return self.unknown_clone(&record).map(|()| None);
+            }
+        };
+        let delay = self
+            .git_server()
+            .and_then(|access| access.delay_before(attempts + 1));
+        match delay {
+            Some(delay) if attempts < MAX_FETCH_ATTEMPTS => Ok(Some(CloneStep {
+                record,
+                effect: CloneEffect::Backoff(delay),
+            })),
+            // The fetching phase decides between another attempt and the end of the clone.
+            Some(_) | None => self.continue_clone(record, None),
+        }
     }
 
     /// Records the workload command of `step` before it leaves this thread, so a restart settles

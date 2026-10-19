@@ -39,6 +39,16 @@ impl RetryPolicy {
     };
 }
 
+/// Whether a call retries its retryable failures itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Attempts {
+    /// Up to three attempts, paused by the retry policy.
+    Retried,
+    /// One attempt; the caller decides whether and when another follows (clone, Node clone
+    /// ADR D4, counts every attempt durably before it starts).
+    Single,
+}
+
 /// How long Git Server commands may run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TimeLimit {
@@ -78,6 +88,7 @@ pub(crate) struct GitServerAccess {
     /// `PATH` for Git's helpers; the deployment's clone search path.
     search_path: String,
     retry: RetryPolicy,
+    attempts: Attempts,
     limit: TimeLimit,
 }
 
@@ -88,8 +99,24 @@ impl GitServerAccess {
             material,
             search_path,
             retry,
+            attempts: Attempts::Retried,
             limit: TimeLimit::Network,
         }
+    }
+
+    /// The same access making one attempt per call, for callers that schedule retries themselves.
+    pub(crate) fn single_attempt(&self) -> Self {
+        Self {
+            attempts: Attempts::Single,
+            ..self.clone()
+        }
+    }
+
+    /// The pause the retry policy puts before the `attempt`-th attempt (counting from 1); `None`
+    /// for the first attempt and for any beyond the third.
+    pub(crate) fn delay_before(&self, attempt: u32) -> Option<Duration> {
+        let index = usize::try_from(attempt.checked_sub(2)?).ok()?;
+        self.retry.delays.get(index).copied()
     }
 
     /// The same access with its commands bounded by `limit` instead.
@@ -208,7 +235,8 @@ impl GitServerAccess {
         })
     }
 
-    /// Runs `attempt` up to three times while it fails with a retryable failure.
+    /// Runs `attempt` up to three times while it fails with a retryable failure, or once for
+    /// single-attempt access.
     fn retrying<T>(
         &self,
         stopping: &dyn Fn() -> bool,
@@ -220,7 +248,7 @@ impl GitServerAccess {
                 return Err(GitServerFailure::Stopped);
             }
             match attempt() {
-                Err(GitServerFailure::Unavailable) => {
+                Err(GitServerFailure::Unavailable) if self.attempts == Attempts::Retried => {
                     let Some(delay) = delays.next() else {
                         return Err(GitServerFailure::Unavailable);
                     };
@@ -349,7 +377,7 @@ impl GitServerAccess {
 }
 
 /// Sleeps for `delay` in short steps; returns `false` when the Node started stopping meanwhile.
-fn pause(delay: Duration, stopping: &dyn Fn() -> bool) -> bool {
+pub(crate) fn pause(delay: Duration, stopping: &dyn Fn() -> bool) -> bool {
     let step = Duration::from_millis(100);
     let mut waited = Duration::ZERO;
     while waited < delay {

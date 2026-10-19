@@ -295,3 +295,57 @@ fn restart_during_the_first_fetch_pass_completes_on_the_second() {
         assert_eq!(fetch_passes(&server), 2);
     });
 }
+
+/// Attempts made within a run and after a restart share one durable count of three: attempts
+/// spent before a restart are not granted again, and the restarted Node makes the attempt left at
+/// once instead of waiting out the pause it was in.
+#[test]
+fn fetch_attempts_before_a_restart_count_toward_the_shared_limit() {
+    ora_logging::with_trace_logging(|| {
+        let fixture = Fixture::new();
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let config = configuration(&fixture, &server);
+        let command = request(&server, "fetch-count", "main");
+        server.server.answer_always(Some(503));
+        // Writes: directory created, attempts 1, 2 and 3 — refused before the third attempt.
+        let mut node = Node::open_managed_with_dependencies(
+            fixture.config(),
+            fixture.process(),
+            Shutdown::default(),
+            FailNth::new(WritePoint::Progress, 4),
+            LocalClock,
+        )
+        .unwrap();
+        node.configure_clone(config.clone()).unwrap();
+        node.configure_git_access(server.access());
+        node.set_git_server_retry_delays([std::time::Duration::ZERO; 2]);
+        let stopped = node.submit_clone(command.clone()).map(drop);
+        assert!(matches!(
+            stopped,
+            Err(ora_node::Error::Storage(ora_node_db::Error::Injected(
+                WritePoint::Progress
+            )))
+        ));
+        drop(node);
+        assert!(matches!(
+            phase(&fixture, &command),
+            ora_node_db::ClonePhase::Fetching { attempts: 2, .. }
+        ));
+        assert_eq!(fetch_passes(&server), 2);
+        // The restarted Node keeps the deployment's 5- and 30-second pauses.
+        let started = std::time::Instant::now();
+        let mut node =
+            Node::open(fixture.config(), fixture.process(), Shutdown::default()).unwrap();
+        node.configure_clone(config).unwrap();
+        node.configure_git_access(server.access());
+        node.recover_clones().unwrap();
+        let state = node.submit_clone(command).unwrap().state;
+        let Some(CloneExecutionResult::CloneFailed(failed)) = clone_result(&state) else {
+            panic!("clone did not fail once the shared attempts ran out: {state:?}");
+        };
+        assert_eq!(failed.failure, CloneFailureCode::SourceUnavailable);
+        assert_eq!(fetch_passes(&server), 3);
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    });
+}

@@ -9,8 +9,9 @@ use std::path::{Path, PathBuf};
 
 /// Kind of the transport repositories clones use.
 const TRANSPORT_KIND: &str = "clone";
-/// Passes of the snapshot fetch a clone may start in all, across restarts (ADR D4).
-pub(super) const MAX_FETCH_PASSES: u32 = 3;
+/// Snapshot fetch attempts a clone may start in all: retries within a run and fetches after a
+/// restart share this one durable count (Node clone ADR D4).
+pub(super) const MAX_FETCH_ATTEMPTS: u32 = 3;
 /// Commands of the workload sequence; the last one leaves the checkout complete.
 pub(super) const WORKLOAD_STEPS: u32 = 3;
 /// The workload command that takes the snapshot out of the transport repository.
@@ -22,7 +23,9 @@ pub(super) enum Fetched {
     /// workload user now.
     Ready,
     Failed(CloneFailureCode),
-    /// The Node is stopping: the pass ends without a verdict and the next start fetches again.
+    /// The Git Server could not be reached; another attempt may follow while attempts remain.
+    Unavailable,
+    /// The Node is stopping: the attempt ends without a verdict and the next start fetches again.
     Stopped,
 }
 
@@ -37,7 +40,7 @@ pub(super) fn transport_path(config: &CloneConfig, record: &CloneExecution) -> P
 
 /// Whether the clone's workload sequence may still read its transport repository: it has not
 /// finished the step that takes the snapshot from it. That step is never preceded by another
-/// fetch pass, so the repository must outlive a Node restart.
+/// fetch attempt, so the repository must outlive a Node restart.
 pub(super) fn reads_transport(record: &CloneExecution) -> bool {
     match &record.progress {
         CloneProgress::Pending(phase) | CloneProgress::Unknown(phase) => match phase {
@@ -88,7 +91,10 @@ pub(super) fn fetch(
             | GitServerFailure::Denied
             | GitServerFailure::MissingRef,
         ) => Some(CloneFailureCode::SnapshotUnavailable),
-        Err(GitServerFailure::Unavailable) => Some(CloneFailureCode::SourceUnavailable),
+        Err(GitServerFailure::Unavailable) => {
+            ora_logging::ora_warn!(execution_id = %record.command.execution_id.as_str(), "clone snapshot fetch could not reach the Git Server");
+            return Fetched::Unavailable;
+        }
         Err(GitServerFailure::Stopped) => return Fetched::Stopped,
     };
     if let Some(failure) = failure {
