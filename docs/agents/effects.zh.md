@@ -44,11 +44,13 @@ Scope 的代就是收敛纪元：投影以 `(target_id, generation, consumer_rev
 
 每次变更都有持久的 `Prepared → Applied → Finalized` 日志，带有精确的预期状态和计划状态。日志存在之前的瞬时失败进入计数的重试计划。日志一旦存在，被中断或结果不明的操作会在 worker 租约过期后，让它的 Attempt、Target 和 Resource 进入 `RecoveryRequired`，并带上阻塞性的人工 Condition；仍然有效的 worker 从不被隔离。调度器排除正在恢复的 Target，而不是猜测或规划第二个操作；暂存和备份 Artifact 一直保留到获得精确的清理授权。没有任何机制会自动清除 `RecoveryRequired`；它唯一的出口是受控的 `recoverEffectTarget` 命令：在关闭之前，它用适配器逐个证明被隔离的操作。外部状态恰好等于其精确计划状态的操作被终结并保留其所有权账本行；仍等于其精确预期基线的操作以 `FinalizedWithoutEffect` 关闭且不授予任何所有权，因为它的变更可证明从未落地。两个状态都证明不了的操作让 Target 保持隔离——恢复从不重放变更、从不授予未经证明的所有权、也从不改写不可变的投影历史。关闭最后一个日志会清除该 Target 的人工 Condition、让其请求回到待处理，由普通收敛对着当前 Desired State 继续推进；退役中的 Target 还会推进其 Scope 纪元，让空的退役投影落在新的不可变身份上。恢复一个 Target 从不清除共享 Resource 上另一个 Target 的隔离；该 Resource 的证据仍指向一个仍被隔离的操作。
 
+恢复在不创建目录的前提下重新校验 journal 固化的 Workspace 与 Resource 路径，解析后的根目录必须与 journal 一致。普通文件、链接、不可访问路径和被重定向的根目录不能证明 Missing；安全的 Resource 缺失可以。恢复调用和刷新归 effects 数据 owner，只刷新曾观察到该 Target 的查询，不改变其他 Workspace 和 Agent 的 readiness 缓存。
+
 ## 审计时间与业务时间
 
 Effect 仓储拥有行的审计时间：它们在获取写事务之后从注入的 `TimestampSource` 取样，并在整个事务中复用这个样本。每一行保留已有的 `updated_at` 以及 CHECK 约束要求的业务下界，所以墙钟校正可以让审计时间相等，但从不让它倒退，也不授予代或栅栏授权。
 
-reconciler 在准备时、应用后和就绪后取样业务时间；同一个 Attempt 中的操作共享准备时间。恢复记录独立的 `detected_at`。worker claim、恢复扫描和重试调度都取新样本，重试延迟从处理失败时开始计算。回执的 `received_at` 表示本地持久接收。Condition 保留其身份和首次观测时间，最后观测时间从不倒退。状态读取在一个快照中同时返回审计元数据和领域证据。本地 Skill 的 `updated_at` 仍是它的 revision key；未变化的发布不产生 revision。
+reconciler 在准备时、应用后和就绪后取样业务时间；同一个 Attempt 中的操作共享准备时间。恢复只在 Operation 为 `RecoveryRequired` 时记录独立的 `detected_at`。关闭事务先把每个 Operation 的原检测时间、身份和关闭结果复制到 `recovery_finalized` 审计事件，再清空其当前阶段的 `detected_at`；事件的 `occurred_at` 是关闭事务的审计时间，不是检测时间。审计写入失败时关闭也一起回滚。worker claim、恢复扫描和重试调度都取新样本，重试延迟从处理失败时开始计算。回执的 `received_at` 表示本地持久接收。Condition 保留其身份和首次观测时间，最后观测时间从不倒退。状态读取在一个快照中同时返回审计元数据和领域证据。本地 Skill 的 `updated_at` 仍是它的 revision key；未变化的发布不产生 revision。
 
 ## 接口
 

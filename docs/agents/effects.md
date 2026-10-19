@@ -107,6 +107,12 @@ Target additionally advances its Scope epoch so its empty retirement projection 
 immutable identity. Recovering one Target never clears another Target's quarantine on a shared
 Resource; the Resource keeps its evidence pointed at a still-quarantined operation.
 
+Recovery revalidates the journal's persisted Workspace and Resource paths without creating
+directories, and requires the resolved root to match the journal. Files, links, inaccessible paths
+and redirected roots cannot prove a Missing state; a safely missing Resource can. The effects data
+owner runs recovery and refreshes only selectors that observed that Target, so unrelated Workspace
+and Agent readiness caches remain unchanged.
+
 ## Audit and business time
 
 Effect repositories own row audit time: they sample an injected `TimestampSource` after acquiring
@@ -115,7 +121,11 @@ the write transaction and reuse that sample for the transaction. Each row preser
 times equal but never regress them or confer generation or fencing authority.
 
 The reconciler samples business time at preparation, after apply and after readiness; operations in
-one Attempt share the preparation time. Recovery records an independent `detected_at`. Worker
+one Attempt share the preparation time. Recovery records an independent `detected_at` only while
+an operation is `RecoveryRequired`. The closing transaction copies each operation's original
+detection time, identity and closure outcome into the `recovery_finalized` audit event before clearing
+its active `detected_at`; the event's `occurred_at` is the closing transaction's audit time, not the
+detection time. Audit failure rolls back the closure as well. Worker
 claims, recovery scans and retry scheduling take fresh samples, and a retry delay starts when the
 failure is handled. Receipt `received_at` means local durable reception. Conditions keep their
 identity and first observation and never regress their last observation. Status reads return audit
