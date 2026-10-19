@@ -16,8 +16,6 @@ pub enum MessageValidationError {
     CloneCommitMismatch,
     #[error("clone failure code is retired and only appears in historical records")]
     RetiredCloneFailure,
-    #[error("revision failure code is retired and only appears in historical records")]
-    RetiredRevisionFailure,
     #[error("Workspace directory must list at most 100 distinct canonical Workspaces")]
     InvalidWorkspaceDirectory,
     #[error("unsupported protocol version {actual}; expected {expected}")]

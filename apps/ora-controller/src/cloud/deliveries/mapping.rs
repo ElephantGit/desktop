@@ -152,9 +152,6 @@ pub(super) fn result(value: &RevisionExecutionResult) -> proto::ExecutionResult 
                     RevisionFailureCode::SnapshotFailed => {
                         proto::RevisionFailureReason::SnapshotFailed
                     }
-                    // Retired: the Node codec rejects a new result carrying it, so it never
-                    // reaches here, and mapping it to itself keeps history readable.
-                    RevisionFailureCode::BundleFailed => proto::RevisionFailureReason::BundleFailed,
                     RevisionFailureCode::HistoryUnavailable => {
                         proto::RevisionFailureReason::HistoryUnavailable
                     }
@@ -425,10 +422,6 @@ mod tests {
             (
                 RevisionFailureCode::SnapshotFailed,
                 proto::RevisionFailureReason::SnapshotFailed,
-            ),
-            (
-                RevisionFailureCode::BundleFailed,
-                proto::RevisionFailureReason::BundleFailed,
             ),
             (
                 RevisionFailureCode::HistoryUnavailable,

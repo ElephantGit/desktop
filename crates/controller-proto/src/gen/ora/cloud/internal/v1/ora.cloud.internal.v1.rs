@@ -260,8 +260,6 @@ pub enum RevisionFailureReason {
     SessionNotSettled = 1,
     CheckoutUnavailable = 2,
     SnapshotFailed = 3,
-    /// Kept for history only; a new result carrying it is rejected.
-    BundleFailed = 4,
     HistoryUnavailable = 5,
     UploadFailed = 6,
     /// Recorded by Cloud when the declared objects are missing or differ; a Node never reports it.
@@ -282,7 +280,6 @@ impl RevisionFailureReason {
             Self::SessionNotSettled => "REVISION_FAILURE_REASON_SESSION_NOT_SETTLED",
             Self::CheckoutUnavailable => "REVISION_FAILURE_REASON_CHECKOUT_UNAVAILABLE",
             Self::SnapshotFailed => "REVISION_FAILURE_REASON_SNAPSHOT_FAILED",
-            Self::BundleFailed => "REVISION_FAILURE_REASON_BUNDLE_FAILED",
             Self::HistoryUnavailable => "REVISION_FAILURE_REASON_HISTORY_UNAVAILABLE",
             Self::UploadFailed => "REVISION_FAILURE_REASON_UPLOAD_FAILED",
             Self::VerificationFailed => "REVISION_FAILURE_REASON_VERIFICATION_FAILED",
@@ -297,7 +294,6 @@ impl RevisionFailureReason {
             "REVISION_FAILURE_REASON_SESSION_NOT_SETTLED" => Some(Self::SessionNotSettled),
             "REVISION_FAILURE_REASON_CHECKOUT_UNAVAILABLE" => Some(Self::CheckoutUnavailable),
             "REVISION_FAILURE_REASON_SNAPSHOT_FAILED" => Some(Self::SnapshotFailed),
-            "REVISION_FAILURE_REASON_BUNDLE_FAILED" => Some(Self::BundleFailed),
             "REVISION_FAILURE_REASON_HISTORY_UNAVAILABLE" => Some(Self::HistoryUnavailable),
             "REVISION_FAILURE_REASON_UPLOAD_FAILED" => Some(Self::UploadFailed),
             "REVISION_FAILURE_REASON_VERIFICATION_FAILED" => Some(Self::VerificationFailed),

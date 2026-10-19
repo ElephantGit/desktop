@@ -248,8 +248,8 @@ async fn deliver_revision_rejects_refs_keys_and_commits_outside_the_contract()
     Ok(())
 }
 
-/// The push failure codes are part of the closed set; the bundle failure only lives in
-/// historical records and is refused in a new result, as is a delivered result with a bundle.
+/// The push failure codes are part of the closed set; the retired bundle failure is no longer a
+/// code at all, and a delivered result with a bundle is refused.
 #[tokio::test]
 async fn revision_failures_name_push_outcomes() -> Result<(), TestError> {
     for (code, wire) in [
@@ -265,13 +265,7 @@ async fn revision_failures_name_push_outcomes() -> Result<(), TestError> {
     let [failed_event, _] = result_cases(failed, failed_wire);
     let mut wire = failed_event.wire;
     replace(&mut wire, "/payload/result/failure", json!("bundle_failed"));
-    reject_semantics(
-        Peer::Node,
-        &wire,
-        "retired failure",
-        MessageValidationError::RetiredRevisionFailure,
-    )
-    .await?;
+    reject_structure(Peer::Node, &wire, "retired failure").await;
     let [delivered_event, _] = result_cases(delivered, delivered_wire);
     let mut wire = delivered_event.wire;
     wire["payload"]["result"]["bundle"] =

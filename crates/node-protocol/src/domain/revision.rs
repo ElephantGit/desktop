@@ -175,9 +175,6 @@ pub enum RevisionFailureCode {
     SessionNotSettled,
     CheckoutUnavailable,
     SnapshotFailed,
-    /// Only in records written before deliveries went over Git; a new result carrying it is
-    /// rejected.
-    BundleFailed,
     HistoryUnavailable,
     /// The session JSONL could not be uploaded.
     UploadFailed,
@@ -228,9 +225,6 @@ impl RevisionExecutionResult {
                 validate_commit(&result.base_commit)?;
                 result.revision_ref.validate()?;
                 result.history.validate()
-            }
-            Self::RevisionFailed(result) if result.failure == RevisionFailureCode::BundleFailed => {
-                Err(MessageValidationError::RetiredRevisionFailure)
             }
             Self::RevisionFailed(_) => Ok(()),
         }
