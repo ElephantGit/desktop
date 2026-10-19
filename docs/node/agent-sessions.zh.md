@@ -18,6 +18,8 @@ checkout 中，只启动该执行指明的 Agent 插件的精确版本，把每�
 Deno 路径必须是绝对路径，超时必须为正数。有这个配置段时，握手声明 `agent_session`；没有时拒绝新会话，但启动时仍会结算
 未完成的会话。设置了 `process.workload_uid` 时还需要 `agent.workload_directory`：一个已存在的绝对路径，属于 Node 身份，
 其他人都不可写，且不与 Node home、进程宿主目录或 clone 根目录重叠。它由沙盒入口程序创建，Node 从不创建。
+配置了 `agent.ora_git_directory` 和 `git_access` 时，每个会话还有自己的 [ora-git](ora-git.zh.md) socket，以
+`ORA_GIT_SOCKET` 导出。
 
 ## 每个执行一个运行时
 

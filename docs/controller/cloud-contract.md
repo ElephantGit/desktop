@@ -21,7 +21,7 @@ uses each service is in [Controller](controller.md) and [Agent relay](agent-rela
 | `ControlSignalService` | `Watch` (server stream) | `WorkAvailable`, `OperationAvailable`, `Drain`, `NodeAssignment`; at most once, not persisted, changes no ownership |
 | `WorkspaceOperationService` | `ClaimOperation`, `PlanEffect`, `RecordEffectResult`, `AdvanceOperation`, `DeferOperation`, `ListLiveSandboxes` | Writes fenced by `epoch` and the operation `version`; the clone and plugin steps dispatch through `ExecutionService` with the operation's id |
 | `NodeReportService` | `RegisterNode`, `ReportNodeStatus`, `ReportNodeIdle`, `EndNode` | Sandbox Nodes the Controller holds sessions with; `RegisterNode` is idempotent per (sandbox, incarnation) and a second live incarnation conflicts until the first ends |
-| `AgentRunService` | `TakeOverThreadEvents`, `ClaimThreadCommands`, `RecordThreadCommandDelivered`, `GrantRevisionUpload`, `GrantRevisionDownload` | Thread relay and Revision grants |
+| `AgentRunService` | `TakeOverThreadEvents`, `ClaimThreadCommands`, `RecordThreadCommandDelivered`, `GrantRevisionUpload` | Thread relay and the upload grants of Revision history |
 | `RuntimeControlService` | `ListBindings`, `AcknowledgeBinding`, `GetExecutionPermit`, `GetEffectPermit`, `ListForceStops`, `ConfirmForceStop` | Fenced runtime control, see [Runtime control](runtime-control.md) |
 
 Failures use the gRPC status code as the primary classification with an attached
@@ -33,7 +33,9 @@ verdict drops the held epoch.
 
 ## Revision upload checksums
 
-`GrantRevisionUploadRequest.checksums` maps each fixed object key to its lowercase SHA-256. Every
+Revision code goes to the Git Server; object storage holds only the session history.
+`GrantRevisionUploadRequest.checksums` maps the delivery's `history_key` to its lowercase SHA-256 and
+may name no other key. Every
 returned grant signs `x-amz-checksum-sha256` and `If-None-Match: *`, so an unexpired grant cannot
 overwrite an object Cloud already verified; a retry that gets 412 keeps the first object and submits
 the original metadata for verification. The uploader sends every returned header with its PUT.
@@ -43,10 +45,13 @@ before the first PUT, so a restart reuses them with fresh grants; changed conten
 work item and keys. Cloud verifies existence, size and stored SHA-256, then atomically records the
 Node evidence, receipt and Revision.
 
-Resumed runs extend the same contract: `AgentSessionSpec.prior_revision` names the prior Revision and
-its verified bundle object, `DeliverRevisionSpec.prior_revision` only its final commit, and
-`GrantRevisionDownload` signs a memory-only `GET` of exactly that bundle for a registered session
-without a result.
+`DeliverRevisionSpec` carries the Git Server `git_repository_url`, `delivery_ref` and `workspace_ref`
+the Node pushes to. For resumed runs, `AgentSessionSpec.prior_revision` names the prior Revision with the
+Git Server repository, delivery ref and base commit the Node fetches it from, and
+`DeliverRevisionSpec.prior_revision` only its identity and final commit. There is no download grant.
+The clone step's `clone_input` is the frozen snapshot input described in
+[Repository clone](../node/repository-clone.md#input). The decision is
+[snapshot clone input and execution ref grants](https://github.com/ora-space/specs/blob/main/decisions/cloud/controller-integration/20261016-snapshot-clone-input-and-execution-ref-grants.md).
 
 ## Obtaining and generating the contract
 

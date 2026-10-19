@@ -22,6 +22,8 @@ The Deno path must be absolute and the timeout positive. With this section the h
 When `process.workload_uid` is set, `agent.workload_directory` is required: an existing absolute path
 owned by the Node identity, writable by no one else and not overlapping the Node home, process host
 directory or clone root. The sandbox entrypoint creates it; the Node never does.
+With `agent.ora_git_directory` and `git_access`, each session also gets its own
+[ora-git](ora-git.md) socket, exported as `ORA_GIT_SOCKET`.
 
 ## One runtime per execution
 

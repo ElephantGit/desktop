@@ -78,10 +78,11 @@ across module boundaries. Implementation details inside a crate or package live 
 - [Node](node/node.md): deployment, execution and recovery, storage
 - [Control session](node/control-session.md): transports, ownership, close codes, admission, liveness
 - [Controller–Node protocol](node/protocol.md): framing, capabilities, message contracts, the codec
-- [Repository clone](node/repository-clone.md)
+- [Repository clone](node/repository-clone.md): the Git Server snapshot input, the transport repository, failures and records
 - [Worktree execution](node/worktree-execution.md)
 - [Node agent sessions](node/agent-sessions.md): per-execution runtimes, workload users, the ledger, model access
-- [Revisions](node/revisions.md): delivery, upload and restoring a prior Revision
+- [Revisions](node/revisions.md): delivery over Git, the history upload and restoring a prior Revision
+- [ora-git](node/ora-git.md): the Agent's Git command, per-session sockets, verbs, pushes and exit codes
 - [Node plugins](node/plugins.md)
 
 **Process runtime**

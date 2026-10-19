@@ -44,7 +44,7 @@ a response to an earlier Hello and enforcing handshake order belong to the sessi
 | `agent_session` | `start_agent_session`, `submit_user_turn`, `end_session` | `thread_event`, `agent_session_ended`, `session_command_accepted`, `session_command_rejected` |
 | `model_proxy` | Model-bound session starts | |
 | `revision_delivery` | `deliver_revision`, `upload_grant` | `revision_result`, `upload_grant_needed` |
-| `revision_restore` | `start_agent_session` with `prior_revision`, `download_grant` | `download_grant_needed` |
+| `revision_restore` | `start_agent_session` with `prior_revision` | Restore failure codes in `agent_session_ended` |
 
 Always available: `hello`, `heartbeat`, `get_execution_status` / `execution_status` and `event_ack`.
 The codec validates declarations only; a session must still check the selected Node's capability
@@ -63,14 +63,16 @@ fact). See [Runtime control](../controller/runtime-control.md).
 
 ### Message contracts
 
-- **Clone.** `clone_repository` carries only `node_id`, `repository` and `branch`. URLs must be
-  explicit lowercase `https://` or `ssh://` with a host and path; whitespace, backslashes, queries,
-  fragments, passwords and HTTPS userinfo are rejected (SSH usernames are allowed), `Debug` redacts the
-  address, and parse errors never echo input. Branches are validated with `ora-utils::GitBranchName`
-  and `HEAD` is refused. Unknown spec fields (destinations, credentials, Git options) are rejected.
-  `clone_ready` carries the original spec, the originating incarnation, `RepositoryId`, a Node-scoped
-  path and a full commit id; `clone_failed` a structured code and `no_directory` or
-  `retained { repository_id, path }` residue. Raw diagnostics are never carried.
+- **Clone.** `clone_repository` carries `node_id`, `repository_url`, `snapshot_ref`, `base_commit` and
+  `workspace_ref`. The repository URL is `https://` without userinfo, query or fragment; the snapshot
+  ref names a canonical Binding UUID and exactly the base commit; the Workspace ref
+  (`refs/heads/workspaces/<workspaceId>/<branch>`) names a canonical Workspace UUID and a branch other
+  than `HEAD`. The former `repository`/`branch` shape, SSH and unknown spec fields (destinations,
+  credentials, Git options) are rejected. `clone_ready` carries the original spec, the originating
+  incarnation, `RepositoryId`, a Node-scoped path and a full commit id; `clone_failed` a structured code
+  (including `snapshot_unavailable` and `base_commit_mismatch`) and `no_directory` or
+  `retained { repository_id, path }` residue. Raw diagnostics are never carried. See
+  [Repository clone](repository-clone.md).
 - **Plugins.** Inputs name each canonical `<namespace>/<identifier>` once, with one universal HTTP(S)
   download or distinct per-target downloads, each with a lowercase SHA-256. Item failures are reported
   per plugin; `plugins_failed` means the whole execution could not run.
@@ -82,14 +84,17 @@ fact). See [Runtime control](../controller/runtime-control.md).
   `agent_session_ended`, whose `detail` is a short snake_case code. Commands carry a `command_id`;
   their replies have no sequence and need no acknowledgement, and a lost reply is recovered by resending.
 - **Revisions.** A delivery names the ended session, the clone, the base commit, a ref under
-  `refs/ora/revisions/` and two distinct object keys. `revision_delivered` requires a final commit
-  different from the base; `revision_unchanged` allows the base or, with `prior_revision`, the prior
-  final commit. A session's `prior_revision { revision_id, final_commit, bundle { key, size, sha256 } }`
-  names the Revision it resumes; a delivery's carries no bundle. A failed restore ends the session as
-  `agent_failed` with `prior_revision_unavailable` or `prior_revision_base_unavailable`.
-- **Grants.** `upload_grant`, `upload_grant_needed`, `download_grant` and `download_grant_needed` are
-  memory-only: no sequence, no acknowledgement, never persisted or logged, and `PresignedUrl` redacts
-  itself in `Debug`.
+  `refs/ora/revisions/`, the Git Server `git_repository_url`, a `delivery_ref` under
+  `refs/ora/deliveries/`, the `workspace_ref` and one history object key. `revision_delivered`
+  requires a final commit different from the base; `revision_unchanged` allows the base or, with
+  `prior_revision`, the prior final commit. A session's
+  `prior_revision { revision_id, final_commit, base_commit, git_repository_url, delivery_ref }`
+  names the Revision it resumes; a delivery's carries only `revision_id` and `final_commit`. A
+  session also carries the Workspace directory (`workspace_directory`) that
+  [`ora-git list`](ora-git.md) shows. A failed restore ends the session as `agent_failed` with
+  `prior_revision_unavailable` or `prior_revision_base_unavailable`.
+- **Grants.** `upload_grant` and `upload_grant_needed` are memory-only: no sequence, no
+  acknowledgement, never persisted or logged, and `PresignedUrl` redacts itself in `Debug`.
 - **Worktrees.** Both commands carry a `WorktreeExecutionSpec` (resource identities, an opaque
   `RepositoryRef`, the Main Workspace binding, base ref, expected branch and a
   `NodeManaged { directory_name }` path policy). The codec checks only that values are non-blank; the

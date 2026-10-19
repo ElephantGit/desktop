@@ -76,10 +76,11 @@
 - [Node](node/node.zh.md)：部署、执行与恢复、存储
 - [控制会话](node/control-session.zh.md)：传输、归属、关闭码、准入、存活
 - [Controller–Node 协议](node/protocol.zh.md)：分帧、能力、消息契约、编解码器
-- [仓库 clone](node/repository-clone.zh.md)
+- [仓库 clone](node/repository-clone.zh.md)：Git Server 快照输入、传输仓库、失败与记录
 - [Worktree 执行](node/worktree-execution.zh.md)
 - [Node Agent 会话](node/agent-sessions.zh.md)：每个执行一个运行时、工作负载用户、账本、模型访问
-- [Revision](node/revisions.zh.md)：交付、上传与恢复上一个 Revision
+- [Revision](node/revisions.zh.md)：经 Git 交付、会话历史上传与恢复上一个 Revision
+- [ora-git](node/ora-git.zh.md)：Agent 使用的 Git 命令、每个会话的 socket、动词、推送与退出码
 - [Node 插件](node/plugins.zh.md)
 
 **进程运行时**

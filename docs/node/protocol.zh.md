@@ -40,7 +40,7 @@ ADR。
 | `agent_session` | `start_agent_session`、`submit_user_turn`、`end_session` | `thread_event`、`agent_session_ended`、`session_command_accepted`、`session_command_rejected` |
 | `model_proxy` | 绑定了模型的会话启动 | |
 | `revision_delivery` | `deliver_revision`、`upload_grant` | `revision_result`、`upload_grant_needed` |
-| `revision_restore` | 带 `prior_revision` 的 `start_agent_session`、`download_grant` | `download_grant_needed` |
+| `revision_restore` | 带 `prior_revision` 的 `start_agent_session` | `agent_session_ended` 中的恢复失败代码 |
 
 始终可用：`hello`、`heartbeat`、`get_execution_status` / `execution_status` 和 `event_ack`。编解码器只校验声明；
 会话在派发之前仍要检查选定 Node 的能力。
@@ -56,12 +56,13 @@ operation id；`input_closed`；以及签发和过期时间。`ControlledClone`�
 
 ### 消息契约
 
-- **Clone。** `clone_repository` 只带 `node_id`、`repository` 和 `branch`。URL 必须是显式的小写 `https://` 或
-  `ssh://`，带主机和路径；空白、反斜杠、query、fragment、密码和 HTTPS userinfo 都会被拒绝（允许 SSH 用户名），
-  `Debug` 会隐去地址，解析错误从不回显输入。分支用 `ora-utils::GitBranchName` 校验，拒绝 `HEAD`。未知的 spec 字段
-  （目标位置、凭据、Git 选项）会被拒绝。`clone_ready` 带原始 spec、发起时的 incarnation、`RepositoryId`、Node 范围内
-  的路径和完整的 commit id；`clone_failed` 带结构化的错误码，以及 `no_directory` 或
-  `retained { repository_id, path }` 残留。从不携带原始诊断信息。
+- **Clone。** `clone_repository` 带 `node_id`、`repository_url`、`snapshot_ref`、`base_commit` 和 `workspace_ref`。
+  仓库 URL 是不含 userinfo、query 和 fragment 的 `https://`；快照 ref 指明规范的 Binding UUID 并恰好指明基础 commit；
+  Workspace ref（`refs/heads/workspaces/<workspaceId>/<branch>`）指明规范的 Workspace UUID 和一个不是 `HEAD` 的分支。
+  旧的 `repository`/`branch` 形状、SSH 和未知的 spec 字段（目标位置、凭据、Git 选项）都会被拒绝。`clone_ready` 带原始
+  spec、发起时的 incarnation、`RepositoryId`、Node 范围内的路径和完整的 commit id；`clone_failed` 带结构化的错误码
+  （包括 `snapshot_unavailable` 和 `base_commit_mismatch`），以及 `no_directory` 或 `retained { repository_id, path }`
+  残留。从不携带原始诊断信息。见 [仓库 clone](repository-clone.zh.md)。
 - **插件。** 输入中每个规范的 `<namespace>/<identifier>` 只出现一次，带一个通用的 HTTP(S) 下载地址或按目标平台区分
   的多个下载地址，每个都带小写的 SHA-256。单项失败按插件报告；`plugins_failed` 表示整个执行无法运行。
 - **Agent 会话。** 会话指明 Agent 插件和版本、它所用 checkout 对应的 clone 执行（从不是 Node 路径）、一个不会破坏
@@ -69,13 +70,15 @@ operation id；`input_closed`；以及签发和过期时间。`ControlledClone`�
   `thread_event` 携带一条已定稿的 `ora-history` 记录，作为最多 256 KiB 的不透明 JSON 对象（`truncated` 标记被截短的
   记录），并与终止的 `agent_session_ended` 共享该执行无间隙的序号，后者的 `detail` 是一个简短的 snake_case 代码。
   命令带 `command_id`；它们的回复没有序号，不需要确认，丢失的回复靠重发找回。
-- **Revision。** 交付指明已结束的会话、clone、基础 commit、`refs/ora/revisions/` 下的一个 ref 和两个不同的对象 key。
+- **Revision。** 交付指明已结束的会话、clone、基础 commit、`refs/ora/revisions/` 下的一个 ref、Git Server 的
+  `git_repository_url`、`refs/ora/deliveries/` 下的 `delivery_ref`、`workspace_ref` 和一个会话历史对象 key。
   `revision_delivered` 要求最终 commit 与基础 commit 不同；`revision_unchanged` 允许等于基础 commit，或在有
-  `prior_revision` 时等于上一个最终 commit。会话的 `prior_revision { revision_id, final_commit, bundle { key, size, sha256 } }`
-  指明它要恢复的 Revision；交付中的 `prior_revision` 不带 bundle。恢复失败时，会话以 `agent_failed` 结束，带
+  `prior_revision` 时等于上一个最终 commit。会话的
+  `prior_revision { revision_id, final_commit, base_commit, git_repository_url, delivery_ref }` 指明它要恢复的
+  Revision；交付中的 `prior_revision` 只带 `revision_id` 和 `final_commit`。会话还带有
+  [`ora-git list`](ora-git.zh.md) 显示的 Workspace 目录（`workspace_directory`）。恢复失败时，会话以 `agent_failed` 结束，带
   `prior_revision_unavailable` 或 `prior_revision_base_unavailable`。
-- **授权。** `upload_grant`、`upload_grant_needed`、`download_grant` 和 `download_grant_needed` 只存在于内存：没有
-  序号，不需要确认，从不持久化或记录日志，`PresignedUrl` 在 `Debug` 中会隐去自己。
+- **授权。** `upload_grant` 和 `upload_grant_needed` 只存在于内存：没有序号，不需要确认，从不持久化或记录日志，`PresignedUrl` 在 `Debug` 中会隐去自己。
 - **Worktree。** 两条命令都带一个 `WorktreeExecutionSpec`（资源身份、不透明的 `RepositoryRef`、Main Workspace 绑定、
   基础 ref、期望的分支和 `NodeManaged { directory_name }` 路径策略）。编解码器只检查值非空；Node 在使用前校验路径。
   见 [Worktree 执行](worktree-execution.zh.md)。

@@ -13,16 +13,16 @@
 | `ControlSignalService` | `Watch`（服务端流） | `WorkAvailable`、`OperationAvailable`、`Drain`、`NodeAssignment`；至多一次，不持久化，不改变任何归属 |
 | `WorkspaceOperationService` | `ClaimOperation`、`PlanEffect`、`RecordEffectResult`、`AdvanceOperation`、`DeferOperation`、`ListLiveSandboxes` | 写入以 `epoch` 和操作的 `version` 设置栅栏；clone 和 plugin 步骤以操作的 id 通过 `ExecutionService` 派发 |
 | `NodeReportService` | `RegisterNode`、`ReportNodeStatus`、`ReportNodeIdle`、`EndNode` | Controller 持有会话的沙盒 Node；`RegisterNode` 按（沙盒、incarnation）幂等，第一个结束之前第二个活跃的 incarnation 会冲突 |
-| `AgentRunService` | `TakeOverThreadEvents`、`ClaimThreadCommands`、`RecordThreadCommandDelivered`、`GrantRevisionUpload`、`GrantRevisionDownload` | Thread 中继和 Revision 授权 |
+| `AgentRunService` | `TakeOverThreadEvents`、`ClaimThreadCommands`、`RecordThreadCommandDelivered`、`GrantRevisionUpload` | Thread 中继和 Revision 会话历史的上传授权 |
 | `RuntimeControlService` | `ListBindings`、`AcknowledgeBinding`、`GetExecutionPermit`、`GetEffectPermit`、`ListForceStops`、`ConfirmForceStop` | 带栅栏的运行时控制，见[运行时控制](runtime-control.zh.md) |
 
 失败以 gRPC 状态码作为主要分类，并附带 `ErrorDetail { ErrorCode }`。Rust 一侧在 Cloud RPC 适配器内部一次性把它们映射为协调类别（冲突、缺失、不可用、未知、资格过期），所以协调逻辑从不看到 gRPC。Cloud 对过期的操作快照（`stale_operation`）返回与过期租约相同的 `FAILED_PRECONDITION`；适配器把它归为冲突，所以只有租约判定才会丢弃持有的 epoch。
 
 ## Revision 上传校验和
 
-`GrantRevisionUploadRequest.checksums` 把每个固定的对象 key 映射到它的小写 SHA-256。返回的每个授权都签名 `x-amz-checksum-sha256` 和 `If-None-Match: *`，所以未过期的授权也不能覆盖 Cloud 已经校验过的对象；得到 412 的重试保留第一个对象，并提交原始元数据供校验。上传方在 PUT 中发送返回的每个 header。授权留在内存中，从不进入日志、环境变量、参数或文件，部署用的原始 S3 凭据从不到达 Node。每个执行在第一次 PUT 之前冻结对象字节和元数据，所以重启后用新授权复用它们；内容变化需要新的 Cloud 工作条目和 key。Cloud 校验存在性、大小和存储的 SHA-256，然后原子地记录 Node 证据、回执和 Revision。
+Revision 的代码进入 Git Server；对象存储只存会话历史。`GrantRevisionUploadRequest.checksums` 把交付的 `history_key` 映射到它的小写 SHA-256，不能含其他 key。返回的每个授权都签名 `x-amz-checksum-sha256` 和 `If-None-Match: *`，所以未过期的授权也不能覆盖 Cloud 已经校验过的对象；得到 412 的重试保留第一个对象，并提交原始元数据供校验。上传方在 PUT 中发送返回的每个 header。授权留在内存中，从不进入日志、环境变量、参数或文件，部署用的原始 S3 凭据从不到达 Node。每个执行在第一次 PUT 之前冻结对象字节和元数据，所以重启后用新授权复用它们；内容变化需要新的 Cloud 工作条目和 key。Cloud 校验存在性、大小和存储的 SHA-256，然后原子地记录 Node 证据、回执和 Revision。
 
-恢复运行扩展了同一契约：`AgentSessionSpec.prior_revision` 指明上一个 Revision 及其经过校验的 bundle 对象，`DeliverRevisionSpec.prior_revision` 只有它的最终 commit，`GrantRevisionDownload` 为一个已登记且没有结果的会话签名对那个 bundle 的只在内存中使用的 `GET`。
+`DeliverRevisionSpec` 携带 Node 推送目标的 Git Server `git_repository_url`、`delivery_ref` 和 `workspace_ref`。恢复运行时，`AgentSessionSpec.prior_revision` 指明上一个 Revision，以及 Node 拉取它所用的 Git Server 仓库、交付 ref 和基础 commit；`DeliverRevisionSpec.prior_revision` 只有它的身份和最终 commit。没有下载授权。clone 步骤的 `clone_input` 是 [仓库 clone](../node/repository-clone.zh.md#输入) 中描述的冻结快照输入。决策是[快照 clone 输入与执行 ref 授权](https://github.com/ora-space/specs/blob/main/decisions/cloud/controller-integration/20261016-snapshot-clone-input-and-execution-ref-grants.md)。
 
 ## 获取与生成契约
 
