@@ -1,5 +1,5 @@
 import { PlatformProvider, type PlatformAdapter } from "../../platform";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { AppI18nProvider } from "../../i18n/i18n";
@@ -361,7 +361,9 @@ describe("EntityDialog searchable select", () => {
     Object.defineProperty(input, "clientWidth", { configurable: true, value: 80 });
 
     await user.hover(input);
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
 
     expect(screen.queryByRole("dialog", { name: "main" })).toBeNull();
     expect(document.querySelector("[data-slot=popover-content]")).toBeNull();
