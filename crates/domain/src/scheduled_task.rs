@@ -69,6 +69,25 @@ impl ScheduledTaskSchedule {
             minute,
         })
     }
+
+    /// Returns the first hourly occurrence strictly after `after`, retaining the enable-time
+    /// anchor instead of deriving an alignment from a later process restart.
+    ///
+    /// Calendar schedules intentionally return `None`: their next occurrence depends on the
+    /// configured timezone and belongs to the scheduler adapter rather than the domain model.
+    pub fn next_hourly_occurrence_after(&self, anchor_at: i64, after: i64) -> Option<i64> {
+        let Self::EveryHours { interval } = self else {
+            return None;
+        };
+        let interval_millis = i64::from(*interval).checked_mul(60 * 60 * 1_000)?;
+        let elapsed = after.saturating_sub(anchor_at);
+        let completed_intervals = elapsed.div_euclid(interval_millis);
+        anchor_at.checked_add(
+            completed_intervals
+                .checked_add(1)?
+                .checked_mul(interval_millis)?,
+        )
+    }
 }
 
 /// Freezes where future occurrences are owned for the lifetime of a task.

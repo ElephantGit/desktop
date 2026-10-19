@@ -167,6 +167,29 @@ fn validates_scheduled_task_definition() {
     );
 }
 
+/// Hourly schedules retain their enable-time anchor across later scheduler observations.
+#[test]
+fn preserves_hourly_schedule_anchor_when_projecting_next_occurrence() {
+    let schedule = ScheduledTaskSchedule::every_hours(3).expect("valid interval");
+    let anchor_at = 1_000_i64;
+    let interval_millis = 3 * 60 * 60 * 1_000_i64;
+
+    assert_eq!(
+        schedule.next_hourly_occurrence_after(anchor_at, anchor_at),
+        Some(anchor_at + interval_millis)
+    );
+    assert_eq!(
+        schedule.next_hourly_occurrence_after(anchor_at, anchor_at + interval_millis + 1),
+        Some(anchor_at + (2 * interval_millis))
+    );
+    assert_eq!(
+        ScheduledTaskSchedule::daily(9, 30)
+            .expect("valid calendar schedule")
+            .next_hourly_occurrence_after(anchor_at, anchor_at),
+        None
+    );
+}
+
 /// Cloud definitions and missing consent cannot become active local scheduler jobs.
 #[test]
 fn rejects_unapproved_local_activation() {
