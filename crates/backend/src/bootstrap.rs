@@ -249,7 +249,7 @@ impl Backend {
             scheduled_task,
             project: Arc::new(ProjectApi::new(
                 pool.clone(),
-                sessions_root.clone(),
+                sessions_root,
                 clock,
                 effect_reconcile.clone(),
                 git_cleanup.clone(),

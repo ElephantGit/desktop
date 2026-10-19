@@ -137,7 +137,7 @@ impl ScheduledTaskRuntime {
                 let mut handles = self
                     .handles
                     .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 handles.insert(key, handle);
             }
             Ok(None) => {}
@@ -151,7 +151,7 @@ impl ScheduledTaskRuntime {
         let mut handles = self
             .handles
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _ = handles.remove(task_id.as_ref());
     }
 
@@ -168,7 +168,7 @@ impl ScheduledTaskRuntime {
         };
         let delay = Duration::from_millis(scheduled_at.saturating_sub(now).max(0) as u64);
         let runtime = Arc::clone(self);
-        let task_id = task.id.clone();
+        let task_id = task.id;
         self.scheduler
             .schedule_after(delay, async move {
                 runtime.trigger(task_id, scheduled_at).await;
@@ -181,8 +181,9 @@ impl ScheduledTaskRuntime {
         self: &Arc<Self>,
         task: ScheduledTask,
     ) -> Result<Option<ScheduledTaskHandle>, ora_scheduler::SchedulerError> {
-        let schedule =
-            calendar_cron_expression(&task.schedule).expect("calendar schedule selected");
+        let Some(schedule) = calendar_cron_expression(&task.schedule) else {
+            return Ok(None);
+        };
         let job = CalendarScheduledTaskJob {
             name: format!("scheduled-task:{}", task.id),
             schedule,
@@ -465,7 +466,7 @@ fn is_schedulable(task: &ScheduledTask) -> bool {
         && task
             .worktree_base_branch
             .as_deref()
-            .map_or(false, |branch| !branch.trim().is_empty())
+            .is_some_and(|branch| !branch.trim().is_empty())
         && match task.schedule {
             ScheduledTaskSchedule::EveryHours { .. } => task.schedule_anchor_at.is_some(),
             ScheduledTaskSchedule::Daily { .. } | ScheduledTaskSchedule::Weekly { .. } => true,
@@ -483,6 +484,7 @@ fn calendar_cron_expression(schedule: &ScheduledTaskSchedule) -> Option<String> 
             "0 {minute} {hour} * * {}",
             weekdays
                 .iter()
+                .copied()
                 .map(weekday_cron_name)
                 .collect::<Vec<_>>()
                 .join(",")
@@ -491,7 +493,7 @@ fn calendar_cron_expression(schedule: &ScheduledTaskSchedule) -> Option<String> 
     }
 }
 
-fn weekday_cron_name(day: &ScheduledTaskWeekday) -> &'static str {
+fn weekday_cron_name(day: ScheduledTaskWeekday) -> &'static str {
     match day {
         ScheduledTaskWeekday::Monday => "MON",
         ScheduledTaskWeekday::Tuesday => "TUE",
