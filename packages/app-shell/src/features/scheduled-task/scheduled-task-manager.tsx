@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ScheduledTask } from "@ora/contracts";
-import { Button, Spinner, Switch, cn } from "@ora/ui";
+import { Button, cn, Spinner, Switch } from "@ora/ui";
 import {
   IconCalendarClock,
   IconEdit,
@@ -43,6 +43,12 @@ export function ScheduledTaskManager() {
   const revokeApproval = useRevokeScheduledTaskApproval();
   const sidebarCollapsed = useUiStore((state) => state.sidebarCollapsed);
   const setSidebarCollapsed = useUiStore((state) => state.setSidebarCollapsed);
+  const historyRequest = useUiStore(
+    (state) => state.scheduledTaskHistoryRequest,
+  );
+  const clearScheduledTaskHistoryRequest = useUiStore(
+    (state) => state.clearScheduledTaskHistoryRequest,
+  );
   const [editing, setEditing] = useState<ScheduledTask | null | undefined>();
   const [historyTask, setHistoryTask] = useState<ScheduledTask | null>(null);
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(
@@ -57,6 +63,15 @@ export function ScheduledTaskManager() {
     () => new Map(projects.map((project) => [project.id, project.name])),
     [projects],
   );
+
+  // A one-shot history deep link (for example from a notification) resolves against the
+  // definition list at render time; closing the dialog clears it like a navigation.
+  const requestedHistoryTask =
+    historyRequest === null
+      ? null
+      : (tasks.find((task) => task.id === historyRequest.taskId) ?? null);
+  const displayedHistoryTask = historyTask ?? requestedHistoryTask;
+
   const agentNames = useMemo(
     () => new Map(agents.map((agent) => [agent.agentRef, agent.label])),
     [agents],
@@ -262,10 +277,15 @@ export function ScheduledTaskManager() {
           onOpenChange={(open) => !open && setEditing(undefined)}
         />
       )}
-      {historyTask !== null && (
+      {displayedHistoryTask !== null && (
         <ScheduledTaskHistoryDialog
-          task={historyTask}
-          onOpenChange={(open) => !open && setHistoryTask(null)}
+          task={displayedHistoryTask}
+          onOpenChange={(open) => {
+            if (!open) {
+              setHistoryTask(null);
+              clearScheduledTaskHistoryRequest();
+            }
+          }}
         />
       )}
       {pendingConfirm !== null && (

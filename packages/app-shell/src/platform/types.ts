@@ -247,6 +247,24 @@ export interface DiagnosticLogsCapability {
   downloadPluginLog(pluginId: string, fileStem: string): Promise<boolean>;
 }
 
+/** Describes one native OS notification the shell asks the host to show. */
+export interface DesktopNotificationOptions {
+  title: string;
+  body: string;
+}
+
+/**
+ * Shows native OS notifications without coupling shared UI to the host notification API.
+ *
+ * Clicking a notification only activates the host window: the desktop notification plugin
+ * exposes click actions on mobile platforms only, so actionable navigation is offered by the
+ * in-app surface that raises the notification.
+ */
+export interface DesktopNotificationsCapability {
+  /** Shows one OS notification; resolves to `false` when the host cannot notify. */
+  show(options: DesktopNotificationOptions): Promise<boolean>;
+}
+
 /** Collects the host capabilities consumed by the shared application shell. */
 export interface PlatformAdapter {
   readonly worktreeStorage: WorktreeStorageCapability;
@@ -256,6 +274,7 @@ export interface PlatformAdapter {
   readonly updates?: DesktopUpdateCapability;
   readonly pluginMarketplace?: PluginMarketplaceCapability;
   readonly diagnosticLogs?: DiagnosticLogsCapability;
+  readonly desktopNotifications?: DesktopNotificationsCapability;
   selectPath(options: SelectPathOptions): Promise<string | null>;
   /** Opens the native save dialog and returns the chosen path, or null when dismissed. */
   selectSavePath(options: SelectSavePathOptions): Promise<string | null>;

@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import type { ContractsClient } from "@ora/contracts";
 import { useQueryClient } from "@tanstack/react-query";
-import { refetchSessions, invalidateSessions } from "../data/sessions";
+import { invalidateSessions, refetchSessions } from "../data/sessions";
 import { invalidatePluginState } from "../data/plugin-lifecycle";
 import { invalidateAgentModels } from "../data/agent-runtime";
 import { invalidateMcpHealth } from "../data/mcp-health";
 import { invalidateWorkflowRun } from "../data/workflow-runs";
+import { surfaceScheduledTaskEvent } from "../data/scheduled-task-events";
+import { useOptionalPlatform } from "../../platform/use-platform";
 
 const INITIAL_RECONNECT_DELAY_MS = 1_000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
@@ -13,6 +15,7 @@ const MAX_RECONNECT_DELAY_MS = 30_000;
 /** Maintains the application stream and invalidates authoritative session state on loss. */
 export function useAppEvents(client: ContractsClient) {
   const queryClient = useQueryClient();
+  const platform = useOptionalPlatform();
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -62,6 +65,10 @@ export function useAppEvents(client: ContractsClient) {
             // The event names only which run changed; the run rows stay the single source of
             // truth and are re-queried here.
             invalidateWorkflowRun(queryClient, event.run_id);
+          } else if (event.type === "scheduled_task") {
+            // The event announces a persisted fact; navigation and OS notifications are
+            // handled together with the history invalidation.
+            void surfaceScheduledTaskEvent(platform, event, queryClient);
           }
         }
         handleDisconnect();
@@ -77,7 +84,7 @@ export function useAppEvents(client: ContractsClient) {
       controller.abort();
       if (reconnectTimer !== undefined) clearTimeout(reconnectTimer);
     };
-  }, [client, queryClient]);
+  }, [client, queryClient, platform]);
 
   return { ready };
 }
