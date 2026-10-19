@@ -251,13 +251,14 @@ function WorkspaceEntityDialog({
         value: "",
       },
       {
-        kind: "select",
+        kind: "searchable-select",
         name: "baseBranch",
         label: t("dialog.baseBranch"),
         value: preferredBaseBranch(projectBranches),
         options: projectBranches.map((branch) => ({
           label: branch.displayName,
           value: branch.refName,
+          keywords: branch.name,
         })),
         loading: branchesLoading,
       },

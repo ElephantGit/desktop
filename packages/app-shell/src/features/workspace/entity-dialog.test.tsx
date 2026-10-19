@@ -260,3 +260,79 @@ describe("EntityDialog submit loading", () => {
     );
   });
 });
+
+describe("EntityDialog searchable select", () => {
+  const longName = `feature/${"a".repeat(80)}`;
+  const branchFields: EntityField[] = [
+    {
+      kind: "searchable-select",
+      name: "baseBranch",
+      label: "Base branch",
+      value: "refs/heads/main",
+      options: [
+        { label: "main", value: "refs/heads/main", keywords: "main" },
+        {
+          label: "213124",
+          value: "refs/heads/ora/6f9888a9",
+          keywords: "ora/6f9888a9",
+        },
+        { label: longName, value: "refs/heads/long", keywords: longName },
+      ],
+    },
+  ];
+
+  async function openBranchMenu() {
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("combobox", { name: "Base branch" }));
+    return {
+      user,
+      search: await screen.findByPlaceholderText(/Search branches|搜索分支/),
+    };
+  }
+
+  it("wraps a long branch name inside the menu", async () => {
+    renderSubmitDialog({ onSubmit: async () => {}, fields: branchFields });
+    await openBranchMenu();
+
+    const option = await screen.findByRole("option", { name: longName });
+    expect(option.textContent).toBe(longName);
+    expect(option.querySelector("span")?.className).toContain("wrap-break-word");
+    expect(option.querySelector("span")?.className).toContain("whitespace-normal");
+  });
+
+  it("filters by the git branch name behind a task title", async () => {
+    renderSubmitDialog({ onSubmit: async () => {}, fields: branchFields });
+    const { user, search } = await openBranchMenu();
+    await user.type(search, "6f9888a9");
+
+    expect(await screen.findByRole("option", { name: "213124" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "main" })).toBeNull();
+    expect(screen.queryByRole("option", { name: longName })).toBeNull();
+  });
+
+  it("shows an empty state when nothing matches", async () => {
+    renderSubmitDialog({ onSubmit: async () => {}, fields: branchFields });
+    const { user, search } = await openBranchMenu();
+    await user.type(search, "missing-branch");
+
+    expect(
+      screen.getByText(/No matching branches|没有匹配的分支/),
+    ).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "main" })).toBeNull();
+  });
+
+  it("submits the ref of the branch chosen from search", async () => {
+    const onSubmit = vi.fn(async () => {});
+    renderSubmitDialog({ onSubmit, fields: branchFields });
+    const { user, search } = await openBranchMenu();
+    await user.type(search, "6f9888a9");
+    await user.click(await screen.findByRole("option", { name: "213124" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith({
+        baseBranch: "refs/heads/ora/6f9888a9",
+      }),
+    );
+  });
+});

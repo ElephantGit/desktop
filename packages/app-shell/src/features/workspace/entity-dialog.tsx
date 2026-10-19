@@ -3,6 +3,14 @@ import { IconFolderOpen } from "@tabler/icons-react";
 import { usePlatform, type PathSelectionKind } from "../../platform";
 import {
   Button,
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxTrigger,
+  ComboboxValue,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -32,9 +40,23 @@ interface TextEntityField extends EntityFieldBase {
   placeholder?: string;
 }
 
+interface SelectOption {
+  label: string;
+  value: string;
+  /** Extra text that search matches, such as the git branch behind a task title. */
+  keywords?: string;
+}
+
 interface SelectEntityField extends EntityFieldBase {
   kind: "select";
   options: Array<{ label: string; value: string }>;
+  /** True while options are still loading, so submit cannot race an empty value. */
+  loading?: boolean;
+}
+
+interface SearchableSelectEntityField extends EntityFieldBase {
+  kind: "searchable-select";
+  options: SelectOption[];
   /** True while options are still loading, so submit cannot race an empty value. */
   loading?: boolean;
 }
@@ -45,7 +67,30 @@ interface PathEntityField extends EntityFieldBase {
   placeholder?: string;
 }
 
-export type EntityField = TextEntityField | SelectEntityField | PathEntityField;
+export type EntityField =
+  | TextEntityField
+  | SelectEntityField
+  | SearchableSelectEntityField
+  | PathEntityField;
+
+function isChoiceField(
+  field: EntityField,
+): field is SelectEntityField | SearchableSelectEntityField {
+  return field.kind === "select" || field.kind === "searchable-select";
+}
+
+/** Shows every option while the query is empty or still the current label, then matches label, keywords, and value. */
+function optionMatchesQuery(
+  option: SelectOption,
+  query: string,
+  selectedLabel: string,
+): boolean {
+  const needle = query.trim().toLowerCase();
+  if (needle === "" || needle === selectedLabel.trim().toLowerCase()) return true;
+  return [option.label, option.keywords, option.value].some((part) =>
+    part?.toLowerCase().includes(needle),
+  );
+}
 
 interface EntityDialogProps {
   open: boolean;
@@ -101,14 +146,14 @@ export function EntityDialog({
   }, [fields, values]);
 
   const optionsLoading = fields.some(
-    (field) => field.kind === "select" && field.loading === true,
+    (field) => isChoiceField(field) && field.loading === true,
   );
   // A loading select is empty because options have not arrived, not because the
   // user skipped it. Treat that as a wait state so Enter does not look like a
   // required-field miss that then lingers after the default branch fills in.
   const hasEmptyNonLoadingField = fields.some(
     (field) =>
-      !(field.kind === "select" && field.loading === true) &&
+      !(isChoiceField(field) && field.loading === true) &&
       !resolvedValues[field.name]?.trim(),
   );
 
@@ -181,7 +226,19 @@ export function EntityDialog({
             {fields.map((field) => (
               <div key={field.name} className="grid gap-1.5">
                 <Label htmlFor={`entity-${field.name}`}>{field.label}</Label>
-                {field.kind === "select" ? (
+                {field.kind === "searchable-select" ? (
+                  <SearchableSelectField
+                    field={field}
+                    value={resolvedValues[field.name] ?? ""}
+                    disabled={submitting || field.loading === true}
+                    onValueChange={(value) =>
+                      setValues((current) => ({
+                        ...current,
+                        [field.name]: value,
+                      }))
+                    }
+                  />
+                ) : field.kind === "select" ? (
                   <Select
                     value={resolvedValues[field.name] ?? ""}
                     disabled={submitting || field.loading === true}
@@ -318,5 +375,69 @@ export function EntityDialog({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Branch picker: the closed control stays one line, the menu wraps names and filters them. */
+function SearchableSelectField({
+  field,
+  value,
+  disabled,
+  onValueChange,
+}: {
+  field: SearchableSelectEntityField;
+  value: string;
+  disabled: boolean;
+  onValueChange: (value: string) => void;
+}) {
+  const { t } = useTranslation();
+  const selected = field.options.find((option) => option.value === value) ?? null;
+
+  return (
+    <Combobox
+      items={field.options}
+      value={selected}
+      disabled={disabled}
+      isItemEqualToValue={(item, current) => item.value === current.value}
+      itemToStringLabel={(item) => item.label}
+      filter={(item, query) =>
+        optionMatchesQuery(item, query, selected?.label ?? "")
+      }
+      onValueChange={(next) => onValueChange(next?.value ?? "")}
+    >
+      <ComboboxTrigger
+        id={`entity-${field.name}`}
+        type="button"
+        aria-busy={field.loading === true}
+        className="flex h-8 w-full min-w-0 items-center justify-between gap-1.5 rounded-lg border border-input bg-transparent py-2 pr-2 pl-2.5 text-left text-sm whitespace-nowrap outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:shrink-0"
+      >
+        {field.loading === true ? (
+          <Spinner
+            className="size-3.5 text-muted-foreground"
+            aria-hidden="true"
+          />
+        ) : (
+          <ComboboxValue className="min-w-0 flex-1 truncate" />
+        )}
+      </ComboboxTrigger>
+      <ComboboxContent side="top" align="start" className="min-w-(--anchor-width)">
+        <ComboboxInput
+          showTrigger={false}
+          placeholder={t("dialog.searchBranch")}
+          aria-label={t("dialog.searchBranch")}
+          className="w-full"
+        />
+        <ComboboxEmpty>{t("dialog.noMatchingBranches")}</ComboboxEmpty>
+        <ComboboxList>
+          {(option: SelectOption) => (
+            <ComboboxItem key={option.value} value={option} className="items-start">
+              <span className="min-w-0 flex-1 text-left wrap-break-word whitespace-normal">
+                {option.label}
+              </span>
+            </ComboboxItem>
+          )}
+        </ComboboxList>
+      </ComboboxContent>
+    </Combobox>
   );
 }
