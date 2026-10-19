@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::ScheduledTaskEvent;
+
 /// Describes an application-level invalidation or stream lifecycle event.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -26,6 +28,11 @@ pub enum AppEvent {
     /// source of truth, and a lost or reordered event only leaves a stale view until the next
     /// event or refresh re-queries persistence.
     WorkflowRunInvalidated { run_id: String },
+    /// Announces one Scheduled Task lifecycle fact; see `ScheduledTaskEvent` for payloads.
+    ///
+    /// Like the other invalidations, the event is best-effort: a missed announcement only
+    /// leaves the client's view stale until the next refresh re-queries persistence.
+    ScheduledTask(ScheduledTaskEvent),
 }
 
 /// Opens the application event stream without filtering or ownership metadata.
@@ -93,6 +100,61 @@ mod tests {
             serde_json::json!({
                 "type": "mcp_health_changed",
                 "plugin_id": "official/tavily",
+            }),
+        );
+        // Scheduled task announcements carry only navigation identifiers; the run rows stay
+        // the single source of truth for status and history.
+        assert_eq!(
+            serde_json::to_value(AppEvent::ScheduledTask(
+                crate::ScheduledTaskEvent::RunStarted {
+                    task_id: "task-1".to_string(),
+                    session_id: "session-1".to_string(),
+                    worktree_task_id: "worktree-task-1".to_string(),
+                    project_id: "project-1".to_string(),
+                }
+            ))
+            .expect("scheduled run start serializes"),
+            serde_json::json!({
+                "type": "scheduled_task",
+                "kind": "run_started",
+                "taskId": "task-1",
+                "sessionId": "session-1",
+                "worktreeTaskId": "worktree-task-1",
+                "projectId": "project-1",
+            }),
+        );
+        assert_eq!(
+            serde_json::to_value(AppEvent::ScheduledTask(
+                crate::ScheduledTaskEvent::RunFinished {
+                    task_id: "task-1".to_string(),
+                    status: crate::ScheduledRunStatus::Failed,
+                    failure_reason: Some(crate::ScheduledRunFailureReason::Timeout),
+                }
+            ))
+            .expect("scheduled run finish serializes"),
+            serde_json::json!({
+                "type": "scheduled_task",
+                "kind": "run_finished",
+                "taskId": "task-1",
+                "status": "failed",
+                "failureReason": "timeout",
+            }),
+        );
+        assert_eq!(
+            serde_json::to_value(AppEvent::ScheduledTask(
+                crate::ScheduledTaskEvent::OccurrenceMissed {
+                    task_id: "task-1".to_string(),
+                    scheduled_at: 1_000,
+                    reason: crate::ScheduledMissReason::AppNotRunning,
+                }
+            ))
+            .expect("missed occurrence serializes"),
+            serde_json::json!({
+                "type": "scheduled_task",
+                "kind": "occurrence_missed",
+                "taskId": "task-1",
+                "scheduledAt": 1_000,
+                "reason": "app_not_running",
             }),
         );
     }

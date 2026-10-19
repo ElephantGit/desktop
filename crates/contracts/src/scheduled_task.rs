@@ -211,6 +211,8 @@ pub enum ScheduledTaskHistoryEntry {
         status: ScheduledRunStatus,
         session_id: Option<String>,
         worktree_path: Option<String>,
+        /// The task-owned worktree this run executed in; present only after the run started.
+        worktree_task_id: Option<String>,
         failure_reason: Option<ScheduledRunFailureReason>,
         created_at: i64,
         updated_at: i64,
@@ -254,6 +256,39 @@ pub struct UpdateScheduledTaskRequest {
     pub model: Option<String>,
     pub prompt: String,
     pub approval_change: ScheduledTaskApprovalChange,
+}
+
+/// Announces one Scheduled Task lifecycle fact on the application event stream.
+///
+/// The event is an interactive aid, not a run fact: clients may miss it without any run row
+/// changing, and the identifiers only ask the client to re-query persisted history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+#[ts(export_to = "scheduled-task.ts")]
+pub enum ScheduledTaskEvent {
+    /// One admitted Scheduled Run whose session and worktree are persisted.
+    RunStarted {
+        task_id: String,
+        session_id: String,
+        worktree_task_id: String,
+        project_id: String,
+    },
+    /// One Scheduled Run that reached a terminal state.
+    RunFinished {
+        task_id: String,
+        status: ScheduledRunStatus,
+        failure_reason: Option<ScheduledRunFailureReason>,
+    },
+    /// One planned occurrence that was persisted as missed.
+    OccurrenceMissed {
+        task_id: String,
+        scheduled_at: i64,
+        reason: ScheduledMissReason,
+    },
 }
 
 /// Returns the authoritative updated task snapshot.
@@ -315,6 +350,7 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     ScheduledRunFailureReason::export(config)?;
     ScheduledMissReason::export(config)?;
     ScheduledTaskHistoryEntry::export(config)?;
+    ScheduledTaskEvent::export(config)?;
     ListScheduledTaskHistoryRequest::export(config)?;
     ListScheduledTaskHistoryResponse::export(config)?;
     UpdateScheduledTaskRequest::export(config)?;

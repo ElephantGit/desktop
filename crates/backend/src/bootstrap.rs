@@ -243,6 +243,7 @@ impl Backend {
             task.clone(),
             session.clone(),
             clock,
+            app_events.publisher(),
         ));
 
         Ok(Self {

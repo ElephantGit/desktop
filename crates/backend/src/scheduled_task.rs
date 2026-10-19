@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 #[path = "scheduled_task_runtime.rs"]
 mod runtime;
+#[path = "scheduled_task_worktree.rs"]
+mod worktree;
 
 use ora_application::{
     CreateScheduledTaskHandler, DeleteScheduledTaskHandler, GetScheduledTaskHandler,
@@ -65,12 +67,14 @@ impl ScheduledTaskApi {
         tasks_api: Arc<TaskApi>,
         sessions: Arc<Sessions>,
         clock: SystemClock,
+        events: crate::app_event::AppEventPublisher,
     ) -> Self {
         let repository = Arc::new(SqliteScheduledTaskRepository::new(pool.clone()));
         let projects = Arc::new(SqliteProjectRepository::new(pool.clone()));
         let workspaces = Arc::new(SqliteWorkspaceRepository::new(pool.clone()));
         let run_repository = Arc::new(SqliteScheduledRunRepository::new(pool.clone()));
-        let runtime = ScheduledTaskRuntime::new(pool, scheduler, tasks_api, sessions, clock);
+        let runtime =
+            ScheduledTaskRuntime::new(pool, scheduler, tasks_api, sessions, clock, events);
         Self {
             agent_runtime,
             workspaces: workspaces.as_ref().clone(),

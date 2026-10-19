@@ -141,6 +141,30 @@ export type ScheduledTaskApprovalChange = { "kind": "keep" } | {
 export type ScheduledTaskApprovalPolicy = "full_auto_in_worktree";
 
 /**
+ * Announces one Scheduled Task lifecycle fact on the application event stream.
+ *
+ * The event is an interactive aid, not a run fact: clients may miss it without any run row
+ * changing, and the identifiers only ask the client to re-query persisted history.
+ */
+export type ScheduledTaskEvent = {
+  "kind": "run_started";
+  taskId: string;
+  sessionId: string;
+  worktreeTaskId: string;
+  projectId: string;
+} | {
+  "kind": "run_finished";
+  taskId: string;
+  status: ScheduledRunStatus;
+  failureReason: ScheduledRunFailureReason | null;
+} | {
+  "kind": "occurrence_missed";
+  taskId: string;
+  scheduledAt: bigint;
+  reason: ScheduledMissReason;
+};
+
+/**
  * Identifies which runtime owns every future occurrence of a task.
  */
 export type ScheduledTaskExecutionLocation = "local" | "cloud";
@@ -156,6 +180,10 @@ export type ScheduledTaskHistoryEntry = {
   status: ScheduledRunStatus;
   sessionId: string | null;
   worktreePath: string | null;
+  /**
+   * The task-owned worktree this run executed in; present only after the run started.
+   */
+  worktreeTaskId: string | null;
   failureReason: ScheduledRunFailureReason | null;
   createdAt: bigint;
   updatedAt: bigint;

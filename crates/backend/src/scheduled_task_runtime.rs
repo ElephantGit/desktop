@@ -7,9 +7,9 @@ use agent_client_protocol_schema::v1::{ContentBlock, StopReason, TextContent};
 use chrono::{Duration as ChronoDuration, TimeZone, Utc};
 use cron::Schedule;
 use ora_application::{
-    AdmitScheduledOccurrenceHandler, Clock, RecordOfflineMissedOccurrenceHandler,
-    ScheduledOccurrenceResolution, ScheduledRunLifecycleRepository, ScheduledTaskRepository,
-    UuidScheduledRunIdGenerator,
+    AdmitScheduledOccurrenceHandler, Clock, OfflineRecoveryResolution,
+    RecordOfflineMissedOccurrenceHandler, ScheduledOccurrenceResolution,
+    ScheduledRunLifecycleRepository, ScheduledTaskRepository, UuidScheduledRunIdGenerator,
 };
 use ora_contracts::{
     CreateTaskRequest, GetTaskWorkspaceRequest, PromptSessionEvent, PromptSessionRequest,
@@ -18,13 +18,16 @@ use ora_contracts::{
 use ora_db::{RepositoryPool, SqliteScheduledRunRepository, SqliteScheduledTaskRepository};
 use ora_domain::{
     MAX_SCHEDULED_OCCURRENCE_LATENESS_MILLIS, ScheduledRun, ScheduledRunFailureReason,
-    ScheduledRunTransition, ScheduledTask, ScheduledTaskExecutionLocation, ScheduledTaskId,
-    ScheduledTaskSchedule, ScheduledTaskWeekday, SessionId,
+    ScheduledRunStatus, ScheduledRunTransition, ScheduledTask, ScheduledTaskExecutionLocation,
+    ScheduledTaskId, ScheduledTaskSchedule, ScheduledTaskWeekday, SessionId, TaskId,
 };
 use ora_logging::ora_warn;
 use ora_scheduler::{BoxFuture, CronHandle, DelayHandle, Job, Scheduler};
 
+use crate::app_event::AppEventPublisher;
 use crate::{Sessions, TaskApi, clock::SystemClock};
+
+use super::worktree::ScheduledWorktreeJanitor;
 
 const SCHEDULED_RUN_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
@@ -55,7 +58,9 @@ impl ScheduledTaskRuntime {
         tasks_api: Arc<TaskApi>,
         sessions: Arc<Sessions>,
         clock: SystemClock,
+        events: AppEventPublisher,
     ) -> Arc<Self> {
+        let janitor = ScheduledWorktreeJanitor::new(tasks_api.clone(), pool.clone());
         let runtime = Arc::new(Self {
             scheduler,
             tasks: SqliteScheduledTaskRepository::new(pool.clone()),
@@ -65,6 +70,8 @@ impl ScheduledTaskRuntime {
                 sessions,
                 runs: SqliteScheduledRunRepository::new(pool),
                 clock,
+                janitor,
+                events,
             },
             clock,
             handles: Mutex::new(HashMap::new()),
@@ -91,6 +98,18 @@ impl ScheduledTaskRuntime {
                 ora_warn!(error = %error, "scheduled task recovery could not list definitions")
             }
         }
+        // A previous process may have finished runs without cleaning their worktrees, or left
+        // more kept worktrees than the retention bound. The sweep is best-effort: a lost pass
+        // is retried by the next finished run.
+        let janitor = self.executor.janitor.clone();
+        match self.scheduler.schedule_after(Duration::ZERO, async move {
+            janitor.enforce_retention().await;
+        }) {
+            Ok(handle) => handle.detach(),
+            Err(error) => {
+                ora_warn!(error = %error, "scheduled task worktree retention sweep could not be queued")
+            }
+        }
     }
 
     fn recover_offline_occurrences(self: &Arc<Self>, task: &ScheduledTask) {
@@ -103,13 +122,29 @@ impl ScheduledTaskRuntime {
         let Some(&latest) = occurrences.last() else {
             return;
         };
-        if let Err(error) = RecordOfflineMissedOccurrenceHandler::new(self.runs.clone()).handle(
+        match RecordOfflineMissedOccurrenceHandler::new(self.runs.clone()).handle(
             task,
             occurrences.iter().copied(),
             observed_at,
         ) {
-            ora_warn!(task_id = %task.id, error = %error, "scheduled task offline recovery failed");
-            return;
+            Ok(OfflineRecoveryResolution::Recorded(resolution)) => {
+                if let ScheduledOccurrenceResolution::Missed(missed) = *resolution {
+                    self.executor
+                        .events
+                        .try_publish(ora_contracts::AppEvent::ScheduledTask(
+                            ora_contracts::ScheduledTaskEvent::OccurrenceMissed {
+                                task_id: missed.occurrence.task_id.to_string(),
+                                scheduled_at: missed.occurrence.scheduled_at,
+                                reason: contract_miss_reason(missed.reason),
+                            },
+                        ));
+                }
+            }
+            Ok(_) => {}
+            Err(error) => {
+                ora_warn!(task_id = %task.id, error = %error, "scheduled task offline recovery failed");
+                return;
+            }
         }
         if observed_at.saturating_sub(latest) <= MAX_SCHEDULED_OCCURRENCE_LATENESS_MILLIS {
             let runtime = Arc::clone(self);
@@ -231,6 +266,19 @@ impl ScheduledTaskRuntime {
         .handle(&task, scheduled_at, observed_at);
         match admission {
             Ok(ScheduledOccurrenceResolution::Admitted(run)) => self.executor.execute(run).await,
+            // A late live observation persists a missed fact; announce it once so the user
+            // learns why nothing ran. Replays (ExistingMissed) never re-notify.
+            Ok(ScheduledOccurrenceResolution::Missed(missed)) => {
+                self.executor
+                    .events
+                    .try_publish(ora_contracts::AppEvent::ScheduledTask(
+                        ora_contracts::ScheduledTaskEvent::OccurrenceMissed {
+                            task_id: missed.occurrence.task_id.to_string(),
+                            scheduled_at: missed.occurrence.scheduled_at,
+                            reason: contract_miss_reason(missed.reason),
+                        },
+                    ));
+            }
             Ok(_) => {}
             Err(error) => {
                 ora_warn!(task_id = %task_id, error = %error, "scheduled task occurrence admission failed")
@@ -305,6 +353,8 @@ struct DesktopScheduledRunExecutor {
     sessions: Arc<Sessions>,
     runs: SqliteScheduledRunRepository,
     clock: SystemClock,
+    janitor: ScheduledWorktreeJanitor,
+    events: AppEventPublisher,
 }
 
 impl DesktopScheduledRunExecutor {
@@ -315,7 +365,8 @@ impl DesktopScheduledRunExecutor {
             .as_deref()
             .filter(|branch| !branch.trim().is_empty())
         else {
-            self.fail(&run, ScheduledRunFailureReason::WorktreeFailed);
+            self.fail(&run, ScheduledRunFailureReason::WorktreeFailed)
+                .await;
             return;
         };
         let created = match self.tasks.create(CreateTaskRequest {
@@ -326,17 +377,27 @@ impl DesktopScheduledRunExecutor {
             Ok(created) => created,
             Err(error) => {
                 ora_warn!(run_id = %run.id, error = %error, "scheduled run worktree creation failed");
-                self.fail(&run, ScheduledRunFailureReason::WorktreeFailed);
+                self.fail(&run, ScheduledRunFailureReason::WorktreeFailed)
+                    .await;
                 return;
             }
         };
+        let worktree_task_id = TaskId::new(created.task.id.clone());
         let workspace = match self.tasks.workspace(GetTaskWorkspaceRequest {
             task_id: created.task.id.clone(),
         }) {
             Ok(workspace) => workspace.workspace,
             Err(error) => {
                 ora_warn!(run_id = %run.id, error = %error, "scheduled run workspace lookup failed");
-                self.fail(&run, ScheduledRunFailureReason::WorktreeFailed);
+                self.finish(
+                    &run,
+                    Some(&worktree_task_id),
+                    None,
+                    ScheduledRunTransition::Fail {
+                        reason: ScheduledRunFailureReason::WorktreeFailed,
+                    },
+                )
+                .await;
                 return;
             }
         };
@@ -352,20 +413,44 @@ impl DesktopScheduledRunExecutor {
             Ok(started) => started,
             Err(error) => {
                 ora_warn!(run_id = %run.id, error = %error, "scheduled run session start failed");
-                self.fail(&run, ScheduledRunFailureReason::TargetUnavailable);
+                self.finish(
+                    &run,
+                    Some(&worktree_task_id),
+                    None,
+                    ScheduledRunTransition::Fail {
+                        reason: ScheduledRunFailureReason::TargetUnavailable,
+                    },
+                )
+                .await;
                 return;
             }
         };
         let session_id = SessionId::new(started.session.id);
+        let worktree_path = workspace.root_path;
         if !self.transition(
             &run,
             ScheduledRunTransition::Start {
                 session_id: session_id.clone(),
-                worktree_path: workspace.root_path,
+                worktree_path: worktree_path.clone(),
+                worktree_task_id: worktree_task_id.clone(),
             },
         ) {
+            // The run row already reached a terminal state (startup recovery won the race),
+            // so the freshly provisioned worktree is discarded directly.
+            self.janitor
+                .run_finished(&run, &worktree_task_id, None)
+                .await;
             return;
         }
+        self.events
+            .try_publish(ora_contracts::AppEvent::ScheduledTask(
+                ora_contracts::ScheduledTaskEvent::RunStarted {
+                    task_id: run.occurrence.task_id.to_string(),
+                    session_id: session_id.to_string(),
+                    worktree_task_id: worktree_task_id.to_string(),
+                    project_id: run.snapshot.project_id.to_string(),
+                },
+            ));
         let mut stream = match self
             .sessions
             .prompt(PromptSessionRequest {
@@ -381,7 +466,15 @@ impl DesktopScheduledRunExecutor {
             Ok(stream) => stream,
             Err(error) => {
                 ora_warn!(run_id = %run.id, error = %error, "scheduled run prompt start failed");
-                self.fail(&run, ScheduledRunFailureReason::ExecutionError);
+                self.finish(
+                    &run,
+                    Some(&worktree_task_id),
+                    Some(&worktree_path),
+                    ScheduledRunTransition::Fail {
+                        reason: ScheduledRunFailureReason::ExecutionError,
+                    },
+                )
+                .await;
                 return;
             }
         };
@@ -395,22 +488,52 @@ impl DesktopScheduledRunExecutor {
                     }).await {
                         ora_warn!(run_id = %run.id, error = %error, "scheduled run timeout could not stop session");
                     }
-                    self.fail(&run, ScheduledRunFailureReason::Timeout);
+                    self.finish(
+                        &run,
+                        Some(&worktree_task_id),
+                        Some(&worktree_path),
+                        ScheduledRunTransition::Fail {
+                            reason: ScheduledRunFailureReason::Timeout,
+                        },
+                    )
+                    .await;
                     return;
                 }
                 event = stream.recv() => match event {
                     Some(Ok(PromptSessionEvent::Completed { stop_reason, .. })) => {
-                        self.transition(&run, scheduled_run_completion_transition(stop_reason));
+                        self.finish(
+                            &run,
+                            Some(&worktree_task_id),
+                            Some(&worktree_path),
+                            scheduled_run_completion_transition(stop_reason),
+                        )
+                        .await;
                         return;
                     }
                     Some(Ok(_)) => {}
                     Some(Err(error)) => {
                         ora_warn!(run_id = %run.id, error = %error, "scheduled run prompt failed");
-                        self.fail(&run, ScheduledRunFailureReason::ExecutionError);
+                        self.finish(
+                            &run,
+                            Some(&worktree_task_id),
+                            Some(&worktree_path),
+                            ScheduledRunTransition::Fail {
+                                reason: ScheduledRunFailureReason::ExecutionError,
+                            },
+                        )
+                        .await;
                         return;
                     }
                     None => {
-                        self.fail(&run, ScheduledRunFailureReason::ExecutionError);
+                        self.finish(
+                            &run,
+                            Some(&worktree_task_id),
+                            Some(&worktree_path),
+                            ScheduledRunTransition::Fail {
+                                reason: ScheduledRunFailureReason::ExecutionError,
+                            },
+                        )
+                        .await;
                         return;
                     }
                 },
@@ -418,8 +541,46 @@ impl DesktopScheduledRunExecutor {
         }
     }
 
-    fn fail(&self, run: &ScheduledRun, reason: ScheduledRunFailureReason) {
-        let _ = self.transition(run, ScheduledRunTransition::Fail { reason });
+    /// Persists one terminal transition, announces it, and hands the worktree to the janitor.
+    async fn finish(
+        &self,
+        run: &ScheduledRun,
+        worktree_task_id: Option<&TaskId>,
+        worktree_path: Option<&str>,
+        transition: ScheduledRunTransition,
+    ) {
+        if !self.transition(run, transition.clone()) {
+            return;
+        }
+        self.publish_finished(run, &transition);
+        if let Some(worktree_task_id) = worktree_task_id {
+            self.janitor
+                .run_finished(run, worktree_task_id, worktree_path)
+                .await;
+        }
+    }
+
+    /// Announces a terminal run state once the persisted fact is committed.
+    fn publish_finished(&self, run: &ScheduledRun, transition: &ScheduledRunTransition) {
+        let (status, failure_reason) = match transition {
+            ScheduledRunTransition::Start { .. } => return,
+            ScheduledRunTransition::Succeed => (ScheduledRunStatus::Succeeded, None),
+            ScheduledRunTransition::Fail { reason } => (ScheduledRunStatus::Failed, Some(*reason)),
+            ScheduledRunTransition::Cancel => (ScheduledRunStatus::Cancelled, None),
+        };
+        self.events
+            .try_publish(ora_contracts::AppEvent::ScheduledTask(
+                ora_contracts::ScheduledTaskEvent::RunFinished {
+                    task_id: run.occurrence.task_id.to_string(),
+                    status: contract_run_status(status),
+                    failure_reason: failure_reason.map(contract_failure_reason),
+                },
+            ));
+    }
+
+    async fn fail(&self, run: &ScheduledRun, reason: ScheduledRunFailureReason) {
+        self.finish(run, None, None, ScheduledRunTransition::Fail { reason })
+            .await;
     }
 
     fn transition(&self, run: &ScheduledRun, transition: ScheduledRunTransition) -> bool {
@@ -453,6 +614,54 @@ fn scheduled_run_completion_transition(stop_reason: StopReason) -> ScheduledRunT
         _ => ScheduledRunTransition::Fail {
             reason: ScheduledRunFailureReason::ExecutionError,
         },
+    }
+}
+
+fn contract_run_status(status: ScheduledRunStatus) -> ora_contracts::ScheduledRunStatus {
+    match status {
+        ScheduledRunStatus::Accepted => ora_contracts::ScheduledRunStatus::Accepted,
+        ScheduledRunStatus::Running => ora_contracts::ScheduledRunStatus::Running,
+        ScheduledRunStatus::Succeeded => ora_contracts::ScheduledRunStatus::Succeeded,
+        ScheduledRunStatus::Failed => ora_contracts::ScheduledRunStatus::Failed,
+        ScheduledRunStatus::Cancelled => ora_contracts::ScheduledRunStatus::Cancelled,
+        ScheduledRunStatus::SkippedBusy => ora_contracts::ScheduledRunStatus::SkippedBusy,
+        ScheduledRunStatus::SkippedCapacity => ora_contracts::ScheduledRunStatus::SkippedCapacity,
+    }
+}
+
+fn contract_failure_reason(
+    reason: ScheduledRunFailureReason,
+) -> ora_contracts::ScheduledRunFailureReason {
+    match reason {
+        ScheduledRunFailureReason::TargetUnavailable => {
+            ora_contracts::ScheduledRunFailureReason::TargetUnavailable
+        }
+        ScheduledRunFailureReason::ModelUnavailable => {
+            ora_contracts::ScheduledRunFailureReason::ModelUnavailable
+        }
+        ScheduledRunFailureReason::WorktreeFailed => {
+            ora_contracts::ScheduledRunFailureReason::WorktreeFailed
+        }
+        ScheduledRunFailureReason::ApprovalPolicyInvalid => {
+            ora_contracts::ScheduledRunFailureReason::ApprovalPolicyInvalid
+        }
+        ScheduledRunFailureReason::Timeout => ora_contracts::ScheduledRunFailureReason::Timeout,
+        ScheduledRunFailureReason::ExecutionError => {
+            ora_contracts::ScheduledRunFailureReason::ExecutionError
+        }
+    }
+}
+
+fn contract_miss_reason(
+    reason: ora_domain::ScheduledMissReason,
+) -> ora_contracts::ScheduledMissReason {
+    match reason {
+        ora_domain::ScheduledMissReason::AppNotRunning => {
+            ora_contracts::ScheduledMissReason::AppNotRunning
+        }
+        ora_domain::ScheduledMissReason::LateTrigger => {
+            ora_contracts::ScheduledMissReason::LateTrigger
+        }
     }
 }
 

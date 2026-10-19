@@ -7,7 +7,7 @@ use ora_domain::{
     AgentRef, MAX_CONCURRENT_LOCAL_SCHEDULED_RUNS, MAX_SCHEDULED_TASK_HISTORY_ENTRIES, ProjectId,
     ScheduledMissReason, ScheduledMissedOccurrence, ScheduledOccurrence, ScheduledRun,
     ScheduledRunFailureReason, ScheduledRunId, ScheduledRunSnapshot, ScheduledRunStatus,
-    ScheduledRunTransition, ScheduledTaskHistoryEntry, ScheduledTaskId, SessionId,
+    ScheduledRunTransition, ScheduledTaskHistoryEntry, ScheduledTaskId, SessionId, TaskId,
 };
 use rusqlite::{Row, Transaction, TransactionBehavior, params};
 
@@ -98,12 +98,13 @@ impl ScheduledTaskHistoryRepository for SqliteScheduledRunRepository {
                             r.id, r.task_id, r.scheduled_at, r.task_revision, r.project_id,
                             r.worktree_base_branch, r.agent_ref, r.model, r.prompt, r.approval_policy,
                             r.approval_consented_at, r.status, r.session_id,
-                            r.worktree_path, r.failure_reason, r.created_at, r.updated_at
-                     FROM scheduled_occurrences o
-                     LEFT JOIN scheduled_runs r
-                       ON r.task_id = o.task_id AND r.scheduled_at = o.scheduled_at
-                     WHERE o.task_id = ?1
-                     ORDER BY o.scheduled_at DESC",
+                            r.worktree_path, r.worktree_task_id, r.failure_reason,
+                            r.created_at, r.updated_at
+                      FROM scheduled_occurrences o
+                      LEFT JOIN scheduled_runs r
+                        ON r.task_id = o.task_id AND r.scheduled_at = o.scheduled_at
+                      WHERE o.task_id = ?1
+                      ORDER BY o.scheduled_at DESC",
                 )?;
                 let mut rows = statement.query([task_id.as_ref()])?;
                 let mut entries = Vec::new();
@@ -136,6 +137,32 @@ impl ScheduledRunLifecycleRepository for SqliteScheduledRunRepository {
             .map_err(repository_error_from_database)
     }
 
+    fn list_scheduled_runs_with_retained_worktrees(
+        &self,
+    ) -> Result<Vec<ScheduledRun>, RepositoryError> {
+        self.pool
+            .with_connection(|connection| {
+                let mut statement = connection.prepare(
+                    "SELECT id, task_id, scheduled_at, task_revision, project_id,
+                            worktree_base_branch, agent_ref, model, prompt,
+                            approval_policy, approval_consented_at, status,
+                            session_id, worktree_path, worktree_task_id, failure_reason,
+                            created_at, updated_at
+                     FROM scheduled_runs
+                     WHERE status NOT IN ('accepted', 'running')
+                       AND worktree_task_id IS NOT NULL
+                     ORDER BY updated_at, id",
+                )?;
+                let mut rows = statement.query([])?;
+                let mut runs = Vec::new();
+                while let Some(row) = rows.next()? {
+                    runs.push(map_scheduled_run_row(row)?);
+                }
+                Ok(runs)
+            })
+            .map_err(repository_error_from_database)
+    }
+
     fn transition_scheduled_run(
         &self,
         run_id: &ScheduledRunId,
@@ -159,12 +186,13 @@ impl ScheduledRunLifecycleRepository for SqliteScheduledRunRepository {
                             let updated = transaction.execute(
                                 "UPDATE scheduled_runs
                                  SET status = ?1, session_id = ?2, worktree_path = ?3,
-                                     failure_reason = ?4, updated_at = ?5
-                                 WHERE id = ?6 AND status = ?7",
+                                     worktree_task_id = ?4, failure_reason = ?5, updated_at = ?6
+                                 WHERE id = ?7 AND status = ?8",
                                 params![
                                     status_column(run.status),
                                     run.session_id.as_ref().map(AsRef::<str>::as_ref),
                                     run.worktree_path.as_deref(),
+                                    run.worktree_task_id.as_ref().map(AsRef::<str>::as_ref),
                                     run.failure_reason.map(failure_reason_column),
                                     run.updated_at,
                                     run.id.as_ref(),
@@ -300,9 +328,9 @@ fn insert_scheduled_run(
         "INSERT INTO scheduled_runs (
             id, task_id, scheduled_at, task_revision, project_id, worktree_base_branch, agent_ref,
             model, prompt, approval_policy, approval_consented_at, status,
-            session_id, worktree_path, failure_reason, created_at, updated_at
+            session_id, worktree_path, worktree_task_id, failure_reason, created_at, updated_at
          ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18
          )",
         params![
             run.id.as_ref(),
@@ -319,6 +347,7 @@ fn insert_scheduled_run(
             status_column(run.status),
             run.session_id.as_ref().map(AsRef::<str>::as_ref),
             run.worktree_path.as_deref(),
+            run.worktree_task_id.as_ref().map(AsRef::<str>::as_ref),
             run.failure_reason.map(failure_reason_column),
             run.created_at,
             run.updated_at,
@@ -365,7 +394,7 @@ fn load_scheduled_run(
     let mut statement = transaction.prepare(
         "SELECT id, task_id, scheduled_at, task_revision, project_id, worktree_base_branch, agent_ref,
                 model, prompt, approval_policy, approval_consented_at, status,
-                session_id, worktree_path, failure_reason, created_at, updated_at
+                session_id, worktree_path, worktree_task_id, failure_reason, created_at, updated_at
          FROM scheduled_runs
          WHERE task_id = ?1 AND scheduled_at = ?2",
     )?;
@@ -384,7 +413,7 @@ fn load_scheduled_run_by_id(
     let mut statement = transaction.prepare(
         "SELECT id, task_id, scheduled_at, task_revision, project_id, worktree_base_branch, agent_ref,
                 model, prompt, approval_policy, approval_consented_at, status,
-                session_id, worktree_path, failure_reason, created_at, updated_at
+                session_id, worktree_path, worktree_task_id, failure_reason, created_at, updated_at
          FROM scheduled_runs
          WHERE id = ?1",
     )?;
@@ -424,6 +453,9 @@ fn map_scheduled_run_row(row: &Row<'_>) -> Result<ScheduledRun, crate::DatabaseE
             .get::<_, Option<String>>("session_id")?
             .map(SessionId::new),
         worktree_path: row.get("worktree_path")?,
+        worktree_task_id: row
+            .get::<_, Option<String>>("worktree_task_id")?
+            .map(TaskId::new),
         failure_reason: row
             .get::<_, Option<String>>("failure_reason")?
             .map(|value| parse_failure_reason(&value))
@@ -518,7 +550,7 @@ mod tests {
         ScheduledOccurrence, ScheduledRun, ScheduledRunFailureReason, ScheduledRunId,
         ScheduledRunStatus, ScheduledRunTransition, ScheduledTask, ScheduledTaskApproval,
         ScheduledTaskExecutionLocation, ScheduledTaskHistoryEntry, ScheduledTaskId,
-        ScheduledTaskSchedule, SessionId, WorkspaceLocation,
+        ScheduledTaskSchedule, SessionId, TaskId, WorkspaceLocation,
     };
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
@@ -551,6 +583,7 @@ mod tests {
                 ScheduledRunTransition::Start {
                     session_id: SessionId::new("session-1"),
                     worktree_path: "worktrees/run-lifecycle".to_string(),
+                    worktree_task_id: TaskId::new("task-lifecycle"),
                 },
                 100,
             )
@@ -561,6 +594,7 @@ mod tests {
                 status: ScheduledRunStatus::Running,
                 session_id: Some(_),
                 worktree_path: Some(_),
+                worktree_task_id: Some(_),
                 failure_reason: None,
                 updated_at: 100,
                 ..
@@ -641,6 +675,7 @@ mod tests {
                 ScheduledRunTransition::Start {
                     session_id: SessionId::new("session-interrupted"),
                     worktree_path: "worktrees/interrupted".to_string(),
+                    worktree_task_id: TaskId::new("task-interrupted"),
                 },
                 302,
             )
@@ -985,6 +1020,113 @@ mod tests {
             .expect("read retained history");
         assert_eq!(history_count, 100);
         assert_eq!(oldest, 1);
+    }
+
+    #[test]
+    fn retained_worktree_listing_returns_only_finished_linked_runs_oldest_first() {
+        let (temp_dir, pool) = bootstrapped_pool();
+        seed_definition(&pool, temp_dir.path());
+        let repository = SqliteScheduledRunRepository::new(pool.clone());
+        let task = scheduled_task();
+
+        let linked = ScheduledRun::accepted(
+            ScheduledRunId::new("run-linked-older"),
+            occurrence(10),
+            &task,
+            11,
+        );
+        repository
+            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::run(linked))
+            .expect("persist linked run");
+        repository
+            .transition_scheduled_run(
+                &ScheduledRunId::new("run-linked-older"),
+                ScheduledRunTransition::Start {
+                    session_id: SessionId::new("session-older"),
+                    worktree_path: "worktrees/older".to_string(),
+                    worktree_task_id: TaskId::new("task-older"),
+                },
+                12,
+            )
+            .expect("start older linked run");
+        repository
+            .transition_scheduled_run(
+                &ScheduledRunId::new("run-linked-older"),
+                ScheduledRunTransition::Succeed,
+                200,
+            )
+            .expect("finish older linked run");
+
+        let linked_newer = ScheduledRun::accepted(
+            ScheduledRunId::new("run-linked-newer"),
+            occurrence(20),
+            &task,
+            21,
+        );
+        repository
+            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::run(linked_newer))
+            .expect("persist newer linked run");
+        repository
+            .transition_scheduled_run(
+                &ScheduledRunId::new("run-linked-newer"),
+                ScheduledRunTransition::Start {
+                    session_id: SessionId::new("session-newer"),
+                    worktree_path: "worktrees/newer".to_string(),
+                    worktree_task_id: TaskId::new("task-newer"),
+                },
+                22,
+            )
+            .expect("start newer linked run");
+        repository
+            .transition_scheduled_run(
+                &ScheduledRunId::new("run-linked-newer"),
+                ScheduledRunTransition::Succeed,
+                300,
+            )
+            .expect("finish newer linked run");
+
+        let never_started = ScheduledRun::accepted(
+            ScheduledRunId::new("run-never-started"),
+            occurrence(30),
+            &task,
+            31,
+        );
+        repository
+            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::run(never_started))
+            .expect("persist never-started run");
+        repository
+            .transition_scheduled_run(
+                &ScheduledRunId::new("run-never-started"),
+                ScheduledRunTransition::Fail {
+                    reason: ScheduledRunFailureReason::TargetUnavailable,
+                },
+                400,
+            )
+            .expect("fail never-started run");
+
+        repository
+            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Missed(
+                ScheduledMissedOccurrence {
+                    occurrence: occurrence(40),
+                    reason: ScheduledMissReason::AppNotRunning,
+                    observed_at: 640_001,
+                },
+            ))
+            .expect("persist missed fact");
+
+        let runs = repository
+            .list_scheduled_runs_with_retained_worktrees()
+            .expect("list retained worktree runs");
+        assert_eq!(
+            runs.iter().map(|run| run.id.as_ref()).collect::<Vec<_>>(),
+            vec!["run-linked-older", "run-linked-newer"]
+        );
+        assert_eq!(
+            runs.first()
+                .and_then(|run| run.worktree_task_id.as_ref())
+                .map(AsRef::<str>::as_ref),
+            Some("task-older")
+        );
     }
 
     #[test]
