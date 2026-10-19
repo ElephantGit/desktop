@@ -15,6 +15,7 @@ import {
   MarkerType,
   ReactFlow,
   useReactFlow,
+  ViewportPortal,
   type Connection,
   type DefaultEdgeOptions,
   type Edge,
@@ -50,6 +51,11 @@ import {
   snapNodePosition,
   withoutExtentClampPositions,
 } from "./layout";
+import {
+  applyDragAlignment,
+  WORKFLOW_ALIGNMENT_SCREEN_PX,
+  type AlignmentGuide,
+} from "./alignment";
 import { WorkflowConnectionStateProvider } from "./connection-state";
 import { WorkflowConnectionLine } from "./connection-line";
 import {
@@ -258,6 +264,7 @@ function WorkflowCanvasInner({
     screenToFlowPosition,
     setViewport,
     getInternalNode,
+    getViewport,
   } = useReactFlow<WorkflowCanvasNode, Edge>();
   // Collapsed iteration frames hide their region members: the members stay in the
   // graph (the frozen structure is authoritative); only the canvas presentation folds.
@@ -420,6 +427,7 @@ function WorkflowCanvasInner({
   const [liveDragNodes, setLiveDragNodes] = useState<
     WorkflowCanvasNode[] | null
   >(null);
+  const [alignmentGuides, setAlignmentGuides] = useState<AlignmentGuide[]>([]);
   const renderedNodes = liveDragNodes ?? canvasNodes;
   const reconnectingEdgeIdRef = useRef<string | null>(null);
 
@@ -474,26 +482,35 @@ function WorkflowCanvasInner({
   const handleNodesChange = useCallback(
     (changes: NodeChange<WorkflowCanvasNode>[]): void => {
       const appliedChanges = withoutExtentClampPositions(changes);
-      if (isNodeDragGestureActive(appliedChanges)) {
-        setLiveDragNodes((current) =>
-          applyNodeChanges(
-            appliedChanges,
-            current ?? preserveLiveMeasurements(canvasNodes, getInternalNode),
-          ),
+      const dragMove = isNodeDragGestureActive(appliedChanges);
+      const dragStop = appliedChanges.some(
+        (change) => change.type === "position" && change.dragging === false,
+      );
+      if (dragMove || dragStop) {
+        const base = preserveLiveMeasurements(canvasNodes, getInternalNode);
+        const proposed = applyNodeChanges(appliedChanges, base);
+        const zoom = getViewport().zoom;
+        const aligned = applyDragAlignment(
+          appliedChanges,
+          proposed,
+          WORKFLOW_ALIGNMENT_SCREEN_PX / (zoom > 0 ? zoom : 1),
         );
-      } else if (
-        appliedChanges.some(
-          (change) => change.type === "position" && change.dragging === false,
-        )
-      ) {
-        // The final drop tick lands right before onNodeDragStop and also after
-        // an aborted gesture (e.g. the dragged node was deleted mid-drag), where
-        // no drag-stop callback follows. Never let the overlay linger stale.
-        setLiveDragNodes(null);
+        if (dragMove) {
+          setLiveDragNodes(applyNodeChanges(aligned.changes, base));
+          setAlignmentGuides(aligned.guides);
+        } else {
+          // The final drop tick lands right before onNodeDragStop and also after
+          // an aborted gesture (e.g. the dragged node was deleted mid-drag), where
+          // no drag-stop callback follows. Never let the overlay linger stale.
+          setLiveDragNodes(null);
+          setAlignmentGuides([]);
+        }
+        onNodesChange(aligned.changes);
+        return;
       }
       onNodesChange(changes);
     },
-    [canvasNodes, getInternalNode, onNodesChange],
+    [canvasNodes, getInternalNode, getViewport, onNodesChange],
   );
 
   /** Drops the live drag overlay once the editor publishes the drop commit. */
@@ -880,6 +897,7 @@ function WorkflowCanvasInner({
                 size={1}
                 color="color-mix(in oklch, var(--foreground) 18%, transparent)"
               />
+              <WorkflowAlignmentGuides guides={alignmentGuides} />
               <WorkflowFlowOverview nodeCount={nodes.length} />
             </ReactFlow>
           </WorkflowIterationActionsProvider>
@@ -947,5 +965,42 @@ function WorkflowCanvasInner({
         </div>
       )}
     </div>
+  );
+}
+
+/** Draws alignment guides in flow space so they follow pan and zoom. */
+function WorkflowAlignmentGuides({ guides }: { guides: AlignmentGuide[] }) {
+  if (guides.length === 0) {
+    return null;
+  }
+  return (
+    <ViewportPortal>
+      <svg
+        className="pointer-events-none overflow-visible"
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: 1,
+          height: 1,
+          overflow: "visible",
+          zIndex: 1000,
+        }}
+      >
+        {guides.map((guide) => (
+          <line
+            key={`${guide.orientation}:${guide.position}:${guide.start}:${guide.end}`}
+            data-workflow-alignment-guide={guide.orientation}
+            x1={guide.orientation === "vertical" ? guide.position : guide.start}
+            y1={guide.orientation === "vertical" ? guide.start : guide.position}
+            x2={guide.orientation === "vertical" ? guide.position : guide.end}
+            y2={guide.orientation === "vertical" ? guide.end : guide.position}
+            stroke="var(--ring)"
+            strokeWidth={1}
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+      </svg>
+    </ViewportPortal>
   );
 }

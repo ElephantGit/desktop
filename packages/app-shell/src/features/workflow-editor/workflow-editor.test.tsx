@@ -2300,7 +2300,7 @@ describe("WorkflowEditor", () => {
     expect(await screen.findByLabelText("Workflow canvas")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Pointer mode: left-drag to box-select · Hand mode: left-drag to pan · Middle-drag to pan · Scroll to zoom · Nodes snap to grid",
+        "Pointer mode: left-drag to box-select · Hand mode: left-drag to pan · Middle-drag to pan · Scroll to zoom · Nodes snap to the grid and to nearby nodes",
       ),
     ).toBeInTheDocument();
     expect(
