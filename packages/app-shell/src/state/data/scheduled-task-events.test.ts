@@ -144,7 +144,9 @@ describe("scheduled task event surfacing", () => {
     document.dispatchEvent(new Event("visibilitychange"));
     await Promise.resolve();
     expect(errorToast).toHaveBeenCalledTimes(1);
-    expect(errorToast.mock.calls[0]?.[1]?.description).toContain("失败：运行超时");
+    expect(errorToast.mock.calls[0]?.[1]?.description).toContain(
+      "失败：运行超时",
+    );
   });
 
   it("announces a failed run without notifying successful or cancelled runs", async () => {

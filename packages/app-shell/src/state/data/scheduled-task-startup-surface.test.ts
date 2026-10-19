@@ -138,7 +138,7 @@ describe("startup surface of persisted scheduled task facts", () => {
     );
   });
 
-  it("sends the OS notification while the window is hidden", async () => {
+  it("sends the OS notification while the window is hidden and keeps the entry for refocus", async () => {
     Object.defineProperty(document, "visibilityState", {
       value: "hidden",
       configurable: true,
@@ -153,9 +153,22 @@ describe("startup surface of persisted scheduled task facts", () => {
     );
 
     expect(show).toHaveBeenCalledTimes(1);
-    expect(errorToast).toHaveBeenCalledTimes(1);
+    // While hidden the toast must not fire, or it would expire unseen; the navigation
+    // entry is retained and rendered when the window is visible again.
+    expect(errorToast).not.toHaveBeenCalled();
     expect(window.localStorage.getItem("ora.scheduledTaskFactsSeenAt")).toBe(
       "5000",
+    );
+
+    Object.defineProperty(document, "visibilityState", {
+      value: "visible",
+      configurable: true,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+    await Promise.resolve();
+    expect(errorToast).toHaveBeenCalledTimes(1);
+    expect(errorToast.mock.calls[0]?.[1]?.description).toContain(
+      "已错过：Desktop 未运行",
     );
   });
 });
