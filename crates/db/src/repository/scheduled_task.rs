@@ -32,9 +32,10 @@ impl ScheduledTaskRepository for SqliteScheduledTaskRepository {
                     "INSERT INTO scheduled_tasks (
                         id, name, enabled, schedule_json, execution_location, project_id,
                         agent_ref, model, prompt, revision, approval_policy,
-                        approval_consented_at, created_at, updated_at, is_deleted
+                        approval_consented_at, schedule_anchor_at, worktree_base_branch,
+                        created_at, updated_at, is_deleted
                      ) VALUES (
-                        ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15
+                        ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17
                      )",
                     params![
                         task.id.as_ref(),
@@ -49,6 +50,8 @@ impl ScheduledTaskRepository for SqliteScheduledTaskRepository {
                         revision,
                         approval_policy,
                         approval_consented_at,
+                        task.schedule_anchor_at,
+                        task.worktree_base_branch.as_deref(),
                         task.audit_fields.created_at,
                         task.audit_fields.updated_at,
                         bool_to_sqlite(task.audit_fields.is_deleted),
@@ -68,7 +71,8 @@ impl ScheduledTaskRepository for SqliteScheduledTaskRepository {
                 let mut statement = connection.prepare(
                     "SELECT id, name, enabled, schedule_json, execution_location, project_id,
                             agent_ref, model, prompt, revision, approval_policy,
-                            approval_consented_at, created_at, updated_at, is_deleted
+                            approval_consented_at, schedule_anchor_at, worktree_base_branch,
+                            created_at, updated_at, is_deleted
                      FROM scheduled_tasks
                      WHERE id = ?1 AND is_deleted = 0",
                 )?;
@@ -84,7 +88,8 @@ impl ScheduledTaskRepository for SqliteScheduledTaskRepository {
                 let mut statement = connection.prepare(
                     "SELECT id, name, enabled, schedule_json, execution_location, project_id,
                             agent_ref, model, prompt, revision, approval_policy,
-                            approval_consented_at, created_at, updated_at, is_deleted
+                            approval_consented_at, schedule_anchor_at, worktree_base_branch,
+                            created_at, updated_at, is_deleted
                      FROM scheduled_tasks
                      WHERE is_deleted = 0
                      ORDER BY created_at, id",
@@ -119,8 +124,9 @@ impl ScheduledTaskRepository for SqliteScheduledTaskRepository {
                          SET name = ?2, enabled = ?3, schedule_json = ?4, project_id = ?5,
                              agent_ref = ?6, model = ?7, prompt = ?8, revision = ?9,
                              approval_policy = ?10, approval_consented_at = ?11,
-                             updated_at = ?12
-                         WHERE id = ?1 AND is_deleted = 0 AND updated_at = ?13",
+                             schedule_anchor_at = ?12, worktree_base_branch = ?13,
+                             updated_at = ?14
+                         WHERE id = ?1 AND is_deleted = 0 AND updated_at = ?15",
                         params![
                             task.id.as_ref(),
                             &task.name,
@@ -133,6 +139,8 @@ impl ScheduledTaskRepository for SqliteScheduledTaskRepository {
                             revision,
                             approval_policy,
                             approval_consented_at,
+                            task.schedule_anchor_at,
+                            task.worktree_base_branch.as_deref(),
                             task.audit_fields.updated_at,
                             expected_updated_at,
                         ],
@@ -212,6 +220,8 @@ fn map_scheduled_task_row(row: &Row<'_>) -> Result<ScheduledTask, crate::Databas
         ),
     )?;
     task.revision = revision;
+    task.schedule_anchor_at = row.get("schedule_anchor_at")?;
+    task.worktree_base_branch = row.get("worktree_base_branch")?;
     Ok(task)
 }
 
@@ -388,7 +398,7 @@ mod tests {
     }
 
     fn scheduled_task() -> ScheduledTask {
-        ScheduledTask::new(
+        let mut task = ScheduledTask::new(
             ScheduledTaskId::new("scheduled-task-1"),
             "Quality report",
             true,
@@ -401,6 +411,9 @@ mod tests {
             Some(ScheduledTaskApproval::full_auto_in_worktree(10)),
             AuditFields::new(10, 10, false),
         )
-        .expect("task")
+        .expect("task");
+        task.reanchor_on_enable(10);
+        task.freeze_worktree_base_branch("main");
+        task
     }
 }

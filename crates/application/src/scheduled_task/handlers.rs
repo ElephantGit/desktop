@@ -11,7 +11,7 @@ use ora_contracts::{
 };
 use ora_domain::{
     AgentRef, AuditFields, ProjectId, ScheduledTask, ScheduledTaskExecutionLocation,
-    ScheduledTaskId, WorkspaceLocation,
+    ScheduledTaskId, ScheduledTaskSchedule, WorkspaceLocation,
 };
 
 use super::mapper::{approval_from_policy, map_history_entry, map_task, parse_schedule};
@@ -107,11 +107,11 @@ where
 
         let now = self.clock.now_timestamp_millis();
         let project_id = ProjectId::new(request.project_id);
-        require_git_project(self.projects.as_ref(), &project_id)?;
+        let project = require_git_project(self.projects.as_ref(), &project_id)?;
         let approval = request
             .approval_policy
             .map(|policy| approval_from_policy(policy, now));
-        let task = ScheduledTask::new(
+        let mut task = ScheduledTask::new(
             self.id_generator.generate_scheduled_task_id(),
             request.name,
             request.enabled,
@@ -126,6 +126,8 @@ where
             AuditFields::new(now, now, /*is_deleted*/ false),
         )
         .map_err(ApplicationError::from_scheduled_task_domain_error)?;
+        task.reanchor_on_enable(now);
+        freeze_worktree_base_branch(&mut task, &project)?;
         require_activation_approval(&task)?;
         require_active_local_target(&task, self.workspaces.as_ref(), &self.target_validator)?;
 
@@ -319,7 +321,7 @@ where
             .now_timestamp_millis()
             .max(existing.audit_fields.updated_at.saturating_add(1));
         let project_id = ProjectId::new(request.project_id);
-        require_git_project(self.projects.as_ref(), &project_id)?;
+        let project = require_git_project(self.projects.as_ref(), &project_id)?;
         let project_changed = project_id != existing.project_id;
         let schedule = parse_schedule(request.schedule)?;
         let agent_ref = AgentRef::parse(request.agent_ref)
@@ -357,6 +359,22 @@ where
         )
         .map_err(ApplicationError::from_scheduled_task_domain_error)?;
         replacement.revision = existing.revision + u64::from(revision_changed);
+        if !existing.enabled && replacement.enabled
+            || !matches!(&existing.schedule, ScheduledTaskSchedule::EveryHours { .. })
+                && matches!(
+                    &replacement.schedule,
+                    ScheduledTaskSchedule::EveryHours { .. }
+                )
+        {
+            replacement.reanchor_on_enable(now);
+        } else {
+            replacement.preserve_schedule_anchor(&existing);
+        }
+        if project_changed || existing.worktree_base_branch.is_none() {
+            freeze_worktree_base_branch(&mut replacement, &project)?;
+        } else {
+            replacement.worktree_base_branch = existing.worktree_base_branch.clone();
+        }
         require_activation_approval(&replacement)?;
         require_active_local_target(
             &replacement,
@@ -507,7 +525,7 @@ where
 fn require_git_project<Projects>(
     projects: &Projects,
     project_id: &ProjectId,
-) -> Result<(), ApplicationError>
+) -> Result<ora_domain::Project, ApplicationError>
 where
     Projects: ProjectRepository,
 {
@@ -520,6 +538,19 @@ where
     if project.repository_kind != "git" {
         return Err(ApplicationError::ScheduledTaskRequiresGitProject);
     }
+    Ok(project)
+}
+
+fn freeze_worktree_base_branch(
+    task: &mut ScheduledTask,
+    project: &ora_domain::Project,
+) -> Result<(), ApplicationError> {
+    let branch = project
+        .default_branch
+        .as_deref()
+        .filter(|branch| !branch.trim().is_empty())
+        .ok_or(ApplicationError::ScheduledTaskRequiresGitProject)?;
+    task.freeze_worktree_base_branch(branch);
     Ok(())
 }
 
