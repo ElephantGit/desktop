@@ -495,8 +495,10 @@ function WorkflowCanvasInner({
           proposed,
           WORKFLOW_ALIGNMENT_SCREEN_PX / (zoom > 0 ? zoom : 1),
         );
+        // applyNodeChanges and the editor both take a mutable change list.
+        const alignedChanges = [...aligned.changes];
         if (dragMove) {
-          setLiveDragNodes(applyNodeChanges(aligned.changes, base));
+          setLiveDragNodes(applyNodeChanges(alignedChanges, base));
           setAlignmentGuides(aligned.guides);
         } else {
           // The final drop tick lands right before onNodeDragStop and also after
@@ -505,7 +507,7 @@ function WorkflowCanvasInner({
           setLiveDragNodes(null);
           setAlignmentGuides([]);
         }
-        onNodesChange(aligned.changes);
+        onNodesChange(alignedChanges);
         return;
       }
       onNodesChange(changes);
