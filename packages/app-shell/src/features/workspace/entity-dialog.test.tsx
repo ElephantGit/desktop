@@ -338,6 +338,77 @@ describe("EntityDialog searchable select", () => {
     );
   });
 
+  it("wraps a Chinese name and an unbroken string inside the menu", async () => {
+    const chinese =
+      "测试/这是一条用来检查基础分支下拉框的超长中文分支名看文字会不会被裁掉";
+    const unbroken = "a".repeat(80);
+    renderSubmitDialog({
+      onSubmit: async () => {},
+      fields: [
+        {
+          kind: "searchable-select",
+          name: "baseBranch",
+          label: "Base branch",
+          value: "refs/heads/main",
+          options: [
+            { label: "main", value: "refs/heads/main", keywords: "main" },
+            { label: chinese, value: "refs/heads/zh", keywords: chinese },
+            { label: unbroken, value: "refs/heads/unbroken", keywords: unbroken },
+          ],
+        },
+      ],
+    });
+    await openBranchMenu();
+
+    const menu = document.querySelector("[data-slot=combobox-content]");
+    expect(menu?.className).toContain("max-w-(--anchor-width)");
+    for (const name of [chinese, unbroken]) {
+      const option = await screen.findByRole("option", { name });
+      const label = option.querySelector("span");
+      expect(option.textContent).toBe(name);
+      expect(label?.className).toContain("wrap-break-word");
+      expect(label?.className).toContain("whitespace-normal");
+      expect(label?.className).not.toMatch(/truncate|line-clamp|text-ellipsis/);
+    }
+  });
+
+  it("submits the ref of the last branch in a list longer than 20", async () => {
+    const options = Array.from({ length: 21 }, (_, index) => {
+      const name = `branch-${String(index + 1).padStart(2, "0")}`;
+      return {
+        label: name,
+        value: `refs/heads/${name}`,
+        keywords: name,
+      };
+    });
+    const last = options[20]!;
+    const onSubmit = vi.fn(async () => {});
+    renderSubmitDialog({
+      onSubmit,
+      fields: [
+        {
+          kind: "searchable-select",
+          name: "baseBranch",
+          label: "Base branch",
+          value: options[0]!.value,
+          options,
+        },
+      ],
+    });
+    const { user } = await openBranchMenu();
+
+    const list = document.querySelector("[data-slot=combobox-list]");
+    expect(list?.className).toContain("max-h-52");
+    expect(list?.className).toContain("overflow-y-auto");
+    expect(screen.getAllByRole("option")).toHaveLength(21);
+    await user.click(screen.getByRole("option", { name: last.label }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith({ baseBranch: last.value }),
+    );
+  });
+
   it("shows the full branch name when the selected text overflows", async () => {
     const user = userEvent.setup();
     renderSubmitDialog({
