@@ -71,6 +71,8 @@ pub enum ScheduledTaskHistoryEntry {
 pub struct ScheduledRunSnapshot {
     pub revision: u64,
     pub project_id: ProjectId,
+    /// Preserves the unattended worktree baseline selected at occurrence admission.
+    pub worktree_base_branch: Option<String>,
     pub agent_ref: AgentRef,
     pub model: Option<String>,
     pub prompt: String,
@@ -162,6 +164,7 @@ impl ScheduledRun {
             snapshot: ScheduledRunSnapshot {
                 revision: task.revision,
                 project_id: task.project_id.clone(),
+                worktree_base_branch: task.worktree_base_branch.clone(),
                 agent_ref: task.agent_ref.clone(),
                 model: task.model.clone(),
                 prompt: task.prompt.clone(),

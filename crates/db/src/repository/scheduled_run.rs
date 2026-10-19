@@ -96,7 +96,7 @@ impl ScheduledTaskHistoryRepository for SqliteScheduledRunRepository {
                             o.scheduled_at AS occurrence_scheduled_at,
                             o.outcome, o.missed_reason, o.observed_at,
                             r.id, r.task_id, r.scheduled_at, r.task_revision, r.project_id,
-                            r.agent_ref, r.model, r.prompt, r.approval_policy,
+                            r.worktree_base_branch, r.agent_ref, r.model, r.prompt, r.approval_policy,
                             r.approval_consented_at, r.status, r.session_id,
                             r.worktree_path, r.failure_reason, r.created_at, r.updated_at
                      FROM scheduled_occurrences o
@@ -279,11 +279,11 @@ fn insert_scheduled_run(
     let (approval_policy, approval_consented_at) = approval_columns(run.snapshot.approval.as_ref());
     transaction.execute(
         "INSERT INTO scheduled_runs (
-            id, task_id, scheduled_at, task_revision, project_id, agent_ref,
+            id, task_id, scheduled_at, task_revision, project_id, worktree_base_branch, agent_ref,
             model, prompt, approval_policy, approval_consented_at, status,
             session_id, worktree_path, failure_reason, created_at, updated_at
          ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17
          )",
         params![
             run.id.as_ref(),
@@ -291,6 +291,7 @@ fn insert_scheduled_run(
             run.occurrence.scheduled_at,
             revision,
             run.snapshot.project_id.as_ref(),
+            run.snapshot.worktree_base_branch.as_deref(),
             run.snapshot.agent_ref.as_str(),
             run.snapshot.model.as_deref(),
             &run.snapshot.prompt,
@@ -343,7 +344,7 @@ fn load_scheduled_run(
     occurrence: &ScheduledOccurrence,
 ) -> Result<ScheduledRun, crate::DatabaseError> {
     let mut statement = transaction.prepare(
-        "SELECT id, task_id, scheduled_at, task_revision, project_id, agent_ref,
+        "SELECT id, task_id, scheduled_at, task_revision, project_id, worktree_base_branch, agent_ref,
                 model, prompt, approval_policy, approval_consented_at, status,
                 session_id, worktree_path, failure_reason, created_at, updated_at
          FROM scheduled_runs
@@ -362,7 +363,7 @@ fn load_scheduled_run_by_id(
     run_id: &ScheduledRunId,
 ) -> Result<Option<ScheduledRun>, crate::DatabaseError> {
     let mut statement = transaction.prepare(
-        "SELECT id, task_id, scheduled_at, task_revision, project_id, agent_ref,
+        "SELECT id, task_id, scheduled_at, task_revision, project_id, worktree_base_branch, agent_ref,
                 model, prompt, approval_policy, approval_consented_at, status,
                 session_id, worktree_path, failure_reason, created_at, updated_at
          FROM scheduled_runs
@@ -393,6 +394,7 @@ fn map_scheduled_run_row(row: &Row<'_>) -> Result<ScheduledRun, crate::DatabaseE
         snapshot: ScheduledRunSnapshot {
             revision,
             project_id: ProjectId::new(row.get::<_, String>("project_id")?),
+            worktree_base_branch: row.get("worktree_base_branch")?,
             agent_ref: AgentRef::parse(row.get::<_, String>("agent_ref")?)?,
             model: row.get("model")?,
             prompt: row.get("prompt")?,
@@ -592,6 +594,7 @@ mod tests {
         let occurrence = occurrence(100);
         let first =
             ScheduledRun::accepted(ScheduledRunId::new("run-1"), occurrence.clone(), &task, 101);
+        assert_eq!(first.snapshot.worktree_base_branch.as_deref(), Some("main"));
         assert_eq!(
             repository
                 .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::run(first.clone()))
@@ -985,7 +988,7 @@ mod tests {
     }
 
     fn scheduled_task_with_id(task_id: &str) -> ScheduledTask {
-        ScheduledTask::new(
+        let mut task = ScheduledTask::new(
             ScheduledTaskId::new(task_id),
             "Quality report",
             true,
@@ -998,6 +1001,8 @@ mod tests {
             Some(ScheduledTaskApproval::full_auto_in_worktree(10)),
             AuditFields::new(10, 10, false),
         )
-        .expect("task")
+        .expect("task");
+        task.freeze_worktree_base_branch("main");
+        task
     }
 }
