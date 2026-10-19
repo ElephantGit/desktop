@@ -97,6 +97,7 @@ impl ShutdownCompletion {
 pub struct Scheduler {
     inner: Arc<SchedulerInner>,
     completion: Arc<ShutdownCompletion>,
+    timezone: Tz,
 }
 
 impl Scheduler {
@@ -135,7 +136,16 @@ impl Scheduler {
                 });
             }
         }
-        Scheduler { inner, completion }
+        Scheduler {
+            inner,
+            completion,
+            timezone,
+        }
+    }
+
+    /// Returns the configured IANA timezone used for every cron evaluation.
+    pub fn timezone(&self) -> Tz {
+        self.timezone
     }
 
     /// Dynamically registers a recurring cron job.

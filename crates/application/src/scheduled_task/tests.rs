@@ -52,13 +52,82 @@ fn enabled_local_task_requires_explicit_unattended_approval() {
 #[test]
 fn approved_local_task_is_created_at_revision_one() {
     let repository = Arc::new(MemoryScheduledTaskRepository::default());
-    let handler = create_handler(repository);
+    let handler = create_handler(repository.clone());
 
     let response = handler.handle(create_request()).expect("create task");
 
     assert!(response.task.enabled);
     assert_eq!(response.task.revision, 1);
     assert_eq!(response.task.approval.expect("approval").consented_at, NOW);
+    let persisted = latest_task(&repository);
+    assert_eq!(persisted.schedule_anchor_at, Some(NOW));
+    assert_eq!(persisted.worktree_base_branch, Some("main".to_string()));
+}
+
+#[test]
+fn re_enabling_an_hourly_task_replaces_its_persisted_anchor() {
+    let repository = Arc::new(MemoryScheduledTaskRepository::default());
+    let created = create_handler(repository.clone())
+        .handle(create_request())
+        .expect("create task")
+        .task;
+    let handler = UpdateScheduledTaskHandler::new(
+        repository.clone(),
+        projects(),
+        workspaces(),
+        AcceptingTargetValidator,
+        FixedClock(NOW + 1_000),
+    );
+
+    let mut disable = keep_consent_request(&created);
+    disable.enabled = false;
+    let disabled = handler.handle(disable).expect("disable task").task;
+    assert_eq!(latest_task(&repository).schedule_anchor_at, None);
+
+    let mut enable = keep_consent_request(&disabled);
+    enable.enabled = true;
+    handler.handle(enable).expect("enable task");
+
+    assert_eq!(
+        latest_task(&repository).schedule_anchor_at,
+        Some(NOW + 1_001)
+    );
+}
+
+#[test]
+fn retargeting_a_task_freezes_the_new_projects_default_branch() {
+    let repository = Arc::new(MemoryScheduledTaskRepository::default());
+    let created = create_handler(repository.clone())
+        .handle(create_request())
+        .expect("create task")
+        .task;
+    let mut release_project = git_project("project-2");
+    release_project.default_branch = Some("release/2026".to_string());
+    let handler = UpdateScheduledTaskHandler::new(
+        repository.clone(),
+        Arc::new(MemoryProjectRepository::with_projects(vec![
+            git_project("project-1"),
+            release_project,
+        ])),
+        Arc::new(MemoryWorkspaceRepository::with_workspaces(vec![
+            main_workspace("project-1"),
+            main_workspace("project-2"),
+        ])),
+        AcceptingTargetValidator,
+        FixedClock(NOW + 1_000),
+    );
+
+    let mut request = keep_consent_request(&created);
+    request.project_id = "project-2".to_string();
+    request.approval_change = ScheduledTaskApprovalChange::Grant {
+        policy: ScheduledTaskApprovalPolicy::FullAutoInWorktree,
+    };
+    handler.handle(request).expect("retarget task");
+
+    assert_eq!(
+        latest_task(&repository).worktree_base_branch,
+        Some("release/2026".to_string())
+    );
 }
 
 #[test]
@@ -424,6 +493,16 @@ fn main_workspace(project_id: &str) -> Workspace {
         WorkspaceLifecycle::Active,
         AuditFields::new(NOW, NOW, false),
     )
+}
+
+fn latest_task(repository: &MemoryScheduledTaskRepository) -> ScheduledTask {
+    repository
+        .tasks
+        .lock()
+        .expect("lock tasks")
+        .last()
+        .expect("stored task")
+        .clone()
 }
 
 #[derive(Default)]

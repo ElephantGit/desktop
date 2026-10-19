@@ -117,6 +117,12 @@ pub enum ScheduledRunTransitionResolution {
 
 /// Persists forward-only Scheduled Run lifecycle changes atomically.
 pub trait ScheduledRunLifecycleRepository {
+    /// Marks active runs from an earlier Desktop process as failed during startup recovery.
+    fn fail_interrupted_scheduled_runs(
+        &self,
+        interrupted_at: i64,
+    ) -> Result<usize, RepositoryError>;
+
     fn transition_scheduled_run(
         &self,
         run_id: &ScheduledRunId,
