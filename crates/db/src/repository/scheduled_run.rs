@@ -117,6 +117,25 @@ impl ScheduledTaskHistoryRepository for SqliteScheduledRunRepository {
 }
 
 impl ScheduledRunLifecycleRepository for SqliteScheduledRunRepository {
+    fn fail_interrupted_scheduled_runs(
+        &self,
+        interrupted_at: i64,
+    ) -> Result<usize, RepositoryError> {
+        self.pool
+            .with_connection_mut(|connection| {
+                Ok(connection.execute(
+                    "UPDATE scheduled_runs
+                     SET status = 'failed', failure_reason = ?1, updated_at = ?2
+                     WHERE status IN ('accepted', 'running')",
+                    params![
+                        failure_reason_column(ScheduledRunFailureReason::ExecutionError),
+                        interrupted_at,
+                    ],
+                )?)
+            })
+            .map_err(repository_error_from_database)
+    }
+
     fn transition_scheduled_run(
         &self,
         run_id: &ScheduledRunId,
@@ -580,6 +599,70 @@ mod tests {
                 status: ScheduledRunStatus::Failed,
                 failure_reason: Some(ScheduledRunFailureReason::Timeout),
                 updated_at: 200,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn startup_recovery_finishes_interrupted_accepted_and_running_runs() {
+        let (temp_dir, pool) = bootstrapped_pool();
+        seed_definition(&pool, temp_dir.path());
+        let repository = SqliteScheduledRunRepository::new(pool);
+        let task = scheduled_task();
+        let accepted = ScheduledRun::accepted(
+            ScheduledRunId::new("run-interrupted-accepted"),
+            occurrence(100),
+            &task,
+            101,
+        );
+        repository
+            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::run(accepted))
+            .expect("admit accepted run");
+        assert_eq!(
+            repository
+                .fail_interrupted_scheduled_runs(200)
+                .expect("finish accepted run"),
+            1
+        );
+
+        let running = ScheduledRun::accepted(
+            ScheduledRunId::new("run-interrupted-running"),
+            occurrence(300),
+            &task,
+            301,
+        );
+        repository
+            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::run(running))
+            .expect("admit running run");
+        repository
+            .transition_scheduled_run(
+                &ScheduledRunId::new("run-interrupted-running"),
+                ScheduledRunTransition::Start {
+                    session_id: SessionId::new("session-interrupted"),
+                    worktree_path: "worktrees/interrupted".to_string(),
+                },
+                302,
+            )
+            .expect("start run");
+        assert_eq!(
+            repository
+                .fail_interrupted_scheduled_runs(400)
+                .expect("finish running run"),
+            1
+        );
+        assert!(matches!(
+            repository
+                .transition_scheduled_run(
+                    &ScheduledRunId::new("run-interrupted-running"),
+                    ScheduledRunTransition::Succeed,
+                    401,
+                )
+                .expect("load terminal run"),
+            ScheduledRunTransitionResolution::InvalidState(ScheduledRun {
+                status: ScheduledRunStatus::Failed,
+                failure_reason: Some(ScheduledRunFailureReason::ExecutionError),
+                updated_at: 400,
                 ..
             })
         ));

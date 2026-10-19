@@ -76,6 +76,10 @@ impl ScheduledTaskRuntime {
     /// Rebuilds only definitions whose persisted approval and frozen execution inputs permit
     /// local execution. Legacy definitions without the new frozen fields remain inert.
     fn restore(self: &Arc<Self>) {
+        let interrupted_at = self.clock.now_timestamp_millis();
+        if let Err(error) = self.runs.fail_interrupted_scheduled_runs(interrupted_at) {
+            ora_warn!(error = %error, "scheduled task startup recovery could not finish interrupted runs");
+        }
         match self.tasks.list_scheduled_tasks() {
             Ok(tasks) => {
                 for task in tasks {
