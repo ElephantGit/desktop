@@ -172,14 +172,17 @@ fn every_outcome_is_pushed_and_a_replay_succeeds() {
     );
 }
 
-/// A refused delivery ref fails at once as `push_rejected`; an unreachable Git Server is tried
-/// three times and fails as `push_failed`.
+/// A refused or unauthenticated delivery ref push fails at once as `push_rejected`; an
+/// unreachable Git Server is tried three times and fails as `push_failed`.
 #[test]
 fn refused_and_unreachable_pushes_fail_with_their_codes() {
     let setup = setup();
     setup.server.answer_always(Some(403));
     let rejected = setup.push(&setup.job);
     let refused = setup.server.served().len();
+    setup.server.answer_always(Some(401));
+    let unauthenticated = setup.push(&setup.job);
+    let unauthenticated_attempts = setup.server.served().len() - refused;
     setup.server.answer_always(Some(503));
     let failed = setup.push(&setup.job);
     setup.server.answer_always(None);
@@ -195,14 +198,15 @@ fn refused_and_unreachable_pushes_fail_with_their_codes() {
     );
     let taken = setup.push(&setup.job(&setup.final_commit, "refs/ora/deliveries/taken", None));
     assert_eq!(
-        [rejected, failed, taken],
+        [rejected, unauthenticated, failed, taken],
         [
+            Pushed::Failed(RevisionFailureCode::PushRejected),
             Pushed::Failed(RevisionFailureCode::PushRejected),
             Pushed::Failed(RevisionFailureCode::PushFailed),
             Pushed::Failed(RevisionFailureCode::PushRejected),
         ]
     );
-    assert_eq!(refused, 1);
+    assert_eq!([refused, unauthenticated_attempts], [1, 1]);
     assert_eq!(
         setup
             .server

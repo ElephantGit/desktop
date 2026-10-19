@@ -232,8 +232,9 @@ async fn restore_moves_the_branch_and_judges_divergence_by_the_snapshot() {
     }
 }
 
-/// A missing delivery ref and a refused request are permanent; another commit at the ref and
-/// an unreachable server are retryable. None moves the branch.
+/// A missing delivery ref and a refused request are permanent; a 401, another commit at the
+/// ref and an unreachable server are retryable. Only the unreachable server is retried within
+/// the restore. None moves the branch.
 #[tokio::test]
 async fn restore_failures_follow_the_git_server_answer() {
     let setup = setup();
@@ -247,6 +248,15 @@ async fn restore_failures_follow_the_git_server_answer() {
         .await;
     setup.server.answer_always(Some(403));
     let denied = setup
+        .restore(
+            &restorer,
+            setup.request(&setup.prior, DELIVERY, &setup.earlier),
+            RestoreCancel::default(),
+        )
+        .await;
+    // A 401 only says the Node's git-access material failed; the prior Revision stays resumable.
+    setup.server.answer_always(Some(401));
+    let unauthenticated = setup
         .restore(
             &restorer,
             setup.request(&setup.prior, DELIVERY, &setup.earlier),
@@ -270,10 +280,11 @@ async fn restore_failures_follow_the_git_server_answer() {
         )
         .await;
     assert_eq!(
-        [missing, denied, unavailable, mismatch],
+        [missing, denied, unauthenticated, unavailable, mismatch],
         [
             Err(RestoreFailure::BaseUnavailable),
             Err(RestoreFailure::BaseUnavailable),
+            Err(RestoreFailure::Unavailable),
             Err(RestoreFailure::Unavailable),
             Err(RestoreFailure::Unavailable),
         ]
@@ -286,6 +297,13 @@ async fn restore_failures_follow_the_git_server_answer() {
         .filter(|request| request.status == 503)
         .count();
     assert_eq!(attempts, 3);
+    let unauthenticated_attempts = setup
+        .server
+        .served()
+        .iter()
+        .filter(|request| request.status == 401)
+        .count();
+    assert_eq!(unauthenticated_attempts, 1);
 }
 
 /// A cancelled session and a spent deadline start no Git Server request and leave the branch.

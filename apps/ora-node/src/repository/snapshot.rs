@@ -83,9 +83,11 @@ pub(super) fn fetch(
     let failure = match fetched {
         Ok(()) => None,
         // The Git Server answers missing and unreadable refs the same way.
-        Err(GitServerFailure::Denied | GitServerFailure::MissingRef) => {
-            Some(CloneFailureCode::SnapshotUnavailable)
-        }
+        Err(
+            GitServerFailure::Unauthenticated
+            | GitServerFailure::Denied
+            | GitServerFailure::MissingRef,
+        ) => Some(CloneFailureCode::SnapshotUnavailable),
         Err(GitServerFailure::Unavailable) => Some(CloneFailureCode::SourceUnavailable),
         Err(GitServerFailure::Stopped) => return Fetched::Stopped,
     };

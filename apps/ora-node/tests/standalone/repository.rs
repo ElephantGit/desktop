@@ -206,8 +206,9 @@ fn managed_snapshot_clone_checks_out_the_base_commit_without_a_remote() {
     });
 }
 
-/// A missing or unreadable snapshot ref, and one that points at another commit, fail with their
-/// own codes and retain separate destinations; a new execution uses a new directory.
+/// A missing, unreadable or unauthenticated snapshot ref, and one that points at another
+/// commit, fail with their own codes and retain separate destinations; a new execution uses a
+/// new directory.
 #[test]
 fn snapshot_failures_retain_targets_and_new_retry_uses_new_directory() {
     ora_logging::with_trace_logging(|| {
@@ -242,6 +243,25 @@ fn snapshot_failures_retain_targets_and_new_retry_uses_new_directory() {
             Some(CloneFailureCode::SnapshotUnavailable)
         );
         server.reject_auth(false);
+        // A 401 is not retried either: the same git-access material cannot pass.
+        server.server.answer_always(Some(401));
+        let unauthenticated = node
+            .submit_clone(request(&server, "unauthenticated", "main"))
+            .unwrap();
+        assert_eq!(
+            failure(&unauthenticated.state).map(|failed| failed.failure),
+            Some(CloneFailureCode::SnapshotUnavailable)
+        );
+        assert_eq!(
+            server
+                .server
+                .served()
+                .iter()
+                .filter(|request| request.status == 401)
+                .count(),
+            1
+        );
+        server.server.answer_always(None);
         // A snapshot ref that names one commit but points at another is a data mismatch.
         let other = fixture.git(&[
             "-c",
@@ -286,7 +306,7 @@ fn snapshot_failures_retain_targets_and_new_retry_uses_new_directory() {
         };
         assert_ne!(ready.path, *old);
         assert!(PathBuf::from(old.as_str()).is_dir());
-        assert_eq!(node.pending_events().unwrap().len(), 4);
+        assert_eq!(node.pending_events().unwrap().len(), 5);
     });
 }
 

@@ -143,9 +143,12 @@ where
                         GitServerFailure::Denied | GitServerFailure::MissingRef => {
                             RestoreFailure::BaseUnavailable
                         }
-                        GitServerFailure::Unavailable | GitServerFailure::Stopped => {
-                            RestoreFailure::Unavailable
-                        }
+                        // A 401 only says the Node's own git-access material is wrong or
+                        // expired; it must not mark the prior Revision unresumable, so a later
+                        // session may try again once the deployment is fixed.
+                        GitServerFailure::Unauthenticated
+                        | GitServerFailure::Unavailable
+                        | GitServerFailure::Stopped => RestoreFailure::Unavailable,
                     }
                 })?;
             // A delivery ref only ever gets created, so another commit is a defect; it stays

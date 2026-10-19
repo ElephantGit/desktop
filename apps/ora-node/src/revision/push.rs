@@ -87,7 +87,11 @@ pub(crate) fn push<N: GitRunner>(
         Ok(PushReport::Updated | PushReport::UpToDate) => {}
         // An existing delivery ref at another commit is refused: only this execution creates it.
         Ok(PushReport::Rejected | PushReport::Stale)
-        | Err(GitServerFailure::Denied | GitServerFailure::MissingRef) => {
+        | Err(
+            GitServerFailure::Unauthenticated
+            | GitServerFailure::Denied
+            | GitServerFailure::MissingRef,
+        ) => {
             ora_logging::ora_warn!(execution_id = %execution, "Git Server refused the delivery ref");
             return Pushed::Failed(RevisionFailureCode::PushRejected);
         }
@@ -150,7 +154,12 @@ fn fast_forward<N: GitRunner>(
             ora_logging::ora_info!(execution_id = %execution, "Workspace branch moved since this checkout last saw it; left unchanged");
             None
         }
-        Ok(PushReport::Rejected) | Err(GitServerFailure::Denied | GitServerFailure::MissingRef) => {
+        Ok(PushReport::Rejected)
+        | Err(
+            GitServerFailure::Unauthenticated
+            | GitServerFailure::Denied
+            | GitServerFailure::MissingRef,
+        ) => {
             ora_logging::ora_info!(execution_id = %execution, "Workspace branch was not fast-forwarded to the final commit");
             None
         }

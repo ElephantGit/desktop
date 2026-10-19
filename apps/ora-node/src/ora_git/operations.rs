@@ -399,7 +399,7 @@ impl<R: GitRunner + Send + 'static, N: GitRunner + Send + 'static> Context<'_, R
 /// Maps a Git Server failure to its `ora-git` code.
 fn server_failure(failure: GitServerFailure) -> Failure {
     match failure {
-        GitServerFailure::Denied => (
+        GitServerFailure::Unauthenticated | GitServerFailure::Denied => (
             ErrorCode::Denied,
             "the Git Server refused the request".to_owned(),
         ),

@@ -179,7 +179,7 @@ fn push_reports_each_fate_of_the_ref() {
     );
 }
 
-/// 403 is not retried; 503 is retried until it succeeds or the attempts run out.
+/// 403 and 401 are not retried; 503 is retried until it succeeds or the attempts run out.
 #[test]
 fn denied_requests_fail_at_once_and_unavailable_ones_are_retried() {
     let setup = setup();
@@ -190,6 +190,13 @@ fn denied_requests_fail_at_once_and_unavailable_ones_are_retried() {
         Err(GitServerFailure::Denied)
     );
     assert_eq!(setup.server.served().len(), 1);
+    // Git answers a 401 by looking for credentials, which the Node never provides.
+    setup.server.fail_next(401, 1);
+    assert_eq!(
+        setup.push(&transport, &setup.first, BRANCH, Lease::Absent),
+        Err(GitServerFailure::Unauthenticated)
+    );
+    assert_eq!(setup.server.served().len(), 2);
     setup.server.fail_next(503, 2);
     assert_eq!(
         setup.push(&transport, &setup.first, BRANCH, Lease::Absent),

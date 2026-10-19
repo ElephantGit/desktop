@@ -9,8 +9,12 @@ use gitlancer::GitExecError;
 /// Why a Git Server request did not succeed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum GitServerFailure {
-    /// `401`, `403` or another `4xx` other than `429`: Cloud's current state refuses the request,
-    /// and repeating it within the same attempt cannot change that.
+    /// `401`: the Node's own git-access identity did not authenticate. Repeating the request with
+    /// the same material cannot pass, but unlike a refusal it says nothing about whether what was
+    /// asked for exists, which matters to restore (Node delivery push ADR D6).
+    Unauthenticated,
+    /// `403` or another `4xx` other than `401` and `429`: Cloud's current state refuses the
+    /// request, and repeating it within the same attempt cannot change that.
     Denied,
     /// The server has no ref matching what was asked for.
     MissingRef,
@@ -43,12 +47,19 @@ pub(crate) fn classify(error: &GitExecError) -> GitServerFailure {
     if lower.contains("couldn't find remote ref") || lower.contains("no such remote ref") {
         return GitServerFailure::MissingRef;
     }
+    // Git never prints a 401 as a status: it asks for credentials instead, and with no helper
+    // and prompts disabled it gives up before reporting one. Supplied credentials that fail are
+    // reported as an authentication failure instead.
+    if lower.contains("could not read username") || lower.contains("authentication failed") {
+        return GitServerFailure::Unauthenticated;
+    }
     let status = lower
         .split("returned error: ")
         .nth(1)
         .and_then(|rest| rest.get(..3))
         .and_then(|code| code.parse::<u16>().ok());
     match status {
+        Some(401) => GitServerFailure::Unauthenticated,
         Some(429) => GitServerFailure::Unavailable,
         Some(400..=499) => GitServerFailure::Denied,
         Some(_) | None => GitServerFailure::Unavailable,
@@ -96,6 +107,9 @@ mod tests {
         let cases = [
             "fatal: unable to access 'https://h/r.git/': The requested URL returned error: 403",
             "fatal: unable to access 'https://h/r.git/': The requested URL returned error: 401",
+            "fatal: could not read Username for 'https://h': terminal prompts disabled",
+            "fatal: Authentication failed for 'https://h/r.git/'",
+            "fatal: unable to access 'https://h/r.git/': The requested URL returned error: 404",
             "fatal: unable to access 'https://h/r.git/': The requested URL returned error: 503",
             "error: RPC failed; HTTP 429 curl 22 The requested URL returned error: 429",
             "fatal: couldn't find remote ref refs/ora/deliveries/d",
@@ -106,6 +120,9 @@ mod tests {
             cases.map(|stderr| classify(&failed(stderr))),
             [
                 GitServerFailure::Denied,
+                GitServerFailure::Unauthenticated,
+                GitServerFailure::Unauthenticated,
+                GitServerFailure::Unauthenticated,
                 GitServerFailure::Denied,
                 GitServerFailure::Unavailable,
                 GitServerFailure::Unavailable,
