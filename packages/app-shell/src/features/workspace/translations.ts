@@ -35,6 +35,8 @@ export const workspaceTranslations = {
     "dialog.createTask": "创建任务",
     "dialog.taskTitle": "任务标题",
     "dialog.baseBranch": "基础分支",
+    "dialog.searchBranch": "搜索分支",
+    "dialog.noMatchingBranches": "没有匹配的分支",
     "dialog.required": "请填写所有必填字段。",
     "dialog.optionsLoading": "选项仍在加载，请稍候再提交。",
     "dialog.submitError": "请求失败，请重试。",
@@ -141,6 +143,8 @@ export const workspaceTranslations = {
     "dialog.createTask": "Create task",
     "dialog.taskTitle": "Task title",
     "dialog.baseBranch": "Base branch",
+    "dialog.searchBranch": "Search branches",
+    "dialog.noMatchingBranches": "No matching branches",
     "dialog.required": "Complete all required fields.",
     "dialog.optionsLoading":
       "Options are still loading. Try again in a moment.",
