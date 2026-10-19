@@ -4,7 +4,7 @@ use pretty_assertions::assert_eq;
 /// A non-directory ancestor is not proof of absence for either recovery outcome.
 #[test]
 fn recovery_refuses_file_roots_without_closing_the_journal() {
-    for relative in ["workspace", "workspace/.agents", "workspace/.agents/skills"] {
+    for depth in 1..=3 {
         let (directory, pool, workspace) = fixture();
         let manifest = b"---\nname: review\ndescription: Reviews changes\n---\ncontent\n";
         let (repository, clock, target, _) =
@@ -16,20 +16,25 @@ fn recovery_refuses_file_roots_without_closing_the_journal() {
         let journal = repository.load_target_recovery(&target).unwrap().unwrap();
         let operation = &journal.attempts[0].operations[0];
         let delete = deletion_of(operation);
-        let replaced = directory.path().join(relative);
+        let replaced = ["workspace", ".agents", "skills"]
+            .iter()
+            .take(depth)
+            .fold(directory.path().to_path_buf(), |path, segment| {
+                path.join(segment)
+            });
         std::fs::remove_dir_all(&replaced).unwrap();
         std::fs::write(&replaced, b"user file").unwrap();
         let before = quarantine_state(&pool, &target);
 
         assert!(
             SkillDirectoryResourceAdapter.verify(&delete).is_err(),
-            "{relative} must not prove planned Missing"
+            "{replaced:?} must not prove planned Missing"
         );
         assert!(
             SkillDirectoryResourceAdapter
                 .verify_expected(operation)
                 .is_err(),
-            "{relative} must not prove expected Missing"
+            "{replaced:?} must not prove expected Missing"
         );
         assert!(matches!(
             recover_target(&repository, &clock, &target),
@@ -74,12 +79,7 @@ fn recovery_proves_missing_resource_without_creating_directories() {
 #[cfg(unix)]
 #[test]
 fn recovery_refuses_link_roots_and_dangling_item_links() {
-    for relative in [
-        "workspace",
-        "workspace/.agents",
-        "workspace/.agents/skills",
-        "workspace/.agents/skills/review",
-    ] {
+    for depth in 1..=4 {
         let (directory, pool, workspace) = fixture();
         let manifest = b"---\nname: review\ndescription: Reviews changes\n---\ncontent\n";
         let (repository, clock, target, _) =
@@ -91,7 +91,12 @@ fn recovery_refuses_link_roots_and_dangling_item_links() {
         let journal = repository.load_target_recovery(&target).unwrap().unwrap();
         let operation = &journal.attempts[0].operations[0];
         let delete = deletion_of(operation);
-        let replaced = directory.path().join(relative);
+        let replaced = ["workspace", ".agents", "skills", "review"]
+            .iter()
+            .take(depth)
+            .fold(directory.path().to_path_buf(), |path, segment| {
+                path.join(segment)
+            });
         let outside = directory.path().join("outside");
         std::fs::rename(&replaced, &outside).unwrap();
         std::os::unix::fs::symlink(&outside, &replaced).unwrap();
