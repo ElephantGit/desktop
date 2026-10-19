@@ -47,15 +47,22 @@ mod tests {
             preview: &ThreadPreviewMessage,
         ) -> Result<(), Error> {
             let _completion = Completion(self.completed.clone());
-            self.observed.send(preview.payload.version).unwrap();
-            self.gate.acquire().await.unwrap().forget();
+            self.observed
+                .send(preview.payload.version)
+                .map_err(|error| Error::Unavailable(error.to_string()))?;
+            self.gate
+                .acquire()
+                .await
+                .map_err(|error| Error::Unavailable(error.to_string()))?
+                .forget();
             Ok(())
         }
     }
 
     /// Reliable completion must free the concurrent preview slot on a long-lived connection.
     #[tokio::test]
-    async fn completed_executions_do_not_exhaust_preview_capacity() {
+    async fn completed_executions_do_not_exhaust_preview_capacity()
+    -> Result<(), Box<dyn std::error::Error>> {
         let (observed, mut received) = mpsc::unbounded_channel();
         let sink = BlockedSink {
             observed,
@@ -84,19 +91,19 @@ mod tests {
                 },
             );
             assert_eq!(
-                tokio::time::timeout(Duration::from_secs(1), received.recv())
-                    .await
-                    .unwrap(),
+                tokio::time::timeout(Duration::from_secs(1), received.recv()).await?,
                 Some(version)
             );
             relay.finish(&execution);
         }
         assert!(relay.queues.is_empty());
+        Ok(())
     }
 
     /// Terminal takeover cancels a blocked optional publish without touching another live execution.
     #[tokio::test]
-    async fn terminal_takeover_cancels_only_its_in_flight_publisher() {
+    async fn terminal_takeover_cancels_only_its_in_flight_publisher()
+    -> Result<(), Box<dyn std::error::Error>> {
         let (observed, mut received) = mpsc::unbounded_channel();
         let sink = BlockedSink {
             observed,
@@ -126,12 +133,12 @@ mod tests {
                 },
             );
         }
+        let mut seen = Vec::new();
         for _ in 0..2 {
-            tokio::time::timeout(Duration::from_secs(1), received.recv())
-                .await
-                .unwrap()
-                .unwrap();
+            seen.push(tokio::time::timeout(Duration::from_secs(1), received.recv()).await?);
         }
+        seen.sort();
+        assert_eq!(seen, vec![Some(1), Some(2)]);
         relay.finish(&first);
         relay.finish(&first);
         tokio::time::timeout(Duration::from_secs(1), async {
@@ -139,18 +146,19 @@ mod tests {
                 tokio::task::yield_now().await;
             }
         })
-        .await
-        .unwrap();
+        .await?;
         assert_eq!(sink.completed.load(Ordering::SeqCst), 1);
         assert_eq!(relay.queues.keys().collect::<Vec<_>>(), vec![&second]);
         sink.gate.add_permits(1);
         relay.finish(&second);
         assert!(relay.queues.is_empty());
+        Ok(())
     }
 
     /// A blocked network call retains only the latest replacement, and disconnect aborts it.
     #[tokio::test]
-    async fn slow_publisher_coalesces_and_connection_drop_cancels_workers() {
+    async fn slow_publisher_coalesces_and_connection_drop_cancels_workers()
+    -> Result<(), Box<dyn std::error::Error>> {
         let (observed, mut received) = mpsc::unbounded_channel();
         let sink = BlockedSink {
             observed,
@@ -174,18 +182,14 @@ mod tests {
         let mut relay = Relay::new();
         relay.push(&sink, &node, message(1));
         assert_eq!(
-            tokio::time::timeout(Duration::from_secs(1), received.recv())
-                .await
-                .unwrap(),
+            tokio::time::timeout(Duration::from_secs(1), received.recv()).await?,
             Some(1)
         );
         relay.push(&sink, &node, message(2));
         relay.push(&sink, &node, message(3));
         sink.gate.add_permits(1);
         assert_eq!(
-            tokio::time::timeout(Duration::from_secs(1), received.recv())
-                .await
-                .unwrap(),
+            tokio::time::timeout(Duration::from_secs(1), received.recv()).await?,
             Some(3)
         );
         assert!(received.try_recv().is_err());
@@ -195,8 +199,8 @@ mod tests {
                 tokio::task::yield_now().await;
             }
         })
-        .await
-        .unwrap();
+        .await?;
+        Ok(())
     }
 }
 
