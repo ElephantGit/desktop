@@ -42,6 +42,7 @@ is the only source of truth for the schema; there is no checked-in `schema.sql`.
 | `0013` | Workflow execution scopes: root and Loop-round identities, scoped node uniqueness, downgrade archive |
 | `0014` | Pack installation ownership (`pack_installation`, `pack_installation_member`) |
 | `0015` | Scheduled tasks, scheduled runs and occurrences |
+| `0016` | The `finalized_without_effect` Effect operation phase, added by rebuilding the operation journal through staging copies |
 
 Details of individual migrations live in [`crates/db/src/migration/README.md`](../../crates/db/src/migration/README.md).
 The catalog describes only the current schema; databases whose `migrations` table predates SQL
