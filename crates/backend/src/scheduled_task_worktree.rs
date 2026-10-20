@@ -772,6 +772,13 @@ mod tests {
                 .expect("worktree workspace")
                 .workspace
                 .root_path;
+            // The retained worktree carries changes, so the runtime's own startup sweep
+            // keeps it instead of discarding it and racing this test's flow.
+            std::fs::write(
+                std::path::Path::new(&worktree_root).join("agent-output.txt"),
+                "retained",
+            )
+            .expect("dirty the retained worktree");
 
             let database_path = temporary.path().join("ora.sqlite3");
             let pool = DatabaseBootstrapper::system()
@@ -816,14 +823,7 @@ mod tests {
             )
             .expect("finish run");
 
-            // The user deletes the retained worktree through the ordinary task list.
-            tasks
-                .delete(DeleteTaskRequest {
-                    task_id: worktree_task.id.clone(),
-                })
-                .await
-                .expect("delete the worktree task");
-
+            // While the task row exists the run stays tracked, whatever the sweeps do.
             let run_row = runs
                 .list_scheduled_runs_with_retained_worktrees()
                 .expect("list retained runs")
@@ -831,6 +831,14 @@ mod tests {
                 .next()
                 .expect("the deleted task's run is still tracked");
             assert_eq!(run_row.id.as_ref(), "run-unlink");
+
+            // The user deletes the retained worktree through the ordinary task list.
+            tasks
+                .delete(DeleteTaskRequest {
+                    task_id: worktree_task.id.clone(),
+                })
+                .await
+                .expect("delete the worktree task");
 
             super::ScheduledWorktreeJanitor::new(
                 tasks.clone(),
