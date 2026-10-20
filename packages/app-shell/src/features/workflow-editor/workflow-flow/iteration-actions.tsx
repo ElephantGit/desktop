@@ -23,7 +23,7 @@ import {
   DropdownMenuTrigger,
 } from "@ora/ui";
 import type { WorkflowContainerInsertion } from "../workflow-container-insertion";
-import { WORKFLOW_CANVAS_NODE_KINDS } from "../workflow-node-catalog";
+import { WORKFLOW_CANVAS_NODE_KINDS } from "../workflow-canvas-node-kinds";
 import { getNodeMetadata } from "../workflow-node-metadata";
 import {
   useWorkflowIterationActions,
