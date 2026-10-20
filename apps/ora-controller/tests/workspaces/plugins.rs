@@ -96,6 +96,10 @@ fn input() -> proto::ExecutionInput {
                         sha256: "a".repeat(64),
                     }),
                     targets: vec![],
+                    agent_configuration: Some(proto::PluginAgentConfiguration {
+                        schema_version: 1,
+                        declaration_sha256: "b".repeat(64),
+                    }),
                 }],
             },
         )),
