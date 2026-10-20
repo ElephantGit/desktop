@@ -49,10 +49,6 @@ pub const EPOCH: i64 = 1;
 /// One observable decision, from whichever party saw it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
-    PreviewPublished {
-        execution: String,
-        version: i64,
-    },
     AgentRegistered {
         run: String,
     },

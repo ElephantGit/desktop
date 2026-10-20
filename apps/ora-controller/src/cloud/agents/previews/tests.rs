@@ -24,9 +24,9 @@ fn preview() -> ThreadPreviewMessage {
 
 /// Real gRPC transport must preserve the snapshot, holder, lease and Cloud-owned run identity.
 #[tokio::test]
-async fn relays_snapshot_and_empty_clear_without_receipts() {
+async fn relays_snapshot_and_empty_clear_without_advertising_or_receipts() {
     let fixture = Fixture::new().await;
-    assert!(fixture.store.supports_thread_previews());
+    assert!(!fixture.store.supports_thread_previews());
     let mut message = preview();
     fixture
         .store

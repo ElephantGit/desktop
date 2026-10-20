@@ -6,12 +6,12 @@ use ora_controller_proto::v1 as proto;
 use std::io;
 
 impl CoordinationStore for CloudStore {
-    /// The generated Cloud contract and publisher implement the optional snapshot path.
+    /// Keeps negotiation disabled until Cloud deploys the preview RPC implementation.
     fn supports_thread_previews(&self) -> bool {
-        true
+        false
     }
 
-    /// Relays negotiated snapshots without involving durable event acknowledgement.
+    /// Relays an explicit snapshot without involving durable event acknowledgement.
     async fn publish_thread_preview(
         &self,
         session: &NodeRuntimeIdentity,

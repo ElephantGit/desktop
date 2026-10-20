@@ -5,7 +5,6 @@ use std::collections::{BTreeMap, HashSet};
 
 #[derive(Default)]
 struct AgentData {
-    previews: std::collections::VecDeque<ThreadPreviewMessage>,
     starts: HashMap<ExecutionId, StartAgentSessionMessage>,
     outbox: BTreeMap<(String, u64), NodeToControllerMessage>,
     terminal: HashMap<ExecutionId, AgentSessionResult>,
@@ -60,9 +59,6 @@ impl AgentNode {
         sent: &mut HashSet<(String, u64)>,
     ) -> Option<NodeToControllerMessage> {
         let mut data = self.data.lock().unwrap();
-        if let Some(preview) = data.previews.pop_front() {
-            return Some(NodeToControllerMessage::ThreadPreview(preview));
-        }
         let (key, event) = data.outbox.iter().find(|(key, _)| !sent.contains(*key))?;
         sent.insert(key.clone());
         Some(event.clone())
@@ -610,9 +606,9 @@ fn foreign_command_reply_is_not_delivery_evidence() {
     });
 }
 
-/// Negotiated previews traverse the real session relay and gRPC adapter before any durable Ack.
+/// The Controller must not offer a preview path while Cloud only declares its RPC.
 #[test]
-fn negotiated_preview_reaches_cloud_before_settlement() {
+fn cloud_preview_capability_stays_disabled_before_server_rollout() {
     scenario("main", |world| async move {
         world
             .node
@@ -621,62 +617,12 @@ fn negotiated_preview_reaches_cloud_before_settlement() {
             .store(true, Ordering::SeqCst);
         workspace(&world).await;
         let execution = started(&world, "preview-run").await;
-        assert!(world.node.agents.previews_negotiated.load(Ordering::SeqCst));
-        let start = world.node.agents.started(&execution);
-        let record = serde_json::from_value(json!({"text": "live body"})).unwrap();
-        world
-            .node
-            .agents
-            .data
-            .lock()
-            .unwrap()
-            .previews
-            .push_back(ThreadPreviewMessage {
-                protocol_version: CURRENT_PROTOCOL_VERSION,
-                operation_id: start.operation_id,
-                execution_id: execution.clone(),
-                payload: ThreadPreview {
-                    version: 1,
-                    blocks: vec![ThreadPreviewBlock {
-                        history_sequence: 42,
-                        turn_id: Some(TurnId::new("first-turn")),
-                        record,
-                    }],
-                    incomplete: false,
-                },
-            });
-        world
-            .timeline
-            .until(|events| {
-                events.contains(&Event::PreviewPublished {
-                    execution: execution.as_str().into(),
-                    version: 1,
-                })
-            })
-            .await;
-        assert_eq!(
-            world.cloud.thread_previews(),
-            vec![proto::PublishThreadPreviewRequest {
-                epoch: workspace_cloud::EPOCH,
-                operation_id: "preview-run".into(),
-                execution_id: execution.as_str().into(),
-                version: 1,
-                blocks: vec![proto::ThreadPreviewBlock {
-                    history_sequence: 42,
-                    turn_id: "first-turn".into(),
-                    record: "{\"text\":\"live body\"}".into()
-                }],
-                incomplete: false,
-            }]
-        );
-        assert!(world.cloud.thread_events(execution.as_str()).is_empty());
-        assert!(!world.timeline.events().iter().any(|event| matches!(event, Event::AgentAck { execution: id, .. } if id == execution.as_str())));
+        assert!(!world.node.agents.previews_negotiated.load(Ordering::SeqCst));
         world.node.agents.emit(&execution, 12);
         acked(&world, &execution, 1).await;
         assert_eq!(world.cloud.thread_events(execution.as_str()).len(), 1);
     });
 }
-
 /// An old Node can decline the optional path without losing the durable session protocol.
 #[test]
 fn old_node_declines_preview_and_still_settles_thread() {
@@ -686,7 +632,6 @@ fn old_node_declines_preview_and_still_settles_thread() {
         assert!(!world.node.agents.previews_negotiated.load(Ordering::SeqCst));
         world.node.agents.emit(&execution, 12);
         acked(&world, &execution, 1).await;
-        assert!(world.cloud.thread_previews().is_empty());
         assert_eq!(world.cloud.thread_events(execution.as_str()).len(), 1);
     });
 }

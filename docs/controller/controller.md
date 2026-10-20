@@ -45,11 +45,11 @@ late previews cannot recreate its relay, while other live executions remain inde
 does not accumulate across completed executions on a long-lived connection. This
 path writes no durable coordination data, produces no Node Ack and cannot fail reliable Thread
 takeover. A store advertises `supports_thread_previews=true` only when it implements the downstream
-publisher. `CloudStore` advertises this capability; `SqliteStore` keeps it disabled. The Cloud adapter
+publisher. `CloudStore` and `SqliteStore` keep the capability disabled until a Cloud server implements the RPC. The Cloud adapter
 maps settled assistant text, truncation and history positions, and provides an explicit preview
 publisher. The publisher validates the Node envelope and registered session, rejects ended executions,
 and sends one replacement snapshot under the current lease. It never retries through the durable
-submission loop or produces an acknowledgement. Preview relay requires both Controller and Node to negotiate the capability; older Nodes retain the durable path.
+submission loop or produces an acknowledgement. The explicit publisher can be tested against the generated contract; automatic negotiation stays disabled while the server implementation is unavailable.
 
 ## Running the executable
 
