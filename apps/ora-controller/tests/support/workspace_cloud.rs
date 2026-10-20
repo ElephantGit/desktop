@@ -653,6 +653,16 @@ impl ControlSignalService for WorkspaceCloud {
 
 #[tonic::async_trait]
 impl WorkspaceOperationService for WorkspaceCloud {
+    /// The fixture does not exercise provisioning reconciliation from the newer Cloud contract.
+    async fn record_provisioning_fact(
+        &self,
+        _request: Request<proto::RecordProvisioningFactRequest>,
+    ) -> Result<Response<proto::RecordProvisioningFactResponse>, Status> {
+        Err(Status::unimplemented(
+            "provisioning reconciliation not exercised",
+        ))
+    }
+
     async fn claim_operation(
         &self,
         request: Request<proto::ClaimOperationRequest>,

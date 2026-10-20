@@ -1,5 +1,6 @@
 //! In-process authority exercising production adapters over the generated gRPC contract.
 use super::*;
+use pretty_assertions::assert_eq;
 use proto::agent_run_service_server::{AgentRunService, AgentRunServiceServer};
 use proto::execution_service_server::{ExecutionService, ExecutionServiceServer};
 use std::sync::{Arc, Mutex};
@@ -51,7 +52,7 @@ impl Fixture {
         let server = Server::default();
         let incoming =
             tonic::transport::server::TcpIncoming::bind("127.0.0.1:0".parse().unwrap()).unwrap();
-        let endpoint = format!("http://{}", incoming.local_addr());
+        let endpoint = format!("http://{}", incoming.local_addr().unwrap());
         let services = tonic::transport::Server::builder()
             .add_service(AgentRunServiceServer::new(server.clone()))
             .add_service(ExecutionServiceServer::new(server.clone()));
