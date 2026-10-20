@@ -236,6 +236,60 @@ async fn host_kill_reconnect_stop_and_close_use_original_attempt() -> TestResult
     Ok(())
 }
 
+/// Consecutive short Git commands retain the same five-second close budget used by Node restore.
+#[tokio::test]
+async fn completed_git_scope_closes_under_repeated_close_requests() -> TestResult {
+    let fixture = Fixture::new()?;
+    let mut child = fixture.launch("create")?;
+    ready(&fixture, &mut child).await?;
+    let client = fixture.client();
+    for _ in 0..12 {
+        let scope = ScopeId::new();
+        client.execute(Operation::CreateScope { scope }).await?;
+        let mut spec = RunSpec::new(
+            "/usr/bin/git",
+            fixture.directory.path(),
+            DescendantPolicy::Cleanup {
+                grace: Duration::ZERO,
+            },
+        );
+        spec.args.push("--version".into());
+        let run = RunId::new();
+        client
+            .execute(Operation::Start {
+                intent: HostRunIntent {
+                    scope,
+                    run,
+                    spec,
+                    host_disconnect: GuardianHostDisconnect::KeepRunning,
+                },
+            })
+            .await?;
+        let snapshot = observed(&client, run, |snapshot| {
+            matches!(snapshot.cleanup, CleanupState::Complete(_))
+        })
+        .await?;
+        assert_eq!(
+            snapshot.direct,
+            DirectProcessState::Exited(ExitOutcome::Code(0))
+        );
+        let deadline = Instant::now() + Duration::from_secs(/*secs*/ 5);
+        loop {
+            let view = client.execute(Operation::Close { scope }).await?;
+            if matches!(view, Reply::Scope(ref view) if matches!(view.last_observed, Some(ScopeState::Closed(_))))
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "original Scope cleanup is unverified: {view:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(/*millis*/ 25)).await;
+        }
+    }
+    Ok(())
+}
+
 /// Disconnecting before the Start reply does not cancel execution or permit duplicate side effects.
 #[tokio::test]
 async fn lost_reply_executes_once_and_stalled_output_does_not_block_control() -> TestResult {

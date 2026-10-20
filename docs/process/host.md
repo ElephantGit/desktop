@@ -87,6 +87,11 @@ exchange, with up to 32 Scopes in flight and round-robin scheduling. Failed exch
 hundreds of milliseconds to five seconds plus Scope-specific jitter. Neither socket I/O nor bootstrap
 delivery holds the journal while waiting for a peer.
 
+A newly accepted Close wakes its Scope without waiting for the previous observation backoff. An
+in-flight exchange keeps ownership and the close is dispatched after it finishes; duplicate Close
+requests do not reset failure backoff. Waking coordination is not closure evidence: callers still
+wait for the original guardian's Closed observation.
+
 Changed Run and Scope observations are persisted before queries expose them. Queries return the durable
 `last_observed` facts and a separate `coordination` status (`Pending` after recovery, `Unavailable` when
 a guardian is lost); a historical `Running` never proves a process is live, and no stored PID or snapshot
