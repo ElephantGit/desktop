@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it } from "vitest";
 import { createChatStore, type ChatTurn } from "@ora/chat";
@@ -217,6 +217,75 @@ it.each(["completed", "failed", "cancelled"] as const)(
     cold.getState().dispose();
   },
 );
+
+it("keeps a settled child projection unknown after the same session starts a new prompt", async () => {
+  let calls = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const client = createTestClient({
+    async *promptSession() {
+      calls += 1;
+      if (calls === 1) {
+        yield* stream(live);
+        return;
+      }
+      // The second prompt stays open long enough to prove the first turn keeps its own fence.
+      yield {
+        type: "session_update",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "later",
+          content: { type: "text", text: "LATER" },
+          _meta: worker,
+        },
+      } satisfies PromptSessionEvent;
+      await gate;
+      yield {
+        type: "completed",
+        stopReason: "end_turn",
+      } satisfies PromptSessionEvent;
+    },
+  });
+  const store = createChatStore(client.session, { now: () => 100 });
+  await store.getState().sendMessage({ oraSessionId: "one", text: "first" });
+  const second = store.getState().sendMessage({
+    oraSessionId: "one",
+    text: "second",
+  });
+  await waitFor(() => {
+    const turns = store.getState().conversations.one!.turns;
+    if (turns.length !== 2 || turns[1]!.items.length === 0) {
+      throw new Error("waiting for the second prompt's first child update");
+    }
+  });
+  expect(store.getState().conversations.one!.turns[1]!.status).toBe(
+    "streaming",
+  );
+  const first = render(
+    <ResponseTurn
+      turn={store.getState().conversations.one!.turns[0]!}
+      userName="Reader"
+    />,
+  );
+  expect(screen.queryByText("State not reported (observing)")).toBeNull();
+  expect(
+    screen.getAllByText("Further state unknown (projection stopped)"),
+  ).toHaveLength(1);
+  first.unmount();
+  const later = render(
+    <ResponseTurn
+      turn={store.getState().conversations.one!.turns[1]!}
+      userName="Reader"
+    />,
+  );
+  expect(screen.getAllByText("State not reported (observing)")).toHaveLength(1);
+  later.unmount();
+  release();
+  await second;
+  store.getState().dispose();
+});
 
 it.each([true, false])(
   "does not invent a stopped projection from old EOF-only history (attribution=%s)",
