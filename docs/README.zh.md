@@ -49,6 +49,7 @@
 **插件**
 
 - [插件系统](plugins/plugin-system.zh.md)：种类、布局、生命周期、协议与 SDK、配置、Hook
+- [Agent 配置](plugins/agent-configuration.zh.md)：静态声明、模型能力、字节身份与编译边界
 - [Marketplace](plugins/marketplace.zh.md)：源、同步与索引、安装、pack
 - [Surface](plugins/surfaces.zh.md)：workbench 和 webview 插件界面
 - [插件日志](plugins/plugin-logging.zh.md)：由宿主拥有的按插件区分的日志

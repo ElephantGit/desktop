@@ -187,6 +187,11 @@ stays visible but cannot start. List responses include each plugin's configurati
 MCP settings are limited to `string`, `number` and `boolean`; HTTP headers must bind through setting
 references, so credentials cannot be baked into a package.
 
+The separate [Agent declaration compiler](agent-configuration.md) validates static model-access
+capabilities and optional Settings with an exact-byte identity. Its version-two shape is rejected by
+the installed configuration dispatcher; compiling a declaration does not enable a personal model
+configuration or authorize execution.
+
 ## Hooks
 
 A Hook package ships a program that manages its own agent integration; the host never performs that
