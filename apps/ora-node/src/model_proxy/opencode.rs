@@ -1,6 +1,7 @@
 //! OpenCode config uses environment references so serialization cannot persist the runtime token.
 
-use super::{Grant, ModelAccessError, Protocol};
+use super::{Grant, ModelAccessError};
+use ora_node_protocol::ModelProtocol;
 use serde_json::json;
 use std::{collections::BTreeMap, path::Path};
 
@@ -10,13 +11,7 @@ pub(super) fn environment(
     ca: &Path,
     node_home: &Path,
 ) -> Result<(BTreeMap<String, String>, tempfile::TempDir), ModelAccessError> {
-    let runtime_root = node_home.join("model-runtime");
-    ora_utils::path::create_directories_without_symlinks(&runtime_root)
-        .map_err(|_| ModelAccessError("model_runtime_state_unavailable"))?;
-    let home = tempfile::Builder::new()
-        .prefix("opencode-")
-        .tempdir_in(runtime_root)
-        .map_err(|_| ModelAccessError("model_runtime_state_unavailable"))?;
+    let home = super::isolated_home(node_home, "opencode-")?;
     let model_id = &grant.model.id;
     let config = json!({
         "$schema": "https://opencode.ai/config.json",
@@ -25,8 +20,8 @@ pub(super) fn environment(
         "enabled_providers": ["ora-model"],
         "provider": {"ora-model": {
             "npm": match grant.protocol {
-                Protocol::OpenaiCompletions => "@ai-sdk/openai-compatible",
-                Protocol::AnthropicMessages => "@ai-sdk/anthropic",
+                ModelProtocol::OpenaiCompletions => "@ai-sdk/openai-compatible",
+                ModelProtocol::AnthropicMessages => "@ai-sdk/anthropic",
             },
             "name": "Ora model gateway",
             "options": {"baseURL": grant.proxy_base_url, "apiKey": "{env:ORA_MODEL_ACCESS_TOKEN}"},
@@ -36,33 +31,10 @@ pub(super) fn environment(
             }},
         }},
     });
-    let mut variables = BTreeMap::from([
+    let mut variables = super::home_variables(home.path(), ca);
+    variables.extend([
         ("OPENCODE_CONFIG_CONTENT".to_string(), config.to_string()),
         ("ORA_MODEL_ACCESS_TOKEN".to_string(), grant.token.clone()),
-        (
-            "NODE_EXTRA_CA_CERTS".to_string(),
-            ca.to_string_lossy().into_owned(),
-        ),
-        (
-            "HOME".to_string(),
-            home.path().to_string_lossy().into_owned(),
-        ),
-        (
-            "XDG_CONFIG_HOME".to_string(),
-            home.path().join("config").to_string_lossy().into_owned(),
-        ),
-        (
-            "XDG_CACHE_HOME".to_string(),
-            home.path().join("cache").to_string_lossy().into_owned(),
-        ),
-        (
-            "XDG_DATA_HOME".to_string(),
-            home.path().join("data").to_string_lossy().into_owned(),
-        ),
-        (
-            "XDG_STATE_HOME".to_string(),
-            home.path().join("state").to_string_lossy().into_owned(),
-        ),
         (
             "OPENCODE_DISABLE_AUTOUPDATE".to_string(),
             "true".to_string(),

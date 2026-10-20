@@ -12,7 +12,7 @@ use super::queue::{Plan, plan};
 use super::resume;
 use super::workload::SessionPlacement;
 use super::{SessionConfig, Shared};
-use crate::model_proxy::{ModelAccess, ModelAccessStatus};
+use crate::model_proxy::{ModelAccess, ModelAccessStatus, ModelRoute};
 use agent_client_protocol_schema::v1::{ContentBlock as AcpContentBlock, MessageId, TextContent};
 use ora_agent_runtime::{AgentRuntimeManager, AgentRuntimeSetup, MemorySessionStore, NoSessionMcp};
 use ora_contracts::{
@@ -170,8 +170,14 @@ where
             let Some(config) = shared.config.model_proxy.clone() else {
                 return SessionEnd::agent_failed("model_proxy_unavailable");
             };
-            match ModelAccess::open(config, binding, execution, &shared.config.home_directory).await
-            {
+            // A frozen configuration hands the grant to the plugin's adapter; without one the
+            // package is a legacy OpenCode build whose configuration the Node still writes.
+            let route = spec
+                .agent_configuration
+                .as_ref()
+                .map_or(ModelRoute::LegacyOpenCode, ModelRoute::Adapter);
+            let home = &shared.config.home_directory;
+            match ModelAccess::open(config, binding, execution, home, route).await {
                 Ok(access) => Some(access),
                 Err(error) if error.0 == "model_session_ending" => {
                     return match super::model::reconcile(
@@ -281,6 +287,9 @@ where
             lifecycle: lifecycle.clone(),
             taps,
             plugin_id: plugin_id.clone(),
+            model_context: model_access
+                .as_ref()
+                .and_then(|access| access.context.clone()),
         }),
         store: MemorySessionStore::default(),
         directory: CheckoutDirectory(checkout.clone()),

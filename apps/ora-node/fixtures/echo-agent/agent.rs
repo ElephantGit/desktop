@@ -1,4 +1,8 @@
 //! Plugin protocol shell and the minimal ACP agent inside it.
+//!
+//! Given a model context, the fixture acts as a minimal adapter: it confirms the exact frozen
+//! configuration it received, unless its Settings ask it to refuse (`{"refuse": true}`), so a
+//! test can show that an unconfirmed adapter never reaches ACP.
 
 use agent_client_protocol_schema::v1::{
     AGENT_METHOD_NAMES, AgentCapabilities, CLIENT_METHOD_NAMES, CancelNotification,
@@ -9,9 +13,10 @@ use agent_client_protocol_schema::v1::{
 };
 use ora_plugin_protocol::{
     AGENT_ACP_METHOD, AGENT_LIST_MODELS_METHOD, AGENT_START_METHOD, AGENT_STOP_METHOD,
-    AgentListModelsResult, AgentStartResult, CHILDPROCESS_EXIT_METHOD, CHILDPROCESS_SPAWN_METHOD,
-    JSON_RPC_VERSION, METHOD_NOT_FOUND_CODE, PluginRegistrationParams, REGISTER_METHOD,
-    SHUTDOWN_METHOD, read_message, write_message,
+    AgentListModelsResult, AgentModelApplied, AgentModelContext, AgentStartContext,
+    AgentStartResult, CHILDPROCESS_EXIT_METHOD, CHILDPROCESS_SPAWN_METHOD, JSON_RPC_VERSION,
+    METHOD_NOT_FOUND_CODE, PluginRegistrationParams, REGISTER_METHOD, SHUTDOWN_METHOD,
+    read_message, write_message,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -41,6 +46,8 @@ struct EchoAgent {
     held: Option<PendingPrompt>,
     /// A `[commit]` prompt, answered when the host-spawned commit exits.
     committing: Option<PendingPrompt>,
+    /// The model context the host started this plugin with, if any.
+    model: Option<AgentModelContext>,
 }
 
 /// Runs until the host sends `ora/shutdown` or closes stdin.
@@ -72,7 +79,7 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error>> {
             (Some(CHILDPROCESS_EXIT_METHOD), None) => agent.commit_finished(&mut output).await?,
             (Some(method), Some(id)) => {
                 let result = match method {
-                    AGENT_START_METHOD => serde_json::to_value(AgentStartResult::acp_v1())?,
+                    AGENT_START_METHOD => serde_json::to_value(agent.start(params)?)?,
                     AGENT_STOP_METHOD => json!({}),
                     AGENT_LIST_MODELS_METHOD => {
                         serde_json::to_value(AgentListModelsResult { models: Vec::new() })?
@@ -98,6 +105,24 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 impl EchoAgent {
+    /// Confirms a supplied model context exactly, the way a real adapter does once it applied it.
+    fn start(&mut self, params: Value) -> Result<AgentStartResult, Box<dyn std::error::Error>> {
+        let start: AgentStartContext = serde_json::from_value(params)?;
+        let mut result = AgentStartResult::acp_v1();
+        if let Some(context) = start.model_context {
+            let settings: Value = serde_json::from_str(&context.configuration.settings_json)?;
+            if settings.get("refuse") != Some(&Value::Bool(true)) {
+                result.model_applied = Some(AgentModelApplied {
+                    adapter_version: context.configuration.adapter_version,
+                    declaration_fingerprint: context.configuration.declaration_fingerprint.clone(),
+                    configuration_revision: context.configuration.configuration_revision,
+                });
+            }
+            self.model = Some(context);
+        }
+        Ok(result)
+    }
+
     /// Serves one ACP frame from the host.
     async fn acp_frame(
         &mut self,
@@ -240,7 +265,19 @@ impl EchoAgent {
             message(output, &session_id, &answer).await?;
             return respond(output, id, &PromptResponse::new(StopReason::EndTurn)).await;
         }
-        let answer = if text.contains("[env]") {
+        let answer = if text.contains("[model]") {
+            // Reports what the adapter received, and whether the token also leaked into the
+            // environment every process the plugin spawns would inherit.
+            match &self.model {
+                Some(model) => format!(
+                    "model={} proxy={} token_in_environment={}",
+                    model.configuration.model.id,
+                    model.proxy_base_url,
+                    std::env::vars().any(|(_, value)| value.contains(&model.token)),
+                ),
+                None => "model=none".to_string(),
+            }
+        } else if text.contains("[env]") {
             let cwd = std::env::current_dir().unwrap_or_default();
             let home = std::env::var("HOME").unwrap_or_default();
             format!("cwd={} home={home}", cwd.display())

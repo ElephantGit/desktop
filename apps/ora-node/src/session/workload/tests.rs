@@ -245,6 +245,7 @@ async fn model_runtime_uses_workload_home_and_only_publishes_public_trust() {
         &ModelBindingId::new("binding-1"),
         &execution(),
         layout._temp.path(),
+        crate::model_proxy::ModelRoute::LegacyOpenCode,
     )
     .await
     .expect("grant");

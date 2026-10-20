@@ -3,200 +3,9 @@
 use super::*;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
-use std::{
-    io::{Read, Write},
-    net::TcpListener,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
-};
+use std::sync::atomic::Ordering;
 
-/// Generates narrowly purposed TLS material and serves the real grant HTTP contract over mTLS.
-pub(crate) struct Gateway {
-    pub(crate) config: ModelProxyConfig,
-    pub(crate) requests: Arc<Mutex<Vec<(String, Value)>>>,
-    stop: Arc<AtomicBool>,
-    worker: Option<std::thread::JoinHandle<()>>,
-    pub(crate) behavior: Arc<GatewayBehavior>,
-}
-
-#[derive(Default)]
-pub(crate) struct GatewayBehavior {
-    foreign_endpoint: AtomicBool,
-    deny_renewal: AtomicBool,
-    pub(crate) ending_initially: AtomicBool,
-    pub(crate) ending_at_renewal: AtomicBool,
-}
-
-impl Gateway {
-    /// Test tokens are synthetic and never pass through the durable execution protocol.
-    pub(crate) fn new(root: &std::path::Path) -> Self {
-        ora_logging::initialize_test_clock();
-        let mut ca_params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
-        ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
-        ca_params.key_usages = vec![rcgen::KeyUsagePurpose::KeyCertSign];
-        let ca =
-            rcgen::CertifiedIssuer::self_signed(ca_params, rcgen::KeyPair::generate().unwrap())
-                .unwrap();
-        let key = rcgen::KeyPair::generate().unwrap();
-        let mut params = rcgen::CertificateParams::new(vec!["localhost".to_owned()]).unwrap();
-        params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ServerAuth];
-        let server = params.signed_by(&key, &ca).unwrap();
-        let mut roots = rustls::RootCertStore::empty();
-        roots.add(ca.der().clone()).unwrap();
-        let verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(roots))
-            .build()
-            .unwrap();
-        let server_config = Arc::new(
-            rustls::ServerConfig::builder()
-                .with_client_cert_verifier(verifier)
-                .with_single_cert(
-                    vec![server.der().clone()],
-                    rustls::pki_types::PrivatePkcs8KeyDer::from(key.serialize_der()).into(),
-                )
-                .unwrap(),
-        );
-        let client_key = rcgen::KeyPair::generate().unwrap();
-        let mut client_params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
-        client_params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
-        let client = client_params.signed_by(&client_key, &ca).unwrap();
-        let ca_cert = root.join("model-ca.pem");
-        let client_cert = root.join("model-client.pem");
-        let client_key_path = root.join("model-client-key.pem");
-        std::fs::write(&ca_cert, ca.pem()).unwrap();
-        std::fs::write(&client_cert, client.pem()).unwrap();
-        std::fs::write(&client_key_path, client_key.serialize_pem()).unwrap();
-        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        listener.set_nonblocking(true).unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let requests = Arc::new(Mutex::new(Vec::new()));
-        let observed = requests.clone();
-        let stop = Arc::new(AtomicBool::new(false));
-        let stopping = stop.clone();
-        let behavior = Arc::new(GatewayBehavior::default());
-        let serving = behavior.clone();
-        let worker = std::thread::spawn(move || {
-            while !stopping.load(Ordering::SeqCst) {
-                match listener.accept() {
-                    Ok((socket, _)) => {
-                        socket
-                            .set_read_timeout(Some(Duration::from_secs(/*secs*/ 2)))
-                            .unwrap();
-                        socket
-                            .set_write_timeout(Some(Duration::from_secs(/*secs*/ 2)))
-                            .unwrap();
-                        let connection =
-                            rustls::ServerConnection::new(server_config.clone()).unwrap();
-                        let mut stream = rustls::StreamOwned::new(connection, socket);
-                        let _ = serve(&mut stream, &observed, port, &serving);
-                    }
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(Duration::from_millis(/*millis*/ 5))
-                    }
-                    Err(_) => break,
-                }
-            }
-        });
-        Self {
-            config: ModelProxyConfig {
-                gateway_url: format!("https://localhost:{port}"),
-                ca_cert,
-                client_cert,
-                client_key: client_key_path,
-            },
-            requests,
-            stop,
-            worker: Some(worker),
-            behavior,
-        }
-    }
-}
-
-impl Drop for Gateway {
-    /// Fixture timeouts ensure a failed assertion cannot leave a listener running.
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::SeqCst);
-        self.worker.take().unwrap().join().unwrap();
-    }
-}
-
-/// Captures only authenticated scoped grant requests and returns short renewable fixture grants.
-fn serve(
-    stream: &mut impl ReadWrite,
-    observed: &Mutex<Vec<(String, Value)>>,
-    port: u16,
-    behavior: &GatewayBehavior,
-) -> std::io::Result<()> {
-    let mut header = Vec::new();
-    while !header.ends_with(b"\r\n\r\n") && header.len() < 8192 {
-        let mut byte = [0];
-        stream.read_exact(&mut byte)?;
-        header.extend(byte);
-    }
-    let header = String::from_utf8(header).unwrap();
-    let request = header.lines().next().unwrap().to_string();
-    let length: usize = header
-        .lines()
-        .find_map(|line| {
-            line.to_ascii_lowercase()
-                .strip_prefix("content-length: ")
-                .map(str::to_owned)
-        })
-        .unwrap()
-        .parse()
-        .unwrap();
-    let mut body = vec![0; length];
-    stream.read_exact(&mut body)?;
-    let body: Value = serde_json::from_slice(&body).unwrap();
-    observed.lock().unwrap().push((request.clone(), body));
-    if request.starts_with("POST /internal/v1/model-grants ")
-        && behavior.ending_initially.load(Ordering::SeqCst)
-        || request.contains("/renew ") && behavior.ending_at_renewal.load(Ordering::SeqCst)
-    {
-        let body =
-            json!({"code":"model_session_ending","params":{},"requestId":"fixture"}).to_string();
-        write!(
-            stream,
-            "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-            body.len()
-        )?;
-        return stream.flush();
-    }
-    if request.starts_with("POST ")
-        && request.contains("/renew ")
-        && behavior.deny_renewal.load(Ordering::SeqCst)
-    {
-        stream.write_all(
-            b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-        )?;
-        return stream.flush();
-    }
-    let data_url = if behavior.foreign_endpoint.load(Ordering::SeqCst) {
-        "https://untrusted.invalid/runtime/openai/v1".to_owned()
-    } else {
-        format!("https://localhost:{port}/runtime/openai/v1")
-    };
-    let response = if request.starts_with("POST /internal/v1/model-grants ") {
-        json!({"grantId":"grant-1", "token":"synthetic-temporary-token", "expiresAt": chrono::Local::now().fixed_offset() + chrono::Duration::seconds(2),
-            "protocol":"openai-completions", "proxyBaseUrl":data_url,
-            "model":{"id":"team/model", "name":"Fixture", "contextWindow":32768,"maxTokens":1024}})
-    } else if request.starts_with("POST ") {
-        json!({"expiresAt":chrono::Local::now().fixed_offset() + chrono::Duration::minutes(15)})
-    } else {
-        json!({})
-    }.to_string();
-    write!(
-        stream,
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
-        response.len()
-    )?;
-    stream.flush()
-}
-
-/// Allows the synchronous fixture to operate on a TLS stream without exposing transport internals.
-trait ReadWrite: Read + Write {}
-impl<T: Read + Write> ReadWrite for T {}
+pub(crate) use super::test_gateway::Gateway;
 
 #[tokio::test]
 async fn renewable_access_keeps_token_in_memory_and_revokes_at_end() {
@@ -207,6 +16,7 @@ async fn renewable_access_keeps_token_in_memory_and_revokes_at_end() {
         &ModelBindingId::new("binding-1"),
         &ExecutionId::new("execution-1"),
         root.path(),
+        crate::model_proxy::ModelRoute::LegacyOpenCode,
     )
     .await
     .unwrap();
@@ -272,6 +82,7 @@ async fn foreign_data_endpoint_is_rejected_and_grant_revoked() {
         &ModelBindingId::new("binding-1"),
         &ExecutionId::new("execution-1"),
         root.path(),
+        crate::model_proxy::ModelRoute::LegacyOpenCode,
     )
     .await;
     let Err(error) = result else {
@@ -303,6 +114,7 @@ async fn denied_renewal_notifies_the_conversation_to_stop() {
         &ModelBindingId::new("binding-1"),
         &ExecutionId::new("execution-1"),
         root.path(),
+        crate::model_proxy::ModelRoute::LegacyOpenCode,
     )
     .await
     .unwrap();
@@ -330,6 +142,7 @@ async fn close_cancels_the_scheduled_renewal() {
         &ModelBindingId::new("binding-1"),
         &ExecutionId::new("execution-1"),
         root.path(),
+        crate::model_proxy::ModelRoute::LegacyOpenCode,
     )
     .await
     .unwrap();
@@ -346,7 +159,7 @@ fn anthropic_configuration_preserves_model_ids_and_isolates_cli_storage() {
         grant_id: "grant-1".into(),
         token: "synthetic-token".into(),
         expires_at: chrono::Local::now().fixed_offset(),
-        protocol: Protocol::AnthropicMessages,
+        protocol: ora_node_protocol::ModelProtocol::AnthropicMessages,
         proxy_base_url: "https://gateway/runtime/anthropic/v1".into(),
         model: Model {
             id: "team/model".into(),
@@ -408,7 +221,7 @@ fn runtime_state_refuses_existing_files_and_symlinks_without_changing_them() {
         grant_id: "grant-1".into(),
         token: "synthetic-token".into(),
         expires_at: chrono::Local::now().fixed_offset(),
-        protocol: Protocol::OpenaiCompletions,
+        protocol: ora_node_protocol::ModelProtocol::OpenaiCompletions,
         proxy_base_url: "https://gateway/runtime/openai/v1".into(),
         model: Model {
             id: "model".into(),
@@ -425,4 +238,165 @@ fn runtime_state_refuses_existing_files_and_symlinks_without_changing_them() {
     symlink(checkout.path(), &runtime).unwrap();
     assert!(opencode::environment(&grant, &root.path().join("ca.pem"), root.path()).is_err());
     assert_eq!(std::fs::read_dir(checkout.path()).unwrap().count(), 0);
+}
+
+/// The frozen configuration the fixture gateway's grant serves.
+fn adapter_configuration() -> FrozenAgentConfiguration {
+    FrozenAgentConfiguration {
+        plugin_id: ora_node_protocol::PluginId::new("official/ora-space.claude"),
+        plugin_version: ora_node_protocol::PluginVersion::new("0.4.0"),
+        target: "x86_64-unknown-linux-gnu".into(),
+        package_sha256: ora_node_protocol::Sha256Digest::new("a".repeat(64)),
+        schema_version: 2,
+        declaration_fingerprint: ora_node_protocol::Sha256Digest::new("b".repeat(64)),
+        adapter_version: 1,
+        configuration_revision: 4,
+        settings_json: r#"{"effort":"high"}"#.into(),
+        protocol: ModelProtocol::OpenaiCompletions,
+        model: ora_node_protocol::BoundModel {
+            id: "team/model".into(),
+            name: "Fixture".into(),
+            context_window: 32768,
+            max_tokens: 1024,
+        },
+    }
+}
+
+/// On the adapter route the Node writes no CLI configuration and keeps the token out of every
+/// environment variable; only the startup context, which the runtime never persists, carries it.
+#[tokio::test]
+async fn adapter_route_hands_the_token_only_to_the_startup_context() {
+    let root = tempfile::tempdir().unwrap();
+    let gateway = Gateway::new(root.path());
+    let configuration = adapter_configuration();
+    let mut access = ModelAccess::open(
+        gateway.config.clone(),
+        &ModelBindingId::new("binding-1"),
+        &ExecutionId::new("execution-1"),
+        root.path(),
+        ModelRoute::Adapter(&configuration),
+    )
+    .await
+    .unwrap();
+    let home = PathBuf::from(&access.environment["HOME"]);
+    assert!(home.starts_with(root.path().join("model-runtime")));
+    assert_eq!(
+        access.environment.keys().cloned().collect::<Vec<_>>(),
+        vec![
+            "HOME",
+            "NODE_EXTRA_CA_CERTS",
+            "XDG_CACHE_HOME",
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+            "XDG_STATE_HOME",
+        ]
+    );
+    assert!(
+        access
+            .environment
+            .values()
+            .all(|value| !value.contains("synthetic-temporary-token"))
+    );
+    let port = Url::parse(&gateway.config.gateway_url)
+        .unwrap()
+        .port()
+        .unwrap();
+    assert_eq!(
+        access.context,
+        Some(AgentModelContext {
+            configuration: ora_plugin_protocol::AgentModelConfiguration {
+                plugin_id: "official/ora-space.claude".into(),
+                plugin_version: "0.4.0".into(),
+                target: "x86_64-unknown-linux-gnu".into(),
+                package_sha256: "a".repeat(64),
+                schema_version: 2,
+                declaration_fingerprint: "b".repeat(64),
+                adapter_version: 1,
+                configuration_revision: 4,
+                settings_json: r#"{"effort":"high"}"#.into(),
+                protocol: ora_plugin_protocol::AgentModelProtocol::OpenaiCompletions,
+                model: ora_plugin_protocol::AgentBoundModel {
+                    id: "team/model".into(),
+                    name: "Fixture".into(),
+                    context_window: 32768,
+                    max_tokens: 1024,
+                },
+            },
+            proxy_base_url: format!("https://localhost:{port}/runtime/openai/v1"),
+            token: "synthetic-temporary-token".into(),
+        })
+    );
+    access.close().await;
+    drop(access);
+    assert!(!home.exists());
+    assert_eq!(
+        gateway
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(route, _)| route.clone())
+            .filter(|route| !route.contains("/renew "))
+            .collect::<Vec<_>>(),
+        vec![
+            "POST /internal/v1/model-grants HTTP/1.1",
+            "DELETE /internal/v1/model-grants/grant-1 HTTP/1.1"
+        ]
+    );
+}
+
+/// A grant that serves another model or protocol than the frozen configuration is revoked before
+/// any CLI state exists: the binding and the admitted configuration disagree.
+#[tokio::test]
+async fn adapter_route_revokes_a_grant_that_differs_from_the_frozen_configuration() {
+    let mismatches = [
+        FrozenAgentConfiguration {
+            protocol: ModelProtocol::AnthropicMessages,
+            ..adapter_configuration()
+        },
+        FrozenAgentConfiguration {
+            model: ora_node_protocol::BoundModel {
+                id: "team/other".into(),
+                ..adapter_configuration().model
+            },
+            ..adapter_configuration()
+        },
+        FrozenAgentConfiguration {
+            model: ora_node_protocol::BoundModel {
+                max_tokens: 2048,
+                ..adapter_configuration().model
+            },
+            ..adapter_configuration()
+        },
+    ];
+    for configuration in mismatches {
+        let root = tempfile::tempdir().unwrap();
+        let gateway = Gateway::new(root.path());
+        let result = ModelAccess::open(
+            gateway.config.clone(),
+            &ModelBindingId::new("binding-1"),
+            &ExecutionId::new("execution-1"),
+            root.path(),
+            ModelRoute::Adapter(&configuration),
+        )
+        .await;
+        let Err(error) = result else {
+            panic!("a mismatched grant must not start an adapter")
+        };
+        assert_eq!(error.to_string(), "model_grant_mismatch");
+        assert!(!root.path().join("model-runtime").exists());
+        assert_eq!(
+            gateway
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(route, _)| route.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                "POST /internal/v1/model-grants HTTP/1.1",
+                "DELETE /internal/v1/model-grants/grant-1 HTTP/1.1"
+            ]
+        );
+    }
 }

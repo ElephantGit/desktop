@@ -120,6 +120,7 @@ async fn unconfigured_model_proxy_ends_before_launching_the_plugin() {
         OperationId::new(OPERATION),
         ExecutionId::new(EXECUTION),
         AgentSessionSpec {
+            agent_configuration: None,
             node_id: fixture.node().node_id,
             agent_plugin_id: PluginId::new(PLUGIN_ID),
             agent_plugin_version: PluginVersion::new(PLUGIN_VERSION),
@@ -666,5 +667,106 @@ async fn a_separate_workload_runs_the_agent_from_its_session_directory() {
             AgentSessionEndReason::UserEnded,
             0,
         ),
+    );
+}
+
+/// Grant routes the gateway fixture saw, without the renewals a slow run may add.
+fn grant_routes(gateway: &gateway::Gateway) -> Vec<String> {
+    gateway
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(route, _)| route.clone())
+        .filter(|route| !route.contains("/renew "))
+        .collect()
+}
+
+/// A configured session hands its grant to the adapter in the startup context alone: the adapter
+/// answers with the frozen model and the platform proxy, the token never reaches its environment,
+/// history or Thread, and ending the session revokes the grant.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_configured_adapter_receives_its_grant_only_in_the_startup_context() {
+    let fixture = Fixture::new();
+    let gateway = gateway::Gateway::new(&fixture.home());
+    let sessions = fixture.model_sessions(gateway.config.clone());
+    fixture.start_configured(&sessions, "[model]", r#"{"effort":"high"}"#);
+    let answer = until(|| {
+        fixture.ledger.events().iter().find_map(|event| {
+            (field(&event.record, &["update", "sessionUpdate"]) == "agent_message_chunk")
+                .then(|| field(&event.record, &["update", "content", "text"]))
+        })
+    })
+    .await;
+    fixture.command(
+        &sessions,
+        "command-2",
+        SessionCommand::EndSession(EndSessionReason::UserEnded),
+    );
+    let ended = fixture.ended().await;
+    sessions.shutdown().await;
+    let port = url::Url::parse(&gateway.config.gateway_url)
+        .unwrap()
+        .port()
+        .unwrap();
+    assert_eq!(
+        (answer, ended.reason),
+        (
+            format!(
+                "model=team/model proxy=https://localhost:{port}/runtime/openai/v1 token_in_environment=false"
+            ),
+            AgentSessionEndReason::UserEnded,
+        )
+    );
+    let history = serde_json::to_string(&fixture.history_lines()).unwrap();
+    let thread = format!("{:?}", fixture.ledger.events());
+    assert!(!history.contains("synthetic-temporary-token"));
+    assert!(!thread.contains("synthetic-temporary-token"));
+    assert_eq!(
+        grant_routes(&gateway),
+        vec![
+            "POST /internal/v1/model-grants HTTP/1.1",
+            "DELETE /internal/v1/model-grants/grant-1 HTTP/1.1"
+        ]
+    );
+    assert!(
+        fixture
+            .plugin_pids()
+            .into_iter()
+            .all(|pid| !process_exists(pid))
+    );
+}
+
+/// An adapter that does not confirm the exact configuration it was given never receives a prompt:
+/// the session fails before ACP starts, revokes the grant and stops the plugin.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unconfirmed_adapter_never_receives_a_prompt() {
+    let fixture = Fixture::new();
+    let gateway = gateway::Gateway::new(&fixture.home());
+    let sessions = fixture.model_sessions(gateway.config.clone());
+    fixture.start_configured(&sessions, "must not be sent", r#"{"refuse":true}"#);
+    let ended = fixture.ended().await;
+    sessions.shutdown().await;
+    assert_eq!(
+        (ended.reason, ended.detail.as_deref()),
+        (
+            AgentSessionEndReason::AgentFailed,
+            Some("agent_unavailable")
+        )
+    );
+    assert_eq!(fixture.ledger.events(), Vec::new());
+    assert_eq!(
+        grant_routes(&gateway),
+        vec![
+            "POST /internal/v1/model-grants HTTP/1.1",
+            "DELETE /internal/v1/model-grants/grant-1 HTTP/1.1"
+        ]
+    );
+    assert!(!fixture.plugin_pids().is_empty());
+    assert!(
+        fixture
+            .plugin_pids()
+            .into_iter()
+            .all(|pid| !process_exists(pid))
     );
 }

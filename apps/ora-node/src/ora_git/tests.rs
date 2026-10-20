@@ -214,6 +214,7 @@ fn session_start(node: &NodeId) -> StartAgentSessionMessage {
                 agent_plugin_version: PluginVersion::new("1.0.0"),
                 checkout_execution_id: ExecutionId::new("clone"),
                 model_binding_id: None,
+                agent_configuration: None,
                 git_identity: GitIdentity {
                     name: "User".into(),
                     email: "user@example.com".into(),

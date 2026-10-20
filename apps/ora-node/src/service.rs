@@ -145,6 +145,8 @@ struct SessionInfo {
     identity: NodeRuntimeIdentity,
     controller: ControllerId,
     capabilities: Vec<NodeCapability>,
+    /// Advertised beside `model_proxy`; absent when this Node cannot run plugin-owned adapters.
+    model_adapter: Option<ora_node_protocol::ModelAdapterCapability>,
 }
 
 struct StopOnDrop(Shutdown);

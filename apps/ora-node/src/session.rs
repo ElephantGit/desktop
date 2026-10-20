@@ -172,6 +172,22 @@ impl<L, C, P, R> AgentSessions<L, C, P, R> {
     pub(crate) fn model_capable(&self) -> bool {
         self.shared.config.model_proxy.is_some()
     }
+
+    /// The adapter path needs model access and a target plugin packages are built for; a host
+    /// outside the supported Linux targets keeps only the legacy OpenCode route.
+    pub(crate) fn model_adapter(&self) -> Option<ora_node_protocol::ModelAdapterCapability> {
+        let target = ora_plugin_registry::current_host_target()?;
+        (self.model_capable() && target.as_str().ends_with("-unknown-linux-gnu")).then(|| {
+            ora_node_protocol::ModelAdapterCapability {
+                contract_version: ora_node_protocol::MODEL_ADAPTER_CONTRACT_VERSION,
+                target: target.as_str().to_string(),
+                protocols: vec![
+                    ora_node_protocol::ModelProtocol::OpenaiCompletions,
+                    ora_node_protocol::ModelProtocol::AnthropicMessages,
+                ],
+            }
+        })
+    }
     /// A lost actor or failed terminal write stops admission instead of stranding a Running row.
     pub(crate) fn failed(&self) -> bool {
         self.shared
