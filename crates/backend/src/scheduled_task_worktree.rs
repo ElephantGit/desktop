@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use gitlancer::git::diff::{DiffRequest, DiffScope};
 use gitlancer::git::status::StatusEntriesRequest;
@@ -47,6 +47,9 @@ pub(super) struct ScheduledWorktreeJanitor {
     tasks: Arc<TaskApi>,
     pool: RepositoryPool,
     relative_path_base: PathBuf,
+    /// Live handle to the worktree root, resolved per sweep so recovery paths for
+    /// runs without a recorded path follow the current provisioning root.
+    worktree_root: Arc<RwLock<PathBuf>>,
     runs: SqliteScheduledRunRepository,
     task_rows: SqliteTaskRepository,
     worktrees: SqliteWorktreeRepository,
@@ -57,10 +60,12 @@ impl ScheduledWorktreeJanitor {
         tasks: Arc<TaskApi>,
         pool: RepositoryPool,
         relative_path_base: PathBuf,
+        worktree_root: Arc<RwLock<PathBuf>>,
     ) -> Self {
         Self {
             tasks,
             relative_path_base,
+            worktree_root,
             runs: SqliteScheduledRunRepository::new(pool.clone()),
             task_rows: SqliteTaskRepository::new(pool.clone()),
             worktrees: SqliteWorktreeRepository::new(pool.clone()),
@@ -97,23 +102,31 @@ impl ScheduledWorktreeJanitor {
     /// worktrees first. Also discards worktrees that provably carry no changes, which
     /// covers runs a previous process finished without cleanup. In-use worktrees are
     /// excluded from both deletion and the retained count, so the cap governs the unused set.
+    ///
+    /// Existence is checked before path handling: a deleted task's stale link is cleared
+    /// even when the run has no recorded path, or it would be exempt from history pruning
+    /// forever. A run without a recorded path (an ownership commit that crashed before
+    /// `Start`) is classified against the path resolved from its committed task's
+    /// workspace identity — a missing path is never treated as evidence of a clean worktree.
     pub(super) async fn enforce_retention(&self) {
         let Ok(runs) = self.runs.list_scheduled_runs_with_retained_worktrees() else {
             return;
         };
+        let worktree_root = self
+            .worktree_root
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         let mut candidates = Vec::with_capacity(runs.len());
         for run in runs {
             let Some(task_id) = run.worktree_task_id.clone() else {
                 continue;
             };
-            let Some(worktree_path) = run.worktree_path.clone() else {
-                continue;
-            };
-            match self.task_exists(&task_id) {
+            let owned_task = match self.task_rows.find_task(&task_id) {
                 // A transient probe failure must keep the link for the next sweep instead of
                 // unlinking a worktree that probably still exists.
-                None => continue,
-                Some(false) => {
+                Err(_) => continue,
+                Ok(None) => {
                     // History actions may delete a retained worktree through the ordinary
                     // Task API. Treat the missing row as an already-completed discard so
                     // this run can be pruned again.
@@ -126,8 +139,15 @@ impl ScheduledWorktreeJanitor {
                     }
                     continue;
                 }
-                Some(true) => {}
-            }
+                Ok(Some(task)) => task,
+            };
+            let worktree_path = match run.worktree_path.clone() {
+                Some(path) => path,
+                None => worktree_root
+                    .join(owned_task.workspace_id.as_ref())
+                    .to_string_lossy()
+                    .into_owned(),
+            };
             let in_use = self.task_in_use(&task_id);
             let has_changes = self.classify_worktree(&run, &task_id, &worktree_path);
             candidates.push(RetentionCandidate {
@@ -654,6 +674,7 @@ mod tests {
                 tasks.clone(),
                 pool.clone(),
                 temporary.path().to_path_buf(),
+                std::sync::Arc::new(std::sync::RwLock::new(temporary.path().join("worktrees"))),
             );
             let run_row = runs
                 .list_scheduled_runs_with_retained_worktrees()
@@ -844,6 +865,7 @@ mod tests {
                 tasks.clone(),
                 pool.clone(),
                 temporary.path().to_path_buf(),
+                std::sync::Arc::new(std::sync::RwLock::new(temporary.path().join("worktrees"))),
             )
             .enforce_retention()
             .await;
@@ -883,6 +905,149 @@ mod tests {
                 prunable_left.is_empty(),
                 "the unlinked run is pruned like any other history fact"
             );
+        });
+    }
+
+    /// The real scheduled provisioning entry binds the run to its worktree task
+    /// and path inside the task-creation transaction; a run the startup recovery
+    /// settled before its session started is then reclaimed by retention.
+    #[test]
+    fn integration_retention_reclaims_a_never_started_run_after_ownership_commit() {
+        run_integration(async {
+            use ora_application::{
+                ScheduledOccurrenceRepository, ScheduledRunLifecycleRepository,
+                ScheduledTaskRepository, TaskRepository,
+            };
+            use ora_contracts::CreateProjectRequest;
+            use ora_db::{
+                DatabaseBootstrapper, DatabaseLocation, SqliteScheduledRunRepository,
+                SqliteScheduledTaskRepository, SqliteTaskRepository, default_migration_catalog,
+            };
+            use ora_domain::{
+                ScheduledOccurrence, ScheduledRun, ScheduledRunId, ScheduledRunTransition,
+            };
+            use tempfile::TempDir;
+
+            let temporary = TempDir::new().expect("backend fixture");
+            let git = GitTestScaffold::new("scheduled-worktree-recovery").expect("Git fixture");
+            git.write_file(git.repo_path(), "README.md", "fixture\n")
+                .expect("seed repository");
+            git.stage_all_and_commit("initial").expect("initial commit");
+            let backend = crate::Backend::open(crate::test_backend::backend_paths(
+                temporary.path(),
+                temporary.path(),
+            ))
+            .expect("backend");
+            let tasks = backend.tasks();
+            let project = backend
+                .projects()
+                .create(CreateProjectRequest {
+                    name: "Retention fixture".to_string(),
+                    main_workspace_path: git.repo_path().to_string_lossy().into_owned(),
+                })
+                .expect("project")
+                .project;
+
+            let database_path = temporary.path().join("ora.sqlite3");
+            let pool = DatabaseBootstrapper::system()
+                .bootstrap_repository_pool(
+                    &DatabaseLocation::path(&database_path),
+                    &default_migration_catalog().expect("migration catalog"),
+                )
+                .expect("reopen database pool");
+            let definition = integration_scheduled_task(&project.id);
+            SqliteScheduledTaskRepository::new(pool.clone())
+                .create_scheduled_task(definition.clone())
+                .expect("create definition");
+            let runs = SqliteScheduledRunRepository::new(pool.clone());
+            let run_id = ScheduledRunId::new("run-a-prime");
+            let run = ScheduledRun::accepted(
+                run_id.clone(),
+                ScheduledOccurrence {
+                    task_id: definition.id.clone(),
+                    scheduled_at: 1_000,
+                },
+                &definition,
+                1_001,
+            );
+            runs.resolve_scheduled_occurrence(ora_application::ScheduledOccurrenceCandidate::run(
+                run,
+            ))
+            .expect("admit run");
+
+            // The real scheduled provisioning entry: the ownership commit binds
+            // the run to the worktree task and its path in the task-creation
+            // transaction, so the freshly provisioned worktree has a durable
+            // owner before the session ever starts.
+            let created = tasks
+                .create_for_scheduled_run(crate::task::ScheduledRunWorktreeCommand {
+                    project_id: project.id.clone(),
+                    title: "Scheduled run run-a-prime".to_string(),
+                    base_branch: "main".to_string(),
+                    run_id: run_id.to_string(),
+                })
+                .expect("scheduled provisioning");
+            let worktree_task_id = ora_domain::TaskId::new(&created.task.id);
+            // The projection normalizes separators; compare as paths.
+            assert_eq!(
+                std::path::PathBuf::from(&created.worktree_path),
+                std::path::PathBuf::from(
+                    tasks
+                        .workspace(ora_contracts::GetTaskWorkspaceRequest {
+                            task_id: created.task.id.clone(),
+                        })
+                        .expect("worktree workspace")
+                        .workspace
+                        .root_path
+                ),
+                "the committed path matches the workspace projection"
+            );
+            // The run row carries the binding while still `accepted`.
+            assert_eq!(
+                runs.list_scheduled_runs_with_retained_worktrees()
+                    .expect("retained list")
+                    .into_iter()
+                    .filter(|run| run.id == run_id)
+                    .count(),
+                0,
+                "an accepted run is not yet part of the retained history"
+            );
+
+            // Startup recovery settles the run while its session never started;
+            // the bound worktree is now retention's responsibility.
+            runs.transition_scheduled_run(
+                &run_id,
+                ScheduledRunTransition::Fail {
+                    reason: ora_domain::ScheduledRunFailureReason::ExecutionError,
+                },
+                1_100,
+            )
+            .expect("settle run");
+
+            let janitor = super::ScheduledWorktreeJanitor::new(
+                tasks.clone(),
+                pool.clone(),
+                temporary.path().to_path_buf(),
+                std::sync::Arc::new(std::sync::RwLock::new(temporary.path().join("worktrees"))),
+            );
+            janitor.enforce_retention().await;
+
+            // The never-started worktree is provably clean against its committed
+            // path, so the sweep discards the task and clears the link.
+            assert!(
+                SqliteTaskRepository::new(pool.clone())
+                    .find_task(&worktree_task_id)
+                    .expect("task probe")
+                    .is_none(),
+                "the clean never-started worktree task is discarded"
+            );
+            let linked = runs
+                .list_scheduled_runs_with_retained_worktrees()
+                .expect("retained list")
+                .into_iter()
+                .filter(|run| run.id == run_id)
+                .count();
+            assert_eq!(linked, 0, "the link is cleared after the discard");
         });
     }
 }

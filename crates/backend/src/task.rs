@@ -6,14 +6,15 @@ use crate::{BackendError, ErrorClassification};
 use gitlancer::git::worktree::ResolveWorktreeByBranchRequest;
 use gitlancer::{CliGitRunner, Git, GitlancerError, RepoRoot, Repository};
 use ora_application::{
-    ApplicationError, Clock, CreateTaskHandler, GetTaskHandler, GitTaskWorktreeProvisioner,
-    ListTasksHandler, ProjectRepository, RepositoryError, TaskRepository, UpdateTaskHandler,
-    UuidTaskIdGenerator, WorktreeRepository,
+    ApplicationError, Clock, CreateScheduledWorktreeTaskHandler,
+    CreateScheduledWorktreeTaskRequest, CreateTaskHandler, GetTaskHandler,
+    GitTaskWorktreeProvisioner, ListTasksHandler, ProjectRepository, RepositoryError,
+    TaskRepository, UpdateTaskHandler, UuidTaskIdGenerator, WorktreeRepository,
 };
 use ora_contracts::{
     CreateTaskRequest, CreateTaskResponse, DeleteTaskRequest, DeleteTaskResponse, GetTaskRequest,
     GetTaskResponse, GetTaskWorkspaceRequest, GetTaskWorkspaceResponse, ListTasksRequest,
-    ListTasksResponse, TaskWorkspace, UpdateTaskRequest, UpdateTaskResponse,
+    ListTasksResponse, Task, TaskWorkspace, UpdateTaskRequest, UpdateTaskResponse,
 };
 use ora_contracts::{EmptyErrorParams, PublicError};
 use ora_db::{
@@ -21,9 +22,27 @@ use ora_db::{
     SqliteTaskRepository, SqliteTaskWorkspaceRepository, SqliteWorkspaceRepository,
     SqliteWorktreeProvisioningLeaseRepository, SqliteWorktreeRepository,
 };
-use ora_domain::{Project, ProjectId, TaskId, WorkspaceId, WorkspaceLocation, WorktreeActivity};
+use ora_domain::{
+    Project, ProjectId, ScheduledRunId, TaskId, WorkspaceId, WorkspaceLocation, WorktreeActivity,
+};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
+
+/// The scheduled-only provisioning command: the admitted run and the frozen
+/// execution inputs for its isolated worktree task.
+pub struct ScheduledRunWorktreeCommand {
+    pub project_id: String,
+    pub title: String,
+    pub base_branch: String,
+    pub run_id: String,
+}
+
+/// The committed worktree task plus its owned worktree path, so the caller can
+/// start the session without a separate workspace lookup.
+pub struct ScheduledRunWorktreeCreated {
+    pub task: Task,
+    pub worktree_path: String,
+}
 
 #[cfg(test)]
 mod lifecycle_tests;
@@ -118,6 +137,47 @@ impl TaskApi {
         let response = handler.handle(request)?;
         self.effect_reconcile.notify();
         Ok(response)
+    }
+
+    /// Resolves the requested project and provisions the isolated worktree task
+    /// whose ownership commit also binds the admitted Scheduled Run.
+    ///
+    /// This is the scheduled-only provisioning entry: the public
+    /// [`TaskApi::create`](Self::create) keeps its contract untouched, while the
+    /// ownership binding (run → worktree task + path) shares the task commit
+    /// transaction per the A′ decision.
+    pub fn create_for_scheduled_run(
+        &self,
+        command: ScheduledRunWorktreeCommand,
+    ) -> Result<ScheduledRunWorktreeCreated, BackendError> {
+        let project_id = ProjectId::new(&command.project_id);
+        self.find_project(&project_id)?;
+        let repository_root = self.find_main_workspace_root(&project_id)?;
+        let handler = CreateScheduledWorktreeTaskHandler::new(
+            SqliteTaskWorkspaceRepository::new(self.pool.clone()),
+            SqliteWorktreeProvisioningLeaseRepository::new(self.pool.clone()),
+            UuidTaskIdGenerator::new(),
+            GatedWorktreeProvisioner::new(
+                GitTaskWorktreeProvisioner::new(repository_root.clone()),
+                Arc::clone(&self.repository_gates),
+                crate::git_cleanup::normalize_repository_key(&repository_root),
+            ),
+            repository_root,
+            self.worktree_root_snapshot()?,
+            self.clock,
+        );
+
+        let response = handler.handle(CreateScheduledWorktreeTaskRequest {
+            project_id: command.project_id,
+            title: command.title,
+            base_branch: command.base_branch,
+            run_id: ScheduledRunId::new(command.run_id),
+        })?;
+        self.effect_reconcile.notify();
+        Ok(ScheduledRunWorktreeCreated {
+            task: response.task,
+            worktree_path: response.worktree_path,
+        })
     }
 
     /// Executes one task lookup through the application handler.
@@ -241,6 +301,13 @@ impl TaskApi {
             .read()
             .map(|root| root.clone())
             .map_err(|_poisoned| ApplicationError::TaskWorktreeRootUnavailable)
+    }
+
+    /// Shares the live worktree-root handle so long-lived consumers (the
+    /// scheduled worktree janitor) resolve paths against the current root at
+    /// sweep time instead of a stale construction-time snapshot.
+    pub(crate) fn worktree_root_handle(&self) -> Arc<RwLock<PathBuf>> {
+        Arc::clone(&self.worktree_root)
     }
 }
 
