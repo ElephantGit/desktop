@@ -33,3 +33,5 @@ export {
   type SessionUsage,
 } from "./store.ts";
 export type { RunDiagnostics } from "./diagnostics.ts";
+export { childSessionSource } from "./item-metadata.ts";
+export type { ChildSessionSource } from "./item-metadata.ts";

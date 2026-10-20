@@ -354,6 +354,12 @@ export function ToolStatus({
       ? null
       : ` · ${t(durationMs === undefined ? "chat.elapsedTime" : "chat.totalTime")} ${elapsed}`;
   switch (status) {
+    case "unknown":
+      return (
+        <span className="text-[11px] text-muted-foreground">
+          {t("chat.subagentToolUnknown")}
+        </span>
+      );
     case "completed":
       return (
         <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-emerald-600">

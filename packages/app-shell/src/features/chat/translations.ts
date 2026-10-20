@@ -32,6 +32,10 @@ export const chatTranslations = {
     "chat.diagnosticsNoTools": "没有已知进行中的工具",
     "chat.diagnosticsLimit":
       "时间表示本界面收到活动的时刻，不是超时倒计时。子代理活动不会刷新父回合活动时间；静默不代表卡死。",
+    "chat.subagentRelationshipUnknown": "父子关系缺失或冲突，按独立来源显示。",
+    "chat.subagentHistoryLimit":
+      "只显示已收到的内容；未保存的历史无法补全，子代理终态未知。",
+    "chat.subagentToolUnknown": "结果未知",
     "errors.session_not_found": "未找到该会话。",
     "errors.agent_not_installed": "未安装提供该 Agent 的插件。",
     "errors.agent_runtime_unavailable": "Agent 运行时当前不可用。",
@@ -236,6 +240,15 @@ export const chatTranslations = {
     "chat.planProgress": "已完成 {{completed}}/{{total}}",
     "chat.toolPending": "等待中",
     "chat.toolRunning": "执行中",
+    "chat.subagentTitle": "子代理 · {{name}}",
+    "chat.subagentUnnamed": "子代理 {{index}}",
+    "chat.subagentCounts":
+      "{{messages}} 条文本 · {{thoughts}} 段思考 · {{tools}} 个工具",
+    "chat.subagentTurn.active": "本轮进行中",
+    "chat.subagentTurn.ended": "本轮已结束",
+    "chat.subagentTurn.stopped": "本轮已停止",
+    "chat.subagentThought": "思考",
+    "chat.subagentStateUnknown": "状态未知",
     "chat.toolCompleted": "已完成",
     "chat.toolFailed": "失败",
     "chat.toolCancelled": "已取消",
@@ -384,6 +397,11 @@ export const chatTranslations = {
     "chat.diagnosticsNoTools": "No known active tools",
     "chat.diagnosticsLimit":
       "Times show received observations, not timeout countdowns. Child activity does not refresh the parent clock; silence does not prove a stall.",
+    "chat.subagentRelationshipUnknown":
+      "Parent relationship missing or conflicting; shown independently.",
+    "chat.subagentHistoryLimit":
+      "Only received content is shown; missing history cannot be recovered and child state is unknown.",
+    "chat.subagentToolUnknown": "Outcome unknown",
     "errors.session_not_found": "The session was not found.",
     "errors.agent_not_installed":
       "The plugin that supplies this agent is not installed.",
@@ -619,6 +637,15 @@ export const chatTranslations = {
     "chat.planProgress": "{{completed}}/{{total}} completed",
     "chat.toolPending": "Pending",
     "chat.toolRunning": "Running",
+    "chat.subagentTitle": "Subagent · {{name}}",
+    "chat.subagentUnnamed": "Worker {{index}}",
+    "chat.subagentCounts":
+      "{{messages}} messages · {{thoughts}} thoughts · {{tools}} tools",
+    "chat.subagentTurn.active": "Turn in progress",
+    "chat.subagentTurn.ended": "Turn ended",
+    "chat.subagentTurn.stopped": "Turn stopped",
+    "chat.subagentThought": "Thought",
+    "chat.subagentStateUnknown": "Status unknown",
     "chat.toolCompleted": "Completed",
     "chat.toolFailed": "Failed",
     "chat.toolCancelled": "Cancelled",

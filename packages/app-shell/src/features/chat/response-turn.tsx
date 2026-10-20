@@ -15,6 +15,7 @@ import {
 } from "./turn-item-grouping";
 import { TurnDiffSummary } from "./turn-diff-summary";
 import { formatElapsedDuration } from "../../lib/format";
+import { SubagentGroup } from "./subagent-group";
 
 interface ResponseTurnProps {
   turn: ChatTurn;
@@ -72,6 +73,14 @@ export function DisplayTurnItemView({
   durationMs?: number;
 }) {
   switch (item.kind) {
+    case "subagentGroup":
+      return (
+        <SubagentGroup
+          group={item}
+          turnStatus={turn.status}
+          userName={userName}
+        />
+      );
     case "activityPhase":
       return (
         <ActivityPhase
