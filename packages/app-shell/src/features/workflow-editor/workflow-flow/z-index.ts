@@ -8,9 +8,9 @@
  *
  * - Annotations stay beneath executable nodes, and selecting a node lifts it above
  *   every unselected element including its own container frame.
- * - Edge-owned controls (the iteration insert buttons rendered through
- *   `EdgeLabelRenderer`) must stay above every node and edge elevation React Flow can
- *   compute, otherwise the edge hit target swallows their clicks. A parented member of
+ * - Edge-owned controls (insert buttons rendered through `EdgeLabelRenderer`)
+ *   must stay above every node and edge elevation React Flow can compute,
+ *   otherwise the edge hit target swallows their clicks. A parented member of
  *   a selected container stacks at `WORKFLOW_SELECTED_NODE_Z_INDEX + 2`, so the edge
  *   control band keeps a full order of magnitude of headroom above it.
  */

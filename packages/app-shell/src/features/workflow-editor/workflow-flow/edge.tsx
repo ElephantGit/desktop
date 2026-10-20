@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   BaseEdge,
@@ -10,6 +10,8 @@ import { cn } from "@ora/ui";
 import { IterationInsertMenu } from "./iteration-actions";
 import { useWorkflowIterationActions } from "./iteration-actions-context";
 import { WORKFLOW_EDGE_CONTROL_Z_INDEX } from "./z-index";
+
+const CANVAS_INSERT_HOVER_HOLD_MS = 180;
 
 /** Draws a selectable workflow edge with an accessible hit target and optional branch label. */
 export const WorkflowFlowEdgeView = memo(function WorkflowFlowEdgeView({
@@ -37,6 +39,33 @@ export const WorkflowFlowEdgeView = memo(function WorkflowFlowEdgeView({
     sourceHandle: sourceHandleId,
     target,
   });
+  const [hovered, setHovered] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const hideHoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (hideHoverTimer.current !== null) {
+        clearTimeout(hideHoverTimer.current);
+      }
+    },
+    [],
+  );
+  const showHover = () => {
+    if (hideHoverTimer.current !== null) {
+      clearTimeout(hideHoverTimer.current);
+      hideHoverTimer.current = null;
+    }
+    setHovered(true);
+  };
+  const hideHoverSoon = () => {
+    if (hideHoverTimer.current !== null) {
+      clearTimeout(hideHoverTimer.current);
+    }
+    hideHoverTimer.current = setTimeout(() => {
+      setHovered(false);
+      hideHoverTimer.current = null;
+    }, CANVAS_INSERT_HOVER_HOLD_MS);
+  };
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
@@ -48,6 +77,13 @@ export const WorkflowFlowEdgeView = memo(function WorkflowFlowEdgeView({
   const edgeColor = selected
     ? "var(--ring)"
     : "color-mix(in oklch, var(--foreground) 46%, transparent)";
+  const showInsert =
+    insertion !== null &&
+    (insertion.type !== "canvas-edge" || hovered || selected || menuOpen);
+  const insertLabel =
+    insertion?.type === "canvas-edge"
+      ? t("settings.workflow.insertOnEdge")
+      : t("settings.workflow.iteration.insertOnEdge");
 
   return (
     <>
@@ -61,6 +97,15 @@ export const WorkflowFlowEdgeView = memo(function WorkflowFlowEdgeView({
           strokeWidth: selected ? 3 : 2,
           stroke: edgeColor,
         }}
+      />
+      <path
+        d={edgePath}
+        fill="none"
+        stroke="transparent"
+        strokeWidth={interactionWidth ?? 20}
+        className="react-flow__edge-interaction"
+        onMouseEnter={showHover}
+        onMouseLeave={hideHoverSoon}
       />
       {selected && (
         <g className="pointer-events-none">
@@ -88,7 +133,7 @@ export const WorkflowFlowEdgeView = memo(function WorkflowFlowEdgeView({
         </g>
       )}
       <EdgeLabelRenderer>
-        {insertion !== null && (
+        {showInsert && insertion !== null && (
           <div
             className="nodrag nopan pointer-events-auto absolute"
             style={{
@@ -98,11 +143,16 @@ export const WorkflowFlowEdgeView = memo(function WorkflowFlowEdgeView({
               // elevation or the edge hit target swallows its clicks.
               zIndex: WORKFLOW_EDGE_CONTROL_Z_INDEX,
             }}
+            onMouseEnter={showHover}
+            onMouseLeave={hideHoverSoon}
+            onClick={(event) => event.stopPropagation()}
           >
             <IterationInsertMenu
               insertion={insertion}
-              label={t("settings.workflow.iteration.insertOnEdge")}
+              label={insertLabel}
               side="top"
+              open={menuOpen}
+              onOpenChange={setMenuOpen}
             />
           </div>
         )}

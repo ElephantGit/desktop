@@ -1,17 +1,17 @@
 import { createContext, useContext } from "react";
 import type { Edge } from "@xyflow/react";
 import type { WorkflowNodeKind, WorkflowNodeType } from "@ora/workflow-mock";
-import type { IterationInsertion } from "../workflow-iteration-graph";
 
 import type { WorkflowContainerInsertion } from "../workflow-container-insertion";
 
 export interface WorkflowIterationActions {
   loopNodeTypes: WorkflowNodeType[];
+  canvasNodeTypes: WorkflowNodeType[];
   nodeTypes: WorkflowNodeType[];
   readOnly: boolean;
   insertionForEdge: (
     edge: Pick<Edge, "id" | "source" | "sourceHandle" | "target">,
-  ) => IterationInsertion | null;
+  ) => WorkflowContainerInsertion | null;
   outputInsertion: (
     nodeId: string,
     sourceHandle?: string | null,

@@ -23,6 +23,7 @@ import {
   DropdownMenuTrigger,
 } from "@ora/ui";
 import type { WorkflowContainerInsertion } from "../workflow-container-insertion";
+import { WORKFLOW_CANVAS_NODE_KINDS } from "../workflow-node-catalog";
 import { getNodeMetadata } from "../workflow-node-metadata";
 import {
   useWorkflowIterationActions,
@@ -116,6 +117,12 @@ export function WorkflowIterationActionsProvider({
       loopNodeTypes: capabilities.nodeTypes.filter((nodeType) =>
         supportsWorkflowNodeScope(nodeType, "loop"),
       ),
+      canvasNodeTypes: capabilities.nodeTypes.filter(
+        (nodeType) =>
+          nodeType.kind !== "start" &&
+          WORKFLOW_CANVAS_NODE_KINDS.has(nodeType.kind) &&
+          supportsWorkflowNodeScope(nodeType, "workflow"),
+      ),
       readOnly,
       insertionForEdge: (edge) => {
         // The fixed start already owns the entry add affordance. Repeating it at the
@@ -131,9 +138,22 @@ export function WorkflowIterationActionsProvider({
             : targetOwner !== null && edge.source === targetOwner
               ? targetOwner
               : null;
-        return iterationId === null
-          ? null
-          : { type: "edge", iterationId, edgeId: edge.id };
+        if (iterationId !== null) {
+          return { type: "edge", iterationId, edgeId: edge.id };
+        }
+        const source = nodeById.get(edge.source);
+        const target = nodeById.get(edge.target);
+        // Loop/iteration members already have in-container seams. Only top-level
+        // canvas edges get the Dify-style midpoint insert.
+        if (
+          source === undefined ||
+          target === undefined ||
+          source.parentId !== undefined ||
+          target.parentId !== undefined
+        ) {
+          return null;
+        }
+        return { type: "canvas-edge", edgeId: edge.id };
       },
       outputInsertion: (nodeId, sourceHandle) => {
         const source = nodeById.get(nodeId);
@@ -209,7 +229,9 @@ export function IterationInsertMenu({
   const nodeTypes =
     insertion.type === "loop-output"
       ? actions.loopNodeTypes
-      : actions.nodeTypes;
+      : insertion.type === "canvas-edge"
+        ? actions.canvasNodeTypes
+        : actions.nodeTypes;
   const { t } = useTranslation();
   if (readOnly) {
     return null;
