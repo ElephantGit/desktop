@@ -63,6 +63,8 @@ pub struct FrozenAgentConfiguration {
     pub schema_version: u32,
     pub declaration_fingerprint: Sha256Digest,
     pub adapter_version: u32,
+    /// Zero when the plugin declares no Settings and the user never saved a configuration, as for
+    /// an Agent that keeps using the personal model default.
     pub configuration_revision: u64,
     /// Validated Settings kept as JSON text so numeric lexemes survive every hop unchanged.
     pub settings_json: String,
@@ -88,7 +90,6 @@ impl FrozenAgentConfiguration {
             || self.target.is_empty()
             || self.schema_version == 0
             || self.adapter_version != MODEL_ADAPTER_CONTRACT_VERSION
-            || self.configuration_revision == 0
             || !settings_object
             || self.model.id.is_empty()
             || self.model.name.is_empty()

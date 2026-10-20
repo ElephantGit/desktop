@@ -248,6 +248,19 @@ async fn configured_session_round_trips_and_rejects_inconsistent_configuration()
     });
     case.assert_wire().await?;
     case.assert_round_trip().await?;
+    // An Agent on the personal model default with no declared Settings was never saved, so its
+    // frozen revision is zero; the rejections below each fail for their own field from that base.
+    let Message::Controller(ControllerToNodeMessage::StartAgentSession(command)) =
+        &mut case.message
+    else {
+        panic!("fixture must be a session start")
+    };
+    if let Some(configuration) = command.payload.spec.agent_configuration.as_mut() {
+        configuration.configuration_revision = 0;
+    }
+    case.wire["payload"]["spec"]["agent_configuration"]["configuration_revision"] = json!(0);
+    case.assert_wire().await?;
+    case.assert_round_trip().await?;
     let configuration = "/payload/spec/agent_configuration";
     for (path, value) in [
         (
@@ -257,7 +270,6 @@ async fn configured_session_round_trips_and_rejects_inconsistent_configuration()
         (format!("{configuration}/plugin_version"), json!("1.2.1")),
         (format!("{configuration}/target"), json!("")),
         (format!("{configuration}/adapter_version"), json!(2)),
-        (format!("{configuration}/configuration_revision"), json!(0)),
         (format!("{configuration}/settings_json"), json!("[1]")),
         (format!("{configuration}/settings_json"), json!("{")),
         (format!("{configuration}/model/id"), json!("")),
