@@ -29,6 +29,10 @@ A Skill is a catalog row plus an on-disk package `<data root>/atoms/skills/<name
 ship Skills, which are imported into the catalog with their origin recorded. Names are single ASCII
 slug segments that never start with `.`, and descriptions are at most 4096 bytes.
 
+Installed Skill plugins can declare public and secret settings for scripts. See
+[Skill plugin configuration](skill-configuration.md) for declarations, startup environment snapshots,
+restart behavior and security boundaries.
+
 - `availability` is computed from the package: a missing directory or an unloadable `SKILL.md`
   marks the Skill unavailable instead of deleting it or failing the request. Creating or importing
   the same name restores that row's package and keeps its id.

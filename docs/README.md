@@ -9,13 +9,13 @@ across module boundaries. Implementation details inside a crate or package live 
 
 ## Where to start
 
-| I want to… | Read first |
-|---|---|
-| Understand the whole system | [Architecture](architecture.md) |
-| Run it on my machine | [Local development](development/local-development.md) |
-| Add or remove a feature | [Changing the code](development/changing-the-code.md), then the document for the domain |
-| Run the tests | [Testing](development/testing.md) |
-| Deploy the Cloud runtime | [Container images](operations/container-images.md), [Controller](controller/controller.md), [Node](node/node.md) |
+| I want to…                  | Read first                                                                                                       |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Understand the whole system | [Architecture](architecture.md)                                                                                  |
+| Run it on my machine        | [Local development](development/local-development.md)                                                            |
+| Add or remove a feature     | [Changing the code](development/changing-the-code.md), then the document for the domain                          |
+| Run the tests               | [Testing](development/testing.md)                                                                                |
+| Deploy the Cloud runtime    | [Container images](operations/container-images.md), [Controller](controller/controller.md), [Node](node/node.md) |
 
 ## All documents
 
@@ -46,6 +46,7 @@ across module boundaries. Implementation details inside a crate or package live 
 - [Session history](agents/session-history.md): recording, switching agents, degraded history, deletion
 - [Session MCP](agents/session-mcp.md): selection, delivery, live refresh, Host MCP health
 - [Agent definitions and Skills](agents/agents-and-skills.md): roles, the Skill catalog, packages and imports
+- [Skill plugin configuration](agents/skill-configuration.md): public and secret settings, startup environment snapshots, restart behavior and security boundaries
 - [Effects](agents/effects.md): Workspace Effect convergence and Skill materialization
 
 **Plugins**

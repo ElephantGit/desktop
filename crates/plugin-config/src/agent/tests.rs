@@ -120,6 +120,29 @@ fn enforces_the_source_byte_limit_before_parsing() {
     );
 }
 
+/// Skill-only metadata must not extend the published Agent schema, even when explicitly false.
+#[test]
+fn keeps_skill_secret_metadata_out_of_agent_settings() -> TestResult {
+    let settings = json!({"token": {
+        "type": "string", "title": "Token", "description": "Service token", "secret": false
+    }});
+    let mut agent: Value = serde_json::from_slice(MINIMAL)?;
+    agent["settings"] = settings.clone();
+    assert_eq!(
+        compile_agent_configuration(&serde_json::to_vec(&agent)?),
+        Err(CompileAgentConfigurationError::InvalidSettings)
+    );
+
+    let mut skill = json!({"schemaVersion": 1, "settings": settings});
+    let public = compile_declaration(&serde_json::to_vec(&skill)?)?;
+    let serialized = serde_json::to_value(&public.settings)?;
+    assert!(serialized[0].get("secret").is_none());
+    skill["settings"]["token"]["secret"] = json!(true);
+    let secret = compile_declaration(&serde_json::to_vec(&skill)?)?;
+    assert_eq!(serde_json::to_value(&secret.settings)?[0]["secret"], true);
+    Ok(())
+}
+
 /// The existing Settings owner, rather than a second parser, enforces the shared maximum count.
 #[test]
 fn inherits_the_settings_count_limit() -> TestResult {
