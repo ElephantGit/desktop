@@ -118,6 +118,8 @@ pub(super) struct Sandbox {
     pub(super) gate: sync::Mutex<Gate>,
     unresolved: Mutex<HashMap<ExecutionId, Instant>>,
     capabilities: Mutex<Vec<NodeCapability>>,
+    /// The adapter facts of the same handshake; only an exact match runs a configured session.
+    model_adapter: Mutex<Option<ModelAdapterCapability>>,
     /// Cloud's Node records of this sandbox, from the latest snapshot.
     known: Mutex<Vec<proto::NodeRecord>>,
 }
@@ -146,6 +148,27 @@ impl Sandbox {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .contains(&NodeCapability::ModelProxy)
+    }
+
+    /// Registration reports the adapter facts of the same handshake as `model_proxy`.
+    pub(super) fn advertised_model_adapter(&self) -> Option<ModelAdapterCapability> {
+        self.model_adapter
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Whether the live session can run a session frozen with `configuration`. Cloud fences
+    /// the same match; checking here keeps an incompatible item queued instead of refused.
+    pub(super) fn admits(&self, configuration: &proto::AgentModelConfiguration) -> bool {
+        let Some(adapter) = self.advertised_model_adapter() else {
+            return false;
+        };
+        self.connected()
+            && adapter.contract_version == configuration.adapter_version
+            && adapter.target == configuration.target
+            && ModelProtocol::parse(&configuration.protocol)
+                .is_some_and(|protocol| adapter.protocols.contains(&protocol))
     }
 
     /// Whether a session is established right now.
@@ -196,11 +219,19 @@ impl Sandbox {
 }
 
 impl SessionObserver for Sandbox {
-    fn capabilities(&self, capabilities: &[NodeCapability]) {
+    fn capabilities(
+        &self,
+        capabilities: &[NodeCapability],
+        model_adapter: Option<&ModelAdapterCapability>,
+    ) {
         *self
             .capabilities
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = capabilities.to_vec();
+        *self
+            .model_adapter
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = model_adapter.cloned();
     }
     fn established(&self, node: &NodeRuntimeIdentity) {
         self.identity.send_replace(Some(node.clone()));
@@ -299,6 +330,7 @@ impl Fleet {
             gate: sync::Mutex::new(Gate::Open),
             unresolved: Mutex::default(),
             capabilities: Mutex::default(),
+            model_adapter: Mutex::default(),
             known: Mutex::new(records),
         });
         let (stop, stopping) = watch::channel(false);

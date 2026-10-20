@@ -114,6 +114,7 @@ impl ExecutionService for Server {
                 input: Some(proto::ExecutionInput {
                     spec: Some(proto::execution_input::Spec::AgentSession(
                         proto::AgentSessionSpec {
+                            agent_configuration: None,
                             agent_plugin_id: "official/ora-space.echo".into(),
                             agent_plugin_version: "1.2.3".into(),
                             checkout_execution_id: "checkout".into(),

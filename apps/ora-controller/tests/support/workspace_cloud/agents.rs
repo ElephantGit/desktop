@@ -47,6 +47,27 @@ impl WorkspaceCloud {
         prior: Option<proto::PriorRevision>,
         binding: &str,
     ) {
+        self.queue_session_input(run, prior, binding, /*configuration*/ None);
+    }
+
+    /// Freezes a model binding together with the adapter configuration Cloud admitted.
+    pub fn queue_configured_agent(
+        &self,
+        run: &str,
+        binding: &str,
+        configuration: proto::AgentModelConfiguration,
+    ) {
+        self.queue_session_input(run, /*prior*/ None, binding, Some(configuration));
+    }
+
+    /// Queues one session work item and wakes the Controller.
+    fn queue_session_input(
+        &self,
+        run: &str,
+        prior: Option<proto::PriorRevision>,
+        binding: &str,
+        configuration: Option<proto::AgentModelConfiguration>,
+    ) {
         let mut state = self.lock();
         let sandbox = state.sandboxes.last().unwrap();
         let node = state.nodes.last().unwrap().identity.as_ref().unwrap();
@@ -60,6 +81,7 @@ impl WorkspaceCloud {
             input: Some(proto::ExecutionInput {
                 spec: Some(proto::execution_input::Spec::AgentSession(
                     proto::AgentSessionSpec {
+                        agent_configuration: configuration,
                         agent_plugin_id: "official/ora-space.echo".into(),
                         agent_plugin_version: "1.2.3".into(),
                         checkout_execution_id: state.clones[0].execution_id.clone(),
@@ -115,6 +137,15 @@ impl WorkspaceCloud {
             },
         ]
     }
+    /// The adapter facts each registered Node record carries, in registration order.
+    pub fn registered_model_adapters(&self) -> Vec<Option<proto::ModelAdapterCapabilities>> {
+        self.lock()
+            .nodes
+            .iter()
+            .map(|node| node.model_adapter.clone())
+            .collect()
+    }
+
     /// Reads registered session facts for assertions and subsequent command input.
     pub fn agent_records(&self) -> Vec<proto::ExecutionRecord> {
         self.lock()

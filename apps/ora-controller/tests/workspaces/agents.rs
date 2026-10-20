@@ -17,6 +17,7 @@ pub(super) struct AgentNode {
     data: Arc<Mutex<AgentData>>,
     pub(super) enabled: Arc<AtomicBool>,
     pub(super) model_proxy: Arc<AtomicBool>,
+    pub(super) model_adapter: Arc<Mutex<Option<ModelAdapterCapability>>>,
     pub(super) previews_enabled: Arc<AtomicBool>,
     pub(super) previews_negotiated: Arc<AtomicBool>,
     pub(super) drop_reply: Arc<AtomicBool>,
@@ -253,6 +254,134 @@ fn model_binding_is_preserved_through_controller_dispatch() {
         );
     });
 }
+/// The frozen adapter input Cloud admitted for `official/ora-space.echo` 1.2.3.
+fn frozen_configuration() -> proto::AgentModelConfiguration {
+    proto::AgentModelConfiguration {
+        plugin_id: "official/ora-space.echo".into(),
+        plugin_version: "1.2.3".into(),
+        target: "x86_64-unknown-linux-gnu".into(),
+        package_sha256: "a".repeat(64),
+        schema_version: 2,
+        declaration_fingerprint: "b".repeat(64),
+        adapter_version: 1,
+        configuration_revision: 7,
+        settings_json: r#"{"effort":12345678901234567890}"#.into(),
+        protocol: "anthropic-messages".into(),
+        model: Some(proto::AgentBoundModel {
+            id: "team/model".into(),
+            name: "Team model".into(),
+            context_window: 200_000,
+            max_tokens: 8192,
+        }),
+    }
+}
+
+/// The Node adapter facts that admit [`frozen_configuration`].
+fn matching_adapter() -> ModelAdapterCapability {
+    ModelAdapterCapability {
+        contract_version: MODEL_ADAPTER_CONTRACT_VERSION,
+        target: "x86_64-unknown-linux-gnu".into(),
+        protocols: vec![ModelProtocol::AnthropicMessages],
+    }
+}
+
+/// A model-proxy Node whose adapter facts do not admit the frozen configuration leaves it queued:
+/// another target, another protocol and no adapter at all are each a mismatch.
+#[test]
+fn configured_session_waits_for_a_matching_model_adapter() {
+    for adapter in [
+        None,
+        Some(ModelAdapterCapability {
+            target: "aarch64-unknown-linux-gnu".into(),
+            ..matching_adapter()
+        }),
+        Some(ModelAdapterCapability {
+            protocols: vec![ModelProtocol::OpenaiCompletions],
+            ..matching_adapter()
+        }),
+    ] {
+        scenario("main", move |world| async move {
+            world.node.agents.model_proxy.store(true, Ordering::SeqCst);
+            *world.node.agents.model_adapter.lock().unwrap() = adapter;
+            workspace(&world).await;
+            world
+                .cloud
+                .queue_configured_agent("model-run", "binding-1", frozen_configuration());
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            assert_eq!(world.cloud.agent_records(), Vec::new());
+            assert_eq!(world.node.agents.data.lock().unwrap().starts.len(), 0);
+        });
+    }
+}
+
+/// The frozen configuration reaches the Node unchanged, numeric lexemes included, beside its
+/// binding; registration reports the adapter facts of the same handshake to Cloud.
+#[test]
+fn frozen_configuration_is_preserved_through_controller_dispatch() {
+    scenario("main", |world| async move {
+        world.node.agents.model_proxy.store(true, Ordering::SeqCst);
+        *world.node.agents.model_adapter.lock().unwrap() = Some(matching_adapter());
+        workspace(&world).await;
+        world
+            .cloud
+            .queue_configured_agent("model-run", "binding-1", frozen_configuration());
+        world
+            .timeline
+            .until(|events| {
+                events
+                    .iter()
+                    .any(|event| matches!(event, Event::AgentStarted { .. }))
+            })
+            .await;
+        let spec = world
+            .node
+            .agents
+            .data
+            .lock()
+            .unwrap()
+            .starts
+            .values()
+            .next()
+            .unwrap()
+            .payload
+            .spec
+            .clone();
+        assert_eq!(
+            spec.model_binding_id,
+            Some(ModelBindingId::new("binding-1"))
+        );
+        assert_eq!(
+            spec.agent_configuration,
+            Some(FrozenAgentConfiguration {
+                plugin_id: PluginId::new("official/ora-space.echo"),
+                plugin_version: PluginVersion::new("1.2.3"),
+                target: "x86_64-unknown-linux-gnu".into(),
+                package_sha256: Sha256Digest::new("a".repeat(64)),
+                schema_version: 2,
+                declaration_fingerprint: Sha256Digest::new("b".repeat(64)),
+                adapter_version: 1,
+                configuration_revision: 7,
+                settings_json: r#"{"effort":12345678901234567890}"#.into(),
+                protocol: ModelProtocol::AnthropicMessages,
+                model: BoundModel {
+                    id: "team/model".into(),
+                    name: "Team model".into(),
+                    context_window: 200_000,
+                    max_tokens: 8192,
+                },
+            })
+        );
+        assert_eq!(
+            world.cloud.registered_model_adapters(),
+            vec![Some(proto::ModelAdapterCapabilities {
+                contract_version: 1,
+                target: "x86_64-unknown-linux-gnu".into(),
+                protocols: vec!["anthropic-messages".into()],
+            })]
+        );
+    });
+}
+
 /// Waits for an exact ACK, never treating a Cloud query or log as receipt.
 async fn acked(world: &World, execution: &ExecutionId, sequence: u64) {
     world

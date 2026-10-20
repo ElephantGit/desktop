@@ -36,6 +36,11 @@ pub(in crate::cloud) fn start(
                 checkout_execution_id: ExecutionId::new(spec.checkout_execution_id.clone()),
                 model_binding_id: (!spec.model_binding_id.is_empty())
                     .then(|| ModelBindingId::new(spec.model_binding_id.clone())),
+                agent_configuration: spec
+                    .agent_configuration
+                    .as_ref()
+                    .map(configuration)
+                    .transpose()?,
                 git_identity: GitIdentity {
                     name: identity.name.clone(),
                     email: identity.email.clone(),
@@ -48,6 +53,42 @@ pub(in crate::cloud) fn start(
     };
     command.validate()?;
     Ok(command)
+}
+
+/// Carries Cloud's frozen adapter input verbatim; an unknown protocol or a missing model cannot be
+/// guessed, so the input is refused rather than started on another route.
+fn configuration(
+    input: &proto::AgentModelConfiguration,
+) -> Result<FrozenAgentConfiguration, Error> {
+    let model = input.model.as_ref().ok_or(Error::Conflict)?;
+    Ok(FrozenAgentConfiguration {
+        plugin_id: PluginId::new(input.plugin_id.clone()),
+        plugin_version: PluginVersion::new(input.plugin_version.clone()),
+        target: input.target.clone(),
+        package_sha256: Sha256Digest::new(input.package_sha256.clone()),
+        schema_version: input.schema_version,
+        declaration_fingerprint: Sha256Digest::new(input.declaration_fingerprint.clone()),
+        adapter_version: input.adapter_version,
+        configuration_revision: input.configuration_revision,
+        settings_json: input.settings_json.clone(),
+        protocol: ModelProtocol::parse(&input.protocol).ok_or(Error::Conflict)?,
+        model: BoundModel {
+            id: model.id.clone(),
+            name: model.name.clone(),
+            context_window: model.context_window,
+            max_tokens: model.max_tokens,
+        },
+    })
+}
+
+/// Whether a session input carries a frozen adapter configuration, and which.
+pub(in crate::cloud) fn frozen_configuration(
+    input: Option<&proto::ExecutionInput>,
+) -> Option<&proto::AgentModelConfiguration> {
+    match input.and_then(|v| v.spec.as_ref()) {
+        Some(proto::execution_input::Spec::AgentSession(spec)) => spec.agent_configuration.as_ref(),
+        Some(_) | None => None,
+    }
 }
 
 /// A session restores its prior Revision from the Git Server location Cloud fixed, so a prior
@@ -198,6 +239,7 @@ mod tests {
             input: Some(proto::ExecutionInput {
                 spec: Some(proto::execution_input::Spec::AgentSession(
                     proto::AgentSessionSpec {
+                        agent_configuration: None,
                         model_binding_id: String::new(),
                         agent_plugin_id: "official/ora-space.echo".into(),
                         agent_plugin_version: "1.2.3".into(),
@@ -274,6 +316,7 @@ mod tests {
                         agent_plugin_version: PluginVersion::new("1.2.3"),
                         checkout_execution_id: ExecutionId::new("clone"),
                         model_binding_id: None,
+                        agent_configuration: None,
                         git_identity: GitIdentity {
                             name: "User".into(),
                             email: "user@example.com".into(),

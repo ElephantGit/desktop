@@ -90,6 +90,8 @@ pub(super) async fn batch(
                     && (!matches!(item.input.as_ref().and_then(|input| input.spec.as_ref()),
                     Some(proto::execution_input::Spec::AgentSession(spec)) if !spec.model_binding_id.is_empty())
                         || sandbox.advertises(NodeCapability::ModelProxy))
+                    && agents::mapping::frozen_configuration(item.input.as_ref())
+                        .is_none_or(|configuration| sandbox.admits(configuration))
             }
             Targeted::Delivery => sandbox.advertises(NodeCapability::RevisionDelivery),
         };

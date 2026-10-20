@@ -247,6 +247,7 @@ impl Node {
                                 selected_version: CURRENT_PROTOCOL_VERSION,
                                 node: identity.clone(),
                                 capabilities: plugins::capabilities(self),
+                                model_adapter: self.agents.model_adapter.lock().unwrap().clone(),
                             },
                         })) },
                         ControllerToNodeMessage::BindRuntime(binding) => Some(NodeToControllerMessage::RuntimeControlState(RuntimeControlState { binding, unfinished_execution_ids:vec![] })),
