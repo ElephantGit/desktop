@@ -1600,8 +1600,10 @@ fn skill_plugins_bound_to_agent_nodes_reach_the_prompt() -> TestResult {
                 prompt.contains("/code-review"),
                 "missing invocation: {prompt:?}"
             );
+            // The discovery root is the agent plugin's declared Effect Resource
+            // (`.opencode/skills` for this fixture), not a host-wide convention.
             assert!(
-                prompt.contains(".agents/skills/code-review"),
+                prompt.contains(".opencode/skills/code-review"),
                 "the prompt must name the materialized worktree copy: {prompt:?}"
             );
             assert!(

@@ -216,6 +216,7 @@ impl Backend {
             engine: workflow_run_engine,
             run_locks,
             transitions: workflow_transitions,
+            plugin_api: plugin.clone(),
             clock,
         }));
 

@@ -610,6 +610,18 @@ impl PluginApi {
             .collect()
     }
 
+    /// Returns the Effect Consumer declaration one agent plugin registered, if any.
+    pub(crate) fn agent_effect_declaration_for(
+        &self,
+        plugin_id: &ora_domain::PluginId,
+    ) -> Option<ConsumerDeclaration> {
+        self.agent_effect_declarations
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(plugin_id)
+            .cloned()
+    }
+
     /// Stops one plugin process while leaving the installed plugin available.
     pub(crate) async fn stop(
         &self,

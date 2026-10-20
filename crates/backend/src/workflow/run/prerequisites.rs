@@ -7,10 +7,11 @@ use ora_application::{
 use ora_db::{
     RepositoryPool, SqliteAgentDefinitionRepository, SqliteSkillRepository, TimestampSource,
 };
-use ora_domain::{AgentDefinitionId, AgentRef, Namespace};
+use ora_domain::{AgentDefinitionId, AgentRef, Namespace, PluginId};
 use ora_utils::path::StrictRelativePath;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Current host capability used until Agent plugins publish their own discovery roots.
 ///
@@ -42,6 +43,63 @@ impl AgentSkillDeliveryProvider for SharedAgentSkillDeliveryProvider {
     ) -> Result<AgentSkillDelivery, ora_application::AgentSkillDeliveryError> {
         Ok(AgentSkillDelivery::Filesystem {
             discovery_roots: self.discovery_roots.clone(),
+        })
+    }
+}
+
+/// Resolves discovery roots from agent plugin declarations, falling back to the
+/// shared default when a plugin has not declared an Effect Resource.
+#[derive(Clone)]
+pub struct PluginAwareAgentSkillDeliveryProvider {
+    plugin_api: Arc<crate::plugin::PluginApi>,
+    fallback: SkillDiscoveryRoots,
+}
+
+impl PluginAwareAgentSkillDeliveryProvider {
+    /// Builds a provider that reads discovery roots from live plugin declarations.
+    pub fn new(
+        plugin_api: Arc<crate::plugin::PluginApi>,
+    ) -> Result<Self, ora_application::AgentSkillDeliveryError> {
+        let fallback_root = StrictRelativePath::parse(".agents/skills").map_err(|error| {
+            ora_application::AgentSkillDeliveryError::Invalid {
+                message: format!("invalid built-in shared skill root: {error:?}"),
+            }
+        })?;
+        Ok(Self {
+            plugin_api,
+            fallback: SkillDiscoveryRoots::new(fallback_root, Vec::new()),
+        })
+    }
+}
+
+impl AgentSkillDeliveryProvider for PluginAwareAgentSkillDeliveryProvider {
+    fn skill_delivery(
+        &self,
+        agent_ref: &AgentRef,
+    ) -> Result<AgentSkillDelivery, ora_application::AgentSkillDeliveryError> {
+        // AgentRef.as_str() is the canonical plugin id (e.g. "official/my-agent")
+        if let Ok(plugin_id) = PluginId::parse(agent_ref.as_str())
+            && let Some(declaration) = self.plugin_api.agent_effect_declaration_for(&plugin_id)
+        {
+            let roots: Vec<StrictRelativePath> = declaration
+                .resources
+                .iter()
+                .filter(|r| {
+                    r.materialization_format
+                        == ora_effect::MaterializationFormat::skill_directory_v1()
+                })
+                .filter_map(|r| StrictRelativePath::parse(r.relative_path.as_str()).ok())
+                .collect();
+            if let Some(first) = roots.first().cloned() {
+                let rest: Vec<StrictRelativePath> = roots.into_iter().skip(1).collect();
+                return Ok(AgentSkillDelivery::Filesystem {
+                    discovery_roots: SkillDiscoveryRoots::new(first, rest),
+                });
+            }
+        }
+        // Fallback: plugin not found, no Effect Resource declared, or no skill_directory resources
+        Ok(AgentSkillDelivery::Filesystem {
+            discovery_roots: self.fallback.clone(),
         })
     }
 }
