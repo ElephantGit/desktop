@@ -432,8 +432,8 @@ export function createChatStore(
       let pendingFlushTimer: ReturnType<typeof setTimeout> | null = null;
       let usageCompleted = false;
 
-      /** Flushes one buffered text batch into the live turn before a boundary update. */
       let pendingDiagnostics: RunDiagnostics | undefined;
+      /** Flushes one buffered text batch into the live turn before a boundary update. */
       const flushPendingTextChunk = () => {
         if (pendingFlushTimer !== null) {
           clearTimeout(pendingFlushTimer);
@@ -715,6 +715,10 @@ export function createChatStore(
             // left open are interrupted now rather than ticking until the turn
             // ends; its pending permissions were answered by that cancel too.
             const retriedAt = now();
+            updateConversation(set, key, (conversation) => ({
+              ...conversation,
+              diagnostics: undefined,
+            }));
             updateTurn(set, key, turnId, (current) => ({
               ...settleActiveToolCalls(current, "cancelled", retriedAt),
               retry: { retry: event.retry, maxRetries: event.maxRetries },

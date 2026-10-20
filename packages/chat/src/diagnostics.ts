@@ -1,11 +1,17 @@
 import type * as acp from "@agentclientprotocol/sdk";
 
 /** A live observation, never reconstructed from transcript load time or provider health guesses. */
+interface ObservedRunActivity {
+  kind: "message" | "thought" | "tool" | "plan";
+  receivedAt: number;
+}
+
 export interface RunDiagnostics {
-  lastActivity?: {
-    kind: "message" | "thought" | "tool" | "plan";
-    receivedAt: number;
-  };
+  /** Parent-stream observations only; projected child output cannot reset this clock. */
+  lastActivity?: ObservedRunActivity;
+  lastChildActivity?: ObservedRunActivity;
+  /** Live ownership evidence survives metadata-free deltas, matching runtime liveness. */
+  toolSources?: Record<string, "parent" | "child">;
   provider?:
     | { kind: "retry"; attempt: number; nextRetryAt?: string }
     | { kind: "compaction"; status: "started" | "completed" | "failed" };
@@ -37,7 +43,26 @@ export function observeDiagnostics(
   } as const;
   if (update.sessionUpdate in kinds) {
     const kind = kinds[update.sessionUpdate as keyof typeof kinds];
-    return { ...previous, lastActivity: { kind, receivedAt } };
+    let child =
+      record(update._meta) && "opencode/child-session" in update._meta;
+    let toolSources = previous?.toolSources;
+    if (
+      update.sessionUpdate === "tool_call" ||
+      update.sessionUpdate === "tool_call_update"
+    ) {
+      child ||= toolSources?.[update.toolCallId] === "child";
+      toolSources = {
+        ...toolSources,
+        [update.toolCallId]: child ? "child" : "parent",
+      };
+    }
+    return {
+      ...previous,
+      ...(toolSources ? { toolSources } : {}),
+      ...(child
+        ? { lastChildActivity: { kind, receivedAt } }
+        : { lastActivity: { kind, receivedAt } }),
+    };
   }
   if (update.sessionUpdate !== "session_info_update" || !record(update._meta))
     return previous;

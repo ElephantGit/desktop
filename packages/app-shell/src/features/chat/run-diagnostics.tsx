@@ -33,6 +33,16 @@ export function RunDiagnosticsPanel({
         ) ?? [])
     : [];
   const provider = diagnostics?.provider;
+  const parentTools = tools.filter(
+    (tool) => diagnostics?.toolSources?.[tool.id] === "parent",
+  );
+  const childTools = tools.filter(
+    (tool) => diagnostics?.toolSources?.[tool.id] === "child",
+  );
+  const unknownTools = tools.filter(
+    (tool) => diagnostics?.toolSources?.[tool.id] === undefined,
+  );
+  const childActivity = diagnostics?.lastChildActivity;
   const report =
     provider?.kind === "retry"
       ? t("chat.diagnosticsRetry", { attempt: provider.attempt })
@@ -81,6 +91,17 @@ export function RunDiagnosticsPanel({
             </>
           )}
         </dd>
+        {childActivity && (
+          <>
+            <dt>{t("chat.diagnosticsChildActivity")}</dt>
+            <dd>
+              {t(`chat.diagnosticsActivity_${childActivity.kind}`)} ·{" "}
+              <time dateTime={new Date(childActivity.receivedAt).toISOString()}>
+                {new Date(childActivity.receivedAt).toLocaleString()}
+              </time>
+            </dd>
+          </>
+        )}
         <dt>{t("chat.diagnosticsRequests")}</dt>
         <dd>
           {pendingPermissions.length
@@ -89,14 +110,37 @@ export function RunDiagnosticsPanel({
         </dd>
         <dt>{t("chat.diagnosticsTools")}</dt>
         <dd>
-          {tools.length
-            ? tools
+          {parentTools.length
+            ? parentTools
                 .map((tool) => (tool.kind === "toolCall" ? tool.title : ""))
                 .join(" · ")
             : t("chat.diagnosticsNoTools")}
         </dd>
+        {childTools.length > 0 && (
+          <>
+            <dt>{t("chat.diagnosticsChildTools")}</dt>
+            <dd>
+              {childTools
+                .map((tool) => (tool.kind === "toolCall" ? tool.title : ""))
+                .join(" · ")}
+            </dd>
+          </>
+        )}
+        {unknownTools.length > 0 && (
+          <>
+            <dt>{t("chat.diagnosticsUnknownTools")}</dt>
+            <dd>
+              {unknownTools
+                .map((tool) => (tool.kind === "toolCall" ? tool.title : ""))
+                .join(" · ")}
+            </dd>
+          </>
+        )}
       </dl>
       <p className="mt-2 text-muted-foreground">{t("chat.diagnosticsLimit")}</p>
+      <p className="mt-1 text-muted-foreground">
+        {t("chat.diagnosticsRequestLimit")}
+      </p>
     </details>
   );
 }
