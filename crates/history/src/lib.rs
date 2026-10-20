@@ -14,6 +14,7 @@ mod assembler;
 mod clock;
 mod error;
 mod handoff;
+mod metadata;
 mod path;
 mod reader;
 mod record;
@@ -23,6 +24,8 @@ mod writer;
 mod assembler_tests;
 #[cfg(test)]
 mod handoff_tests;
+#[cfg(test)]
+mod projection_tests;
 #[cfg(test)]
 mod store_tests;
 

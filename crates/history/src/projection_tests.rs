@@ -1,0 +1,164 @@
+//! Checks source-preserving assembly through the same snapshots used for live reload and JSONL.
+
+use crate::{HistoryAssembler, HistoryRecord};
+use agent_client_protocol_schema::v1::{
+    ContentChunk, Plan, SessionUpdate, StopReason, ToolCall, ToolCallStatus,
+};
+use pretty_assertions::assert_eq;
+use serde_json::{Value, json};
+
+/// Parses a real wire shape so unknown optional metadata participates in the assertion.
+fn update(value: Value) -> SessionUpdate {
+    serde_json::from_value(value).unwrap()
+}
+
+/// Reads the settled or pending payloads without losing metadata to a text-only assertion.
+fn payloads(records: &[crate::AssembledRecord]) -> Vec<SessionUpdate> {
+    records
+        .iter()
+        .filter_map(|record| match &record.record {
+            HistoryRecord::Update { update, .. } => Some(*update.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Constructs a text stream with independently scoped message identity and complete metadata.
+fn text(id: Option<&str>, source: &str, body: &str) -> SessionUpdate {
+    update(
+        json!({"sessionUpdate":"agent_message_chunk", "messageId":id,
+        "content":{"type":"text","text":body,"_meta":{"format":"plain"},"annotations":{"audience":["assistant"]}},
+        "_meta":{"opencode/child-session":{"id":source,"parentID":"root","depth":1}}}),
+    )
+}
+
+#[test]
+fn projected_text_keeps_sources_and_annotations_with_same_or_missing_message_ids() {
+    for id in [Some("shared"), None] {
+        let mut assembler = HistoryAssembler::new(0);
+        let first = text(id, "left", "A");
+        let second = text(id, "right", "B");
+        let mut emitted = assembler.push_update(&first);
+        emitted.extend(assembler.push_update(&second));
+        emitted.extend(assembler.push_update(&text(id, "right", "C")));
+        let mut pending = emitted.clone();
+        pending.extend(assembler.pending_records());
+        let expected = vec![first, text(id, "right", "BC")];
+        assert_eq!(payloads(&pending), expected);
+        emitted.extend(assembler.end_turn(StopReason::EndTurn));
+        assert_eq!(payloads(&emitted), expected);
+        // A serialized roundtrip exercises the existing schema rather than a parallel DTO.
+        for record in emitted {
+            let encoded = serde_json::to_value(&record.record).unwrap();
+            let decoded: HistoryRecord = serde_json::from_value(encoded).unwrap();
+            assert_eq!(decoded, record.record);
+        }
+    }
+}
+
+#[test]
+fn non_text_chunks_and_thoughts_keep_their_full_metadata() {
+    let mut assembler = HistoryAssembler::new(0);
+    let image = update(
+        json!({"sessionUpdate":"agent_message_chunk","content":{"type":"image","data":"YWJj","mimeType":"image/png"},"_meta":{"source":"child"}}),
+    );
+    assert_eq!(payloads(&assembler.push_update(&image)), vec![image]);
+    let mut chunk = ContentChunk::new("reason".into());
+    chunk.meta = Some(serde_json::from_value(json!({"source":"child"})).unwrap());
+    let thought = SessionUpdate::AgentThoughtChunk(chunk);
+    assembler.push_update(&thought);
+    assert_eq!(payloads(&assembler.pending_records()), vec![thought]);
+}
+
+#[test]
+fn late_tool_metadata_replaces_namespaces_and_survives_terminal_refinement() {
+    let mut assembler = HistoryAssembler::new(0);
+    assembler.push_update(&SessionUpdate::ToolCall(ToolCall::new("tool", "Work")));
+    let settled = update(
+        json!({"sessionUpdate":"tool_call_update","toolCallId":"tool","status":"completed","_meta":{"opencode/child-session":{"id":"child","parentID":"root","depth":1},"other":{"old":true}}}),
+    );
+    let first = assembler.push_update(&settled);
+    let cleared = update(
+        json!({"sessionUpdate":"tool_call_update","toolCallId":"tool","_meta":{"opencode/child-session":null,"other":{"new":true}}}),
+    );
+    let last = assembler.push_update(&cleared);
+    assert_eq!(first[0].seq, last[0].seq);
+    let SessionUpdate::ToolCall(call) = &payloads(&last)[0] else {
+        panic!("tool snapshot")
+    };
+    assert_eq!(
+        call.meta,
+        Some(
+            serde_json::from_value(json!({"opencode/child-session":null,"other":{"new":true}}))
+                .unwrap()
+        )
+    );
+    assert_eq!(call.status, ToolCallStatus::Completed);
+}
+
+#[test]
+fn parent_end_does_not_complete_unsettled_projected_tools() {
+    let mut assembler = HistoryAssembler::new(0);
+    let child = update(
+        json!({"sessionUpdate":"tool_call","toolCallId":"child:tool","title":"Work","status":"in_progress","_meta":{"opencode/child-session":{"id":"child","parentID":"root","depth":1}}}),
+    );
+    assembler.push_update(&child);
+    assert_eq!(
+        payloads(&assembler.end_turn(StopReason::EndTurn)),
+        vec![child]
+    );
+}
+
+#[test]
+fn plans_from_distinct_sources_do_not_overwrite_each_other() {
+    let mut assembler = HistoryAssembler::new(0);
+    let parent = SessionUpdate::Plan(Plan::new(vec![]));
+    let child = update(
+        json!({"sessionUpdate":"plan","entries":[],"_meta":{"opencode/child-session":{"id":"child","parentID":"root","depth":1}}}),
+    );
+    assembler.push_update(&parent);
+    assembler.push_update(&child);
+    assert_eq!(
+        payloads(&assembler.pending_records()),
+        vec![parent.clone(), child.clone()]
+    );
+    assert_eq!(
+        payloads(&assembler.end_turn(StopReason::EndTurn)),
+        vec![parent, child]
+    );
+}
+
+#[test]
+fn unidentified_source_switches_preserve_order_through_disk_reload() {
+    let root = tempfile::tempdir().unwrap();
+    let id = "c3000000-0000-4000-8000-000000000001";
+    let writer = crate::HistoryWriter::open(
+        root.path(),
+        id,
+        crate::FixedHistoryClock::new(time::macros::datetime!(2026-10-20 10:00:00 +08:00)),
+    )
+    .unwrap();
+    let mut assembler = HistoryAssembler::new(0);
+    let expected = vec![
+        text(None, "left", "A"),
+        text(None, "right", "B"),
+        text(None, "left", "C"),
+    ];
+    for event in &expected {
+        writer.append(&assembler.push_update(event)).unwrap();
+    }
+    writer
+        .append(&assembler.end_turn(StopReason::EndTurn))
+        .unwrap();
+    let history = crate::read_session_history(root.path(), id).unwrap();
+    let records = history
+        .lines
+        .iter()
+        .map(|line| crate::AssembledRecord {
+            seq: line.seq,
+            record: line.record.clone(),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(payloads(&records), expected);
+    assert_eq!(crate::SCHEMA_VERSION, 2);
+}

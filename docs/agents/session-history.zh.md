@@ -8,6 +8,11 @@ Ora 拥有 transcript，Agent 拥有模型上下文。transcript 可以在 Agent
 
 ## 记录
 
+provider 来源保留在既有 ACP 更新中：文本/思考保存完整 chunk 的 metadata 与注解，工具增量只替换实际
+出现的顶层 metadata 命名空间（包括显式 null）。不同 metadata 的文本即使 messageId 相同或缺失也不
+合并；不同来源 metadata 的 plan 保留独立快照。父回合结束不能证明明确投影自 OpenCode 子会话的工具
+已经完成。JSONL schema 和路径不变；旧历史仍可读取，但没有保存过的来源信息无法恢复。
+
 - 运行时记录的是它选择保留的内容，而不是它发送的内容。prompt 在调用 Agent 之前按请求内容块记录，provider 回显的 `user_message_chunk` 被忽略，所以 Ora 注入的上下文从不进入记录。
 - 流式更新先记录再转发，所以客户端在回合中途断开只丢失流，从不丢失记录。
 - 每个 prompt 回合以它的 `stopReason` 收尾，这也让从未完成的工具调用得以还原。
