@@ -129,6 +129,92 @@ fn plans_from_distinct_sources_do_not_overwrite_each_other() {
 }
 
 #[test]
+fn cleared_or_invalid_child_sources_settle_as_parent_tools() {
+    for source in [
+        Value::Null,
+        json!({}),
+        json!({"id":"","parentID":"root","depth":1}),
+        json!({"id":"child","parentID":"","depth":1}),
+        json!({"id":"child","parentID":"root","depth":0}),
+        json!({"id":"child","parentID":"root","depth":-1}),
+        json!({"id":"child","parentID":"root","depth":1.5}),
+        json!({"id":"child","parentID":"root","depth":"1"}),
+    ] {
+        let mut assembler = HistoryAssembler::new(0);
+        assembler.push_update(&update(json!({
+            "sessionUpdate":"tool_call","toolCallId":"tool","title":"Work",
+            "status":"in_progress",
+            "_meta":{"opencode/child-session":{"id":"child","parentID":"root","depth":1}}
+        })));
+        assembler.push_update(&update(json!({
+            "sessionUpdate":"tool_call_update","toolCallId":"tool",
+            "_meta":{"opencode/child-session":source}
+        })));
+        let expected = update(json!({
+            "sessionUpdate":"tool_call","toolCallId":"tool","title":"Work",
+            "status":"completed","_meta":{"opencode/child-session":source}
+        }));
+        let records = assembler.end_turn(StopReason::EndTurn);
+        assert_eq!(payloads(&records), vec![expected.clone()]);
+        assert_eq!(reload_payloads(&records), vec![expected]);
+    }
+}
+
+/// Exercises the production JSONL writer and reader for settled snapshots.
+fn reload_payloads(records: &[crate::AssembledRecord]) -> Vec<SessionUpdate> {
+    let root = tempfile::tempdir().unwrap();
+    let id = "c3000000-0000-4000-8000-000000000002";
+    let writer = crate::HistoryWriter::open(
+        root.path(),
+        id,
+        crate::FixedHistoryClock::new(time::macros::datetime!(2026-10-20 10:00:00 +08:00)),
+    )
+    .unwrap();
+    writer.append(records).unwrap();
+    let history = crate::read_session_history(root.path(), id).unwrap();
+    payloads(
+        &history
+            .lines
+            .iter()
+            .map(|line| crate::AssembledRecord {
+                seq: line.seq,
+                record: line.record.clone(),
+            })
+            .collect::<Vec<_>>(),
+    )
+}
+
+#[test]
+fn plans_replace_by_source_despite_changing_metadata_through_reload() {
+    let mut assembler = HistoryAssembler::new(0);
+    let plan = |source: Value, revision| {
+        update(json!({
+            "sessionUpdate":"plan",
+            "entries":[{"content":format!("revision {revision}"),"priority":"medium","status":"pending"}],
+            "_meta":{"opencode/child-session":source,"revision":revision}
+        }))
+    };
+    let child = json!({"id":"child","parentID":"root","depth":1});
+    let sibling = plan(json!({"id":"sibling","parentID":"root","depth":1}), 1);
+    assembler.push_update(&plan(Value::Null, 1));
+    assembler.push_update(&plan(child, 1));
+    assembler.push_update(&sibling);
+    // Source identity is the id, not changing extension fields or relation details.
+    let latest_child = plan(
+        json!({"id":"child","parentID":"other","depth":2,"extra":true}),
+        2,
+    );
+    let latest_parent = plan(json!({"id":"invalid"}), 2);
+    assembler.push_update(&latest_child);
+    assembler.push_update(&latest_parent);
+    let expected = vec![latest_parent, latest_child, sibling];
+    assert_eq!(payloads(&assembler.pending_records()), expected);
+    let records = assembler.end_turn(StopReason::EndTurn);
+    assert_eq!(payloads(&records), expected);
+    assert_eq!(reload_payloads(&records), expected);
+}
+
+#[test]
 fn unidentified_source_switches_preserve_order_through_disk_reload() {
     let root = tempfile::tempdir().unwrap();
     let id = "c3000000-0000-4000-8000-000000000001";

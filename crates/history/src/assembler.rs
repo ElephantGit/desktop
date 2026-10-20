@@ -1,4 +1,4 @@
-use crate::metadata::retain_tool_metadata;
+use crate::metadata::{child_source_id, retain_tool_metadata};
 use crate::record::{HistoryRecord, ToolCallTiming};
 use agent_client_protocol_schema::v1::ContentBlock;
 use agent_client_protocol_schema::v1::Plan;
@@ -158,9 +158,8 @@ impl HistoryAssembler {
 
     /// Flushes every item still open and closes the turn with its stop reason.
     ///
-    /// Tool calls the provider never reported finishing are settled here rather
-    /// than written mid-flight, because the turn ending is proof they are no
-    /// longer running.
+    /// Parent tools may settle here; projected child tools retain their reported
+    /// state because the parent ending does not prove child completion.
     pub fn end_turn(&mut self, stop_reason: StopReason) -> Vec<AssembledRecord> {
         let mut records: Vec<AssembledRecord> = std::mem::take(&mut self.texts)
             .into_iter()
@@ -329,13 +328,11 @@ impl HistoryAssembler {
         records
     }
 
-    /// Keeps only the newest plan snapshot, which is the one the turn ends with.
+    /// Keeps the newest plan per valid child id, plus one unattributed parent plan.
     fn replace_plan(&mut self, plan: Plan) -> Vec<AssembledRecord> {
-        match self
-            .plans
-            .iter_mut()
-            .find(|(_, pending)| pending.meta == plan.meta)
-        {
+        match self.plans.iter_mut().find(|(_, pending)| {
+            child_source_id(pending.meta.as_ref()) == child_source_id(plan.meta.as_ref())
+        }) {
             Some((_, pending)) => {
                 *pending = plan;
                 Vec::new()
@@ -433,12 +430,8 @@ impl PendingTool {
             ToolCallStatus::Pending | ToolCallStatus::InProgress
         );
         // A projected child may outlive the parent prompt. Only its own terminal update proves
-        // completion; even malformed attribution must not silently become parent-owned work.
-        let projected = self
-            .call
-            .meta
-            .as_ref()
-            .is_some_and(|meta| meta.contains_key("opencode/child-session"));
+        // completion. Cleared or invalid sources follow the ordinary parent-stream rules.
+        let projected = child_source_id(self.call.meta.as_ref()).is_some();
         if unfinished && !projected && stop_reason == StopReason::EndTurn {
             self.call.status = ToolCallStatus::Completed;
             return Some(tool_record(self.seq, &self.call, self.timing.clone()));
