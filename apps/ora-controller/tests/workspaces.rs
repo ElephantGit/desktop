@@ -179,9 +179,12 @@ impl Node {
                     let Ok(Some(frame)) = frame else { return };
                     let Ok(message) = decode_controller_frame(&frame) else { return };
                     match message {
-                        ControllerToNodeMessage::Hello(_) => { greeted = true; Some(NodeToControllerMessage::HelloAccepted(HelloAcceptedMessage {
+                        ControllerToNodeMessage::Hello(hello) => {
+                            let previews = hello.payload.thread_previews && self.agents.previews_enabled.load(Ordering::SeqCst);
+                            self.agents.previews_negotiated.store(previews, Ordering::SeqCst);
+                            greeted = true; Some(NodeToControllerMessage::HelloAccepted(HelloAcceptedMessage {
                             protocol_version: CURRENT_PROTOCOL_VERSION,
-                            payload: HelloAccepted { thread_previews: false,
+                            payload: HelloAccepted { thread_previews: previews,
                                 selected_version: CURRENT_PROTOCOL_VERSION,
                                 node: identity.clone(),
                                 capabilities: plugins::capabilities(self),
