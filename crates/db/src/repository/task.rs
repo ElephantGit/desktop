@@ -1,5 +1,5 @@
 use ora_application::{RepositoryError, TaskRepository};
-use ora_domain::{AuditFields, ProjectId, Task, TaskId, WorkspaceId};
+use ora_domain::{AuditFields, ProjectId, SessionStatus, Task, TaskId, WorkspaceId};
 use rusqlite::{Row, params};
 
 use crate::repository::{RepositoryPool, connection::bool_to_sqlite};
@@ -145,4 +145,35 @@ pub(super) fn map_task_row(row: &Row<'_>) -> Result<Task, crate::DatabaseError> 
 /// Converts shared database-layer failures into task repository errors.
 fn task_repository_error_from_database(error: crate::DatabaseError) -> RepositoryError {
     RepositoryError::new(error)
+}
+
+impl ora_application::TaskActivityRepository for SqliteTaskRepository {
+    /// Reports whether a live session or workflow run still occupies the task workspace,
+    /// mirroring the cascade delete's ActiveSession guard.
+    fn task_has_running_activity(&self, task_id: &TaskId) -> Result<bool, RepositoryError> {
+        let Some(task) = self.find_task(task_id)? else {
+            return Ok(false);
+        };
+        self.pool
+            .with_connection(|connection| {
+                connection
+                    .query_row(
+                        "SELECT EXISTS(
+                            SELECT 1 FROM sessions
+                            WHERE workspace_id = ?1 AND status = ?2 AND is_deleted = 0
+                         ) OR EXISTS(
+                            SELECT 1 FROM workflow_runs
+                            WHERE workspace_id = ?1 AND run_status IN (0, 1) AND is_deleted = 0
+                         )",
+                        params![
+                            task.workspace_id.as_ref(),
+                            SessionStatus::Running.database_value()
+                        ],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .map(|value| value != 0)
+                    .map_err(Into::into)
+            })
+            .map_err(task_repository_error_from_database)
+    }
 }

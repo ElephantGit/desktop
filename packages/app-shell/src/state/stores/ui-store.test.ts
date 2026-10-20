@@ -184,7 +184,19 @@ describe("useUiStore", () => {
     expect(raw!).not.toContain("settingsOpen");
     expect(raw!).not.toContain("workflowEditorOpen");
     expect(raw!).not.toContain("scheduledTasksOpen");
+    expect(raw!).not.toContain("scheduledTaskHistoryRequest");
     expect(raw!).not.toContain("dialog");
+  });
+
+  it("opens the scheduled task pane with a one-shot history deep link", () => {
+    useUiStore.setState({ scheduledTasksOpen: false });
+    useUiStore.getState().openScheduledTaskHistory({ taskId: "scheduled-1" });
+    expect(useUiStore.getState().scheduledTasksOpen).toBe(true);
+    expect(useUiStore.getState().scheduledTaskHistoryRequest).toEqual({
+      taskId: "scheduled-1",
+    });
+    useUiStore.getState().clearScheduledTaskHistoryRequest();
+    expect(useUiStore.getState().scheduledTaskHistoryRequest).toBeNull();
   });
 
   it("rehydrates layout preferences and rebuilds expand Sets", async () => {

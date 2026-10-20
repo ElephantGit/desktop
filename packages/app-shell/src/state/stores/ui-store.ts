@@ -41,6 +41,12 @@ export type PluginSettingsRequest =
   | { kind: "configure"; pluginId: string; displayName: string };
 
 /**
+ * A one-shot destination inside the Scheduled Task pane requested by another surface:
+ * the run/missed history of one task definition.
+ */
+export type ScheduledTaskHistoryRequest = { taskId: string };
+
+/**
  * Sidebar workflow-run filter. `awaiting_input` is the Theater display spelling
  * so HITL rows match the status dots rather than the wire `awaitingInput` token.
  */
@@ -94,6 +100,14 @@ interface UiState {
   /** Opens Settings on the plugins pane at the requested destination. */
   openPluginSettings(request: PluginSettingsRequest): void;
   clearPluginSettingsRequest(): void;
+  /**
+   * Pending deep link into the Scheduled Task pane (for example from a notification).
+   * The pane adopts it on mount and clears it, so later visits start from the list.
+   */
+  scheduledTaskHistoryRequest: ScheduledTaskHistoryRequest | null;
+  /** Opens the Scheduled Task pane at the requested task's history. */
+  openScheduledTaskHistory(request: ScheduledTaskHistoryRequest): void;
+  clearScheduledTaskHistoryRequest(): void;
   /** First-class workflow definition editor; session-only, not persisted. */
   workflowEditorOpen: boolean;
   /** First-class Scheduled Task definition manager; session-only, not persisted. */
@@ -257,6 +271,7 @@ export const useUiStore = create<UiState>()(
       settingsOpen: false,
       settingsCategory: "appearance",
       pluginSettingsRequest: null,
+      scheduledTaskHistoryRequest: null,
       workflowEditorOpen: false,
       scheduledTasksOpen: false,
       expandedProjects: initialPersist.expandedProjects,
@@ -278,6 +293,10 @@ export const useUiStore = create<UiState>()(
           pluginSettingsRequest,
         }),
       clearPluginSettingsRequest: () => set({ pluginSettingsRequest: null }),
+      openScheduledTaskHistory: (scheduledTaskHistoryRequest) =>
+        set({ scheduledTasksOpen: true, scheduledTaskHistoryRequest }),
+      clearScheduledTaskHistoryRequest: () =>
+        set({ scheduledTaskHistoryRequest: null }),
       setWorkflowEditorOpen: (workflowEditorOpen) =>
         set({
           workflowEditorOpen,

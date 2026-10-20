@@ -22,8 +22,8 @@ pub use handlers::{CreateTaskHandler, GetTaskHandler, ListTasksHandler, UpdateTa
 pub use id_generator::UuidTaskIdGenerator;
 pub use ports::{
     CreateTaskWorktreeRequest, CreateTaskWorktreeResponse, DeleteTaskWorktreeRequest,
-    TaskIdGenerator, TaskRepository, TaskWorktreeDeletionMode, TaskWorktreeProvisioner,
-    TaskWorktreeProvisionerError,
+    TaskActivityRepository, TaskIdGenerator, TaskRepository, TaskWorktreeDeletionMode,
+    TaskWorktreeProvisioner, TaskWorktreeProvisionerError,
 };
 pub use provisioning::{
     PROVISIONING_LEASE_DURATION_MS, ProvisioningLeaseRenewal, TaskWorkspaceCommit,
