@@ -210,3 +210,57 @@ async fn rejects_missing_and_empty_fields() -> Result<(), TestError> {
         .await?;
     Ok(())
 }
+
+/// Adapter facts travel only beside `model_proxy`, with a known contract and distinct protocols.
+#[tokio::test]
+async fn model_adapter_capability_round_trips_and_requires_model_proxy() -> Result<(), TestError> {
+    let mut case = fixtures::hello_accepted();
+    let Message::Node(NodeToControllerMessage::HelloAccepted(accepted)) = &mut case.message else {
+        panic!("fixture must be a hello_accepted")
+    };
+    accepted.payload.capabilities = vec![NodeCapability::AgentSession, NodeCapability::ModelProxy];
+    accepted.payload.model_adapter = Some(ModelAdapterCapability {
+        contract_version: MODEL_ADAPTER_CONTRACT_VERSION,
+        target: "x86_64-unknown-linux-gnu".into(),
+        protocols: vec![
+            ModelProtocol::OpenaiCompletions,
+            ModelProtocol::AnthropicMessages,
+        ],
+    });
+    case.wire["payload"]["capabilities"] = json!(["agent_session", "model_proxy"]);
+    case.wire["payload"]["model_adapter"] = json!({
+        "contract_version": 1,
+        "target": "x86_64-unknown-linux-gnu",
+        "protocols": ["openai-completions", "anthropic-messages"],
+    });
+    case.assert_wire().await?;
+    case.assert_round_trip().await?;
+    for (path, value) in [
+        ("/payload/capabilities", json!(["agent_session"])),
+        ("/payload/model_adapter/contract_version", json!(2)),
+        ("/payload/model_adapter/target", json!("")),
+        ("/payload/model_adapter/protocols", json!([])),
+        (
+            "/payload/model_adapter/protocols",
+            json!(["anthropic-messages", "anthropic-messages"]),
+        ),
+    ] {
+        let mut wire = case.wire.clone();
+        replace(&mut wire, path, value);
+        reject_semantics(
+            Peer::Node,
+            &wire,
+            path,
+            MessageValidationError::InvalidModelAdapterCapability,
+        )
+        .await?;
+    }
+    let mut wire = case.wire.clone();
+    replace(
+        &mut wire,
+        "/payload/model_adapter/protocols",
+        json!(["openai-responses"]),
+    );
+    reject_structure(Peer::Node, &wire, "unknown model protocol").await;
+    Ok(())
+}

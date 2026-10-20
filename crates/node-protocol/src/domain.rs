@@ -1,6 +1,7 @@
 mod agent_session;
 mod execution;
 mod git_server;
+mod model_adapter;
 mod plugin;
 mod repository;
 mod repository_result;
@@ -18,6 +19,10 @@ pub use git_server::{
     DELIVERY_REF_PREFIX, DeliveryRef, GitRepositoryUrl, InvalidGitRepositoryUrl,
     InvalidGitServerRef, MAX_WORKSPACE_BRANCH_BYTES, SnapshotRef, WorkspaceRef, is_canonical_uuid,
     is_full_lowercase_commit, is_workspace_branch,
+};
+pub use model_adapter::{
+    BoundModel, FrozenAgentConfiguration, MAX_AGENT_SETTINGS_BYTES, MODEL_ADAPTER_CONTRACT_VERSION,
+    ModelAdapterCapability, ModelProtocol,
 };
 pub use plugin::{
     InstallPluginsSpec, PluginAgentConfiguration, PluginDownload, PluginExecutionResult,

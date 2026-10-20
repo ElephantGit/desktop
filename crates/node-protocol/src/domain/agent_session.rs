@@ -2,8 +2,8 @@
 //! history records it streams as non-terminal Thread events.
 
 use crate::{
-    ExecutionId, MessageValidationError, ModelBindingId, NodeId, NodeRuntimeIdentity, PluginId,
-    PluginVersion, PriorRevision, TurnId, is_canonical_uuid,
+    ExecutionId, FrozenAgentConfiguration, MessageValidationError, ModelBindingId, NodeId,
+    NodeRuntimeIdentity, PluginId, PluginVersion, PriorRevision, TurnId, is_canonical_uuid,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -121,6 +121,10 @@ pub struct AgentSessionSpec {
     /// Only a binding reference crosses the control protocol; model credentials never do.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_binding_id: Option<ModelBindingId>,
+    /// Present only for a plugin-owned adapter; the session then also names its model binding,
+    /// and the plugin, not the Node, turns the binding into CLI configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_configuration: Option<FrozenAgentConfiguration>,
     pub git_identity: GitIdentity,
     pub initial_turn: UserTurn,
     /// The Revision this session resumes; the Node restores it into the checkout before the agent
@@ -158,6 +162,14 @@ impl AgentSessionSpec {
             return Err(MessageValidationError::EmptyField {
                 field: "model_binding_id",
             });
+        }
+        if let Some(configuration) = &self.agent_configuration {
+            // An adapter needs an authority to apply; one without a binding could only fall back
+            // to whatever credentials the host happens to hold.
+            if self.model_binding_id.is_none() {
+                return Err(MessageValidationError::InvalidAgentConfiguration);
+            }
+            configuration.validate(&self.agent_plugin_id, &self.agent_plugin_version)?;
         }
         self.initial_turn.validate()?;
         if let Some(prior) = &self.prior_revision {
