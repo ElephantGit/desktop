@@ -102,6 +102,8 @@ async fn serve_refuses_an_agent_workload_that_does_not_match_the_process_workloa
 async fn serve_refuses_an_ora_git_directory_that_is_not_the_nodes_alone() {
     let temp = tempfile::tempdir().expect("tempdir");
     let root = temp.path();
+    // The tempdir itself is one of the cases: Node-owned and private, so only the overlap refuses it.
+    fs::set_permissions(root, fs::Permissions::from_mode(0o700)).expect("set mode");
     let with = |ora_git: PathBuf| {
         let mut config = config(root, None, None);
         config.agent.as_mut().expect("agent").ora_git_directory = Some(ora_git);
