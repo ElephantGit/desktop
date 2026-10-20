@@ -11,6 +11,8 @@
 mod agents;
 #[path = "workspaces/deliveries.rs"]
 mod deliveries;
+#[path = "workspaces/force_stop.rs"]
+mod force_stop;
 #[path = "workspaces/plugins.rs"]
 mod plugins;
 #[path = "workspaces/restores.rs"]
@@ -56,6 +58,16 @@ fn node_id() -> NodeId {
 struct Substrate {
     journal: Arc<Mutex<HashMap<String, Value>>>,
     timeline: Timeline,
+    replies: Arc<Mutex<EffectReplies>>,
+}
+
+/// Per-test transport outcomes and verbatim mutation requests, shared with the HTTP stub.
+#[derive(Default)]
+struct EffectReplies {
+    by_id: HashMap<String, (StatusCode, Value)>,
+    ensure: Option<(StatusCode, Value)>,
+    puts: Vec<(String, Value)>,
+    unanswered: std::collections::HashSet<String>,
 }
 
 async fn effects(
@@ -82,6 +94,28 @@ async fn effects(
         method: "PUT",
         kind: kind(&request),
     });
+    let custom = {
+        let mut replies = substrate.replies.lock().unwrap();
+        replies.puts.push((id.clone(), request.clone()));
+        replies.by_id.get(&id).cloned().or_else(|| {
+            (request.get("kind").and_then(Value::as_str) == Some("sandbox_ensure"))
+                .then(|| replies.ensure.clone())
+                .flatten()
+        })
+    };
+    let unanswered = substrate.replies.lock().unwrap().unanswered.contains(&id);
+    if unanswered {
+        std::future::pending::<()>().await;
+    }
+    if let Some((status, mut reply)) = custom {
+        if reply.get("state").is_some() {
+            reply["id"] = json!(id);
+            reply["externalId"] = json!(id);
+            reply["request"] = request;
+            substrate.journal.lock().unwrap().insert(id, reply.clone());
+        }
+        return (status, Json(reply));
+    }
     let result = match request["kind"].as_str() {
         Some("sandbox_ensure") => {
             json!({ "sandboxInstanceId": id, "nodeId": node_id().as_str() })
@@ -120,6 +154,8 @@ struct Node {
     restores: restores::RestoreNode,
     /// Ends the current session once, as a dropped connection would.
     disconnect: Arc<AtomicBool>,
+    /// Keeps the close unacknowledged to exercise the existing bounded shutdown deadline.
+    ignore_close: Arc<AtomicBool>,
     plugin_outcome: Arc<Mutex<plugins::Outcome>>,
     /// The translated plugin commands this Node received, for verbatim preservation checks.
     plugins_received: Arc<Mutex<Vec<PluginCommand>>>,
@@ -178,7 +214,17 @@ impl Node {
             }
             let reply = tokio::select! {
                 frame = receiver.recv() => {
-                    let Ok(Some(frame)) = frame else { return };
+                    let frame = match frame {
+                        Ok(Some(frame)) => frame,
+                        Err(error) if error.is_closed_for(ora_node_transport::CloseReason::Shutdown) => {
+                            self.timeline.push(Event::ShutdownClose);
+                            if self.ignore_close.load(Ordering::SeqCst) {
+                                std::future::pending::<()>().await;
+                            }
+                            return;
+                        }
+                        Ok(None) | Err(_) => return,
+                    };
                     let Ok(message) = decode_controller_frame(&frame) else { return };
                     match message {
                         ControllerToNodeMessage::Hello(hello) => {
@@ -263,6 +309,7 @@ struct World {
     node: Node,
     timeline: Timeline,
     controller: Controller,
+    substrate: Substrate,
 }
 
 /// The running Controller process of a scenario, which a test may restart.
@@ -314,6 +361,7 @@ impl World {
 
 /// Runs `test` against a Controller with a Substrate and no static Node.
 fn scenario<Fut: Future<Output = ()>>(requested_ref: &str, test: impl FnOnce(World) -> Fut) {
+    ora_logging::initialize_test_clock();
     ora_logging::with_trace_logging(|| run_scenario(requested_ref, test));
 }
 
@@ -336,10 +384,11 @@ fn run_scenario<Fut: Future<Output = ()>>(requested_ref: &str, test: impl FnOnce
             let substrate = Substrate {
                 journal: Arc::default(),
                 timeline: timeline.clone(),
+                replies: Arc::default(),
             };
             let app = Router::new()
                 .route("/effects/{id}", any(effects))
-                .with_state(substrate);
+                .with_state(substrate.clone());
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let effects_url = format!("http://{}", listener.local_addr().unwrap());
             tokio::spawn(async move { axum::serve(listener, app).await });
@@ -350,6 +399,7 @@ fn run_scenario<Fut: Future<Output = ()>>(requested_ref: &str, test: impl FnOnce
                 deliveries: deliveries::DeliveryNode::default(),
                 restores: restores::RestoreNode::default(),
                 disconnect: Arc::new(AtomicBool::new(false)),
+                ignore_close: Arc::new(AtomicBool::new(/*v*/ false)),
                 plugin_outcome: Arc::new(Mutex::new(plugins::Outcome::Installed)),
                 plugins_received: Arc::new(Mutex::new(Vec::new())),
                 timeline: timeline.clone(),
@@ -388,6 +438,7 @@ fn run_scenario<Fut: Future<Output = ()>>(requested_ref: &str, test: impl FnOnce
                 node,
                 timeline,
                 controller: controller.clone(),
+                substrate,
             })
             .await;
             controller.stop().await;

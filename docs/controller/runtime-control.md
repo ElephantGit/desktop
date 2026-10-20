@@ -73,6 +73,28 @@ target; Cloud accepts a termination only when it proves both `terminated` and `l
 Unreachability, a heartbeat timeout or a new generation never permits parallel writes to the same
 directory.
 
+The Controller does not filter force-stop plans by the requester's role: the same RPC delivers plans
+from different Cloud entry points. Every effect and sandbox ID is preserved, including targets whose
+ensure never executed. A target rejection, execution failure or unreachable Substrate does not starve
+independent targets. Cloud unavailability during permit or confirmation calls, or local lease loss,
+stops new dispatch. Every new PUT checks permit epoch, expiry and the current local lease after the
+journal GET, and checks again after any bounded Node control close; preparation never extends a permit.
+
+Before a new terminate PUT, the worker attempts to remove the existing Fleet target and send its
+Shutdown control close. A missing connection or close acknowledgement does not prevent termination.
+This is neither an EndSession nor termination evidence; EndSession still comes only from the existing
+authorized Cloud command queue. GET404, an unreachable Node, an expired permit, and missing or false
+dual-evidence fields cannot confirm termination. The exact `sandbox_terminated` ensure refusal (a 503
+admission error or a failed journal's top-level error) enters the existing Blocked path; recovery GET
+cannot retransmit that ensure. Ordinary 503, Docker failures and stale permission are not reclassified
+as tombstones, and successful journals retain their historical results.
+
+The `ora-controller` tests in `src/cloud/substrate/put_admission.rs` and
+`tests/workspaces/force_stop.rs` exercise permit, control-close, termination-evidence and tombstone
+refusal boundaries over real HTTP/gRPC/WebSocket protocols with local doubles. They do not prove
+production authorization, real container destruction, or joint Cloud–Controller–Substrate fault
+recovery. The Controller never invents targets Cloud omitted.
+
 ## Compatibility
 
 Peers negotiate `runtime_control` explicitly, and a controlled execution never silently falls back to

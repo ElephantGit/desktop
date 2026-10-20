@@ -158,6 +158,12 @@ pub enum Event {
     },
     /// The fake Node's session with the Controller ended.
     SessionEnded,
+    /// The Node observed the Controller's deliberate control-channel close.
+    ShutdownClose,
+    /// A force-stop listing completed, including an empty one used to observe the next wake.
+    ForceListed,
+    /// A force permit reply or confirmation changed the condition observed by a scenario.
+    ForceProgress,
     /// The Controller listed the live sandboxes; `sandboxes` is how many Cloud returned.
     Listed {
         sandboxes: usize,
@@ -218,6 +224,7 @@ struct State {
     sandboxes: Vec<proto::SandboxRecord>,
     nodes: Vec<proto::NodeRecord>,
     effects: Vec<(String, proto::Effect)>,
+    force: runtime_control::ForceState,
     clones: Vec<proto::ExecutionRecord>,
     plugin_input: Option<proto::ExecutionInput>,
     agents: agents::AgentState,
@@ -295,6 +302,7 @@ impl WorkspaceCloud {
                 sandboxes: Vec::new(),
                 nodes: Vec::new(),
                 effects: Vec::new(),
+                force: runtime_control::ForceState::default(),
                 clones: Vec::new(),
                 plugin_input: None,
                 agents: agents::AgentState::default(),

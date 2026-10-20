@@ -39,6 +39,12 @@ Node 持久化它的运行时目标、控制 epoch 与版本、关闭状态和�
 
 紧急终止使用独立的 effect 许可，最长 10 秒，并且从不超过 Controller 的租约。Controller 的强制停止 worker（`ListForceStops`、`ConfirmForceStop`）在普通生命周期步骤等待 Node 时仍持续交付，从不编造执行完成。执行一侧使用持久的运行时栅栏，防止迟到的 ensure 重新创建目标；只有同时证明 `terminated` 和 `lateEnsureFenced` 时，Cloud 才接受终止。不可达、心跳超时或新的代次都不允许对同一目录的并行写入。
 
+Controller 不按请求者角色筛选强停计划：同一 RPC 可交付不同 Cloud 入口产生的计划，每项保留原 effect 和 sandbox ID，包括从未执行 ensure 的目标。单个目标拒绝、执行失败或 Substrate 不可达时继续其他独立目标；获取许可或确认时遇到 Cloud 不可用、或本地租约丢失，则停止新派发。每个新 PUT 在 journal GET 之后检查许可 epoch、有效期和当前本地租约；Node 控制关闭耗时之后也重新检查，不能延长许可。
+
+新 terminate PUT 前，worker 尽力移除已有 Fleet target 并发送现有 Shutdown control close；没有连接或 close 没有确认不会阻止后续终止。该消息不是 EndSession，也不是终止证据；EndSession 仍只能来自已有 Cloud 命令队列及其授权。GET404、Node 不可达、过期许可、缺失或为 false 的双确认字段均不能产生终止确认。ensure 收到精确的 `sandbox_terminated`（503 准入错误，或 failed journal 顶层 error）时进入已有 Blocked 路径，恢复 GET 也不能重新 PUT。普通 503、Docker 失败和 stale permission 不会被改称墓碑；已有成功 journal 仍保持原历史结果。
+
+`ora-controller` 的 `src/cloud/substrate/put_admission.rs` 和 `tests/workspaces/force_stop.rs` 中的测试通过真实 HTTP/gRPC/WebSocket 协议与本地假服务覆盖许可、控制关闭、终止证据和墓碑拒绝边界；它们不证明生产授权、真实容器销毁或 Cloud–Controller–Substrate 的联合故障恢复。Cloud 未提供的目标不由 Controller 自动补造。
+
 ## 兼容性
 
 对端显式协商 `runtime_control`，受控的执行从不悄悄退回到不带绑定的请求。已退役的监听和旧的 JSON 接口保持关闭，历史责任仍可查询。升级保留历史的 owner、执行和审计引用；回滚从不通过删除新的持久状态来实现。Node 证书有效期短且没有无缝续期，轮换需要受控的重启。旧的由工作负载拥有的管理 home 不会被自动修复：未完成的未绑定历史会阻止新的绑定，部署必须先停止并对账旧进程，再做受控迁移。

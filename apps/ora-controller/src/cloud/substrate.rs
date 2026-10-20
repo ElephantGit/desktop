@@ -141,28 +141,42 @@ impl Substrate {
     /// queried, because the Substrate may have journaled and executed it.
     #[cfg(test)]
     async fn execute(&self, effect: &proto::Effect) -> Result<Observation, SubstrateError> {
-        self.execute_inner(effect, None).await
+        self.execute_inner(effect, /*permit*/ None, || None, async {})
+            .await
     }
 
+    /// Rechecks dispatch authority after journal I/O and bounded preparation, just before PUT.
     pub(super) async fn execute_authorized(
         &self,
         effect: &proto::Effect,
         permit: &proto::RuntimeEffectPermit,
+        current_epoch: impl Fn() -> Option<i64>,
+        before_put: impl Future<Output = ()>,
     ) -> Result<Observation, SubstrateError> {
-        self.execute_inner(effect, Some(permit)).await
+        self.execute_inner(effect, Some(permit), current_epoch, before_put)
+            .await
     }
 
+    /// Replays successful facts without dispatch, but never retries a tombstoned ensure.
     async fn execute_inner(
         &self,
         effect: &proto::Effect,
         permit: Option<&proto::RuntimeEffectPermit>,
+        current_epoch: impl Fn() -> Option<i64>,
+        before_put: impl Future<Output = ()>,
     ) -> Result<Observation, SubstrateError> {
         if let Some(observed @ Observation::Succeeded { .. }) = self.get(effect).await? {
             return Ok(observed);
         }
+        if let Some(permit) = permit {
+            validate_permit(permit, current_epoch(), now_ms())?;
+        }
+        before_put.await;
         let mut body = request(effect)?;
         if let Some(p) = permit {
             body["authorization"] = json!({"tenantId":p.tenant_id,"workspaceId":p.workspace_id,"sandboxId":p.sandbox_id,"runtimeGeneration":p.runtime_generation,"controllerEpoch":p.controller_epoch,"controlEpoch":p.control_epoch,"issuedAtMs":p.issued_at_ms,"expiresAtMs":p.expires_at_ms});
+            // Closing a control connection can consume the permit's remaining lifetime.
+            validate_permit(p, current_epoch(), now_ms())?;
         }
         let sent = self
             .client
@@ -181,10 +195,19 @@ impl Substrate {
         };
         match response.status().as_u16() {
             // A failed effect is still a journal entry; its body says why.
-            200 | 503 => {
-                let entry = response
-                    .json::<Entry>()
+            status @ (200 | 503) => {
+                let value = response
+                    .json::<Value>()
                     .await
+                    .map_err(|error| SubstrateError::Unreachable(error.to_string()))?;
+                if effect.kind() == proto::EffectKind::SandboxEnsure
+                    && status == 503
+                    && value.get("state").is_none()
+                    && value.get("error").and_then(Value::as_str) == Some("sandbox_terminated")
+                {
+                    return Err(SubstrateError::Rejected("sandbox_terminated".into()));
+                }
+                let entry = serde_json::from_value(value)
                     .map_err(|error| SubstrateError::Unreachable(error.to_string()))?;
                 observation(effect.kind(), entry)
             }
@@ -204,6 +227,25 @@ impl Substrate {
             }
         }
     }
+}
+
+/// Returns epoch milliseconds from the shared local clock; wire permits use this absolute scale.
+fn now_ms() -> i64 {
+    (ora_logging::clock::now_local().unix_timestamp_nanos() / 1_000_000) as i64
+}
+
+/// A permit cannot authorize a new mutation once its issuing lease or its lifetime has ended.
+fn validate_permit(
+    permit: &proto::RuntimeEffectPermit,
+    current_epoch: Option<i64>,
+    now_ms: i64,
+) -> Result<(), SubstrateError> {
+    if current_epoch != Some(permit.controller_epoch) || now_ms >= permit.expires_at_ms {
+        return Err(SubstrateError::Rejected(
+            "stale_runtime_effect_permission".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// The JSON request Cloud planned, rebuilt from the contract's typed form. Cloud's JSON uses the
@@ -242,6 +284,12 @@ fn request(effect: &proto::Effect) -> Result<Value, SubstrateError> {
 /// Reads one journal entry as an observation of an effect of `kind`. Success without the evidence
 /// its kind requires is not success: it stays running so Cloud never records unproven evidence.
 fn observation(kind: proto::EffectKind, entry: Entry) -> Result<Observation, SubstrateError> {
+    if kind == proto::EffectKind::SandboxEnsure
+        && entry.state == "failed"
+        && entry.error.as_deref() == Some("sandbox_terminated")
+    {
+        return Err(SubstrateError::Rejected("sandbox_terminated".into()));
+    }
     let external_id = entry.external_id;
     if external_id.is_empty() {
         return Err(SubstrateError::Rejected(
@@ -297,6 +345,9 @@ fn evidence(kind: proto::EffectKind, result: &Value) -> Option<Evidence> {
         proto::EffectKind::Unspecified => None,
     }
 }
+
+#[cfg(test)]
+mod put_admission;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]

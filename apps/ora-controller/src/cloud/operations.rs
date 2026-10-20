@@ -389,7 +389,12 @@ impl<'a> Round<'a> {
             .fleet
             .deployment()
             .substrate
-            .execute_authorized(&effect, &permit)
+            .execute_authorized(
+                &effect,
+                &permit,
+                || self.store.lease().filter(|epoch| *epoch == self.epoch),
+                async {},
+            )
             .await
         {
             Ok(observation) => observation,
