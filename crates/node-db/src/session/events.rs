@@ -60,6 +60,25 @@ impl<G: WriteGuard> SessionJournal<G> {
                 })
             }
             Record::Ended(ended) => {
+                let restore_phase = restore::phase(&tx, execution)?;
+                let has_attempts: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM restore_process_attempts WHERE execution=?1)",
+                    [execution.as_str()],
+                    |row| row.get(/*idx*/ 0),
+                )?;
+                if restore_phase == Some(RestorePhase::LegacyUnknown)
+                    || (matches!(
+                        restore_phase,
+                        Some(
+                            RestorePhase::GitAdmitted
+                                | RestorePhase::Restored
+                                | RestorePhase::AgentAdmitted
+                        )
+                    ) && !has_attempts)
+                    || !restore::pending(&tx, execution)?.is_empty()
+                {
+                    return Err(Error::ResourceConflict);
+                }
                 if ended.node.node_id != node {
                     return Err(Error::NodeMismatch);
                 }

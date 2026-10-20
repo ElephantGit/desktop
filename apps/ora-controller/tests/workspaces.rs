@@ -201,6 +201,7 @@ impl Node {
                             operation_id: query.operation_id,
                             execution_id: query.execution_id.clone(),
                             payload: ExecutionStatus {
+                                stop_unconfirmed: Vec::new(),
                                 node: identity.clone(),
                                 state: self.agents.status(&query.execution_id).or_else(|| self.deliveries.status(&query.execution_id)).unwrap_or_else(|| results.get(&query.execution_id).map_or(ExecutionState::Unknown, |result| ExecutionState::Completed(result.clone()))),
                             },

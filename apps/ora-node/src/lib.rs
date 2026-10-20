@@ -314,6 +314,22 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
             operation_id: query.operation_id.clone(),
             execution_id: query.execution_id.clone(),
             payload: ExecutionStatus {
+                stop_unconfirmed: self
+                    .database
+                    .session_journal()?
+                    .pending_restore_attempts(&query.execution_id)?
+                    .into_iter()
+                    .filter(|attempt| attempt.stop_unconfirmed)
+                    .filter_map(|attempt| {
+                        Some(StopUnconfirmed {
+                            scope_id: attempt.process.intent.scope.to_string(),
+                            run_id: attempt.process.intent.run.to_string(),
+                            first_stop_at_ms: attempt.first_stop_at_ms?,
+                            bound_at_ms: attempt.stop_bound_at_ms?,
+                            guarantee: attempt.guarantee,
+                        })
+                    })
+                    .collect(),
                 node: self.identity.clone(),
                 state,
             },

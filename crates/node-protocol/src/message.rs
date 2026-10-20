@@ -19,7 +19,7 @@ pub use agent_session::{
 
 pub use execution::{
     EventAck, EventAckMessage, ExecutionState, ExecutionStatus, ExecutionStatusMessage,
-    GetExecutionStatus, GetExecutionStatusMessage,
+    GetExecutionStatus, GetExecutionStatusMessage, StopContainment, StopUnconfirmed,
 };
 pub use plugin::{
     InstallPlugins, InstallPluginsMessage, PluginCommand, PluginsResultMessage, RemovePlugins,

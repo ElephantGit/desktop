@@ -10,7 +10,7 @@ use super::agents::SessionHost;
 use crate::git_server::GitServerAccess;
 use crate::revision::{
     DELIVERY_ROOT, DeliveryGit, GrantStore, HttpUploader, ObjectUploader, Preparation, PushJob,
-    Pushed, RetryPolicy, UploadEnd, UploadJob, prepare, push, upload,
+    Pushed, RetryPolicy, SnapshotMode, UploadEnd, UploadJob, prepare, push, upload,
 };
 use crate::{ManagedNode, SessionHost as _, Shutdown};
 use gitlancer::GitRunner;
@@ -210,6 +210,14 @@ impl Revisions {
             return Ok(());
         }
         for record in node.database.recoverable_deliveries()? {
+            // Frozen legacy bytes do not bypass the same stop fence used for preparation.
+            let journal = node.database.session_journal()?;
+            let session = &record.command.payload.spec.session_execution_id;
+            if journal.restore_phase(session)? == Some(ora_node_db::RestorePhase::LegacyUnknown)
+                || !journal.pending_restore_attempts(session)?.is_empty()
+            {
+                continue;
+            }
             let step = match record.progress.clone() {
                 DeliveryProgress::Frozen(plan) => match push_job(node, &record, &plan)? {
                     Some(push) => Step::Deliver(Box::new((
@@ -345,6 +353,27 @@ fn inputs(
     if !matches!(session.state, ExecutionState::Completed(_)) {
         return Ok(Inputs::Failed(RevisionFailureCode::SessionNotSettled));
     }
+    let journal = node.database.session_journal()?;
+    if !journal
+        .pending_restore_attempts(&spec.session_execution_id)?
+        .is_empty()
+    {
+        return Ok(Inputs::Failed(RevisionFailureCode::SessionNotSettled));
+    }
+    let phase = journal.restore_phase(&spec.session_execution_id)?;
+    let mode = match (session.command.payload.spec.prior_revision.is_some(), phase) {
+        (
+            true,
+            Some(ora_node_db::RestorePhase::Pending | ora_node_db::RestorePhase::GitAdmitted),
+        ) => SnapshotMode::UnstartedRestore,
+        (
+            true,
+            Some(ora_node_db::RestorePhase::Restored | ora_node_db::RestorePhase::AgentAdmitted),
+        )
+        | (true, None)
+        | (false, None) => SnapshotMode::Worktree,
+        _ => return Ok(Inputs::Failed(RevisionFailureCode::SessionNotSettled)),
+    };
     let session_spec = session.command.payload.spec;
     // The checkout must be the session's own, at the base the delivery compares against, and
     // the Workspace branch the delivery fast-forwards must be the one it was cloned for.
@@ -372,6 +401,7 @@ fn inputs(
     }
     Ok(Inputs::Ready(Box::new(Preparation {
         execution: record.command.execution_id.clone(),
+        mode,
         spec: spec.clone(),
         checkout,
         history,

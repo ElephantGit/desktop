@@ -70,6 +70,25 @@ impl<R: GitRunner> DeliveryGit<R> {
         Self { runner, policy }
     }
 
+    /// An unstarted incomplete restore may leave mixed files; only its two allowed HEADs matter.
+    pub(crate) fn unchanged_head(
+        &self,
+        request: &SnapshotRequest<'_>,
+    ) -> Result<Snapshot, SnapshotFailure> {
+        let head = CommitId::new(
+            self.output(
+                request.checkout,
+                &["rev-parse", "--verify", "HEAD^{commit}"],
+                &[],
+            )
+            .map_err(|error| log(error, SnapshotFailure::CheckoutUnavailable))?,
+        );
+        if head != *request.base_commit && request.prior_final_commit != Some(&head) {
+            return Err(SnapshotFailure::CheckoutUnavailable);
+        }
+        Ok(Snapshot::Unchanged { final_commit: head })
+    }
+
     /// Saves the checkout's HEAD chain plus remaining changes under the Revision ref.
     pub(crate) fn snapshot(
         &self,

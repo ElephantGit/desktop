@@ -9,6 +9,40 @@ mod fixtures;
 #[path = "execution/rejections.rs"]
 mod rejections;
 
+/// Named residue is query evidence, with an original identity and a non-renewed absolute clock.
+#[test]
+fn stop_unconfirmed_round_trip_keeps_original_identity_and_guarantee()
+-> Result<(), serde_json::Error> {
+    let message = ExecutionStatusMessage {
+        protocol_version: CURRENT_PROTOCOL_VERSION,
+        operation_id: OperationId::new("operation"),
+        execution_id: ExecutionId::new("execution"),
+        payload: ExecutionStatus {
+            node: node(),
+            state: ExecutionState::Running,
+            stop_unconfirmed: vec![StopUnconfirmed {
+                scope_id: "original-scope".into(),
+                run_id: "original-run".into(),
+                first_stop_at_ms: 1000,
+                bound_at_ms: 601000,
+                guarantee: StopContainment::BestEffort,
+            }],
+        },
+    };
+    assert!(message.validate().is_ok());
+    assert_eq!(
+        serde_json::from_value::<ExecutionStatusMessage>(serde_json::to_value(&message)?)?,
+        message
+    );
+    let mut malformed = message;
+    malformed.payload.stop_unconfirmed[0].bound_at_ms = 1000;
+    assert_eq!(
+        malformed.validate(),
+        Err(MessageValidationError::InvalidStopEvidence)
+    );
+    Ok(())
+}
+
 /// Keeps every occurrence of an identity in the same transparent JSON representation.
 #[test]
 fn serializes_identity_consistently_across_messages() -> Result<(), serde_json::Error> {
@@ -26,6 +60,7 @@ fn serializes_identity_consistently_across_messages() -> Result<(), serde_json::
         operation_id,
         execution_id: ExecutionId::new("execution-1"),
         payload: ExecutionStatus {
+            stop_unconfirmed: Vec::new(),
             node: node(),
             state: ExecutionState::Running,
         },

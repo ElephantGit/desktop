@@ -133,6 +133,7 @@ fn plugin_result_replays_after_restart_until_exact_ack_and_remains_queryable() {
                     operation_id: command.operation_id,
                     execution_id: command.execution_id,
                     payload: ExecutionStatus {
+                        stop_unconfirmed: Vec::new(),
                         node: hello.payload.node,
                         state: ExecutionState::Completed(ExecutionResult::Plugin(event.payload))
                     }

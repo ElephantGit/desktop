@@ -77,6 +77,7 @@ fn cases(result: CloneExecutionResult, wire: serde_json::Value) -> [Case; 2] {
                     operation_id: OperationId::new("operation-clone"),
                     execution_id: ExecutionId::new("execution-clone"),
                     payload: ExecutionStatus {
+                        stop_unconfirmed: Vec::new(),
                         node: node(),
                         state: ExecutionState::Completed(ExecutionResult::Clone(Box::new(result))),
                     },

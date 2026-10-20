@@ -92,7 +92,7 @@ Deno 路径必须是绝对路径，超时必须为正数。有这个配置段时
 以同样的顺序存在于 JSONL 中，崩溃时 JSONL 最多领先一行。一旦 Thread 追加失败，镜像就永久停止，会话以
 `agent_failed{thread_unavailable}` 结束。
 
-重启后，每个没有终止结果的会话都在控制监听打开之前以 `interrupted` 结束；Agent 从不恢复。正常关闭会取消进行中的对话，
+重启后 Agent 从不恢复。未结束的恢复先交接原 Scope/Run，只有停止确认后才报告 `interrupted`；停止未知时会话保留未终态、禁止交付与 checkout 复用（见[Revision 恢复](revisions.zh.md)）。正常关闭会取消进行中的对话，
 等待插件清理，并在释放数据库租约之前提交终止证据。会话仍在运行时，`sealed_history` 返回 `history_unavailable`，否则返回
 它的 JSONL。
 

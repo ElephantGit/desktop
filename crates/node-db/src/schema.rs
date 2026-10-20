@@ -41,7 +41,7 @@ pub(super) fn initialize(
         "user_version",
         |row| row.get(/*idx*/ 0),
     )?;
-    if app != APPLICATION_ID || !matches!(version, 1..=10) {
+    if app != APPLICATION_ID || !matches!(version, 1..=11) {
         return Err(Error::InvalidSchema);
     }
     let check: String = connection.pragma_query_value(
@@ -81,6 +81,9 @@ pub(super) fn initialize(
     }
     if version >= 10 {
         expected.execute_batch(include_str!("branch_heads.sql"))?;
+    }
+    if version >= 11 {
+        expected.execute_batch(include_str!("restore.sql"))?;
     }
     if schema_objects(connection)? != schema_objects(&expected)? {
         return Err(Error::InvalidSchema);
@@ -199,6 +202,17 @@ pub(super) fn initialize(
             /*schema_name*/ None,
             "user_version",
             /*pragma_value*/ 10,
+        )?;
+        tx.commit()?;
+    }
+    if version < 11 {
+        // v11 records restore admission, original restore identities and deferred stop evidence.
+        let tx = connection.transaction()?;
+        tx.execute_batch(include_str!("restore.sql"))?;
+        tx.pragma_update(
+            /*schema_name*/ None,
+            "user_version",
+            /*pragma_value*/ 11,
         )?;
         tx.commit()?;
     }

@@ -60,7 +60,7 @@ pub(super) async fn reconcile<L: SessionLedger>(
 }
 
 /// An unstarted session has no transcript, but delivery still requires a sealed empty JSONL.
-pub(super) fn seal_unstarted_history(
+pub(crate) fn seal_unstarted_history(
     root: &Path,
     execution: &ExecutionId,
 ) -> Result<(), &'static str> {

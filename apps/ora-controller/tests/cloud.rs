@@ -123,6 +123,7 @@ impl Node {
                                 operation_id: query.operation_id,
                                 execution_id: query.execution_id,
                                 payload: ExecutionStatus {
+                                    stop_unconfirmed: Vec::new(),
                                     node: identity.clone(),
                                     state: ExecutionState::Unknown,
                                 },

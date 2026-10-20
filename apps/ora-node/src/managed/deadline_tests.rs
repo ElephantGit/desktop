@@ -12,13 +12,13 @@ use std::{
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-struct Fixture {
-    directory: tempfile::TempDir,
-    host: Child,
+pub(super) struct Fixture {
+    pub(super) directory: tempfile::TempDir,
+    pub(super) host: Child,
 }
 impl Fixture {
     /// Builds require `cargo build -p ora-process-host -p ora-process-guardian` first.
-    fn new() -> Result<Self, Box<dyn std::error::Error>> {
+    pub(super) fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let parent = PathBuf::from(std::env::var_os("HOME").ok_or("fixture HOME missing")?)
             .canonicalize()?;
         let directory = tempfile::Builder::new()
@@ -45,7 +45,7 @@ impl Fixture {
     }
 
     /// The environment is explicit and contains no credentials or process-wide mutations.
-    fn config(&self) -> ProcessConfig {
+    pub(super) fn config(&self) -> ProcessConfig {
         ProcessConfig {
             workload_uid: None,
             host_directory: self.directory.path().join("s"),

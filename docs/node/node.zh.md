@@ -84,6 +84,7 @@ rootless 下的尽力而为，不是强隔离：逃逸的后代进程或死掉�
 | 8 | `node_executions`、`execution_events`、`session_commands`：Agent 会话 |
 | 9 | `revision_deliveries`、`revision_outbox` |
 | 10 | `workspace_branch_heads`：`ora-git` 推送时声明的自己 Workspace 分支的值 |
+| 11 | `session_restores`、`restore_process_attempts`：恢复阶段、原进程身份与停止确认时钟 |
 
 所有执行族共享 `execution_identities`，防止不同族之间的 key 冲突。完成时，资源事实、终止结果和它的原始事件
 一起提交；状态读取从不确认。确认必须匹配 Node、operation、execution 和序号，并且只删除投递记录，结果和去重
@@ -91,3 +92,5 @@ rootless 下的尽力而为，不是强隔离：逃逸的后代进程或死掉�
 中的环境变量值是私有数据，从不进入日志。
 
 `WriteGuard` 为真实 SQLite 故障测试暴露事务失败点；`cargo test -p ora-node-db -p ora-node` 会运行它们。
+
+恢复的 Git 准入阶段与原命令意图在同一事务记录。停止确认前不能提交会话终态；上限耗尽只保留命名残留，不删除原身份。升级前缺少关联的恢复保持 `legacy_unknown`：旧终态继续保留，但不会因此解除 checkout 和运行时准入保护。见 [Revision 恢复](revisions.zh.md)。

@@ -366,7 +366,7 @@ fn remove_plugin_schema(path: &std::path::Path) {
 fn remove_revision_schema(path: &std::path::Path) {
     remove_branch_heads_schema(path);
     let connection = Connection::open(path).unwrap();
-    connection.execute_batch("PRAGMA foreign_keys=OFF; DROP TRIGGER bind_new_revision; DROP TABLE revision_outbox; DROP TABLE revision_deliveries; CREATE TEMP TABLE old_ids AS SELECT * FROM execution_identities; DROP TABLE execution_identities;").unwrap();
+    connection.execute_batch("PRAGMA foreign_keys=OFF; DROP TABLE restore_process_attempts; DROP TABLE session_restores; DROP TRIGGER bind_new_revision; DROP TABLE revision_outbox; DROP TABLE revision_deliveries; CREATE TEMP TABLE old_ids AS SELECT * FROM execution_identities; DROP TABLE execution_identities;").unwrap();
     let definition = include_str!("session.sql")
         .split("CREATE TABLE execution_identities")
         .nth(1)

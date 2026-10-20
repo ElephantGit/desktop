@@ -128,6 +128,7 @@ fn result_cases(result: RevisionExecutionResult, wire: Value) -> [Case; 2] {
                     operation_id: OperationId::new(OPERATION),
                     execution_id: ExecutionId::new(EXECUTION),
                     payload: ExecutionStatus {
+                        stop_unconfirmed: Vec::new(),
                         node: node(),
                         state: ExecutionState::Completed(ExecutionResult::Revision(Box::new(
                             result,

@@ -4,6 +4,10 @@ use thiserror::Error;
 /// Explains why a decoded or outbound typed message violates protocol invariants.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum MessageValidationError {
+    #[error(
+        "unconfirmed-stop evidence must retain original identities and an increasing stop bound"
+    )]
+    InvalidStopEvidence,
     #[error("invalid or unscoped runtime control binding")]
     InvalidRuntimeBinding,
     #[error("clone result must belong to its requested Node")]

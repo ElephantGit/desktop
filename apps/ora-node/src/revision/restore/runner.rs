@@ -6,6 +6,23 @@ use std::{io, time::Instant};
 /// Implementations cap their command budget and request closure on expiry; returning never
 /// substitutes a timeout or a close request for the runner's normal cleanup evidence.
 pub(crate) trait RestoreGitRunner: GitRunner {
+    /// Production binds every command to the original session before any host side effect.
+    fn bind_restore(
+        &mut self,
+        _execution: &ora_node_protocol::ExecutionId,
+        _cancellation: crate::session::RestoreCancel,
+    ) {
+    }
+
+    /// Admission fences command-boundary cancellation, including local staging between commands.
+    fn check_admission(&self) -> Result<(), GitExecError> {
+        Ok(())
+    }
+
+    /// False retains files still reachable by an unconfirmed original process.
+    fn cleanup_safe(&self) -> bool {
+        true
+    }
     /// Runs under min(the command's own budget, the remaining restore deadline).
     fn run_bounded_before(
         &self,
@@ -22,6 +39,29 @@ pub(super) struct RestoreCommands<'a, R> {
     pub(super) deadline: Instant,
 }
 
+impl<R: RestoreGitRunner> RestoreGitRunner for RestoreCommands<'_, R> {
+    /// Local staging uses the same cancellation and deadline fence as Git.
+    fn check_admission(&self) -> Result<(), GitExecError> {
+        check(self.deadline)?;
+        self.runner.check_admission()
+    }
+    /// File ownership remains with an unknown original process.
+    fn cleanup_safe(&self) -> bool {
+        self.runner.cleanup_safe()
+    }
+    /// Keeps nested Git steps on the same deadline and evidence owner.
+    fn run_bounded_before(
+        &self,
+        command: &GitCommand,
+        stdout: usize,
+        stderr: usize,
+        deadline: Instant,
+    ) -> Result<GitOutput, GitExecError> {
+        self.runner
+            .run_bounded_before(command, stdout, stderr, deadline.min(self.deadline))
+    }
+}
+
 impl<R: RestoreGitRunner> GitRunner for RestoreCommands<'_, R> {
     /// Retains the host's capture ceiling for the unbounded trait entry point.
     fn run(&self, command: &GitCommand) -> Result<GitOutput, GitExecError> {
@@ -35,7 +75,7 @@ impl<R: RestoreGitRunner> GitRunner for RestoreCommands<'_, R> {
         stdout: usize,
         stderr: usize,
     ) -> Result<GitOutput, GitExecError> {
-        check(self.deadline)?;
+        self.check_admission()?;
         self.runner
             .run_bounded_before(command, stdout, stderr, self.deadline)
     }

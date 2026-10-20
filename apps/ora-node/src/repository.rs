@@ -116,6 +116,7 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
             self.drive_clone(record)?;
             self.refresh_clone_state()?;
             return Ok(ExecutionStatus {
+                stop_unconfirmed: Vec::new(),
                 node: self.identity.clone(),
                 state: self
                     .database
@@ -159,6 +160,7 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
             }
             return Ok((
                 ExecutionStatus {
+                    stop_unconfirmed: Vec::new(),
                     node: self.identity.clone(),
                     state: record.progress.state(),
                 },
@@ -188,6 +190,7 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
         self.state = NodeState::RecoveryPending;
         Ok((
             ExecutionStatus {
+                stop_unconfirmed: Vec::new(),
                 node: self.identity.clone(),
                 state: record.progress.state(),
             },

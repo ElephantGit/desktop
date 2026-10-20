@@ -6,8 +6,10 @@
 //! checkout lacks is sent, and checks that it is the prior final commit. The workload user then
 //! takes the objects from the transport repository into the checkout and moves the Workspace
 //! branch there. Everything runs on a blocking thread; the transport repository is removed when
-//! the restore ends, whatever the outcome. One absolute deadline, owned by the deployment, bounds
-//! the fetch and every workload Git command; neither a retry nor a wait grants more time.
+//! the restore ends and its original stop is confirmed, whatever the outcome. One absolute
+//! deadline, owned by the deployment, bounds the fetch and every workload Git command; neither a
+//! retry nor a wait grants more time, and unknown original stop evidence retains the inputs across
+//! restart without rerunning the restore.
 
 mod config;
 mod git;
@@ -28,19 +30,22 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 /// Kind of the transport repositories restores use.
-const TRANSPORT_KIND: &str = "restore";
+pub(crate) const TRANSPORT_KIND: &str = "restore";
 
 /// One restore's execution timing; cleanup keeps its independent managed-process budget.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct RestorePolicy {
     /// One absolute budget shared by the Git Server fetch and all workload Git steps.
     pub(crate) deadline: Duration,
+    /// One bound for original stop confirmation, counted from the first stop request.
+    pub(crate) stop_confirmation: Duration,
 }
 
 impl RestorePolicy {
-    /// The approved default: five minutes, shared from the first fetch exchange.
+    /// The approved defaults: five minutes to restore, ten to obtain original stop proof.
     pub(crate) const DEFAULT: Self = Self {
         deadline: Duration::from_millis(config::DEFAULT_DEADLINE_MS),
+        stop_confirmation: Duration::from_secs(/*secs*/ 600),
     };
 }
 
@@ -62,10 +67,18 @@ pub(crate) struct RevisionRestorer<R: Send + 'static, N: Send + 'static> {
     /// Ends the waits between Git Server attempts when the Node stops.
     shutdown: crate::Shutdown,
     policy: RestorePolicy,
+    /// Production shares its stop authority with crash recovery and late execution queries.
+    stops: Option<crate::managed::RestoreStops>,
 }
 
 impl<R: Send + 'static, N: Send + 'static> RevisionRestorer<R, N> {
-    /// Composes one restorer for the Node's lifetime; only the deployment chooses its deadline.
+    /// Production shares its stop authority with crash recovery and late execution queries.
+    pub(crate) fn with_stops(mut self, stops: crate::managed::RestoreStops) -> Self {
+        self.stops = Some(stops);
+        self
+    }
+
+    /// Composes one restorer for the Node's lifetime; only the deployment chooses its budgets.
     pub(crate) fn new(
         git: DeliveryGit<R>,
         node: N,
@@ -82,6 +95,7 @@ impl<R: Send + 'static, N: Send + 'static> RevisionRestorer<R, N> {
             owner,
             shutdown,
             policy,
+            stops: None,
         }
     }
 
@@ -113,6 +127,31 @@ where
     R: RestoreGitRunner + Send + 'static,
     N: GitRunner + Send + 'static,
 {
+    /// Anchors the stop clock before cancellation can reach the command boundary.
+    fn request_stop(&self, execution: &ora_node_protocol::ExecutionId) {
+        if let Some(stops) = &self.stops
+            && let Err(error) = stops.request_session(execution)
+        {
+            ora_logging::ora_warn!(execution_id = %execution, error = %error, "restore stop origin could not be persisted; stopping still has priority");
+        }
+    }
+
+    /// Waits for original stop proof, then removes the transport repository it guarded.
+    async fn confirm_stop(&self, execution: &ora_node_protocol::ExecutionId) -> bool {
+        let confirmed = match &self.stops {
+            Some(stops) => stops.wait(execution).await,
+            None => true,
+        };
+        if confirmed {
+            crate::git_server::remove_transport(&TransportRepository::location(
+                &self.repository_root,
+                TRANSPORT_KIND,
+                execution,
+            ));
+        }
+        confirmed
+    }
+
     /// Fetches, verifies and checks out the prior final commit on a blocking thread, which
     /// starts no further Git once the Node stops, the session is cancelled or the deadline ends.
     async fn restore(
@@ -133,10 +172,12 @@ where
         let shutdown = self.shutdown.clone();
         tokio::task::spawn_blocking(move || {
             let stopping = || shutdown.requested() || cancel.requested();
-            let git = git.lock().unwrap_or_else(PoisonError::into_inner);
-            let Some((workload, node)) = git.as_ref() else {
+            let mut git = git.lock().unwrap_or_else(PoisonError::into_inner);
+            let Some((workload, node)) = git.as_mut() else {
                 return Err(RestoreFailure::Unavailable);
             };
+            // Every later workload command is journaled against this session before admission.
+            workload.bind_restore(&request.execution, cancel.clone());
             let execution = request.execution.as_str();
             let transport =
                 TransportRepository::create(node, &root, TRANSPORT_KIND, &request.execution)

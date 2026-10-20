@@ -11,10 +11,18 @@ use std::io;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
+/// Ledger-selected isolation; unknown stop never reaches an admissible preparation mode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SnapshotMode {
+    Worktree,
+    UnstartedRestore,
+}
+
 /// Everything the worker resolved from the ledger for one delivery's preparation.
 #[derive(Clone, Debug)]
 pub(crate) struct Preparation {
     pub(crate) execution: ExecutionId,
+    pub(crate) mode: SnapshotMode,
     pub(crate) spec: DeliverRevisionSpec,
     pub(crate) checkout: PathBuf,
     /// The sealed session JSONL; nothing writes to it anymore.
@@ -75,27 +83,32 @@ fn freeze<R: GitRunner>(
     // read. The session has ended, so nothing writes the checkout now; hand it back to the
     // workload user without following links, so a link the agent left cannot redirect this
     // privileged change outside the checkout. A checkout that is already right costs only a walk.
-    if let Some(owner) = job.owner {
+    if job.mode == SnapshotMode::Worktree
+        && let Some(owner) = job.owner
+    {
         ora_utils::fs::own_tree_no_follow(&job.checkout, owner, owner)
             .map_err(|error| local(error, RevisionFailureCode::SnapshotFailed))?;
     }
-    let snapshot = git
-        .snapshot(&SnapshotRequest {
-            checkout: &job.checkout,
-            revision_ref: &job.spec.revision_ref,
-            base_commit: &job.spec.base_commit,
-            prior_final_commit: job
-                .spec
-                .prior_revision
-                .as_ref()
-                .map(|prior| &prior.final_commit),
-            author: &job.author,
-            scratch: directory,
-        })
-        .map_err(|failure| match failure {
-            SnapshotFailure::CheckoutUnavailable => RevisionFailureCode::CheckoutUnavailable,
-            SnapshotFailure::SnapshotFailed => RevisionFailureCode::SnapshotFailed,
-        })?;
+    let request = SnapshotRequest {
+        checkout: &job.checkout,
+        revision_ref: &job.spec.revision_ref,
+        base_commit: &job.spec.base_commit,
+        prior_final_commit: job
+            .spec
+            .prior_revision
+            .as_ref()
+            .map(|prior| &prior.final_commit),
+        author: &job.author,
+        scratch: directory,
+    };
+    let snapshot = match job.mode {
+        SnapshotMode::Worktree => git.snapshot(&request),
+        SnapshotMode::UnstartedRestore => git.unchanged_head(&request),
+    }
+    .map_err(|failure| match failure {
+        SnapshotFailure::CheckoutUnavailable => RevisionFailureCode::CheckoutUnavailable,
+        SnapshotFailure::SnapshotFailed => RevisionFailureCode::SnapshotFailed,
+    })?;
     let history = stored(&job.spec.history_key, &history_path)
         .map_err(|error| local(error, RevisionFailureCode::HistoryUnavailable))?;
     let outcome = match snapshot {

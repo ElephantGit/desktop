@@ -49,6 +49,92 @@ fn directory(path: &Path, mode: u32) -> PathBuf {
     path.to_path_buf()
 }
 
+/// Startup keeps unknown restore inputs; local cleanup failure never rewrites stop evidence.
+#[test]
+fn restore_cleanup_requires_original_terminal_stop_evidence()
+-> Result<(), Box<dyn std::error::Error>> {
+    use ora_node_db::{NodeIdentity, ProcessAttempt};
+    use ora_node_protocol::*;
+    use ora_process_protocol::*;
+    ora_logging::initialize_test_clock();
+    let subscriber = tracing::Dispatch::new(
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_test_writer()
+            .finish(),
+    );
+    tracing::dispatcher::with_default(&subscriber, || {
+        let root = tempfile::tempdir()?;
+        let mut deployment = config(
+            root.path(),
+            /*workload_uid*/ None,
+            /*workload_directory*/ None,
+        );
+        deployment.node.identity = NodeIdentity::Require(NodeId::new("node"));
+        let mut node = crate::Node::open(deployment.node, deployment.process, Shutdown::default())?;
+        let input: StartAgentSessionMessage = serde_json::from_value(serde_json::json!({
+            "protocol_version": CURRENT_PROTOCOL_VERSION, "operation_id":"restore-op", "execution_id":"restore-session",
+            "payload":{"spec":{
+                "node_id":"node", "agent_plugin_id":"official/agent", "agent_plugin_version":"1.0.0", "checkout_execution_id":"clone",
+                "git_identity":{"name":"Fixture","email":"fixture@example.test"},
+                "initial_turn":{"turn_id":"initial","content":[{"type":"text","text":"fixture"}]},
+                "prior_revision":{"revision_id":"prior","final_commit":"0123456789012345678901234567890123456789","bundle":{"key":"prior.bundle","size":1,"sha256":"0000000000000000000000000000000000000000000000000000000000000000"}}
+            }}
+        }))?;
+        node.database.accept_session(&input)?;
+        node.database
+            .start_session(&input, &NodeIncarnationId::new("original"))?;
+        let journal = node.database.session_journal()?;
+        let attempt = ProcessAttempt {
+            execution: input.execution_id.clone(),
+            host_directory: root.path().join("original-host"),
+            expected_uid: 42,
+            intent: HostRunIntent {
+                scope: ScopeId::new(),
+                run: RunId::new(),
+                spec: RunSpec::new("git", root.path(), DescendantPolicy::WaitForAll),
+                host_disconnect: GuardianHostDisconnect::KeepRunning,
+            },
+        };
+        journal.record_restore_attempt(&attempt, StopContainment::BestEffort)?;
+        let directory = node
+            .home_directory()
+            .join(crate::revision::RESTORE_ROOT)
+            .join(ora_utils::hash::sha256_hex(
+                input.execution_id.as_str().as_bytes(),
+            ));
+        fs::create_dir_all(&directory)?;
+        fs::write(directory.join("prior.bundle"), "original process input")?;
+        super::sweep_restores(&node, &journal)?;
+        assert!(directory.join("prior.bundle").is_file());
+        let ended = AgentSessionEnded {
+            node: node.identity().clone(),
+            reason: AgentSessionEndReason::Interrupted,
+            detail: None,
+        };
+        assert!(
+            journal
+                .end_session(&input.execution_id, ended.clone())
+                .is_err()
+        );
+        // The process monitor alone acknowledges its independently verified original proof.
+        journal.confirm_restore_stop(attempt.intent.run)?;
+        journal.end_session(&input.execution_id, ended)?;
+        super::sweep_restores(&node, &journal)?;
+        assert!(!directory.exists());
+        fs::write(&directory, "unexpected local residue")?;
+        super::sweep_restores(&node, &journal)?;
+        assert!(directory.is_file());
+        assert!(journal.session_completed(&input.execution_id)?);
+        assert!(
+            journal
+                .pending_restore_attempts(&input.execution_id)?
+                .is_empty()
+        );
+        Ok(())
+    })
+}
+
 /// Agents run as the workload user exactly when Git does, from a directory only the Node may
 /// change that overlaps none of its state; `serve` refuses every other combination before it
 /// opens anything.

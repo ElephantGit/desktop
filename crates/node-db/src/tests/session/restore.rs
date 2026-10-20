@@ -1,0 +1,191 @@
+//! Durable stop clocks and checkout responsibility across real SQLite reopen and migration.
+use super::*;
+use ora_process_protocol::*;
+use pretty_assertions::assert_eq;
+
+/// Supplies an immutable prior input without relying on a running Git fixture.
+fn resumed() -> StartAgentSessionMessage {
+    let mut input = command();
+    input.payload.spec.prior_revision = Some(PriorRevision {
+        revision_id: RevisionId::new("prior"),
+        final_commit: CommitId::new("0123456789012345678901234567890123456789"),
+        bundle: StoredObject {
+            key: ObjectKey::new("prior.bundle"),
+            size: 1,
+            sha256: Sha256Digest::new("0".repeat(64)),
+        },
+    });
+    input
+}
+
+/// No process can exist until this exact association commits.
+fn attempt(input: &StartAgentSessionMessage, directory: &std::path::Path) -> ProcessAttempt {
+    ProcessAttempt {
+        execution: input.execution_id.clone(),
+        host_directory: directory.join("original-host"),
+        expected_uid: 42,
+        intent: HostRunIntent {
+            scope: ScopeId::new(),
+            run: RunId::new(),
+            spec: RunSpec::new("git", directory, DescendantPolicy::WaitForAll),
+            host_disconnect: GuardianHostDisconnect::KeepRunning,
+        },
+    }
+}
+
+/// Expiry, restart and changed configuration preserve the original clock, identity and fence.
+#[test]
+fn unknown_stop_retains_clock_terminal_and_checkout_responsibility()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("db");
+    let mut db = NodeDatabase::open(&path, NodeIdentity::Require(NodeId::new("node")))?;
+    let input = resumed();
+    db.accept_session(&input)?;
+    assert!(db.start_session(&input, &NodeIncarnationId::new("original"))?);
+    let journal = db.session_journal()?;
+    let process = attempt(&input, directory.path());
+    journal.record_restore_attempt(&process, StopContainment::BestEffort)?;
+    journal.request_session_restore_stop(&input.execution_id, 1000, 600_000)?;
+    journal.request_restore_stop(process.intent.run, 20_000, 1_000_000)?;
+    journal.defer_restore_end(&input.execution_id, &ended())?;
+    journal.mark_restore_stop_unconfirmed(process.intent.run, 601_000)?;
+    let expected = vec![RestoreAttempt {
+        process: process.clone(),
+        guarantee: StopContainment::BestEffort,
+        first_stop_at_ms: Some(1000),
+        stop_bound_at_ms: Some(601_000),
+        stop_unconfirmed: true,
+    }];
+    assert_eq!(
+        journal.pending_restore_attempts(&input.execution_id)?,
+        expected
+    );
+    assert!(matches!(
+        journal.end_session(&input.execution_id, ended()),
+        Err(Error::ResourceConflict)
+    ));
+    assert!(db.pending_events()?.is_empty());
+    let mut replacement = input.clone();
+    replacement.execution_id = ExecutionId::new("replacement");
+    replacement.operation_id = OperationId::new("replacement-op");
+    assert!(matches!(
+        db.accept_session(&replacement),
+        Err(Error::ResourceConflict)
+    ));
+    assert!(
+        journal
+            .record_restore_attempt(&attempt(&input, directory.path()), StopContainment::Strong)
+            .is_err()
+    );
+    assert!(journal.restored(&input.execution_id).is_err());
+    assert!(journal.agent_admitted(&input.execution_id).is_err());
+    drop(journal);
+    drop(db);
+    let db = NodeDatabase::open(&path, NodeIdentity::Discover)?;
+    let journal = db.session_journal()?;
+    journal.request_session_restore_stop(&input.execution_id, 900_000, 2_000_000)?;
+    assert_eq!(
+        journal.pending_restore_attempts(&input.execution_id)?,
+        expected
+    );
+    assert_eq!(
+        journal.deferred_restore_end(&input.execution_id)?,
+        Some(ended())
+    );
+    // Only original host proof authorizes the caller to acknowledge this association.
+    journal.confirm_restore_stop(process.intent.run)?;
+    journal.end_session(
+        &input.execution_id,
+        journal
+            .deferred_restore_end(&input.execution_id)?
+            .ok_or("missing deferred end")?,
+    )?;
+    assert!(journal.end_session(&input.execution_id, ended()).is_err());
+    assert_eq!(db.pending_events()?.len(), 1);
+    Ok(())
+}
+
+/// A v9 process with no journal cannot be called interrupted or used as delivery evidence.
+#[test]
+fn upgrade_keeps_unjournaled_restore_unknown() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("db");
+    let mut db = NodeDatabase::open(&path, NodeIdentity::Require(NodeId::new("node")))?;
+    let input = resumed();
+    db.accept_session(&input)?;
+    drop(db);
+    Connection::open(&path)?.execute_batch("PRAGMA foreign_keys=OFF; DROP TABLE restore_process_attempts; DROP TABLE session_restores; PRAGMA user_version=9;")?;
+    let db = NodeDatabase::open(&path, NodeIdentity::Discover)?;
+    let journal = db.session_journal()?;
+    assert_eq!(
+        journal.restore_phase(&input.execution_id)?,
+        Some(RestorePhase::LegacyUnknown)
+    );
+    assert!(matches!(
+        journal.end_session(&input.execution_id, ended()),
+        Err(Error::ResourceConflict)
+    ));
+    assert!(journal.agent_admitted(&input.execution_id).is_err());
+    assert!(db.pending_events()?.is_empty());
+    Ok(())
+}
+
+/// Missing stop origins are fixed on first recovery, never renewed on later handovers.
+#[test]
+fn missing_stop_origin_is_anchored_only_once() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let mut db = NodeDatabase::open(
+        &directory.path().join("db"),
+        NodeIdentity::Require(NodeId::new("node")),
+    )?;
+    let input = resumed();
+    db.accept_session(&input)?;
+    db.start_session(&input, &NodeIncarnationId::new("original"))?;
+    let journal = db.session_journal()?;
+    let process = attempt(&input, directory.path());
+    journal.record_restore_attempt(&process, StopContainment::Strong)?;
+    journal.request_restore_stop(process.intent.run, 50, 100)?;
+    journal.request_restore_stop(process.intent.run, 500, 1000)?;
+    assert_eq!(
+        journal.pending_restore_attempts(&input.execution_id)?,
+        vec![RestoreAttempt {
+            process,
+            guarantee: StopContainment::Strong,
+            first_stop_at_ms: Some(50),
+            stop_bound_at_ms: Some(150),
+            stop_unconfirmed: false
+        }]
+    );
+    Ok(())
+}
+
+/// An old terminal is retained as history, never reinterpreted as missing process stop proof.
+#[test]
+fn legacy_terminal_does_not_release_an_unjournaled_checkout()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("db");
+    let mut db = NodeDatabase::open(&path, NodeIdentity::Require(NodeId::new("node")))?;
+    let input = resumed();
+    db.accept_session(&input)?;
+    db.session_journal()?
+        .end_session(&input.execution_id, ended())?;
+    let original = db.pending_events()?;
+    drop(db);
+    Connection::open(&path)?.execute_batch("PRAGMA foreign_keys=OFF; DROP TABLE restore_process_attempts; DROP TABLE session_restores; PRAGMA user_version=9;")?;
+    let mut db = NodeDatabase::open(&path, NodeIdentity::Discover)?;
+    assert_eq!(db.pending_events()?, original);
+    assert_eq!(
+        db.unfinished_runtime_executions()?,
+        vec![input.execution_id.as_str()]
+    );
+    let mut replacement = input;
+    replacement.operation_id = OperationId::new("replacement-op");
+    replacement.execution_id = ExecutionId::new("replacement-execution");
+    assert!(matches!(
+        db.accept_session(&replacement),
+        Err(Error::ResourceConflict)
+    ));
+    Ok(())
+}

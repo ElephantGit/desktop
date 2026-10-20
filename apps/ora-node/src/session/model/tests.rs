@@ -63,6 +63,7 @@ struct State {
     queued: Vec<QueuedCommand>,
     settled: Vec<(CommandId, CommandSettlement)>,
     ended: Option<AgentSessionEnded>,
+    deferred: Option<AgentSessionEnded>,
 }
 
 #[derive(Clone, Default)]
@@ -70,10 +71,27 @@ struct Ledger {
     state: Arc<Mutex<State>>,
     read: Arc<Notify>,
     terminal: Arc<Notify>,
+    deferred: Arc<Notify>,
 }
 
 impl SessionLedger for Ledger {
     type Error = std::io::Error;
+
+    /// Deferred stop evidence has not sealed the session, even after its actor is gone.
+    fn session_completed(&self, _execution: &ExecutionId) -> Result<bool, Self::Error> {
+        Ok(self.state.lock().unwrap().ended.is_some())
+    }
+
+    /// The terminal intention must become durable before the actor transfers responsibility.
+    fn defer_restore_end(
+        &self,
+        _execution: &ExecutionId,
+        ended: &AgentSessionEnded,
+    ) -> Result<(), Self::Error> {
+        self.state.lock().unwrap().deferred = Some(ended.clone());
+        self.deferred.notify_one();
+        Ok(())
+    }
 
     /// Reconciliation must not fabricate transcript records or terminal events.
     fn append_thread_event(
@@ -348,4 +366,115 @@ async fn missing_durable_end_and_node_shutdown_have_bounded_outcomes() {
         .await,
         Ok(EndSessionReason::Cancelled)
     );
+}
+
+/// Returning from failed restore is not evidence that its original process stopped.
+struct UnknownRestore;
+impl crate::PriorRevisionRestore for UnknownRestore {
+    /// A failed cleanup must transfer responsibility without a terminal result.
+    async fn confirm_stop(&self, _execution: &ExecutionId) -> bool {
+        false
+    }
+    /// No plugin is allowed to start after this restore failure.
+    async fn restore(
+        &self,
+        _request: crate::RestoreRequest,
+    ) -> Result<crate::Restored, crate::RestoreFailure> {
+        Err(crate::RestoreFailure::Unavailable)
+    }
+}
+
+/// The production driver transfers an unknown stop without terminal, queue settlement or history release.
+#[test]
+fn production_driver_defers_unknown_restore_without_releasing_terminal_history() {
+    ora_logging::initialize_test_clock();
+    let dispatcher = tracing::Dispatch::new(
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_test_writer()
+            .finish(),
+    );
+    tracing::dispatcher::with_default(&dispatcher, || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                use crate::{AgentSessions, SessionConfig, SessionHost};
+                use ora_node_protocol::*;
+                let root = tempfile::tempdir().unwrap();
+                let ledger = Ledger::default();
+                let node = NodeRuntimeIdentity {
+                    node_id: NodeId::new("node"),
+                    incarnation_id: NodeIncarnationId::new("original"),
+                };
+                let execution = ExecutionId::new("8b0e5a52-6f1c-4c55-9d3e-2a7b1f0c9e41");
+                let sessions = AgentSessions::new(
+                    SessionConfig {
+                        home_directory: root.path().into(),
+                        deno_path: root.path().join("must-not-run"),
+                        timezone: chrono_tz::UTC,
+                        agent_ready_timeout: Duration::from_secs(/*secs*/ 1),
+                        model_proxy: None,
+                        workload: crate::SessionWorkload::Shared,
+                    },
+                    node.clone(),
+                    ledger.clone(),
+                    CheckoutPath(root.path().into()),
+                    CheckoutPath(root.path().into()),
+                    UnknownRestore,
+                );
+                sessions.start(
+                    OperationId::new("operation"),
+                    execution.clone(),
+                    AgentSessionSpec {
+                        node_id: node.node_id.clone(),
+                        agent_plugin_id: PluginId::new("official/ora-space.echo"),
+                        agent_plugin_version: PluginVersion::new("1.0.0"),
+                        checkout_execution_id: ExecutionId::new("clone"),
+                        model_binding_id: None,
+                        git_identity: GitIdentity {
+                            name: "Fixture".into(),
+                            email: "fixture@example.test".into(),
+                        },
+                        initial_turn: UserTurn {
+                            turn_id: TurnId::new("initial"),
+                            content: vec![ContentBlock::Text {
+                                text: "must not be sent".into(),
+                            }],
+                        },
+                        prior_revision: Some(PriorRevision {
+                            revision_id: RevisionId::new("prior"),
+                            final_commit: CommitId::new("0".repeat(40)),
+                            bundle: StoredObject {
+                                key: ObjectKey::new("prior.bundle"),
+                                size: 1,
+                                sha256: Sha256Digest::new("0".repeat(64)),
+                            },
+                        }),
+                    },
+                );
+                tokio::time::timeout(Duration::from_secs(/*secs*/ 2), ledger.deferred.notified())
+                    .await
+                    .unwrap();
+                sessions.shutdown().await;
+                let state = ledger.state.lock().unwrap();
+                assert_eq!(state.ended, None);
+                assert_eq!(
+                    state.deferred,
+                    Some(AgentSessionEnded {
+                        node,
+                        reason: AgentSessionEndReason::AgentFailed,
+                        detail: Some("prior_revision_unavailable".into())
+                    })
+                );
+                assert!(state.settled.is_empty());
+                assert!(!sessions.failed());
+                drop(state);
+                assert_eq!(
+                    sessions.sealed_history(&execution),
+                    Err(crate::session::HistoryUnavailable)
+                );
+            })
+    });
 }

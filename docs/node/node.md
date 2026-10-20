@@ -99,6 +99,7 @@ event records; the host and guardian own separate journals.
 | 8 | `node_executions`, `execution_events`, `session_commands`: Agent sessions |
 | 9 | `revision_deliveries`, `revision_outbox` |
 | 10 | `workspace_branch_heads`: the own Workspace branch values `ora-git` pushes declare |
+| 11 | `session_restores`, `restore_process_attempts`: restore admission, original identities and stop clocks |
 
 Every execution family shares `execution_identities`, which prevents key collisions across families.
 Completion commits resource facts, the terminal result and its original event together; status reads
@@ -109,3 +110,5 @@ values in a stored `RunSpec` are private data, never logs.
 
 `WriteGuard` exposes transaction failure points for real SQLite fault tests; `cargo test -p
 ora-node-db -p ora-node` runs them.
+
+Restore Git admission and its original command intent commit together. A session terminal requires original stop evidence; bound expiry retains named residue and never deletes identity. Pre-journal restores remain `legacy_unknown`: old terminals are retained as history but do not release checkout/runtime admission fences. See [Revision recovery](revisions.md).

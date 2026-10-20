@@ -120,8 +120,31 @@ Each supervised Git command receives the earlier of its own command deadline and
 No new command starts after expiry; a pending host exchange is bounded by that same cutoff, so it
 cannot defer the close request until a longer transport timeout. Cleanup and original Scope closure
 use their independent cleanup budget after execution expires. A late ancestor check cannot turn an
-expired restore into success. Expiry is not proof that a process stopped: durable unconfirmed-stop
-ownership, delivery isolation and the residual-evidence bound remain separate obligations of the
+expired restore into success.
+
+**Stop confirmation.** Every restore Git intent is durably associated with its session before host
+admission. The first stop request is persisted before Close; cancellation observes command boundaries
+and does not abandon the blocking worker. Only original Scope `Closed` plus original Run direct-process
+exit permits a terminal result, transport cleanup, delivery or checkout reuse. Linux guardian containment is
+BestEffort; its cleanup evidence does not claim Strong quiescence.
+
+If proof is unavailable, the original identities, inputs, terminal intention and checkout conflict
+remain durable. `stop_confirmation_ms` defaults to ten minutes, must be positive, finite and greater
+than `deadline_ms`, and is frozen at the first stop request. Retry, restart, reconnection and changed
+configuration cannot renew it. At expiry the session stops querying host evidence and the existing
+execution-status response exposes `stop_unconfirmed`, including original Scope/Run, first-request and
+bound timestamps and the selected containment. Expiry emits no terminal and grants no cleanup or reuse.
+Startup handover and later execution queries can retry closing and querying those same identities;
+late proof settles the original execution once. Missing pre-upgrade process/agent facts remain unknown.
+
+**Partial restore isolation.** The ledger records restore completion before plugin admission. A prior-
+input session whose restore never completed and whose Agent was never admitted can be delivered only
+after stop confirmation. It reads HEAD alone, accepts only the clone base or prior final commit, and
+returns `unchanged`; it neither probes mixed worktree files nor creates a snapshot, Revision ref or
+bundle. Unknown stop rejects delivery before even that HEAD read. Transport repositories whose original
+process ownership is unknown are retained; cleanup failure is logged independently of process evidence.
+
+These semantics implement the Node portions of the
 [approved restore deadline ADR](https://github.com/ora-space/specs/blob/main/decisions/node/revision/20261018-complete-restore-deadline-and-cancel-confirmation.md).
 
 ## Git Server access material

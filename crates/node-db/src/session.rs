@@ -3,10 +3,12 @@ mod commands;
 mod events;
 mod journal;
 mod model;
+mod restore;
 pub use model::{
     CommandAdmission, SessionCommandInput, SessionCommandSettlement, SessionCommandState,
     SessionExecution,
 };
+pub use restore::{RestoreAttempt, RestorePhase};
 
 use crate::*;
 use ora_node_protocol::*;
@@ -112,6 +114,10 @@ impl<G: WriteGuard> NodeDatabase<G> {
                 Err(Error::IdentityConflict)
             };
         }
+        let conflict: bool = self.connection.query_row("SELECT EXISTS(SELECT 1 FROM node_executions WHERE (state<>'completed' OR execution IN (SELECT execution FROM session_restores WHERE phase='legacy_unknown')) AND json_extract(input,'$.payload.spec.checkout_execution_id')=?1)", [command.payload.spec.checkout_execution_id.as_str()], |r| r.get(/*idx*/ 0))?;
+        if conflict {
+            return Err(Error::ResourceConflict);
+        }
         if permit.is_some() && !self.unfinished_runtime_executions()?.is_empty() {
             return Err(Error::ResourceConflict);
         }
@@ -124,6 +130,12 @@ impl<G: WriteGuard> NodeDatabase<G> {
             params![command.operation_id.as_str(), command.execution_id.as_str()],
         )?;
         tx.execute("INSERT INTO node_executions(execution,kind,input,state) VALUES(?1,'agent_session',?2,'accepted')", params![command.execution_id.as_str(),serde_json::to_string(command)?])?;
+        if command.payload.spec.prior_revision.is_some() {
+            tx.execute(
+                "INSERT INTO session_restores(execution,phase) VALUES(?1,'pending')",
+                [command.execution_id.as_str()],
+            )?;
+        }
         if let Some(permit) = permit {
             tx.execute(
                 "INSERT INTO execution_control(execution,permit) VALUES(?1,?2)",
@@ -167,6 +179,11 @@ impl<G: WriteGuard> NodeDatabase<G> {
             return Err(Error::InvalidTransition);
         }
         Ok(true)
+    }
+
+    /// Lists restore-owned inputs, including completed sessions whose file cleanup may be retried.
+    pub fn restore_sessions(&self) -> Result<Vec<SessionExecution>, Error> {
+        self.connection.prepare("SELECT input,state,result,last_sequence FROM node_executions JOIN session_restores USING(execution) ORDER BY node_executions.rowid")?.query_map([], row)?.map(|row| decode(row?)).collect()
     }
 
     /// Lists unfinished sessions for interrupted settlement, never for automatic Agent restart.

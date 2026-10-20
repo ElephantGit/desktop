@@ -130,7 +130,7 @@ fn uncertain_execution_retransmits_at_most_once_per_connection() {
                         ControllerToNodeMessage::Heartbeat(_) => continue,
                         message => panic!("unexpected {message:?}"),
                     }
-                    write_node_message(&mut stream, &NodeToControllerMessage::ExecutionStatus(ExecutionStatusMessage { protocol_version: CURRENT_PROTOCOL_VERSION, operation_id: command.operation_id.clone(), execution_id: command.execution_id.clone(), payload: ExecutionStatus { node: identity.clone(), state: ExecutionState::Unknown } })).await.unwrap();
+                    write_node_message(&mut stream, &NodeToControllerMessage::ExecutionStatus(ExecutionStatusMessage { protocol_version: CURRENT_PROTOCOL_VERSION, operation_id: command.operation_id.clone(), execution_id: command.execution_id.clone(), payload: ExecutionStatus { stop_unconfirmed: Vec::new(), node: identity.clone(), state: ExecutionState::Unknown } })).await.unwrap();
                 }
                 assert_eq!(retries, 1);
             };

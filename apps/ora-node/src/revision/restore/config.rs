@@ -12,6 +12,8 @@ use std::{
 pub struct RestoreConfig {
     /// One positive, finite budget shared by download and all restore Git steps.
     pub deadline_ms: u64,
+    /// Independent bound, anchored to the first stop request and retained across restart.
+    pub stop_confirmation_ms: u64,
 }
 
 /// The approved default is five minutes; all default construction derives from this value.
@@ -22,6 +24,7 @@ impl Default for RestoreConfig {
     fn default() -> Self {
         Self {
             deadline_ms: DEFAULT_DEADLINE_MS,
+            stop_confirmation_ms: 600_000,
         }
     }
 }
@@ -36,7 +39,19 @@ impl RestoreConfig {
                 "restore.deadline_ms must be positive, finite and representable",
             ));
         }
+        if self.stop_confirmation_ms <= self.deadline_ms
+            || self.stop_confirmation_ms > i64::MAX as u64
+            || Instant::now()
+                .checked_add(Duration::from_millis(self.stop_confirmation_ms))
+                .is_none()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "restore.stop_confirmation_ms must be finite and greater than restore.deadline_ms",
+            ));
+        }
         Ok(RestorePolicy {
+            stop_confirmation: Duration::from_millis(self.stop_confirmation_ms),
             deadline,
             ..RestorePolicy::DEFAULT
         })
@@ -61,8 +76,28 @@ mod tests {
             configured.policy()?.deadline,
             Duration::from_millis(/*millis*/ 42)
         );
-        assert!(RestoreConfig { deadline_ms: 0 }.policy().is_err());
+        assert!(
+            RestoreConfig {
+                deadline_ms: 0,
+                ..RestoreConfig::default()
+            }
+            .policy()
+            .is_err()
+        );
+        for stop_confirmation_ms in [0, 1, DEFAULT_DEADLINE_MS] {
+            assert!(
+                RestoreConfig {
+                    stop_confirmation_ms,
+                    ..RestoreConfig::default()
+                }
+                .policy()
+                .is_err()
+            );
+        }
         for invalid in [
+            r#"{"stop_confirmation_ms":-1}"#,
+            r#"{"stop_confirmation_ms":1.5}"#,
+            r#"{"stop_confirmation_ms":1e999}"#,
             r#"{"deadline_ms":-1}"#,
             r#"{"deadline_ms":1.5}"#,
             r#"{"deadline_ms":1e999}"#,

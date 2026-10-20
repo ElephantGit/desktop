@@ -70,11 +70,20 @@ pub(super) fn run(
         let grants = crate::revision::GrantStore::new();
         let revisions =
             Revisions::start(&node, grants.clone(), shutdown.clone()).map_err(|e| e.to_string())?;
+        let restore_policy = config.restore.policy().map_err(|error| error.to_string())?;
+        let stops = crate::managed::RestoreStops::new(
+            node.database
+                .session_journal()
+                .map_err(|error| error.to_string())?,
+            node.git.runner().process_config().clone(),
+            restore_policy.stop_confirmation,
+        );
         let restorer = agents::restorer(
             &node,
             config.agent.as_ref(),
             shutdown.clone(),
-            config.restore.policy().map_err(|e| e.to_string())?,
+            restore_policy,
+            &stops,
         )
         .map_err(|e| e.to_string())?;
         let agents = agents::open(
@@ -85,11 +94,12 @@ pub(super) fn run(
             plugins.catalog.clone(),
             restorer,
             &shutdown,
+            &stops,
         )
         .map_err(|e| e.to_string())?;
-        Ok::<_, String>((node, controller, clones, plugins, agents, grants, revisions))
+        Ok::<_, String>((node, controller, clones, plugins, agents, grants, revisions, stops))
     })();
-    let (mut node, controller, mut clones, mut plugins, agents, grants, mut revisions) =
+    let (mut node, controller, mut clones, mut plugins, agents, grants, mut revisions, stops) =
         match initialized {
             Ok(value) => value,
             Err(error) => {
@@ -161,6 +171,7 @@ pub(super) fn run(
                             &controller,
                             controlled,
                             target.as_ref(),
+                            &stops,
                             work.request,
                         )
                         .map_err(|error| Rejection {
@@ -183,6 +194,14 @@ pub(super) fn run(
                 // Worktree recovery stays here: the session never admits Worktree commands, so
                 // only state written by other embeddings can reach it.
                 node.recover().map_err(|e| e.to_string())?;
+                tokio::runtime::Handle::current()
+                    .block_on(agents::reconcile(
+                        &mut node,
+                        agents.as_ref(),
+                        &stops,
+                        crate::managed::StopCheck::WithinBound,
+                    ))
+                    .map_err(|error| error.to_string())?;
                 clones.recovery_pass(&mut node)?;
                 next = Instant::now() + Duration::from_millis(config.recovery_interval_ms);
             }
@@ -254,6 +273,7 @@ fn handle(
     controller: &ControllerId,
     controlled: bool,
     target: Option<&RuntimeScope>,
+    stops: &crate::managed::RestoreStops,
     request: Request,
 ) -> Result<Vec<NodeToControllerMessage>, crate::Error> {
     match request {
@@ -336,11 +356,21 @@ fn handle(
         }
         Request::Message(ControllerToNodeMessage::EndSession(input)) => {
             agents.ok_or(crate::Error::UnsupportedMessage)?;
-            agents::command(
+            let execution = input.execution_id.clone();
+            let replies = agents::command(
                 node,
                 controller,
                 ora_node_db::SessionCommandInput::EndSession(input),
-            )
+            )?;
+            if replies
+                .iter()
+                .any(|reply| matches!(reply, NodeToControllerMessage::SessionCommandAccepted(_)))
+                && let Err(error) = stops.request_session(&execution)
+            {
+                // Delivery of cancellation still has priority when the timestamp write fails.
+                ora_logging::ora_warn!(execution_id = %execution, error = %error, "restore stop origin could not be persisted");
+            }
+            Ok(replies)
         }
         Request::Message(ControllerToNodeMessage::BindRuntime(binding)) => {
             if target.is_some_and(|scope| !scope.permits(&binding)) {
@@ -387,6 +417,13 @@ fn handle(
                 &query.operation_id,
                 &query.execution_id,
             )?;
+            // Ownership is checked before an explicit late-evidence handover.
+            tokio::runtime::Handle::current().block_on(agents::reconcile(
+                node,
+                agents,
+                stops,
+                crate::managed::StopCheck::Handover,
+            ))?;
             Ok(vec![NodeToControllerMessage::ExecutionStatus(
                 node.status(&query)?,
             )])
@@ -471,6 +508,7 @@ fn plugin_status(
             operation_id: record.command.operation_id().clone(),
             execution_id: record.command.execution_id().clone(),
             payload: ExecutionStatus {
+                stop_unconfirmed: Vec::new(),
                 node: node.identity().clone(),
                 state: record.state,
             },
@@ -489,6 +527,7 @@ fn delivery_status(
             operation_id: record.command.operation_id.clone(),
             execution_id: record.command.execution_id.clone(),
             payload: ExecutionStatus {
+                stop_unconfirmed: Vec::new(),
                 node: node.identity().clone(),
                 state: record.progress.state(),
             },

@@ -9,7 +9,7 @@
 //! slow Git Server fetch cannot hand the workload fresh per-command budgets.
 use super::super::snapshot::DeliveryGit;
 use super::runner::{RestoreCommands, RestoreGitRunner, check};
-use crate::session::{RestoreFailure, Restored};
+use crate::session::{RestoreCancel, RestoreFailure, Restored};
 use gitlancer::{GitExecError, GitRunner};
 use ora_node_protocol::{CommitId, PriorRevision};
 use std::path::Path;
@@ -35,9 +35,19 @@ pub(crate) struct GitRestore<'a> {
 }
 
 impl<R: RestoreGitRunner> DeliveryGit<R> {
+    /// Binds every later workload command to the original session before admission.
+    pub(crate) fn bind_restore(
+        &mut self,
+        execution: &ora_node_protocol::ExecutionId,
+        cancellation: RestoreCancel,
+    ) {
+        self.runner.bind_restore(execution, cancellation);
+    }
+
     /// Refuses an expired restore before Git starts and runs every step through the cutoff.
     pub(crate) fn restore(&self, request: &GitRestore<'_>) -> Result<Restored, RestoreFailure> {
         check(request.deadline).map_err(failed)?;
+        self.runner.check_admission().map_err(failed)?;
         DeliveryGit::new(
             RestoreCommands {
                 runner: &self.runner,

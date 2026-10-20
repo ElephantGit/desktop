@@ -3,8 +3,8 @@
 //!
 //! Each execution composes its own plugin lifecycle and agent runtime from `ora-agent-runtime`,
 //! so it starts only the plugin it names and exports only its own Git identity. A session never
-//! outlives the Node process: a restarted Node ends every session it finds unfinished as
-//! interrupted instead of resuming it.
+//! resumes after Node restart. Original restore stop evidence must precede interrupted settlement;
+//! an unknown original process retains its session and checkout responsibility.
 
 mod driver;
 mod end;
@@ -18,6 +18,7 @@ mod resume;
 mod thread;
 mod workload;
 
+pub(crate) use model::seal_unstarted_history;
 pub use ports::{
     CheckoutResolver, CommandSettlement, HistoryUnavailable, PluginCatalog, PriorRevisionRestore,
     QueuedCommand, RestoreCancel, RestoreFailure, RestoreRequest, Restored, SessionCommand,
@@ -91,7 +92,7 @@ impl<L, C, P, R> Shared<L, C, P, R> {
     }
 
     /// Reports whether a session of this execution is running in this process.
-    fn is_live(&self, execution: &ExecutionId) -> bool {
+    pub(crate) fn is_live(&self, execution: &ExecutionId) -> bool {
         self.live
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -156,6 +157,9 @@ impl<L, C, P, R> AgentSessions<L, C, P, R> {
             shared.ora_git = Some(broker);
         }
         self
+    /// Recovery must never compete with the actor currently executing restore.
+    pub(crate) fn is_live(&self, execution: &ExecutionId) -> bool {
+        self.shared.is_live(execution)
     }
 
     /// The transport flushes replacements independently of durable event replay and Ack.
@@ -261,7 +265,13 @@ where
     }
 
     fn sealed_history(&self, execution: &ExecutionId) -> Result<PathBuf, HistoryUnavailable> {
-        if self.shared.is_live(execution) {
+        if self.shared.is_live(execution)
+            || !self
+                .shared
+                .ledger
+                .session_completed(execution)
+                .unwrap_or(/*default*/ false)
+        {
             return Err(HistoryUnavailable);
         }
         let path = ora_history::history_path(&self.shared.sessions_root(), execution.as_str())

@@ -59,6 +59,7 @@ pub(super) fn execution_status_unknown() -> Case {
                 operation_id: OperationId::new("operation-create"),
                 execution_id: ExecutionId::new("execution-create"),
                 payload: ExecutionStatus {
+                    stop_unconfirmed: Vec::new(),
                     node: node(),
                     state: ExecutionState::Unknown,
                 },
@@ -91,6 +92,7 @@ pub(super) fn execution_status_accepted() -> Case {
                 operation_id: OperationId::new("operation-create"),
                 execution_id: ExecutionId::new("execution-create"),
                 payload: ExecutionStatus {
+                    stop_unconfirmed: Vec::new(),
                     node: node(),
                     state: ExecutionState::Accepted,
                 },
@@ -123,6 +125,7 @@ pub(super) fn execution_status_running() -> Case {
                 operation_id: OperationId::new("operation-create"),
                 execution_id: ExecutionId::new("execution-create"),
                 payload: ExecutionStatus {
+                    stop_unconfirmed: Vec::new(),
                     node: node(),
                     state: ExecutionState::Running,
                 },

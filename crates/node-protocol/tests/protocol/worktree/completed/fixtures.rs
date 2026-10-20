@@ -9,6 +9,7 @@ pub(super) fn execution_status() -> Case {
                 operation_id: OperationId::new("operation-create"),
                 execution_id: ExecutionId::new("execution-create"),
                 payload: ExecutionStatus {
+                    stop_unconfirmed: Vec::new(),
                     node: node(),
                     state: ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
                         WorktreeExecutionResult::Ready(ready_result()),
@@ -59,6 +60,7 @@ pub(super) fn execution_status_failed() -> Case {
                 operation_id: OperationId::new("operation-create"),
                 execution_id: ExecutionId::new("execution-create"),
                 payload: ExecutionStatus {
+                    stop_unconfirmed: Vec::new(),
                     node: node(),
                     state: ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
                         WorktreeExecutionResult::Failed(failed_result()),
@@ -108,6 +110,7 @@ pub(super) fn execution_status_removed() -> Case {
                 operation_id: OperationId::new("operation-create"),
                 execution_id: ExecutionId::new("execution-create"),
                 payload: ExecutionStatus {
+                    stop_unconfirmed: Vec::new(),
                     node: node(),
                     state: ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
                         WorktreeExecutionResult::Removed(removed_result()),
@@ -154,6 +157,7 @@ pub(super) fn execution_status_removal_failed() -> Case {
                 operation_id: OperationId::new("operation-create"),
                 execution_id: ExecutionId::new("execution-create"),
                 payload: ExecutionStatus {
+                    stop_unconfirmed: Vec::new(),
                     node: node(),
                     state: ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
                         WorktreeExecutionResult::RemovalFailed(removal_failed_result()),

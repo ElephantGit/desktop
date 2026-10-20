@@ -19,12 +19,13 @@ use tokio::sync::watch;
 /// Restores the prior Revision the session names, if any, and appends the divergence note to the
 /// initial turn when the remote history was rewritten.
 ///
-/// A Node stopping meanwhile cancels the session like a stopping conversation, and an
-/// `EndSession` ends it with its own reason (`ended` resolves to that end). Either way the restore
-/// is told to stop and awaited first: the session must not end, and delivery must not read the
-/// checkout, while restore Git may still write it.
-pub(super) async fn restore_prior<R: PriorRevisionRestore>(
+/// A durable `EndSession` and a Node stop are checked before restore admission, and the session
+/// `ended` future also cancels it. Either way the restore is told to stop and awaited first: the
+/// session must not end, and delivery must not read the checkout, while restore Git may still
+/// write it.
+pub(super) async fn restore_prior<R: PriorRevisionRestore, L: super::ports::SessionLedger>(
     restorer: &R,
+    ledger: &L,
     operation: &OperationId,
     execution: &ExecutionId,
     checkout: &ClonedCheckout,
@@ -54,12 +55,21 @@ pub(super) async fn restore_prior<R: PriorRevisionRestore>(
     let cancel = RestoreCancel::default();
     let restore = restorer.restore(request, cancel.clone());
     tokio::pin!(restore);
+    tokio::pin!(ended);
+    if let Some(reason) = stop_reason(ledger, execution, &stopping) {
+        restorer.request_stop(execution);
+        cancel.cancel();
+        let _ = restore.await;
+        return Err(SessionEnd::requested(reason));
+    }
     let end = tokio::select! {
         biased;
         _ = stopping.wait_for(|stop| *stop) => SessionEnd::requested(EndSessionReason::Cancelled),
-        end = ended => end,
+        end = &mut ended => end,
         restored = &mut restore => return note_restored(execution, spec, restored),
     };
+    // The anchor is written before cancellation can reach the next command boundary.
+    restorer.request_stop(execution);
     cancel.cancel();
     let _ = restore.await;
     Err(end)
@@ -95,7 +105,26 @@ fn note_restored(
     }
 }
 
-/// The fixed-format note appended to the first turn when the snapshot lost the prior base.
+/// A durable EndSession and Node stop are checked before restore admission and plugin handoff.
+fn stop_reason<L: super::ports::SessionLedger>(
+    ledger: &L,
+    execution: &ExecutionId,
+    stopping: &watch::Receiver<bool>,
+) -> Option<EndSessionReason> {
+    if *stopping.borrow() {
+        return Some(EndSessionReason::Cancelled);
+    }
+    ledger
+        .queued_commands(execution)
+        .ok()?
+        .into_iter()
+        .find_map(|entry| match entry.command {
+            super::ports::SessionCommand::EndSession(reason) => Some(reason),
+            super::ports::SessionCommand::SubmitUserTurn(_) => None,
+        })
+}
+
+/// The fixed-format note appended to the first turn when `origin/<branch>` lost a base commit.
 fn divergence_note(final_commit: &CommitId, base_commit: &CommitId, branch: &str) -> String {
     let (final_commit, base_commit) = (final_commit.as_str(), base_commit.as_str());
     format!(
