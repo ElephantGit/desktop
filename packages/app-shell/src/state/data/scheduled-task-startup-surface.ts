@@ -1,6 +1,7 @@
 import type {
   ContractsClient,
   ScheduledTask,
+  ScheduledTaskEvent,
   ScheduledTaskHistoryEntry,
 } from "@ora/contracts";
 import type { QueryClient } from "@tanstack/react-query";
@@ -11,6 +12,10 @@ import { useUiStore } from "../stores/ui-store";
 import { notifyFailedScheduledFact } from "./scheduled-task-events";
 
 const SEEN_STORAGE_KEY = "ora.scheduledTaskFactsSeenAt";
+const SEEN_FACTS_STORAGE_KEY = "ora.scheduledTaskFactsSeen";
+const SEEN_FACTS_INITIALIZED_STORAGE_KEY =
+  "ora.scheduledTaskFactsSeenInitialized";
+const MAX_SEEN_FACTS = 1_000;
 
 /** Reads the timestamp up to which persisted facts were already surfaced to the user. */
 function readSeenBaseline(): number {
@@ -38,6 +43,65 @@ function advanceSeenBaseline(at: number): void {
   if (at > readSeenBaseline()) writeSeenBaseline(at);
 }
 
+/** Stores exact facts so one task's live event cannot suppress another task's history. */
+function readSeenFacts(): Record<string, number> {
+  try {
+    const raw = window.localStorage.getItem(SEEN_FACTS_STORAGE_KEY);
+    if (raw === null) return {};
+    const value: unknown = JSON.parse(raw);
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      return {};
+    }
+    return Object.fromEntries(
+      Object.entries(value).filter(
+        ([, seenAt]) => typeof seenAt === "number" && Number.isFinite(seenAt),
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function writeSeenFacts(facts: Record<string, number>): void {
+  try {
+    const retained = Object.entries(facts)
+      .sort(([, left], [, right]) => right - left)
+      .slice(0, MAX_SEEN_FACTS);
+    window.localStorage.setItem(
+      SEEN_FACTS_STORAGE_KEY,
+      JSON.stringify(Object.fromEntries(retained)),
+    );
+  } catch {
+    // Best effort: surfacing must not depend on storage availability.
+  }
+}
+
+function hasSeenFact(key: string): boolean {
+  return Object.hasOwn(readSeenFacts(), key);
+}
+
+function markFactSeen(key: string, seenAt: number): void {
+  writeSeenFacts({ ...readSeenFacts(), [key]: seenAt });
+}
+
+function seenFactsInitialized(): boolean {
+  try {
+    return (
+      window.localStorage.getItem(SEEN_FACTS_INITIALIZED_STORAGE_KEY) === "1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function markSeenFactsInitialized(): void {
+  try {
+    window.localStorage.setItem(SEEN_FACTS_INITIALIZED_STORAGE_KEY, "1");
+  } catch {
+    // The legacy baseline remains a safe fallback when storage is unavailable.
+  }
+}
+
 function asMillis(value: bigint): number {
   return Number(value);
 }
@@ -47,6 +111,44 @@ function surfaceableFactAt(entry: ScheduledTaskHistoryEntry): number | null {
   if (entry.kind === "missed") return asMillis(entry.observedAt);
   if (entry.failureReason !== null) return asMillis(entry.updatedAt);
   return null;
+}
+
+function factKey(
+  taskId: string,
+  entry: ScheduledTaskHistoryEntry,
+): string | null {
+  if (entry.kind === "missed") {
+    return `missed:${taskId}:${entry.scheduledAt}`;
+  }
+  return entry.failureReason === null ? null : `run:${taskId}:${entry.id}`;
+}
+
+function liveFact(
+  entries: ScheduledTaskHistoryEntry[],
+  event: Extract<
+    ScheduledTaskEvent,
+    { kind: "run_finished" | "occurrence_missed" }
+  >,
+): ScheduledTaskHistoryEntry | null {
+  if (event.kind === "occurrence_missed") {
+    return (
+      entries.find(
+        (entry) =>
+          entry.kind === "missed" && entry.scheduledAt === event.scheduledAt,
+      ) ?? null
+    );
+  }
+  return (
+    entries
+      .filter(
+        (entry): entry is Extract<ScheduledTaskHistoryEntry, { kind: "run" }> =>
+          entry.kind === "run" &&
+          entry.status === "failed" &&
+          entry.failureReason === event.failureReason,
+      )
+      .sort((left, right) => Number(right.updatedAt - left.updatedAt))[0] ??
+    null
+  );
 }
 
 /**
@@ -71,28 +173,35 @@ function serializeBaselineTurn<T>(turn: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Records the newest persisted failure or missed fact for one task after its live event was
- * delivered. This prevents a reconnect from replaying a toast that the event stream already
- * surfaced, and a live fact also establishes a sensible baseline after an upgrade.
+ * Claims one persisted fact for a live event. The caller surfaces the toast only when this
+ * returns true, so a startup pass and the live stream cannot toast the same fact twice.
  */
 export function markScheduledTaskHistorySeen(
   client: ContractsClient,
   queryClient: QueryClient,
-  taskId: string,
-): Promise<void> {
+  event: Extract<
+    ScheduledTaskEvent,
+    { kind: "run_finished" | "occurrence_missed" }
+  >,
+): Promise<boolean> {
   return serializeBaselineTurn(async () => {
     try {
       const entries = await client.scheduledTask
-        .listHistory({ taskId })
+        .listHistory({ taskId: event.taskId })
         .then((response) => response.entries);
-      queryClient.setQueryData(scheduledTaskKeys.history(taskId), entries);
-      const newest = entries.reduce((latest, entry) => {
-        const factAt = surfaceableFactAt(entry);
-        return factAt === null ? latest : Math.max(latest, factAt);
-      }, readSeenBaseline());
-      advanceSeenBaseline(newest);
+      queryClient.setQueryData(
+        scheduledTaskKeys.history(event.taskId),
+        entries,
+      );
+      const fact = liveFact(entries, event);
+      const key = fact === null ? null : factKey(event.taskId, fact);
+      if (key === null) return true;
+      if (hasSeenFact(key)) return false;
+      markFactSeen(key, surfaceableFactAt(fact) ?? Date.now());
+      return true;
     } catch {
       // The event remains actionable even when its history refresh is temporarily unavailable.
+      return true;
     }
   });
 }
@@ -103,8 +212,8 @@ let startupSurfaceQueued = false;
 /**
  * Surfaces persisted Scheduled Task facts that were recorded while the shell could not
  * receive application events: startup-recovered missed occurrences and interrupted failed
- * runs. Facts newer than the persisted baseline are surfaced once, then the baseline
- * advances; notifications stay best-effort and never rewrite run facts.
+ * runs. Exact fact keys prevent duplicate notifications; the old timestamp baseline is only
+ * consulted once to migrate existing installs without replaying their already-seen history.
  *
  * A request made while a pass is in flight queues exactly one follow-up pass instead of
  * reusing the in-flight promise: facts persisted during the first pass (for example while
@@ -141,8 +250,9 @@ async function surfaceStartupScheduledFactsOnce(
   platform: PlatformAdapter | null,
 ): Promise<void> {
   const t = appI18n.t.bind(appI18n);
-  const baseline = readSeenBaseline();
-  let newest = baseline;
+  const legacyBaseline = seenFactsInitialized() ? 0 : readSeenBaseline();
+  let newest = legacyBaseline;
+  let historiesComplete = true;
 
   let tasks: ScheduledTask[];
   try {
@@ -165,11 +275,17 @@ async function surfaceStartupScheduledFactsOnce(
             .then((r) => r.entries),
       });
     } catch {
+      historiesComplete = false;
       continue;
     }
     for (const entry of entries) {
       const factAt = surfaceableFactAt(entry);
-      if (factAt === null || factAt <= readSeenBaseline()) continue;
+      const key = factKey(task.id, entry);
+      if (factAt === null || key === null || hasSeenFact(key)) continue;
+      if (factAt <= legacyBaseline) {
+        markFactSeen(key, factAt);
+        continue;
+      }
       newest = Math.max(newest, factAt);
       const title =
         entry.kind === "missed"
@@ -186,8 +302,10 @@ async function surfaceStartupScheduledFactsOnce(
         () =>
           useUiStore.getState().openScheduledTaskHistory({ taskId: task.id }),
       );
+      markFactSeen(key, factAt);
     }
   }
 
-  if (newest > baseline) advanceSeenBaseline(newest);
+  if (newest > legacyBaseline) advanceSeenBaseline(newest);
+  if (historiesComplete) markSeenFactsInitialized();
 }

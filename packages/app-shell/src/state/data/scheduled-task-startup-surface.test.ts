@@ -13,6 +13,7 @@ import {
   markScheduledTaskHistorySeen,
   surfaceStartupScheduledFacts,
 } from "./scheduled-task-startup-surface";
+import { surfaceScheduledTaskEvent } from "./scheduled-task-events";
 
 const TASK: ScheduledTask = {
   id: "scheduled-1",
@@ -53,10 +54,10 @@ function missedFact(observedAt: bigint): ScheduledTaskHistoryEntry {
   };
 }
 
-function failedRun(updatedAt: bigint): ScheduledTaskHistoryEntry {
+function failedRun(updatedAt: bigint, id = "run-1"): ScheduledTaskHistoryEntry {
   return {
     kind: "run",
-    id: "run-1",
+    id,
     scheduledAt: 2_000n,
     revision: 1n,
     status: "failed",
@@ -103,7 +104,9 @@ interface RecordedToastCall {
 }
 
 /** Narrows sonner's broad toast payload to the shape these surfaces emit. */
-function toastCalls(spy: ReturnType<typeof spyOnErrorToast>): RecordedToastCall[] {
+function toastCalls(
+  spy: ReturnType<typeof spyOnErrorToast>,
+): RecordedToastCall[] {
   return spy.mock.calls.map(
     (call) => call[1] as RecordedToastCall | undefined,
   ) as RecordedToastCall[];
@@ -155,7 +158,7 @@ describe("startup surface of persisted scheduled task facts", () => {
   it("surfaces a failed run and skips facts at or before the baseline", async () => {
     window.localStorage.setItem("ora.scheduledTaskFactsSeenAt", "3000");
     const { platform } = createPlatform();
-    const storage = harness([failedRun(3_000n), failedRun(4_000n)]);
+    const storage = harness([failedRun(3_000n), failedRun(4_000n, "run-2")]);
 
     await surfaceStartupScheduledFacts(
       storage.client,
@@ -176,11 +179,12 @@ describe("startup surface of persisted scheduled task facts", () => {
     const { platform } = createPlatform();
     const storage = harness([failedRun(5_000n)]);
 
-    await markScheduledTaskHistorySeen(
-      storage.client,
-      storage.queryClient,
-      TASK.id,
-    );
+    await markScheduledTaskHistorySeen(storage.client, storage.queryClient, {
+      kind: "run_finished",
+      taskId: TASK.id,
+      status: "failed",
+      failureReason: "timeout",
+    });
     await surfaceStartupScheduledFacts(
       storage.client,
       storage.queryClient,
@@ -188,8 +192,8 @@ describe("startup surface of persisted scheduled task facts", () => {
     );
 
     expect(errorToast).not.toHaveBeenCalled();
-    expect(window.localStorage.getItem("ora.scheduledTaskFactsSeenAt")).toBe(
-      "5000",
+    expect(window.localStorage.getItem("ora.scheduledTaskFactsSeen")).toContain(
+      "run:scheduled-1:run-1",
     );
   });
 
@@ -250,11 +254,12 @@ describe("startup surface of persisted scheduled task facts", () => {
     // A live failed fact for task B lands while task A's history read is still in flight.
     // The dedupe write must wait for the in-flight surface pass, or task A's older missed
     // fact would be skipped by the advanced baseline instead of surfaced.
-    const markPromise = markScheduledTaskHistorySeen(
-      client,
-      queryClient,
-      TASK_B.id,
-    );
+    const markPromise = markScheduledTaskHistorySeen(client, queryClient, {
+      kind: "run_finished",
+      taskId: TASK_B.id,
+      status: "failed",
+      failureReason: "timeout",
+    });
     blocked.resolve([missedA]);
     await Promise.all([surfacePromise, markPromise]);
     await Promise.resolve();
@@ -275,6 +280,59 @@ describe("startup surface of persisted scheduled task facts", () => {
     expect(window.localStorage.getItem("ora.scheduledTaskFactsSeenAt")).toBe(
       "5000",
     );
+  });
+
+  it("surfaces an interleaved live failure exactly once", async () => {
+    const missedA = missedFact(1_000n);
+    const failedB = failedRun(5_000n);
+    const blocked = deferred<ScheduledTaskHistoryEntry[]>();
+    const handlers: TestHandlers = {
+      listScheduledTasks: async () => ({ tasks: [TASK, TASK_B] }),
+      listScheduledTaskHistory: async ({ taskId }) => {
+        if (taskId === TASK.id) return { entries: await blocked.promise };
+        return { entries: [failedB] };
+      },
+    };
+    const client = createTestClient(handlers);
+    const queryClient = createTestQueryClient();
+    const { platform } = createPlatform();
+    const liveEvent = {
+      kind: "run_finished" as const,
+      taskId: TASK_B.id,
+      status: "failed" as const,
+      failureReason: "timeout" as const,
+    };
+
+    const startup = surfaceStartupScheduledFacts(client, queryClient, platform);
+    const live = (async () => {
+      const shouldSurface = await markScheduledTaskHistorySeen(
+        client,
+        queryClient,
+        liveEvent,
+      );
+      if (shouldSurface) {
+        await surfaceScheduledTaskEvent(
+          platform,
+          liveEvent,
+          queryClient,
+          client,
+        );
+      }
+    })();
+    blocked.resolve([missedA]);
+    await Promise.all([startup, live]);
+
+    const descriptions = toastCalls(errorToast).map(
+      (call) => call.description ?? "",
+    );
+    expect(
+      descriptions.filter((description) => description.includes("已错过")),
+    ).toHaveLength(1);
+    expect(
+      descriptions.filter((description) =>
+        description.includes("失败：运行超时"),
+      ),
+    ).toHaveLength(1);
   });
 
   it("surfaces facts persisted during an in-flight pass on the queued follow-up", async () => {

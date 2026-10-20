@@ -82,11 +82,12 @@ export function useAppEvents(client: ContractsClient) {
                 event.kind === "occurrence_missed" ||
                 (event.kind === "run_finished" && event.failureReason !== null)
               ) {
-                await markScheduledTaskHistorySeen(
+                const shouldSurface = await markScheduledTaskHistorySeen(
                   client,
                   queryClient,
-                  event.taskId,
+                  event,
                 );
+                if (!shouldSurface) return;
               }
               await surfaceScheduledTaskEvent(
                 platform,
