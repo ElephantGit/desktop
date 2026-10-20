@@ -6,7 +6,8 @@ import { LandingHeading } from "./empty-state";
 import { MessageList } from "./message-list";
 import type { ConversationNavigationPresentation } from "./conversation-navigator";
 import { Button, Tooltip, TooltipContent, TooltipTrigger } from "@ora/ui";
-import type { ChatModelChange, ChatTurn } from "@ora/chat";
+import type { ChatModelChange, ChatTurn, RunDiagnostics } from "@ora/chat";
+import { RunDiagnosticsPanel } from "./run-diagnostics";
 import type { Agent, SessionPermissionRequest, Skill } from "@ora/contracts";
 import { useTranslation } from "react-i18next";
 import type { SessionSetupPresentation } from "./session-setup";
@@ -34,6 +35,7 @@ interface ChatViewProps {
   isLoading?: boolean;
   error: string | null;
   pendingPermissions?: SessionPermissionRequest[];
+  diagnostics?: RunDiagnostics;
   disabled?: boolean;
   /** Overrides composer disablement for the agent/model picker. */
   modelSelectorDisabled?: boolean;
@@ -99,6 +101,7 @@ export function ChatView({
   isLoading = false,
   error,
   pendingPermissions = [],
+  diagnostics,
   disabled = false,
   modelSelectorDisabled = disabled,
   modelSelectorSessionId,
@@ -226,6 +229,14 @@ export function ChatView({
             >
               {error}
             </p>
+          )}
+          {turns.length > 0 && (
+            <RunDiagnosticsPanel
+              diagnostics={diagnostics}
+              turns={turns}
+              isResponding={isResponding}
+              pendingPermissions={pendingPermissions}
+            />
           )}
           {pendingPermissions.map((request) => (
             <section

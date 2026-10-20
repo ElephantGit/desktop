@@ -1,4 +1,5 @@
 import type * as acp from "@agentclientprotocol/sdk";
+import type { RunDiagnostics } from "./diagnostics.ts";
 import type {
   SessionHistoryNotice,
   SessionPermissionRequest,
@@ -155,6 +156,8 @@ export interface SessionUsage {
 
 /** Holds the in-memory chat state isolated to one stable Ora session identifier. */
 export interface SessionConversation {
+  /** Live observations only; loading history clears this rather than inventing recent activity. */
+  diagnostics?: RunDiagnostics;
   /**
    * The agent's configuration selectors (model, and anything else it offers) with
    * their current values. Session-scoped rather than turn-scoped: they arrive

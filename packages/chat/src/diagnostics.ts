@@ -1,0 +1,79 @@
+import type * as acp from "@agentclientprotocol/sdk";
+
+/** A live observation, never reconstructed from transcript load time or provider health guesses. */
+export interface RunDiagnostics {
+  lastActivity?: {
+    kind: "message" | "thought" | "tool" | "plan";
+    receivedAt: number;
+  };
+  provider?:
+    | { kind: "retry"; attempt: number; nextRetryAt?: string }
+    | { kind: "compaction"; status: "started" | "completed" | "failed" };
+}
+
+function record(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Applies only recognized provider reports; unrecognized metadata never becomes a health claim. */
+export function observeDiagnostics(
+  previous: RunDiagnostics | undefined,
+  update: acp.SessionUpdate,
+  receivedAt: number,
+): RunDiagnostics | undefined {
+  if (
+    (update.sessionUpdate === "agent_message_chunk" ||
+      update.sessionUpdate === "agent_thought_chunk") &&
+    update.content.type === "text" &&
+    update.content.text === ""
+  )
+    return previous;
+  const kinds = {
+    agent_message_chunk: "message",
+    agent_thought_chunk: "thought",
+    tool_call: "tool",
+    tool_call_update: "tool",
+    plan: "plan",
+  } as const;
+  if (update.sessionUpdate in kinds) {
+    const kind = kinds[update.sessionUpdate as keyof typeof kinds];
+    return { ...previous, lastActivity: { kind, receivedAt } };
+  }
+  if (update.sessionUpdate !== "session_info_update" || !record(update._meta))
+    return previous;
+  if ("opencode/child-session" in update._meta) return previous;
+  const retry = update._meta["opencode/retry"];
+  if (
+    record(retry) &&
+    typeof retry.attempt === "number" &&
+    Number.isSafeInteger(retry.attempt) &&
+    retry.attempt > 0
+  ) {
+    return {
+      ...previous,
+      provider: {
+        kind: "retry",
+        attempt: retry.attempt,
+        ...(typeof retry.nextRetryAt === "string"
+          ? { nextRetryAt: retry.nextRetryAt }
+          : {}),
+      },
+    };
+  }
+  const compaction = update._meta["opencode/compaction"];
+  if (
+    record(compaction) &&
+    ["started", "completed", "failed"].includes(String(compaction.status))
+  ) {
+    return {
+      ...previous,
+      provider: {
+        kind: "compaction",
+        status: compaction.status as "started" | "completed" | "failed",
+      },
+    };
+  }
+  if (retry === null && previous?.provider?.kind === "retry")
+    return { ...previous, provider: undefined };
+  return previous;
+}

@@ -17,6 +17,7 @@ import type {
   SessionConversation,
 } from "./types.ts";
 import { currentModel } from "./model-option.ts";
+import { observeDiagnostics, type RunDiagnostics } from "./diagnostics.ts";
 import {
   applyContextUsageUpdate,
   beginUsageAfterAgentSwitch,
@@ -224,6 +225,7 @@ export function createChatStore(
           Math.max(conversation.turns.length - 1, 0),
         ),
         usage: beginUsageAfterAgentSwitch(),
+        ...(conversation.diagnostics ? { diagnostics: undefined } : {}),
       }));
     },
 
@@ -303,6 +305,7 @@ export function createChatStore(
         ...previous,
         turns: [],
         usage: reloadedUsage,
+        ...(previous.diagnostics ? { diagnostics: undefined } : {}),
         isLoading: true,
         error: null,
       }));
@@ -369,6 +372,7 @@ export function createChatStore(
         updateConversation(set, oraSessionId, () => ({
           ...previous,
           usage: reloadedUsage,
+          ...(previous.diagnostics ? { diagnostics: undefined } : {}),
           error: isAbortError(error) ? previous.error : errorMessage(error),
         }));
         if (!isAbortError(error)) throw error;
@@ -429,6 +433,7 @@ export function createChatStore(
       let usageCompleted = false;
 
       /** Flushes one buffered text batch into the live turn before a boundary update. */
+      let pendingDiagnostics: RunDiagnostics | undefined;
       const flushPendingTextChunk = () => {
         if (pendingFlushTimer !== null) {
           clearTimeout(pendingFlushTimer);
@@ -445,6 +450,14 @@ export function createChatStore(
             batch.timestamp,
           ),
         );
+        if (pendingDiagnostics) {
+          const diagnostics = pendingDiagnostics;
+          updateConversation(set, key, (conversation) => ({
+            ...conversation,
+            diagnostics,
+          }));
+          pendingDiagnostics = undefined;
+        }
         pendingTextChunk = null;
       };
 
@@ -463,6 +476,17 @@ export function createChatStore(
         chunk: acp.ContentChunk,
       ) => {
         if (chunk.content.type !== "text") return;
+        pendingDiagnostics = observeDiagnostics(
+          pendingDiagnostics ?? get().conversations[key]?.diagnostics,
+          {
+            ...chunk,
+            sessionUpdate:
+              itemKind === "message"
+                ? "agent_message_chunk"
+                : "agent_thought_chunk",
+          },
+          now(),
+        );
         if (
           pendingTextChunk !== null &&
           (pendingTextChunk.itemKind !== itemKind ||
@@ -515,6 +539,7 @@ export function createChatStore(
       updateConversation(set, key, (conversation) => ({
         ...conversation,
         turns: [...conversation.turns, turn],
+        ...(conversation.diagnostics ? { diagnostics: undefined } : {}),
         isResponding: true,
         error: null,
       }));
@@ -536,6 +561,17 @@ export function createChatStore(
             error: message,
           }));
           operations.delete(key);
+          updateConversation(set, key, (conversation) =>
+            conversation.diagnostics?.provider
+              ? {
+                  ...conversation,
+                  diagnostics: {
+                    ...conversation.diagnostics,
+                    provider: undefined,
+                  },
+                }
+              : conversation,
+          );
           throw error;
         }
         if (controller.signal.aborted) {
@@ -553,6 +589,17 @@ export function createChatStore(
             isResponding: false,
           }));
           operations.delete(key);
+          updateConversation(set, key, (conversation) =>
+            conversation.diagnostics?.provider
+              ? {
+                  ...conversation,
+                  diagnostics: {
+                    ...conversation.diagnostics,
+                    provider: undefined,
+                  },
+                }
+              : conversation,
+          );
           return;
         }
         updateTurn(set, key, turnId, (current) => ({
@@ -590,6 +637,23 @@ export function createChatStore(
             // would only duplicate it; every other update belongs to this turn.
             const update = event.update;
             if (update.sessionUpdate === "user_message_chunk") continue;
+            if (!(
+              (update.sessionUpdate === "agent_message_chunk" ||
+                update.sessionUpdate === "agent_thought_chunk") &&
+              update.content.type === "text"
+            )) {
+              flushPendingTextChunk();
+              updateConversation(set, key, (conversation) => {
+                const diagnostics = observeDiagnostics(
+                  conversation.diagnostics,
+                  update,
+                  now(),
+                );
+                return diagnostics === conversation.diagnostics
+                  ? conversation
+                  : { ...conversation, diagnostics };
+              });
+            }
             if (update.sessionUpdate === "usage_update") {
               updateConversation(set, key, (conversation) => ({
                 ...conversation,
@@ -746,6 +810,17 @@ export function createChatStore(
       } finally {
         flushPendingTextChunk();
         operations.delete(key);
+        updateConversation(set, key, (conversation) =>
+          conversation.diagnostics?.provider
+            ? {
+                ...conversation,
+                diagnostics: {
+                  ...conversation.diagnostics,
+                  provider: undefined,
+                },
+              }
+            : conversation,
+        );
         if (!usageCompleted) {
           updateConversation(set, key, (conversation) => ({
             ...conversation,

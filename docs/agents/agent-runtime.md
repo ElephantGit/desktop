@@ -11,6 +11,19 @@ MCP delivery is in [Session MCP](session-mcp.md). Crate internals are in
 
 ## Agents come from plugins
 
+### Runtime observations
+
+Workspace and workflow conversation views expose read-only run details: the latest live content,
+tool or plan observation and its client receipt time, known pending permission requests, active
+tools, and recognized provider retry/compaction reports. Missing reports remain unknown. Reloaded
+history does not refresh the live observation clock; changing provider or beginning another prompt
+clears stale observations. Silence does not establish provider health or a child lifecycle.
+
+OpenCode child-session projections remain visible, but do not independently reset or pause their
+parent prompt's inactivity window. A child tool retains this exclusion across metadata-free deltas.
+The parent delegate's own in-progress update still pauses its existing timer; explicit Wait and
+cancel/error cleanup remain unchanged.
+
 Every agent is supplied by an installed `agent`-kind plugin; nothing is bundled, and Ora ships with
 no agents until the user installs packages that supply them (one agent per package). The plugin
 owns its agent process end to end: it decides which CLI to run and relays ACP frames to the host

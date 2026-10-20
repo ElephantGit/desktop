@@ -184,6 +184,7 @@ export function RunNodeSessionChat({
         }
         error={conversation?.error ?? null}
         pendingPermissions={conversation?.pendingPermissions ?? []}
+        diagnostics={conversation?.diagnostics}
         roles={agentsQuery.data ?? []}
         availableCommands={conversation?.availableCommands ?? []}
         conversationNavigation={NODE_SESSION_CONVERSATION_NAVIGATION}
