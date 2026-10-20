@@ -46,6 +46,17 @@ export const scheduledTaskTranslations = {
     "scheduledTask.historyStatus.skipped_capacity": "已跳过：达到并发上限",
     "scheduledTask.historyReason.app_not_running": "已错过：Desktop 未运行",
     "scheduledTask.historyReason.late_trigger": "已错过：触发超过 10 分钟",
+    "scheduledTask.notificationStartedTitle": "定时任务已开始",
+    "scheduledTask.notificationStartedBody": "“{{name}}”正在独立工作树中运行。",
+    "scheduledTask.notificationFailedTitle": "定时任务运行失败",
+    "scheduledTask.notificationMissedTitle": "定时任务错过执行",
+    "scheduledTask.view": "查看",
+    "scheduledTask.open": "打开",
+    "scheduledTask.discard": "丢弃",
+    "scheduledTask.discardTitle": "丢弃运行工作树",
+    "scheduledTask.discardConfirm":
+      "丢弃这次运行保留的工作树和它的会话记录吗？工作树目录与任务分支会被删除。",
+    "scheduledTask.discarded": "已丢弃运行工作树",
     "scheduledTask.failureReason.target_unavailable": "失败：目标不可用",
     "scheduledTask.failureReason.model_unavailable": "失败：模型不可用",
     "scheduledTask.failureReason.worktree_failed": "失败：工作树创建失败",
@@ -123,6 +134,18 @@ export const scheduledTaskTranslations = {
       "Missed: Desktop was not running",
     "scheduledTask.historyReason.late_trigger":
       "Missed: triggered over 10 minutes late",
+    "scheduledTask.notificationStartedTitle": "Scheduled run started",
+    "scheduledTask.notificationStartedBody":
+      "“{{name}}” is running in an isolated worktree.",
+    "scheduledTask.notificationFailedTitle": "Scheduled run failed",
+    "scheduledTask.notificationMissedTitle": "Scheduled occurrence missed",
+    "scheduledTask.view": "View",
+    "scheduledTask.open": "Open",
+    "scheduledTask.discard": "Discard",
+    "scheduledTask.discardTitle": "Discard run worktree",
+    "scheduledTask.discardConfirm":
+      "Discard the worktree kept for this run and its session records? The worktree directory and its task branch are deleted.",
+    "scheduledTask.discarded": "Run worktree discarded",
     "scheduledTask.failureReason.target_unavailable":
       "Failed: target unavailable",
     "scheduledTask.failureReason.model_unavailable":

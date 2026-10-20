@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     AgentRef, ProjectId, ScheduledRunId, ScheduledTask, ScheduledTaskApproval, ScheduledTaskId,
-    SessionId,
+    SessionId, TaskId,
 };
 
 /// Allows a live scheduler observation to arrive no more than ten minutes late.
@@ -71,6 +71,8 @@ pub enum ScheduledTaskHistoryEntry {
 pub struct ScheduledRunSnapshot {
     pub revision: u64,
     pub project_id: ProjectId,
+    /// Preserves the unattended worktree baseline selected at occurrence admission.
+    pub worktree_base_branch: Option<String>,
     pub agent_ref: AgentRef,
     pub model: Option<String>,
     pub prompt: String,
@@ -115,6 +117,9 @@ pub enum ScheduledRunTransition {
     Start {
         session_id: SessionId,
         worktree_path: String,
+        /// Links the run to the task-owned worktree created for this execution so history
+        /// can open or discard the retained worktree after the process restarts.
+        worktree_task_id: TaskId,
     },
     Succeed,
     Fail {
@@ -143,6 +148,8 @@ pub struct ScheduledRun {
     pub status: ScheduledRunStatus,
     pub session_id: Option<SessionId>,
     pub worktree_path: Option<String>,
+    /// The task-owned worktree created for this run, kept for retained-worktree history.
+    pub worktree_task_id: Option<TaskId>,
     pub failure_reason: Option<ScheduledRunFailureReason>,
     pub created_at: i64,
     pub updated_at: i64,
@@ -162,6 +169,7 @@ impl ScheduledRun {
             snapshot: ScheduledRunSnapshot {
                 revision: task.revision,
                 project_id: task.project_id.clone(),
+                worktree_base_branch: task.worktree_base_branch.clone(),
                 agent_ref: task.agent_ref.clone(),
                 model: task.model.clone(),
                 prompt: task.prompt.clone(),
@@ -170,6 +178,7 @@ impl ScheduledRun {
             status: ScheduledRunStatus::Accepted,
             session_id: None,
             worktree_path: None,
+            worktree_task_id: None,
             failure_reason: None,
             created_at: accepted_at,
             updated_at: accepted_at,
@@ -186,10 +195,12 @@ impl ScheduledRun {
             ScheduledRunTransition::Start {
                 session_id,
                 worktree_path,
+                worktree_task_id,
             } => {
                 self.status = ScheduledRunStatus::Running;
                 self.session_id = Some(session_id);
                 self.worktree_path = Some(worktree_path);
+                self.worktree_task_id = Some(worktree_task_id);
                 self.failure_reason = None;
             }
             ScheduledRunTransition::Succeed => {
@@ -218,7 +229,7 @@ mod tests {
         AgentRef, AuditFields, ProjectId, ScheduledMissReason, ScheduledOccurrence,
         ScheduledOccurrenceTiming, ScheduledRun, ScheduledRunId, ScheduledRunStatus,
         ScheduledRunTransition, ScheduledTask, ScheduledTaskApproval,
-        ScheduledTaskExecutionLocation, ScheduledTaskId, ScheduledTaskSchedule, SessionId,
+        ScheduledTaskExecutionLocation, ScheduledTaskId, ScheduledTaskSchedule, SessionId, TaskId,
     };
 
     #[test]
@@ -263,6 +274,7 @@ mod tests {
         let start = ScheduledRunTransition::Start {
             session_id: SessionId::new("session-1"),
             worktree_path: "worktrees/run-1".to_string(),
+            worktree_task_id: TaskId::new("task-1"),
         };
         assert!(start.is_allowed_from(ScheduledRunStatus::Accepted));
         assert!(!start.is_allowed_from(ScheduledRunStatus::Running));

@@ -5,11 +5,12 @@ plugin-global Stored Setting Values. Its public API compiles `assets/config.json
 effective values and Configuration Completeness, and persists revisioned `store.json` files under
 `<data-dir>/plugins/data/<namespace>/<name>/`.
 
-Store paths follow the same `<namespace>/<name>` segments as [`PluginId`](../../domain/src/plugin_id.rs),
+Store paths follow the same `<namespace>/<name>` segments as [`PluginId`](../domain/src/plugin_id.rs),
 including dotted name segments such as `ora-space.tavily-search`; they are not restricted to hyphen-only
-[`Slug`](../../utils/src/slug.rs) spelling.
+[`Slug`](../utils/src/slug.rs) spelling.
 
-`assets/config.json` has three mutually exclusive shapes, distinguished by top-level keys.
+The installed `assets/config.json` dispatcher supports three mutually exclusive version-one
+shapes and the version-two Agent shape, distinguished by top-level keys.
 Without `transport` or `hook`, the file is a settings-only Setting Declaration. With `transport`,
 it is an MCP Configuration: the same settings subset plus exactly one MCP Transport (`stdio`
 with a package-contained command, or `http` with an HTTPS URL and credential-free headers). With
@@ -21,7 +22,7 @@ carry two contribution shapes. `compile_configuration_file` performs that dispat
 which shape it compiled, so kind-aware callers can refuse a transport-bearing file on a non-MCP
 package or a hook-bearing file on a non-hook package. The settings subset of an MCP or Hook
 Configuration feeds the same editor and `store.json` machinery as a settings-only file.
-Phase 1 restricts MCP setting types to `string`, `number`, and `boolean`; `secret`, `file`, and
+MCP setting types are restricted to `string`, `number`, and `boolean`; `secret`, `file`, and
 `directory` are rejected with a dedicated error. HTTP headers must bind
 through Setting references — a literal header value would be a way to bake credentials into the
 package. HTTP URLs must be HTTPS, must not carry userinfo, must not contain a query string, and
@@ -39,6 +40,26 @@ responses hide marked values and defaults; MCP settings retain their existing al
 environment names, omitting absent optional values and rejecting the whole package on NUL or
 invalid values. Backend owns installed Skill selection and startup snapshot lifetime. See
 [Skill configuration](../../docs/agents/skill-configuration.md) for the script-facing contract.
+
+## Agent declaration compiler
+
+`compile_agent_configuration` is a separate, side-effect-free entry point for a version-two
+Agent declaration. It reuses the scalar Settings compiler, validates the model-access capability,
+and fingerprints the exact input bytes. Its diagnostics do not echo rejected values.
+`compile_configuration_file` routes the Agent shape to this compiler and rejects mixed contribution
+keys. Kind-aware package validation allows the shape only for Agent packages. The local configuration
+store and editor serve the Agent shape's Settings subset under the declaration's raw-byte fingerprint;
+the model-access half has no desktop-local execution semantics, and a settings-free Agent declaration
+has nothing to edit locally. Release-associated installs check the declaration's
+schema version and exact-byte fingerprint against the expected identity before committing; compiling
+or installing a declaration alone does not enable personal configuration or model execution.
+
+The byte-stable JSON input/output vectors in
+[`tests/fixtures/agent-configuration-contract.json`](tests/fixtures/agent-configuration-contract.json)
+are consumed by the Rust tests and can be reused by other language implementations. Each `source`
+is a JSON string so checkout line-ending conversion cannot change its declaration fingerprint.
+See the [declaration format](../../docs/plugins/agent-configuration.md) for the supported
+shape, version and error boundaries.
 
 Declaration parsing is strict and bounded. A missing declaration file, or a package root that
 cannot be traversed as a directory (`NotADirectory`), is reported as undeclared rather than as a

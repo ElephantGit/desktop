@@ -16,24 +16,13 @@ import {
 } from "@ora/workflow-mock";
 import { cn } from "@ora/ui";
 import { useTranslation } from "react-i18next";
+import { WORKFLOW_CANVAS_NODE_KINDS } from "./workflow-canvas-node-kinds";
 import { getNodeMetadata } from "./workflow-node-metadata";
 
 const MAX_ELASTIC_OFFSET = 18;
 const ELASTIC_RESISTANCE = 0.14;
 const WHEEL_END_DELAY_MS = 100;
 const NODE_DRAG_THRESHOLD = 4;
-
-// Keep prototype node definitions available for incremental implementation,
-// but do not advertise nodes that the current workflow runtime cannot execute.
-const AVAILABLE_NODE_KINDS = new Set<WorkflowNodeKind>([
-  "start",
-  "agent",
-  "condition",
-  "aggregator",
-  "loop",
-  "iteration",
-  "output",
-]);
 
 interface NodeDragDraft {
   kind: WorkflowNodeKind;
@@ -63,7 +52,7 @@ export function WorkflowNodeCatalog({
   const { t } = useTranslation();
   const nodeTypes = capabilities.nodeTypes.filter(
     (nodeType) =>
-      AVAILABLE_NODE_KINDS.has(nodeType.kind) &&
+      WORKFLOW_CANVAS_NODE_KINDS.has(nodeType.kind) &&
       supportsWorkflowNodeScope(nodeType, "workflow"),
   );
   const scrollViewportRef = useRef<HTMLDivElement>(null);

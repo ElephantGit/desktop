@@ -424,6 +424,12 @@ where
                 // A Hook Configuration may declare a future plugin-global Settings subset; RTK
                 // v0.1.0 declares none, so the settings summary stays NotDeclared until one ships.
                 CompiledConfigurationFile::Hook(configuration) => configuration.settings,
+                // An Agent declaration's Settings subset feeds the desktop-local value editor
+                // exactly like the MCP and Hook subsets: one declaration, each host edits it in
+                // its own store, per the agent-configuration host table. The fingerprint the
+                // editor round-trips is the declaration's raw-byte digest, so any change to the
+                // declaration — not just its Settings — fails a stale page's save.
+                CompiledConfigurationFile::Agent(agent) => agent.settings_declaration(),
             }))
     }
 
@@ -560,7 +566,7 @@ const MAX_STORE_BYTES: usize = 1024 * 1024;
 #[cfg(test)]
 mod tests {
     use super::{
-        ConfigurationCompleteness, ConfigurationDetails, ConfigurationService,
+        ConfigurationCompleteness, ConfigurationDetails, ConfigurationError, ConfigurationService,
         ConfigurationSummary, EffectiveValueSource, SettingDetails,
     };
     use crate::{CompiledDeclaration, SettingDeclaration, SettingType, SettingValue};
@@ -568,6 +574,98 @@ mod tests {
     use std::collections::BTreeMap;
     use std::fs;
     use tempfile::TempDir;
+
+    /// An Agent declaration's Settings subset feeds the local editor with the declaration's
+    /// raw-byte fingerprint, so a page saved against older bytes fails after any change.
+    #[test]
+    fn an_agent_declaration_settings_subset_feeds_the_local_editor() {
+        let temporary = TempDir::new().expect("create plugin configuration root");
+        let package_root = temporary.path().join("package");
+        fs::create_dir_all(package_root.join("assets")).expect("create package assets");
+        fs::write(
+            package_root.join("assets").join("config.json"),
+            r#"{"schemaVersion":2,"agent":{"modelAccess":{"contractVersion":1,"protocols":["anthropic-messages"],"modelCardinality":"single"}},"settings":{"verbose":{"type":"boolean","title":"Verbose output","description":"Include additional detail","default":false}}}"#,
+        )
+        .expect("write declaration");
+        let service = ConfigurationService::new(temporary.path());
+
+        let loaded = service
+            .get("official/weather", &package_root)
+            .expect("load configuration")
+            .expect("declaration exists");
+
+        assert_eq!(loaded.declaration.schema_version, 1);
+        assert_eq!(
+            loaded.declaration.fingerprint,
+            "d91bec498bb5a24ea985cfffcb144102d5299a9e96e6d4fd6dece9334cee2857",
+            "the editor fingerprint is the declaration's raw-byte digest"
+        );
+        assert_eq!(
+            loaded
+                .settings
+                .iter()
+                .map(|setting| setting.declaration.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["verbose"]
+        );
+
+        let saved = service
+            .save(
+                "official/weather",
+                &package_root,
+                /*expected_revision*/ 0,
+                &loaded.declaration.fingerprint,
+                BTreeMap::from([("verbose".to_string(), SettingValue::Boolean(true))]),
+            )
+            .expect("save configuration");
+        assert_eq!(saved.revision, 1);
+
+        // Any change to the declaration bytes — here only whitespace — is a new identity, so a
+        // page still holding the old fingerprint fails its save instead of writing against the
+        // new declaration silently.
+        fs::write(
+            package_root.join("assets").join("config.json"),
+            r#"{
+  "schemaVersion": 2,
+  "agent": {"modelAccess": {"contractVersion": 1, "protocols": ["anthropic-messages"], "modelCardinality": "single"}},
+  "settings": {"verbose": {"type": "boolean", "title": "Verbose output", "description": "Include additional detail", "default": false}}
+}"#,
+        )
+        .expect("rewrite declaration");
+        let error = service
+            .save(
+                "official/weather",
+                &package_root,
+                /*expected_revision*/ 1,
+                "d91bec498bb5a24ea985cfffcb144102d5299a9e96e6d4fd6dece9334cee2857",
+                BTreeMap::from([("verbose".to_string(), SettingValue::Boolean(true))]),
+            )
+            .expect_err("a stale page must not save");
+        assert!(
+            matches!(error, ConfigurationError::DeclarationChanged),
+            "{error:?}"
+        );
+    }
+
+    /// An Agent declaration without Settings contributes nothing to the local editor: the
+    /// model-access half has no desktop-local execution semantics.
+    #[test]
+    fn an_agent_declaration_without_settings_has_nothing_to_edit_locally() {
+        let temporary = TempDir::new().expect("create plugin configuration root");
+        let package_root = temporary.path().join("package");
+        fs::create_dir_all(package_root.join("assets")).expect("create package assets");
+        fs::write(
+            package_root.join("assets").join("config.json"),
+            r#"{"schemaVersion":2,"agent":{"modelAccess":{"contractVersion":1,"protocols":["anthropic-messages"],"modelCardinality":"single"}}}"#,
+        )
+        .expect("write declaration");
+        let service = ConfigurationService::new(temporary.path());
+
+        let details = service
+            .get("official/weather", &package_root)
+            .expect("load configuration");
+        assert_eq!(details, None, "nothing to edit locally without Settings");
+    }
 
     /// A package declaration resolves defaults without creating a Stored Setting Value file.
     #[test]

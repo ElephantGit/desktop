@@ -13,10 +13,16 @@
 | `ControlSignalService` | `Watch`（服务端流） | `WorkAvailable`、`OperationAvailable`、`Drain`、`NodeAssignment`；至多一次，不持久化，不改变任何归属 |
 | `WorkspaceOperationService` | `ClaimOperation`、`PlanEffect`、`RecordEffectResult`、`AdvanceOperation`、`DeferOperation`、`ListLiveSandboxes` | 写入以 `epoch` 和操作的 `version` 设置栅栏；clone 和 plugin 步骤以操作的 id 通过 `ExecutionService` 派发 |
 | `NodeReportService` | `RegisterNode`、`ReportNodeStatus`、`ReportNodeIdle`、`EndNode` | Controller 持有会话的沙盒 Node；`RegisterNode` 按（沙盒、incarnation）幂等，第一个结束之前第二个活跃的 incarnation 会冲突 |
-| `AgentRunService` | `TakeOverThreadEvents`、`ClaimThreadCommands`、`RecordThreadCommandDelivered`、`GrantRevisionUpload`、`GrantRevisionDownload` | Thread 中继和 Revision 授权 |
+| `AgentRunService` | `PublishThreadPreview`、`TakeOverThreadEvents`、`ClaimThreadCommands`、`RecordThreadCommandDelivered`、`GrantRevisionUpload`、`GrantRevisionDownload` | Thread 中继和 Revision 授权 |
 | `RuntimeControlService` | `ListBindings`、`AcknowledgeBinding`、`GetExecutionPermit`、`GetEffectPermit`、`ListForceStops`、`ConfirmForceStop` | 带栅栏的运行时控制，见[运行时控制](runtime-control.zh.md) |
 
 失败以 gRPC 状态码作为主要分类，并附带 `ErrorDetail { ErrorCode }`。Rust 一侧在 Cloud RPC 适配器内部一次性把它们映射为协调类别（冲突、缺失、不可用、未知、资格过期），所以协调逻辑从不看到 gRPC。Cloud 对过期的操作快照（`stale_operation`）返回与过期租约相同的 `FAILED_PRECONDITION`；适配器把它归为冲突，所以只有租约判定才会丢弃持有的 epoch。
+
+## 插件声明关联
+
+`install_plugins` 的插件项可以携带 Cloud 冻结的 Agent 声明身份：schema 版本与声明 SHA-256。
+Controller 原样映射到 Node 安装计划。Node 核对实际包内声明，复用已安装的精确版本也一样；不匹配则该项失败。
+声明关联属于原执行输入，重试不从市场刷新。
 
 ## Revision 上传校验和
 
@@ -25,6 +31,10 @@
 恢复运行扩展了同一契约：`AgentSessionSpec.prior_revision` 指明上一个 Revision 及其经过校验的 bundle 对象，`DeliverRevisionSpec.prior_revision` 只有它的最终 commit，`GrantRevisionDownload` 为一个已登记且没有结果的会话签名对那个 bundle 的只在内存中使用的 `GET`。
 
 ## 获取与生成契约
+
+插件安装计划中的 `agent_configuration` 是 Cloud 冻结输入的一部分。Controller 从操作快照读取、
+登记派发以及恢复执行时必须保留它，包括存在但字段为空的关联消息；省略它会使 Cloud 的冻结输入
+一致性检查拒绝派发。协议生成检查之外，wire 往返回归和真实 gRPC 操作测试覆盖这条边界。
 
 `third_party/cloud` 是 Cloud 仓库的 git submodule，它的 gitlink 固定了契约的 commit。工作树是部分 clone（`--filter=blob:none`），sparse checkout 只包含 `proto/`。
 

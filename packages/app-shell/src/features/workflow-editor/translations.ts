@@ -197,7 +197,7 @@ export const workflowEditorTranslations = {
     "settings.workflow.resetView": "重置画布视图",
     "settings.workflow.minimap": "工作流小地图",
     "settings.workflow.canvasHint":
-      "指针模式左拖框选 · 手型模式左拖平移 · 中键平移 · 滚轮缩放 · 节点自动对齐网格",
+      "指针模式左拖框选 · 手型模式左拖平移 · 中键平移 · 滚轮缩放 · 节点对齐网格，靠近时贴齐其他节点",
     "settings.workflow.connectTo": "连接到{{name}}",
     "settings.workflow.connectFrom": "从{{name}}开始连接",
     "settings.workflow.selectConnection": "选择从{{source}}到{{target}}的连线",
@@ -339,6 +339,7 @@ export const workflowEditorTranslations = {
       "节点不能跨区域拖动，请使用迭代区域内的添加节点入口。",
     "settings.workflow.iteration.noSupportedNodes":
       "当前没有可用于迭代区域的节点",
+    "settings.workflow.insertOnEdge": "在连线上插入节点",
     "settings.workflow.iteration.insertOnEdge": "在内部连线上插入节点",
     "settings.workflow.iteration.appendBranch": "在 {{branch}} 分支后添加节点",
     "settings.workflow.iteration.appendOutput": "在 {{name}} 后添加节点",
@@ -751,7 +752,7 @@ export const workflowEditorTranslations = {
     "settings.workflow.resetView": "Reset canvas view",
     "settings.workflow.minimap": "Workflow minimap",
     "settings.workflow.canvasHint":
-      "Pointer mode: left-drag to box-select · Hand mode: left-drag to pan · Middle-drag to pan · Scroll to zoom · Nodes snap to grid",
+      "Pointer mode: left-drag to box-select · Hand mode: left-drag to pan · Middle-drag to pan · Scroll to zoom · Nodes snap to the grid and to nearby nodes",
     "settings.workflow.connectTo": "Connect to {{name}}",
     "settings.workflow.connectFrom": "Connect from {{name}}",
     "settings.workflow.selectConnection":
@@ -914,6 +915,7 @@ export const workflowEditorTranslations = {
       "Nodes cannot move across region boundaries. Use the add-node entry inside the iteration region.",
     "settings.workflow.iteration.noSupportedNodes":
       "No node types are available in iteration regions",
+    "settings.workflow.insertOnEdge": "Insert a node on this edge",
     "settings.workflow.iteration.insertOnEdge":
       "Insert a node on the internal edge",
     "settings.workflow.iteration.appendBranch":

@@ -1,7 +1,10 @@
 //! Package discovery and use leases share the same short critical section as publish/remove.
 use crate::session::PluginCatalog;
 use ora_node_protocol::{PluginFailureCode, PluginId, PluginVersion};
-use ora_plugin_manager::{PreparedPlugin, inspect_planned_package, installed_root};
+use ora_plugin_manager::{
+    ExpectedAgentDeclaration, PreparedPlugin, inspect_planned_package, installed_root,
+    verify_agent_declaration,
+};
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -66,12 +69,19 @@ impl DirectoryPluginCatalog {
         &self,
         id: &ora_domain::PluginId,
         version: &semver::Version,
+        declaration: Option<&ExpectedAgentDeclaration>,
     ) -> Result<bool, PluginFailureCode> {
         let uses = self.uses();
         let path = self.path(id, version);
         if ora_utils::path::check_directory_without_symlinks(&path).is_ok()
             && inspect_planned_package(&path, id, version).is_ok()
         {
+            // A previous unassociated plan proves no declaration identity. Recheck under the
+            // same lock that fences publish/remove, without mutating a leased package.
+            if let Some(expected) = declaration {
+                verify_agent_declaration(&path, expected)
+                    .map_err(|_| PluginFailureCode::InvalidPackage)?;
+            }
             return Ok(true);
         }
         if uses.contains_key(&id.canonical()) {

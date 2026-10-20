@@ -7,22 +7,24 @@ mod domain;
 mod frame;
 mod identity;
 mod message;
+pub use message::{ThreadPreview, ThreadPreviewBlock, ThreadPreviewMessage};
 
 pub use domain::{
     AgentSessionEndReason, AgentSessionEnded, AgentSessionResult, AgentSessionSpec, BranchName,
     CloneExecutionResult, CloneExecutionSpec, CloneFailed, CloneFailureCode, CloneReady,
     CloneRepositoryUrl, CloneResidual, CommitId, ContentBlock, DeliverRevisionSpec, DownloadMethod,
     ExecutionResult, GitIdentity, GitRef, InstallPluginsSpec, InvalidCloneRepositoryUrl,
-    MAX_THREAD_RECORD_BYTES, MAX_USER_TURN_TEXT_BYTES, MainWorkspaceBinding, NodePath,
-    ObjectDownloadGrant, ObjectKey, ObjectUploadGrant, PluginDownload, PluginExecutionResult,
-    PluginFailureCode, PluginId, PluginInstall, PluginItemOutcome, PluginItemResult, PluginRelease,
-    PluginRemoval, PluginTargetDownload, PluginVersion, PluginsCompleted, PluginsFailed,
-    PluginsFailureCode, PresignedUrl, PriorRevision, PriorRevisionCommit, REVISION_REF_PREFIX,
-    RemovePluginsSpec, RepositoryRef, RevisionDelivered, RevisionExecutionResult, RevisionFailed,
-    RevisionFailureCode, RevisionRef, RevisionUnchanged, Sha256Digest, StoredObject, ThreadEvent,
-    UploadMethod, UserTurn, WorktreeExecutionResult, WorktreeExecutionSpec, WorktreeFacts,
-    WorktreeFailed, WorktreeFailure, WorktreeFailureCode, WorktreePathPolicy, WorktreeReady,
-    WorktreeRemovalFailed, WorktreeRemovalOutcome, WorktreeRemoved,
+    MAX_THREAD_RECORD_BYTES, MAX_USER_TURN_TEXT_BYTES, MAX_VISIBLE_TEXT_BYTES,
+    MainWorkspaceBinding, NodePath, ObjectDownloadGrant, ObjectKey, ObjectUploadGrant,
+    PluginAgentConfiguration, PluginDownload, PluginExecutionResult, PluginFailureCode, PluginId,
+    PluginInstall, PluginItemOutcome, PluginItemResult, PluginRelease, PluginRemoval,
+    PluginTargetDownload, PluginVersion, PluginsCompleted, PluginsFailed, PluginsFailureCode,
+    PresignedUrl, PriorRevision, PriorRevisionCommit, REVISION_REF_PREFIX, RemovePluginsSpec,
+    RepositoryRef, RevisionDelivered, RevisionExecutionResult, RevisionFailed, RevisionFailureCode,
+    RevisionRef, RevisionUnchanged, Sha256Digest, StoredObject, ThreadEvent, UploadMethod,
+    UserTurn, WorktreeExecutionResult, WorktreeExecutionSpec, WorktreeFacts, WorktreeFailed,
+    WorktreeFailure, WorktreeFailureCode, WorktreePathPolicy, WorktreeReady, WorktreeRemovalFailed,
+    WorktreeRemovalOutcome, WorktreeRemoved,
 };
 pub use frame::{
     FrameError, MAX_FRAME_LENGTH, NODE_MESSAGE_FRAME_TYPE, decode_controller_frame,

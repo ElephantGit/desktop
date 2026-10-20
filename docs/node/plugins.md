@@ -24,7 +24,10 @@ the whole execution defers the step with `PLUGIN_EXECUTION_FAILED` for retry.
 Packages live under `node.home_directory` at `plugins/installed/<namespace>/<name>/<version>/`.
 Downloads and extraction use `plugins/.node-installs/install-*`, outside discovery. Installation reuses
 `ora-plugin-manager` validation and checks the planned SHA-256, identity, version and target before
-publishing. It never starts plugin code.
+publishing. Plans may also freeze an Agent declaration schema version and byte-exact SHA-256.
+Node compiles `assets/config.json` and verifies that association before reporting success, including
+when reusing an installed version. Missing or different declaration bytes return `invalid_package`
+without replacing the installed package. It never starts plugin code.
 
 - A valid exact version already installed succeeds without downloading. An upgrade retires old versions.
   Removing an absent plugin succeeds, and removal keeps plugin data and configuration. Existing symlink

@@ -30,7 +30,7 @@ pub struct SettingDeclaration {
     pub description: String,
     pub setting_type: SettingType,
     pub required: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub secret: bool,
     pub order: Option<i64>,
     pub default: Option<SettingValue>,

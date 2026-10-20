@@ -1,5 +1,10 @@
 use std::sync::Arc;
 
+#[path = "scheduled_task_runtime.rs"]
+mod runtime;
+#[path = "scheduled_task_worktree.rs"]
+mod worktree;
+
 use ora_application::{
     CreateScheduledTaskHandler, DeleteScheduledTaskHandler, GetScheduledTaskHandler,
     GitScheduledTaskTargetValidator, ListScheduledTaskHistoryHandler, ListScheduledTasksHandler,
@@ -18,8 +23,13 @@ use ora_db::{
     SqliteScheduledTaskRepository, SqliteWorkspaceRepository,
 };
 use ora_domain::ScheduledTaskExecutionLocation;
+use ora_scheduler::Scheduler;
 
-use crate::{AgentRuntime, BackendError, ErrorClassification, clock::SystemClock};
+use crate::{
+    AgentRuntime, BackendError, ErrorClassification, Sessions, TaskApi, clock::SystemClock,
+};
+
+use runtime::ScheduledTaskRuntime;
 
 /// Groups concrete Scheduled Task definition handlers shared by runtime adapters.
 pub struct ScheduledTaskApi {
@@ -45,6 +55,7 @@ pub struct ScheduledTaskApi {
     >,
     delete: DeleteScheduledTaskHandler<SqliteScheduledTaskRepository, SystemClock>,
     revoke_approval: RevokeScheduledTaskApprovalHandler<SqliteScheduledTaskRepository, SystemClock>,
+    runtime: Arc<ScheduledTaskRuntime>,
 }
 
 impl ScheduledTaskApi {
@@ -52,12 +63,18 @@ impl ScheduledTaskApi {
     pub(crate) fn new(
         pool: RepositoryPool,
         agent_runtime: AgentRuntime,
+        scheduler: Scheduler,
+        tasks_api: Arc<TaskApi>,
+        sessions: Arc<Sessions>,
         clock: SystemClock,
+        events: crate::app_event::AppEventPublisher,
     ) -> Self {
         let repository = Arc::new(SqliteScheduledTaskRepository::new(pool.clone()));
         let projects = Arc::new(SqliteProjectRepository::new(pool.clone()));
         let workspaces = Arc::new(SqliteWorkspaceRepository::new(pool.clone()));
-        let run_repository = Arc::new(SqliteScheduledRunRepository::new(pool));
+        let run_repository = Arc::new(SqliteScheduledRunRepository::new(pool.clone()));
+        let runtime =
+            ScheduledTaskRuntime::new(pool, scheduler, tasks_api, sessions, clock, events);
         Self {
             agent_runtime,
             workspaces: workspaces.as_ref().clone(),
@@ -81,6 +98,7 @@ impl ScheduledTaskApi {
             ),
             delete: DeleteScheduledTaskHandler::new(repository.clone(), clock),
             revoke_approval: RevokeScheduledTaskApprovalHandler::new(repository, clock),
+            runtime,
         }
     }
 
@@ -98,7 +116,10 @@ impl ScheduledTaskApi {
             )
             .await?;
         }
-        self.create.persist(task).map_err(BackendError::from)
+        let task_for_runtime = task.clone();
+        let response = self.create.persist(task).map_err(BackendError::from)?;
+        self.runtime.reconcile(task_for_runtime);
+        Ok(response)
     }
 
     /// Loads one Scheduled Task definition.
@@ -142,7 +163,10 @@ impl ScheduledTaskApi {
             )
             .await?;
         }
-        self.update.persist(prepared).map_err(BackendError::from)
+        let task_for_runtime = prepared.task().clone();
+        let response = self.update.persist(prepared).map_err(BackendError::from)?;
+        self.runtime.reconcile(task_for_runtime);
+        Ok(response)
     }
 
     async fn validate_agent_model(
@@ -175,7 +199,13 @@ impl ScheduledTaskApi {
         &self,
         request: DeleteScheduledTaskRequest,
     ) -> Result<DeleteScheduledTaskResponse, BackendError> {
-        self.delete.handle(request).map_err(BackendError::from)
+        let response = self
+            .delete
+            .handle(request.clone())
+            .map_err(BackendError::from)?;
+        self.runtime
+            .cancel(&ora_domain::ScheduledTaskId::new(request.task_id));
+        Ok(response)
     }
 
     /// Revokes local-background approval and disables the task.
@@ -183,9 +213,14 @@ impl ScheduledTaskApi {
         &self,
         request: RevokeScheduledTaskApprovalRequest,
     ) -> Result<RevokeScheduledTaskApprovalResponse, BackendError> {
-        self.revoke_approval
+        let task_id = request.task_id.clone();
+        let response = self
+            .revoke_approval
             .handle(request)
-            .map_err(BackendError::from)
+            .map_err(BackendError::from)?;
+        self.runtime
+            .cancel(&ora_domain::ScheduledTaskId::new(task_id));
+        Ok(response)
     }
 }
 

@@ -2,6 +2,8 @@ export { PlatformProvider } from "./platform-context";
 export { usePlatform, useOptionalPlatform } from "./use-platform";
 export {
   PathSelectionInProgressError,
+  type DesktopNotificationOptions,
+  type DesktopNotificationsCapability,
   type LocationActionsCapability,
   type DesktopUpdateCapability,
   type DiagnosticLogsCapability,

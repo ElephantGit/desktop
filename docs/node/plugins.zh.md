@@ -19,7 +19,9 @@ Node 在受理时和开始执行时各检查一次授权，持久化原始输入
 
 包放在 `node.home_directory` 下的 `plugins/installed/<namespace>/<name>/<version>/`。下载和解压使用发现范围之外的
 `plugins/.node-installs/install-*`。安装复用 `ora-plugin-manager` 的校验，并在发布之前检查计划中的 SHA-256、身份、版本和
-目标平台。它从不启动插件代码。
+目标平台。计划也可以冻结 Agent 声明的 schema 版本与原始字节 SHA-256；Node 编译 `assets/config.json`
+并核对该关联后才报告成功，复用已安装版本时同样核对。声明缺失或字节不同返回 `invalid_package`，不替换已安装包。
+它从不启动插件代码。
 
 - 已经安装了有效的精确版本时直接成功，不下载。升级会撤下旧版本。删除不存在的插件也算成功，删除保留插件数据和配置。已存在的
   符号链接目录会被拒绝。

@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashSet};
 
 #[derive(Default)]
 struct AgentData {
+    previews: std::collections::VecDeque<ThreadPreviewMessage>,
     starts: HashMap<ExecutionId, StartAgentSessionMessage>,
     outbox: BTreeMap<(String, u64), NodeToControllerMessage>,
     terminal: HashMap<ExecutionId, AgentSessionResult>,
@@ -16,6 +17,8 @@ pub(super) struct AgentNode {
     data: Arc<Mutex<AgentData>>,
     pub(super) enabled: Arc<AtomicBool>,
     pub(super) model_proxy: Arc<AtomicBool>,
+    pub(super) previews_enabled: Arc<AtomicBool>,
+    pub(super) previews_negotiated: Arc<AtomicBool>,
     pub(super) drop_reply: Arc<AtomicBool>,
     suppress_replies: Arc<AtomicBool>,
     forged_reply: Arc<AtomicBool>,
@@ -56,7 +59,10 @@ impl AgentNode {
         &self,
         sent: &mut HashSet<(String, u64)>,
     ) -> Option<NodeToControllerMessage> {
-        let data = self.data.lock().unwrap();
+        let mut data = self.data.lock().unwrap();
+        if let Some(preview) = data.previews.pop_front() {
+            return Some(NodeToControllerMessage::ThreadPreview(preview));
+        }
         let (key, event) = data.outbox.iter().find(|(key, _)| !sent.contains(*key))?;
         sent.insert(key.clone());
         Some(event.clone())
@@ -94,6 +100,9 @@ impl AgentNode {
                     turn_id: Some(TurnId::new("first-turn")),
                     record: serde_json::from_value(json!({"text": "x".repeat(size)})).unwrap(),
                     truncated: false,
+                    visible_text: None,
+                    visible_text_truncated: false,
+                    history_sequence: None,
                 },
             }),
         );
@@ -598,5 +607,86 @@ fn foreign_command_reply_is_not_delivery_evidence() {
                 >= 2
         );
         assert_eq!(world.node.agents.data.lock().unwrap().commands.len(), 1);
+    });
+}
+
+/// Negotiated previews traverse the real session relay and gRPC adapter before any durable Ack.
+#[test]
+fn negotiated_preview_reaches_cloud_before_settlement() {
+    scenario("main", |world| async move {
+        world
+            .node
+            .agents
+            .previews_enabled
+            .store(true, Ordering::SeqCst);
+        workspace(&world).await;
+        let execution = started(&world, "preview-run").await;
+        assert!(world.node.agents.previews_negotiated.load(Ordering::SeqCst));
+        let start = world.node.agents.started(&execution);
+        let record = serde_json::from_value(json!({"text": "live body"})).unwrap();
+        world
+            .node
+            .agents
+            .data
+            .lock()
+            .unwrap()
+            .previews
+            .push_back(ThreadPreviewMessage {
+                protocol_version: CURRENT_PROTOCOL_VERSION,
+                operation_id: start.operation_id,
+                execution_id: execution.clone(),
+                payload: ThreadPreview {
+                    version: 1,
+                    blocks: vec![ThreadPreviewBlock {
+                        history_sequence: 42,
+                        turn_id: Some(TurnId::new("first-turn")),
+                        record,
+                    }],
+                    incomplete: false,
+                },
+            });
+        world
+            .timeline
+            .until(|events| {
+                events.contains(&Event::PreviewPublished {
+                    execution: execution.as_str().into(),
+                    version: 1,
+                })
+            })
+            .await;
+        assert_eq!(
+            world.cloud.thread_previews(),
+            vec![proto::PublishThreadPreviewRequest {
+                epoch: workspace_cloud::EPOCH,
+                operation_id: "preview-run".into(),
+                execution_id: execution.as_str().into(),
+                version: 1,
+                blocks: vec![proto::ThreadPreviewBlock {
+                    history_sequence: 42,
+                    turn_id: "first-turn".into(),
+                    record: "{\"text\":\"live body\"}".into()
+                }],
+                incomplete: false,
+            }]
+        );
+        assert!(world.cloud.thread_events(execution.as_str()).is_empty());
+        assert!(!world.timeline.events().iter().any(|event| matches!(event, Event::AgentAck { execution: id, .. } if id == execution.as_str())));
+        world.node.agents.emit(&execution, 12);
+        acked(&world, &execution, 1).await;
+        assert_eq!(world.cloud.thread_events(execution.as_str()).len(), 1);
+    });
+}
+
+/// An old Node can decline the optional path without losing the durable session protocol.
+#[test]
+fn old_node_declines_preview_and_still_settles_thread() {
+    scenario("main", |world| async move {
+        workspace(&world).await;
+        let execution = started(&world, "legacy-run").await;
+        assert!(!world.node.agents.previews_negotiated.load(Ordering::SeqCst));
+        world.node.agents.emit(&execution, 12);
+        acked(&world, &execution, 1).await;
+        assert!(world.cloud.thread_previews().is_empty());
+        assert_eq!(world.cloud.thread_events(execution.as_str()).len(), 1);
     });
 }

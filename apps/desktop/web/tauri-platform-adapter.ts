@@ -5,21 +5,28 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
-  PathSelectionInProgressError,
-  type LocationActionsCapability,
+  isPermissionGranted,
+  requestPermission,
+  sendNotification,
+} from "@tauri-apps/plugin-notification";
+import {
+  type DesktopNotificationOptions,
+  type DesktopNotificationsCapability,
   type DesktopUpdateCapability,
   type DesktopUpdateStatus,
   type DiagnosticLogsCapability,
-  type OsDroppedTextFile,
+  type DownloadAction,
+  type LocationActionsCapability,
   type LocationTarget,
+  type OsDroppedTextFile,
+  PathSelectionInProgressError,
   type PlatformAdapter,
   type PluginInstallProgress,
   type PluginMarketplaceCapability,
-  type SelectPathOptions,
-  type SaveTextFileOptions,
-  type SelectSavePathOptions,
-  type DownloadAction,
   type ResolveDownloadOutcome,
+  type SaveTextFileOptions,
+  type SelectPathOptions,
+  type SelectSavePathOptions,
   type SurfaceBounds,
   type SurfaceCapability,
   type SurfaceEvent,
@@ -162,6 +169,23 @@ function createTauriSurfaces(): SurfaceCapability {
   };
 }
 
+/** Wires the native OS notification plugin into the shared shell. */
+function createTauriDesktopNotifications(): DesktopNotificationsCapability {
+  return {
+    show: async (options: DesktopNotificationOptions): Promise<boolean> => {
+      let granted = await isPermissionGranted();
+      if (!granted) {
+        granted = (await requestPermission()) === "granted";
+      }
+      if (!granted) {
+        return false;
+      }
+      sendNotification({ title: options.title, body: options.body });
+      return true;
+    },
+  };
+}
+
 /** Implements the app-shell host capabilities with Tauri APIs and commands. */
 export class TauriPlatformAdapter implements PlatformAdapter {
   private selectionInProgress = false;
@@ -178,6 +202,9 @@ export class TauriPlatformAdapter implements PlatformAdapter {
 
   readonly pluginMarketplace: PluginMarketplaceCapability =
     createTauriPluginMarketplace();
+
+  readonly desktopNotifications: DesktopNotificationsCapability =
+    createTauriDesktopNotifications();
 
   readonly diagnosticLogs: DiagnosticLogsCapability = {
     downloadToday: () => this.downloadTodayLog(),

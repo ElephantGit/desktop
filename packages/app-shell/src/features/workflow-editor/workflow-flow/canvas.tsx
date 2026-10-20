@@ -15,6 +15,7 @@ import {
   MarkerType,
   ReactFlow,
   useReactFlow,
+  ViewportPortal,
   type Connection,
   type DefaultEdgeOptions,
   type Edge,
@@ -50,6 +51,11 @@ import {
   snapNodePosition,
   withoutExtentClampPositions,
 } from "./layout";
+import {
+  applyDragAlignment,
+  WORKFLOW_ALIGNMENT_SCREEN_PX,
+  type AlignmentGuide,
+} from "./alignment";
 import { WorkflowConnectionStateProvider } from "./connection-state";
 import { WorkflowConnectionLine } from "./connection-line";
 import {
@@ -72,6 +78,10 @@ import {
   projectIterationEdges,
 } from "../workflow-iteration-graph";
 import { WorkflowIterationActionsProvider } from "./iteration-actions";
+import {
+  WorkflowEdgeHoverBridge,
+  WorkflowEdgeHoverProvider,
+} from "./workflow-edge-hover";
 import {
   WORKFLOW_ANNOTATION_Z_INDEX,
   WORKFLOW_NODE_Z_INDEX,
@@ -258,6 +268,7 @@ function WorkflowCanvasInner({
     screenToFlowPosition,
     setViewport,
     getInternalNode,
+    getViewport,
   } = useReactFlow<WorkflowCanvasNode, Edge>();
   // Collapsed iteration frames hide their region members: the members stay in the
   // graph (the frozen structure is authoritative); only the canvas presentation folds.
@@ -420,6 +431,7 @@ function WorkflowCanvasInner({
   const [liveDragNodes, setLiveDragNodes] = useState<
     WorkflowCanvasNode[] | null
   >(null);
+  const [alignmentGuides, setAlignmentGuides] = useState<AlignmentGuide[]>([]);
   const renderedNodes = liveDragNodes ?? canvasNodes;
   const reconnectingEdgeIdRef = useRef<string | null>(null);
 
@@ -474,26 +486,37 @@ function WorkflowCanvasInner({
   const handleNodesChange = useCallback(
     (changes: NodeChange<WorkflowCanvasNode>[]): void => {
       const appliedChanges = withoutExtentClampPositions(changes);
-      if (isNodeDragGestureActive(appliedChanges)) {
-        setLiveDragNodes((current) =>
-          applyNodeChanges(
-            appliedChanges,
-            current ?? preserveLiveMeasurements(canvasNodes, getInternalNode),
-          ),
+      const dragMove = isNodeDragGestureActive(appliedChanges);
+      const dragStop = appliedChanges.some(
+        (change) => change.type === "position" && change.dragging === false,
+      );
+      if (dragMove || dragStop) {
+        const base = preserveLiveMeasurements(canvasNodes, getInternalNode);
+        const proposed = applyNodeChanges(appliedChanges, base);
+        const zoom = getViewport().zoom;
+        const aligned = applyDragAlignment(
+          appliedChanges,
+          proposed,
+          WORKFLOW_ALIGNMENT_SCREEN_PX / (zoom > 0 ? zoom : 1),
         );
-      } else if (
-        appliedChanges.some(
-          (change) => change.type === "position" && change.dragging === false,
-        )
-      ) {
-        // The final drop tick lands right before onNodeDragStop and also after
-        // an aborted gesture (e.g. the dragged node was deleted mid-drag), where
-        // no drag-stop callback follows. Never let the overlay linger stale.
-        setLiveDragNodes(null);
+        // applyNodeChanges and the editor both take a mutable change list.
+        const alignedChanges = [...aligned.changes];
+        if (dragMove) {
+          setLiveDragNodes(applyNodeChanges(alignedChanges, base));
+          setAlignmentGuides(aligned.guides);
+        } else {
+          // The final drop tick lands right before onNodeDragStop and also after
+          // an aborted gesture (e.g. the dragged node was deleted mid-drag), where
+          // no drag-stop callback follows. Never let the overlay linger stale.
+          setLiveDragNodes(null);
+          setAlignmentGuides([]);
+        }
+        onNodesChange(alignedChanges);
+        return;
       }
       onNodesChange(changes);
     },
-    [canvasNodes, getInternalNode, onNodesChange],
+    [canvasNodes, getInternalNode, getViewport, onNodesChange],
   );
 
   /** Drops the live drag overlay once the editor publishes the drop commit. */
@@ -812,76 +835,87 @@ function WorkflowCanvasInner({
             onInsert={onInsertContainerNode}
             onToggleCollapsed={onToggleIterationCollapsed}
           >
-            <ReactFlow
-              className="workflow-flow bg-muted/25"
-              data-interaction-mode={interactionMode}
-              nodes={renderedNodes}
-              edges={canvasEdges}
-              nodeTypes={nodeTypes}
-              edgeTypes={edgeTypes}
-              defaultViewport={initialViewport}
-              minZoom={MIN_WORKFLOW_ZOOM}
-              maxZoom={MAX_WORKFLOW_ZOOM}
-              proOptions={{ hideAttribution: true }}
-              nodesFocusable
-              edgesFocusable
-              nodesDraggable={!readOnly}
-              nodesConnectable={!readOnly}
-              elementsSelectable={!readOnly}
-              elevateNodesOnSelect={false}
-              edgesReconnectable={!readOnly}
-              reconnectRadius={28}
-              connectionRadius={24}
-              deleteKeyCode={
-                readOnly ? WORKFLOW_NO_KEY_CODES : WORKFLOW_DELETE_KEY_CODES
-              }
-              multiSelectionKeyCode={null}
-              snapGrid={WORKFLOW_SNAP_GRID}
-              snapToGrid
-              // Auto-pan under a clamped iteration member moves the viewport while
-              // the node sticks to the frame edge, so the card jitters relative to
-              // the pointer. Users can still pan with the hand tool / middle drag.
-              autoPanOnNodeDrag={false}
-              panOnScroll={false}
-              zoomOnScroll
-              zoomOnPinch
-              // Left-drag box-selects multiple nodes; middle-drag keeps panning.
-              panOnDrag={
-                interactionMode === "hand"
-                  ? WORKFLOW_PAN_ON_DRAG_HAND
-                  : WORKFLOW_PAN_ON_DRAG_POINTER
-              }
-              selectionOnDrag={!readOnly && interactionMode === "pointer"}
-              selectNodesOnDrag={false}
-              isValidConnection={isValidConnection}
-              onNodesChange={handleNodesChange}
-              onEdgesChange={onEdgesChange}
-              onBeforeDelete={onBeforeDelete}
-              onDelete={onDelete}
-              onNodeDragStart={onNodeDragStart}
-              onNodeDragStop={handleNodeDragStop}
-              onNodeClick={handleNodeClick}
-              onConnectStart={handleConnectStart}
-              onConnect={onConnect}
-              onConnectEnd={finishNewConnection}
-              onReconnectStart={handleReconnectStart}
-              onReconnect={onReconnect}
-              onReconnectEnd={finishReconnect}
-              onEdgeDoubleClick={handleEdgeDoubleClick}
-              connectionLineComponent={WorkflowConnectionLine}
-              elevateEdgesOnSelect
-              defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
-              connectionLineStyle={CONNECTION_LINE_STYLE}
-            >
-              <Background
-                id="workflow-dots"
-                variant={BackgroundVariant.Dots}
-                gap={20}
-                size={1}
-                color="color-mix(in oklch, var(--foreground) 18%, transparent)"
-              />
-              <WorkflowFlowOverview nodeCount={nodes.length} />
-            </ReactFlow>
+            <WorkflowEdgeHoverProvider>
+              <WorkflowEdgeHoverBridge>
+                {(edgeHover) => (
+                  <ReactFlow
+                    className="workflow-flow bg-muted/25"
+                    data-interaction-mode={interactionMode}
+                    nodes={renderedNodes}
+                    edges={canvasEdges}
+                    nodeTypes={nodeTypes}
+                    edgeTypes={edgeTypes}
+                    defaultViewport={initialViewport}
+                    minZoom={MIN_WORKFLOW_ZOOM}
+                    maxZoom={MAX_WORKFLOW_ZOOM}
+                    proOptions={{ hideAttribution: true }}
+                    nodesFocusable
+                    edgesFocusable
+                    nodesDraggable={!readOnly}
+                    nodesConnectable={!readOnly}
+                    elementsSelectable={!readOnly}
+                    elevateNodesOnSelect={false}
+                    edgesReconnectable={!readOnly}
+                    reconnectRadius={28}
+                    connectionRadius={24}
+                    deleteKeyCode={
+                      readOnly
+                        ? WORKFLOW_NO_KEY_CODES
+                        : WORKFLOW_DELETE_KEY_CODES
+                    }
+                    multiSelectionKeyCode={null}
+                    snapGrid={WORKFLOW_SNAP_GRID}
+                    snapToGrid
+                    // Auto-pan under a clamped iteration member moves the viewport while
+                    // the node sticks to the frame edge, so the card jitters relative to
+                    // the pointer. Users can still pan with the hand tool / middle drag.
+                    autoPanOnNodeDrag={false}
+                    panOnScroll={false}
+                    zoomOnScroll
+                    zoomOnPinch
+                    // Left-drag box-selects multiple nodes; middle-drag keeps panning.
+                    panOnDrag={
+                      interactionMode === "hand"
+                        ? WORKFLOW_PAN_ON_DRAG_HAND
+                        : WORKFLOW_PAN_ON_DRAG_POINTER
+                    }
+                    selectionOnDrag={!readOnly && interactionMode === "pointer"}
+                    selectNodesOnDrag={false}
+                    isValidConnection={isValidConnection}
+                    onNodesChange={handleNodesChange}
+                    onEdgesChange={onEdgesChange}
+                    onBeforeDelete={onBeforeDelete}
+                    onDelete={onDelete}
+                    onNodeDragStart={onNodeDragStart}
+                    onNodeDragStop={handleNodeDragStop}
+                    onNodeClick={handleNodeClick}
+                    onConnectStart={handleConnectStart}
+                    onConnect={onConnect}
+                    onConnectEnd={finishNewConnection}
+                    onReconnectStart={handleReconnectStart}
+                    onReconnect={onReconnect}
+                    onReconnectEnd={finishReconnect}
+                    onEdgeDoubleClick={handleEdgeDoubleClick}
+                    onEdgeMouseEnter={edgeHover.onEdgeMouseEnter}
+                    onEdgeMouseLeave={edgeHover.onEdgeMouseLeave}
+                    connectionLineComponent={WorkflowConnectionLine}
+                    elevateEdgesOnSelect
+                    defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
+                    connectionLineStyle={CONNECTION_LINE_STYLE}
+                  >
+                    <Background
+                      id="workflow-dots"
+                      variant={BackgroundVariant.Dots}
+                      gap={20}
+                      size={1}
+                      color="color-mix(in oklch, var(--foreground) 18%, transparent)"
+                    />
+                    <WorkflowAlignmentGuides guides={alignmentGuides} />
+                    <WorkflowFlowOverview nodeCount={nodes.length} />
+                  </ReactFlow>
+                )}
+              </WorkflowEdgeHoverBridge>
+            </WorkflowEdgeHoverProvider>
           </WorkflowIterationActionsProvider>
         </WorkflowConnectionStateProvider>
 
@@ -947,5 +981,42 @@ function WorkflowCanvasInner({
         </div>
       )}
     </div>
+  );
+}
+
+/** Draws alignment guides in flow space so they follow pan and zoom. */
+function WorkflowAlignmentGuides({ guides }: { guides: AlignmentGuide[] }) {
+  if (guides.length === 0) {
+    return null;
+  }
+  return (
+    <ViewportPortal>
+      <svg
+        className="pointer-events-none overflow-visible"
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: 1,
+          height: 1,
+          overflow: "visible",
+          zIndex: 1000,
+        }}
+      >
+        {guides.map((guide) => (
+          <line
+            key={`${guide.orientation}:${guide.position}:${guide.start}:${guide.end}`}
+            data-workflow-alignment-guide={guide.orientation}
+            x1={guide.orientation === "vertical" ? guide.position : guide.start}
+            y1={guide.orientation === "vertical" ? guide.start : guide.position}
+            x2={guide.orientation === "vertical" ? guide.position : guide.end}
+            y2={guide.orientation === "vertical" ? guide.end : guide.position}
+            stroke="var(--ring)"
+            strokeWidth={1}
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+      </svg>
+    </ViewportPortal>
   );
 }

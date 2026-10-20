@@ -29,6 +29,13 @@ over its `agent/acp` notification channel. See
   a running plugin through the plugin lifecycle (`PluginApi::attach_agent`, which starts it on
   demand), reads that generation's `agent/acp` notifications through a lossless tap, and asks the
   lifecycle to stop the plugin when a generation ends.
+- **Replacement.** A supervisor handle belongs to one installed incarnation: an update or reinstall
+  retires the old supervisor, and a handle cloned earlier does not follow the swap in the shared
+  registry. When a Session reacquires its provider channel, its actor resolves the current
+  supervisor by the persisted `agent_ref` and uses it for that attach and its MCP check. Existing
+  conversations therefore resume through the new supervisor without restarting Ora or stopping the
+  Session, while a removed plugin keeps reporting `agent_runtime_unavailable`. Restore and
+  transcript-backed rebuild acquire their channel through the same path.
 - **Executables.** The host owns OS processes: `ora/childprocess/spawn` accepts a `command` the OS
   resolves or a `packageCommand` the host joins onto the plugin's install root. An agent package is
   published either with a bundled CLI (per-target releases) or without one (a universal release that
@@ -200,6 +207,11 @@ Prompts are ordered ACP `ContentBlock` values (text, images, audio, resource lin
 resources). An empty list or only blank text is rejected.
 
 ## Hosts
+
+Hosts may opt into `RuntimeEvents::record_preview` to observe assembled pending records before
+settlement. Notifications are capped at ten per second, and a turn boundary sends an empty
+replacement. The callback is best effort, produces no acknowledgement and does not change the
+`record_settled` durability order. Hosts that do not opt in incur no pending-snapshot copy.
 
 A host composes the runtime through `AgentRuntimeHost`, whose associated types supply five
 interfaces; they are generic parameters, so each host gets its own monomorphized runtime.

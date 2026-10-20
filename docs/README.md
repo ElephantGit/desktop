@@ -42,7 +42,7 @@ across module boundaries. Implementation details inside a crate or package live 
 
 **Agents**
 
-- [Agent runtime](agents/agent-runtime.md): agents from plugins, supervision, sessions, flow control, limits, hosts
+- [Agent runtime](agents/agent-runtime.md): agents from plugins, supervision, sessions, flow control, limits, host previews
 - [Session history](agents/session-history.md): recording, switching agents, degraded history, deletion
 - [Session MCP](agents/session-mcp.md): selection, delivery, live refresh, Host MCP health
 - [Agent definitions and Skills](agents/agents-and-skills.md): roles, the Skill catalog, packages and imports
@@ -52,6 +52,7 @@ across module boundaries. Implementation details inside a crate or package live 
 **Plugins**
 
 - [Plugin system](plugins/plugin-system.md): kinds, layout, lifecycle, protocol and SDK, configuration, Hooks
+- [Agent configuration](plugins/agent-configuration.md): static declarations, model capabilities, release association and install checks
 - [Marketplace](plugins/marketplace.md): sources, sync and the index, installation, packs
 - [Surfaces](plugins/surfaces.md): workbench and webview plugin UIs
 - [Plugin logging](plugins/plugin-logging.md): host-owned per-plugin logs
@@ -69,7 +70,7 @@ across module boundaries. Implementation details inside a crate or package live 
 
 **Controller**
 
-- [Controller](controller/controller.md): the coordination store, the executable, the cloud form and Workspace sandboxes
+- [Controller](controller/controller.md): the coordination store, preview capability selection, the executable, the cloud form and Workspace sandboxes
 - [Agent relay](controller/agent-relay.md): sessions, Thread events, commands, Revision delivery and grants
 - [Cloud contract](controller/cloud-contract.md): services, upload checksums, generating and upgrading the contract
 - [Runtime control](controller/runtime-control.md): identities, authenticated channels, closure and force stop
@@ -81,7 +82,7 @@ across module boundaries. Implementation details inside a crate or package live 
 - [Controller–Node protocol](node/protocol.md): framing, capabilities, message contracts, the codec
 - [Repository clone](node/repository-clone.md)
 - [Worktree execution](node/worktree-execution.md)
-- [Node agent sessions](node/agent-sessions.md): per-execution runtimes, workload users, the ledger, model access
+- [Node agent sessions](node/agent-sessions.md): per-execution runtimes, workload users, live previews, assistant-text projections, the ledger, model access
 - [Revisions](node/revisions.md): delivery, upload and restoring a prior Revision
 - [Node plugins](node/plugins.md)
 

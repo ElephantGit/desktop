@@ -12,6 +12,7 @@ mod host;
 mod ledger;
 mod model;
 mod ports;
+mod preview;
 mod queue;
 mod resume;
 mod thread;
@@ -68,6 +69,7 @@ pub(crate) struct Shared<L, C, P, R> {
     stopping: tokio::sync::watch::Sender<bool>,
     finished: Notify,
     failed: std::sync::atomic::AtomicBool,
+    previews: preview::PreviewBuffer,
 }
 
 impl<L, C, P, R> Shared<L, C, P, R> {
@@ -78,6 +80,7 @@ impl<L, C, P, R> Shared<L, C, P, R> {
 
     /// Forgets a session whose history nothing writes to anymore.
     fn release(&self, execution: &ExecutionId) {
+        self.previews.remove(execution);
         self.live
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -136,12 +139,17 @@ where
                 stopping: tokio::sync::watch::channel(/*init*/ false).0,
                 finished: Notify::new(),
                 failed: std::sync::atomic::AtomicBool::new(/*v*/ false),
+                previews: preview::PreviewBuffer::default(),
             }),
         }
     }
 }
 
 impl<L, C, P, R> AgentSessions<L, C, P, R> {
+    /// The transport flushes replacements independently of durable event replay and Ack.
+    pub(crate) fn preview_snapshots(&self) -> Vec<ora_node_protocol::ThreadPreviewMessage> {
+        self.shared.previews.snapshots()
+    }
     /// Model-bound sessions require this additional negotiated capability.
     pub(crate) fn model_capable(&self) -> bool {
         self.shared.config.model_proxy.is_some()

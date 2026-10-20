@@ -9,14 +9,15 @@ mod worktree;
 
 pub use agent_session::{
     AgentSessionEndReason, AgentSessionEnded, AgentSessionResult, AgentSessionSpec, ContentBlock,
-    GitIdentity, MAX_THREAD_RECORD_BYTES, MAX_USER_TURN_TEXT_BYTES, ThreadEvent, UserTurn,
+    GitIdentity, MAX_THREAD_RECORD_BYTES, MAX_USER_TURN_TEXT_BYTES, MAX_VISIBLE_TEXT_BYTES,
+    ThreadEvent, UserTurn,
 };
 pub use execution::ExecutionResult;
 pub use plugin::{
-    InstallPluginsSpec, PluginDownload, PluginExecutionResult, PluginFailureCode, PluginId,
-    PluginInstall, PluginItemOutcome, PluginItemResult, PluginRelease, PluginRemoval,
-    PluginTargetDownload, PluginVersion, PluginsCompleted, PluginsFailed, PluginsFailureCode,
-    RemovePluginsSpec, Sha256Digest,
+    InstallPluginsSpec, PluginAgentConfiguration, PluginDownload, PluginExecutionResult,
+    PluginFailureCode, PluginId, PluginInstall, PluginItemOutcome, PluginItemResult, PluginRelease,
+    PluginRemoval, PluginTargetDownload, PluginVersion, PluginsCompleted, PluginsFailed,
+    PluginsFailureCode, RemovePluginsSpec, Sha256Digest,
 };
 pub use repository::{CloneExecutionSpec, CloneRepositoryUrl, InvalidCloneRepositoryUrl};
 pub use repository_result::{
