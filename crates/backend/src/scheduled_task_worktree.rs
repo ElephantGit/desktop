@@ -71,14 +71,16 @@ impl ScheduledWorktreeJanitor {
     /// Decides keep-versus-delete for one finished run, then keeps the retention bound.
     ///
     /// A run that never started still owns a freshly provisioned worktree; it cannot carry
-    /// changes and is discarded directly. A worktree whose task is still in use is untouched.
+    /// changes and is discarded directly. A worktree whose task is still in use is untouched,
+    /// and a failed existence probe skips the run entirely so a transient database error
+    /// never unlinks a worktree that still exists.
     pub(super) async fn run_finished(
         &self,
         run: &ScheduledRun,
         worktree_task_id: &TaskId,
         worktree_path: Option<&str>,
     ) {
-        if !self.task_exists(worktree_task_id) || self.task_in_use(worktree_task_id) {
+        if self.task_exists(worktree_task_id) != Some(true) || self.task_in_use(worktree_task_id) {
             return;
         }
         let classification = match worktree_path {
@@ -107,25 +109,31 @@ impl ScheduledWorktreeJanitor {
             let Some(worktree_path) = run.worktree_path.clone() else {
                 continue;
             };
-            let task_exists = self.task_exists(&task_id);
-            if !task_exists {
-                // History actions may delete a retained worktree through the ordinary Task API.
-                // Treat the missing row as an already-completed discard so this run can be pruned.
-                if let Err(error) = self.runs.clear_retained_worktree_link(&run.id) {
-                    ora_logging::ora_warn!(
-                        run_id = %run.id,
-                        error = %error,
-                        "scheduled run kept a stale worktree link after its task was deleted"
-                    );
+            match self.task_exists(&task_id) {
+                // A transient probe failure must keep the link for the next sweep instead of
+                // unlinking a worktree that probably still exists.
+                None => continue,
+                Some(false) => {
+                    // History actions may delete a retained worktree through the ordinary
+                    // Task API. Treat the missing row as an already-completed discard so
+                    // this run can be pruned again.
+                    if let Err(error) = self.runs.clear_retained_worktree_link(&run.id) {
+                        ora_logging::ora_warn!(
+                            run_id = %run.id,
+                            error = %error,
+                            "scheduled run kept a stale worktree link after its task was deleted"
+                        );
+                    }
+                    continue;
                 }
-                continue;
+                Some(true) => {}
             }
             let in_use = self.task_in_use(&task_id);
             let has_changes = self.classify_worktree(&run, &task_id, &worktree_path);
             candidates.push(RetentionCandidate {
                 run_id: run.id.clone(),
                 task_id,
-                task_exists,
+                task_exists: true,
                 in_use,
                 has_changes,
             });
@@ -135,11 +143,13 @@ impl ScheduledWorktreeJanitor {
         }
     }
 
-    fn task_exists(&self, task_id: &TaskId) -> bool {
+    /// Reports whether the task row is visible. `None` means the probe failed and callers
+    /// must treat the worktree as still present; only `Some(false)` proves the row is gone.
+    fn task_exists(&self, task_id: &TaskId) -> Option<bool> {
         self.task_rows
             .find_task(task_id)
             .map(|task| task.is_some())
-            .unwrap_or(false)
+            .ok()
     }
 
     /// Reports whether a live session or workflow run still occupies the task workspace.
@@ -703,6 +713,167 @@ mod tests {
                     .iter()
                     .any(|job| job.checkout_root.as_deref() == Some(locator_path.as_str())),
                 "the worktree cleanup is enqueued for the durable worker"
+            );
+        });
+    }
+
+    /// A sweep unlinks a run whose worktree task row was deleted through the ordinary Task
+    /// API, so the run becomes prunable history again; the unlink only happens on a proven
+    /// missing row, never on a probe failure.
+    #[test]
+    fn retention_sweep_unlinks_a_run_whose_worktree_task_was_deleted() {
+        run_integration(async {
+            use ora_application::{
+                ScheduledOccurrenceRepository, ScheduledRunLifecycleRepository,
+                ScheduledTaskHistoryRepository, ScheduledTaskRepository, TaskRepository,
+            };
+            use ora_contracts::{CreateProjectRequest, CreateTaskRequest, DeleteTaskRequest};
+            use ora_db::{
+                DatabaseBootstrapper, DatabaseLocation, SqliteScheduledRunRepository,
+                SqliteScheduledTaskRepository, default_migration_catalog,
+            };
+            use ora_domain::{
+                ScheduledMissReason, ScheduledMissedOccurrence, ScheduledOccurrence, ScheduledRun,
+                ScheduledRunId, ScheduledRunTransition,
+            };
+            use tempfile::TempDir;
+
+            let temporary = TempDir::new().expect("backend fixture");
+            let git = GitTestScaffold::new("scheduled-worktree-unlink").expect("Git fixture");
+            git.write_file(git.repo_path(), "README.md", "fixture\n")
+                .expect("seed repository");
+            git.stage_all_and_commit("initial").expect("initial commit");
+            let backend = crate::Backend::open(crate::test_backend::backend_paths(
+                temporary.path(),
+                temporary.path(),
+            ))
+            .expect("backend");
+            let tasks = backend.tasks();
+            let project = backend
+                .projects()
+                .create(CreateProjectRequest {
+                    name: "Scheduled unlink fixture".to_string(),
+                    main_workspace_path: git.repo_path().to_string_lossy().into_owned(),
+                })
+                .expect("project")
+                .project;
+            let worktree_task = tasks
+                .create(CreateTaskRequest {
+                    project_id: project.id.clone(),
+                    title: "Scheduled run run-unlink".to_string(),
+                    base_branch: Some("main".to_string()),
+                })
+                .expect("worktree task")
+                .task;
+            let worktree_root = tasks
+                .workspace(ora_contracts::GetTaskWorkspaceRequest {
+                    task_id: worktree_task.id.clone(),
+                })
+                .expect("worktree workspace")
+                .workspace
+                .root_path;
+
+            let database_path = temporary.path().join("ora.sqlite3");
+            let pool = DatabaseBootstrapper::system()
+                .bootstrap_repository_pool(
+                    &DatabaseLocation::path(&database_path),
+                    &default_migration_catalog().expect("migration catalog"),
+                )
+                .expect("reopen database pool");
+            let definition = integration_scheduled_task(&project.id);
+            SqliteScheduledTaskRepository::new(pool.clone())
+                .create_scheduled_task(definition.clone())
+                .expect("create definition");
+            let runs = SqliteScheduledRunRepository::new(pool.clone());
+            let worktree_task_id = ora_domain::TaskId::new(&worktree_task.id);
+            let run = ScheduledRun::accepted(
+                ScheduledRunId::new("run-unlink"),
+                ScheduledOccurrence {
+                    task_id: definition.id.clone(),
+                    scheduled_at: 1_000,
+                },
+                &definition,
+                1_001,
+            );
+            runs.resolve_scheduled_occurrence(ora_application::ScheduledOccurrenceCandidate::run(
+                run,
+            ))
+            .expect("admit run");
+            runs.transition_scheduled_run(
+                &ScheduledRunId::new("run-unlink"),
+                ScheduledRunTransition::Start {
+                    session_id: ora_domain::SessionId::new("session-unlink"),
+                    worktree_path: worktree_root.clone(),
+                    worktree_task_id: worktree_task_id.clone(),
+                },
+                1_002,
+            )
+            .expect("start run");
+            runs.transition_scheduled_run(
+                &ScheduledRunId::new("run-unlink"),
+                ScheduledRunTransition::Succeed,
+                1_003,
+            )
+            .expect("finish run");
+
+            // The user deletes the retained worktree through the ordinary task list.
+            tasks
+                .delete(DeleteTaskRequest {
+                    task_id: worktree_task.id.clone(),
+                })
+                .await
+                .expect("delete the worktree task");
+
+            let run_row = runs
+                .list_scheduled_runs_with_retained_worktrees()
+                .expect("list retained runs")
+                .into_iter()
+                .next()
+                .expect("the deleted task's run is still tracked");
+            assert_eq!(run_row.id.as_ref(), "run-unlink");
+
+            super::ScheduledWorktreeJanitor::new(
+                tasks.clone(),
+                pool.clone(),
+                temporary.path().to_path_buf(),
+            )
+            .enforce_retention()
+            .await;
+
+            assert!(
+                runs.list_scheduled_runs_with_retained_worktrees()
+                    .expect("list retained runs after sweep")
+                    .is_empty(),
+                "the stale link is cleared once the task row is proven gone"
+            );
+
+            // History pruning resumes: pushing past the bound removes the unlinked run.
+            for scheduled_at in 2_000_i64..=2_100 {
+                runs.resolve_scheduled_occurrence(
+                    ora_application::ScheduledOccurrenceCandidate::Missed(
+                        ScheduledMissedOccurrence {
+                            occurrence: ScheduledOccurrence {
+                                task_id: definition.id.clone(),
+                                scheduled_at,
+                            },
+                            reason: ScheduledMissReason::AppNotRunning,
+                            observed_at: scheduled_at,
+                        },
+                    ),
+                )
+                .expect("persist missed facts past the bound");
+            }
+            let prunable_left: Vec<_> = runs
+                .list_scheduled_task_history(&definition.id)
+                .expect("list history after pruning")
+                .into_iter()
+                .filter(|entry| {
+                    matches!(entry, ora_domain::ScheduledTaskHistoryEntry::Run(run) if run.id.as_ref() == "run-unlink")
+                })
+                .collect();
+            assert!(
+                prunable_left.is_empty(),
+                "the unlinked run is pruned like any other history fact"
             );
         });
     }
