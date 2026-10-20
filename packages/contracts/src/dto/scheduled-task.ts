@@ -155,6 +155,11 @@ export type ScheduledTaskEvent = {
 } | {
   "kind": "run_finished";
   taskId: string;
+  /**
+   * The finished Scheduled Run, so clients can claim exactly this fact instead of
+   * guessing which history entry a failure reason belongs to.
+   */
+  runId: string;
   status: ScheduledRunStatus;
   failureReason: ScheduledRunFailureReason | null;
 } | {

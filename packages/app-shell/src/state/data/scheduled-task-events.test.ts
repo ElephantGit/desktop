@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "@ora/ui";
-import type { ScheduledTask, ScheduledTaskEvent } from "@ora/contracts";
+import type {
+  ScheduledTask,
+  ScheduledTaskEvent,
+  ScheduledTaskHistoryEntry,
+} from "@ora/contracts";
 import { createTestClient } from "../../test/contracts-transport";
 import { createTestQueryClient } from "../../test/hook-harness";
 import type { PlatformAdapter } from "../../platform";
@@ -8,6 +12,23 @@ import { scheduledTaskKeys } from "../hooks/use-scheduled-tasks";
 import { useUiStore } from "../stores/ui-store";
 import { useWorkspaceSelectionStore } from "../stores/workspace-selection-store";
 import { surfaceScheduledTaskEvent } from "./scheduled-task-events";
+import { markScheduledTaskHistorySeen } from "./scheduled-task-startup-surface";
+
+function failedHistory(id: string): ScheduledTaskHistoryEntry {
+  return {
+    kind: "run",
+    id,
+    scheduledAt: 2_000n,
+    revision: 1n,
+    status: "failed",
+    sessionId: "session-1",
+    worktreePath: null,
+    worktreeTaskId: null,
+    failureReason: "timeout",
+    createdAt: 2_000n,
+    updatedAt: 5_000n,
+  };
+}
 
 const TASK: ScheduledTask = {
   id: "scheduled-1",
@@ -133,6 +154,7 @@ describe("scheduled task event surfacing", () => {
     await surface(platform, {
       kind: "run_finished",
       taskId: "scheduled-1",
+      runId: "run-1",
       status: "failed",
       failureReason: "timeout",
     });
@@ -155,6 +177,7 @@ describe("scheduled task event surfacing", () => {
     await surface(platform, {
       kind: "run_finished",
       taskId: "scheduled-1",
+      runId: "run-1",
       status: "failed",
       failureReason: "timeout",
     });
@@ -166,12 +189,50 @@ describe("scheduled task event surfacing", () => {
     await surface(platform, {
       kind: "run_finished",
       taskId: "scheduled-1",
+      runId: "run-1",
       status: "succeeded",
       failureReason: null,
     });
     expect(successToast).not.toHaveBeenCalled();
     expect(errorToast).toHaveBeenCalledTimes(1);
     expect(show).not.toHaveBeenCalled();
+  });
+
+  it("never toasts the same failed fact twice", async () => {
+    const { platform } = createPlatform();
+    const queryClient = createTestQueryClient();
+    const client = createTestClient({
+      listScheduledTaskHistory: async () => ({
+        entries: [failedHistory("run-1")],
+      }),
+    });
+    const failedEvent = {
+      kind: "run_finished",
+      taskId: "scheduled-1",
+      runId: "run-1",
+      status: "failed",
+      failureReason: "timeout",
+    } as const;
+
+    // The hook order claims the fact through the history-backed ledger before surfacing;
+    // a second delivery of the same event claims nothing and must stay silent.
+    for (let delivery = 0; delivery < 2; delivery += 1) {
+      const shouldSurface = await markScheduledTaskHistorySeen(
+        client,
+        queryClient,
+        failedEvent,
+      );
+      if (shouldSurface) {
+        await surfaceScheduledTaskEvent(
+          platform,
+          failedEvent,
+          queryClient,
+          client,
+        );
+      }
+    }
+
+    expect(errorToast).toHaveBeenCalledTimes(1);
   });
 
   it("announces a missed occurrence and deep-links to the task history", async () => {

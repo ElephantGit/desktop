@@ -127,6 +127,7 @@ mod tests {
             serde_json::to_value(AppEvent::ScheduledTask(
                 crate::ScheduledTaskEvent::RunFinished {
                     task_id: "task-1".to_string(),
+                    run_id: "run-1".to_string(),
                     status: crate::ScheduledRunStatus::Failed,
                     failure_reason: Some(crate::ScheduledRunFailureReason::Timeout),
                 }
@@ -136,6 +137,7 @@ mod tests {
                 "type": "scheduled_task",
                 "kind": "run_finished",
                 "taskId": "task-1",
+                "runId": "run-1",
                 "status": "failed",
                 "failureReason": "timeout",
             }),

@@ -587,6 +587,7 @@ impl DesktopScheduledRunExecutor {
             .try_publish(ora_contracts::AppEvent::ScheduledTask(
                 ora_contracts::ScheduledTaskEvent::RunFinished {
                     task_id: run.occurrence.task_id.to_string(),
+                    run_id: run.id.to_string(),
                     status: contract_run_status(status),
                     failure_reason: failure_reason.map(contract_failure_reason),
                 },

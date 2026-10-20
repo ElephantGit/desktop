@@ -139,15 +139,10 @@ function liveFact(
     );
   }
   return (
-    entries
-      .filter(
-        (entry): entry is Extract<ScheduledTaskHistoryEntry, { kind: "run" }> =>
-          entry.kind === "run" &&
-          entry.status === "failed" &&
-          entry.failureReason === event.failureReason,
-      )
-      .sort((left, right) => Number(right.updatedAt - left.updatedAt))[0] ??
-    null
+    entries.find(
+      (entry): entry is Extract<ScheduledTaskHistoryEntry, { kind: "run" }> =>
+        entry.kind === "run" && entry.id === event.runId,
+    ) ?? null
   );
 }
 
@@ -208,17 +203,19 @@ export function markScheduledTaskHistorySeen(
 }
 
 let startupSurfaceInFlight: Promise<void> | null = null;
-let startupSurfaceQueued = false;
+let startupSurfaceQueuedPromise: Promise<void> | null = null;
 
 /**
  * Surfaces persisted Scheduled Task facts that were recorded while the shell could not
  * receive application events: startup-recovered missed occurrences and interrupted failed
- * runs. Exact fact keys prevent duplicate notifications; the old timestamp baseline is only
- * consulted once to migrate existing installs without replaying their already-seen history.
+ * runs. Exact fact keys prevent duplicate notifications; the first run on an install adopts
+ * the existing history as already seen instead of replaying it as a notification storm.
  *
  * A request made while a pass is in flight queues exactly one follow-up pass instead of
  * reusing the in-flight promise: facts persisted during the first pass (for example while
- * a reconnect window had no subscriber) would otherwise wait for the next restart.
+ * a reconnect window had no subscriber) would otherwise wait for the next restart. The
+ * returned promise resolves when the pass serving this call has finished, so awaiting
+ * callers wait out a queued follow-up too.
  */
 export function surfaceStartupScheduledFacts(
   client: ContractsClient,
@@ -226,14 +223,12 @@ export function surfaceStartupScheduledFacts(
   platform: PlatformAdapter | null,
 ): Promise<void> {
   if (startupSurfaceInFlight !== null) {
-    if (!startupSurfaceQueued) {
-      startupSurfaceQueued = true;
-      void startupSurfaceInFlight.then(() => {
-        startupSurfaceQueued = false;
-        void surfaceStartupScheduledFacts(client, queryClient, platform);
-      });
+    if (startupSurfaceQueuedPromise === null) {
+      startupSurfaceQueuedPromise = startupSurfaceInFlight.then(() =>
+        surfaceStartupScheduledFacts(client, queryClient, platform),
+      );
     }
-    return Promise.resolve();
+    return startupSurfaceQueuedPromise;
   }
   const surface = serializeBaselineTurn(() =>
     surfaceStartupScheduledFactsOnce(client, queryClient, platform),
@@ -241,6 +236,7 @@ export function surfaceStartupScheduledFacts(
   startupSurfaceInFlight = surface;
   void surface.finally(() => {
     if (startupSurfaceInFlight === surface) startupSurfaceInFlight = null;
+    startupSurfaceQueuedPromise = null;
   });
   return surface;
 }
@@ -251,9 +247,19 @@ async function surfaceStartupScheduledFactsOnce(
   platform: PlatformAdapter | null,
 ): Promise<void> {
   const t = appI18n.t.bind(appI18n);
-  const legacyBaseline = seenFactsInitialized() ? 0 : readSeenBaseline();
+  // The very first run on an install adopts the existing history as already seen instead of
+  // replaying every historical failure as a notification storm.
+  const migrateOnly = !seenFactsInitialized();
+  const legacyBaseline = migrateOnly ? readSeenBaseline() : 0;
   let newest = legacyBaseline;
   let historiesComplete = true;
+  const seen = readSeenFacts();
+  let seenDirty = false;
+  const hasSeen = (key: string): boolean => Object.hasOwn(seen, key);
+  const markSeen = (key: string, seenAt: number): void => {
+    seen[key] = seenAt;
+    seenDirty = true;
+  };
 
   let tasks: ScheduledTask[];
   try {
@@ -279,12 +285,18 @@ async function surfaceStartupScheduledFactsOnce(
       historiesComplete = false;
       continue;
     }
+    const baseline = readSeenBaseline();
     for (const entry of entries) {
       const factAt = surfaceableFactAt(entry);
       const key = factKey(task.id, entry);
-      if (factAt === null || key === null || hasSeenFact(key)) continue;
-      if (factAt <= legacyBaseline) {
-        markFactSeen(key, factAt);
+      if (factAt === null || key === null || hasSeen(key)) continue;
+      if (migrateOnly || factAt <= baseline) {
+        // Facts recorded before this feature (or already covered by the legacy baseline,
+        // including entries evicted from the bounded seen map) are adopted as seen without
+        // replaying them as notifications. The baseline still advances so these facts stay
+        // suppressed even when the bounded seen map later evicts them.
+        newest = Math.max(newest, factAt);
+        markSeen(key, factAt);
         continue;
       }
       newest = Math.max(newest, factAt);
@@ -303,10 +315,11 @@ async function surfaceStartupScheduledFactsOnce(
         () =>
           useUiStore.getState().openScheduledTaskHistory({ taskId: task.id }),
       );
-      markFactSeen(key, factAt);
+      markSeen(key, factAt);
     }
   }
 
+  if (seenDirty) writeSeenFacts(seen);
   if (newest > legacyBaseline) advanceSeenBaseline(newest);
   if (historiesComplete) markSeenFactsInitialized();
 }

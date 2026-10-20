@@ -280,6 +280,9 @@ pub enum ScheduledTaskEvent {
     /// One Scheduled Run that reached a terminal state.
     RunFinished {
         task_id: String,
+        /// The finished Scheduled Run, so clients can claim exactly this fact instead of
+        /// guessing which history entry a failure reason belongs to.
+        run_id: String,
         status: ScheduledRunStatus,
         failure_reason: Option<ScheduledRunFailureReason>,
     },

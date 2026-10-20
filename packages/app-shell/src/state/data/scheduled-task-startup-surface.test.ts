@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { waitFor } from "@testing-library/react";
 import { toast } from "@ora/ui";
 import type { ScheduledTask, ScheduledTaskHistoryEntry } from "@ora/contracts";
 import {
@@ -119,6 +118,9 @@ describe("startup surface of persisted scheduled task facts", () => {
     vi.restoreAllMocks();
     errorToast = spyOnErrorToast();
     window.localStorage.clear();
+    // Most tests simulate an already-installed app whose first-ever migration pass has
+    // happened; the migration tests below clear storage to start from a fresh install.
+    window.localStorage.setItem("ora.scheduledTaskFactsSeenInitialized", "1");
     useUiStore.setState({ scheduledTasksOpen: false });
   });
 
@@ -182,9 +184,92 @@ describe("startup surface of persisted scheduled task facts", () => {
     await markScheduledTaskHistorySeen(storage.client, storage.queryClient, {
       kind: "run_finished",
       taskId: TASK.id,
+      runId: "run-1",
       status: "failed",
       failureReason: "timeout",
     });
+    await surfaceStartupScheduledFacts(
+      storage.client,
+      storage.queryClient,
+      platform,
+    );
+
+    expect(errorToast).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem("ora.scheduledTaskFactsSeen")).toContain(
+      "run:scheduled-1:run-1",
+    );
+  });
+
+  it("claims exactly the run the event names when two failures share a reason", async () => {
+    const { platform } = createPlatform();
+    const storage = harness([
+      failedRun(5_000n, "run-1"),
+      failedRun(6_000n, "run-2"),
+    ]);
+
+    const shouldSurface = await markScheduledTaskHistorySeen(
+      storage.client,
+      storage.queryClient,
+      {
+        kind: "run_finished",
+        taskId: TASK.id,
+        runId: "run-2",
+        status: "failed",
+        failureReason: "timeout",
+      },
+    );
+    expect(shouldSurface).toBe(true);
+    expect(window.localStorage.getItem("ora.scheduledTaskFactsSeen")).toContain(
+      "run:scheduled-1:run-2",
+    );
+    expect(
+      window.localStorage.getItem("ora.scheduledTaskFactsSeen"),
+    ).not.toContain("run:scheduled-1:run-1");
+
+    // The untouched earlier failure still surfaces; the claimed one does not.
+    await surfaceStartupScheduledFacts(
+      storage.client,
+      storage.queryClient,
+      platform,
+    );
+    expect(errorToast).toHaveBeenCalledTimes(1);
+  });
+
+  it("adopts existing history as seen on the first run after an upgrade", async () => {
+    window.localStorage.clear();
+    const { platform } = createPlatform();
+    const storage = harness([failedRun(4_000n, "run-1"), missedFact(5_000n)]);
+
+    await surfaceStartupScheduledFacts(
+      storage.client,
+      storage.queryClient,
+      platform,
+    );
+
+    expect(errorToast).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem("ora.scheduledTaskFactsSeenAt")).toBe(
+      "5000",
+    );
+    const seen =
+      window.localStorage.getItem("ora.scheduledTaskFactsSeen") ?? "";
+    expect(seen).toContain("run:scheduled-1:run-1");
+    expect(seen).toContain("missed:scheduled-1:1000");
+
+    // Later passes must not replay the adopted facts either.
+    await surfaceStartupScheduledFacts(
+      storage.client,
+      storage.queryClient,
+      platform,
+    );
+    expect(errorToast).not.toHaveBeenCalled();
+  });
+
+  it("suppresses facts covered by the legacy baseline even after seen-map eviction", async () => {
+    window.localStorage.setItem("ora.scheduledTaskFactsSeenAt", "5000");
+    window.localStorage.setItem("ora.scheduledTaskFactsSeenInitialized", "1");
+    const { platform } = createPlatform();
+    const storage = harness([failedRun(4_000n, "run-1")]);
+
     await surfaceStartupScheduledFacts(
       storage.client,
       storage.queryClient,
@@ -257,6 +342,7 @@ describe("startup surface of persisted scheduled task facts", () => {
     const markPromise = markScheduledTaskHistorySeen(client, queryClient, {
       kind: "run_finished",
       taskId: TASK_B.id,
+      runId: "run-1",
       status: "failed",
       failureReason: "timeout",
     });
@@ -299,6 +385,7 @@ describe("startup surface of persisted scheduled task facts", () => {
     const liveEvent = {
       kind: "run_finished" as const,
       taskId: TASK_B.id,
+      runId: "run-1",
       status: "failed" as const,
       failureReason: "timeout" as const,
     };
@@ -356,14 +443,20 @@ describe("startup surface of persisted scheduled task facts", () => {
       platform,
     );
     // A second ready arrives while the first pass is still running: it queues a follow-up
-    // pass instead of reusing the in-flight promise.
-    void surfaceStartupScheduledFacts(client, queryClient, platform);
+    // pass instead of reusing the in-flight promise, and awaiting its returned promise
+    // waits out the queued pass.
+    const secondPass = surfaceStartupScheduledFacts(
+      client,
+      queryClient,
+      platform,
+    );
     // A fact is persisted for task B during the in-flight first pass.
     entriesB.push(missedFact(6_000n));
     blocked.resolve([missedA]);
     await firstPass;
+    await secondPass;
 
-    await waitFor(() => expect(errorToast).toHaveBeenCalledTimes(2));
+    expect(errorToast).toHaveBeenCalledTimes(2);
     expect(toastCalls(errorToast)[1]?.description).toContain(
       "已错过：Desktop 未运行",
     );
