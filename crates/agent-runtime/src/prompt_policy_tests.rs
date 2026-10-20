@@ -551,6 +551,54 @@ fn waiting_prompt_survives_silence_while_default_session_retries() {
     });
 }
 
+/// Projected child events remain visible but cannot reset or pause the parent timeout.
+#[test]
+fn projected_child_activity_does_not_keep_an_unrelated_parent_prompt_alive() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("parent");
+        let mut stream = fixture
+            .manager
+            .prompt_session(prompt("parent"))
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        tokio::time::advance(Duration::from_secs(30)).await;
+        for value in [
+            json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"background"},"_meta":{"opencode/child-session":{"id":"child","parentID":"parent","depth":1}}}),
+            json!({"sessionUpdate":"tool_call","toolCallId":"child:tool","title":"background","status":"in_progress","_meta":{"opencode/child-session":{"id":"child","parentID":"parent","depth":1}}}),
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"child:tool","status":"in_progress"}),
+        ] {
+            let notification: SessionNotification =
+                serde_json::from_value(json!({"sessionId":"parent","update":value})).unwrap();
+            fixture
+                .agent
+                .send(AgentInput::Update(notification))
+                .unwrap();
+            assert!(matches!(
+                stream.recv().await.unwrap().unwrap(),
+                PromptSessionEvent::SessionUpdate { .. }
+            ));
+        }
+        tokio::time::advance(Duration::from_secs(15)).await;
+        assert_eq!(fixture.next_frame().await["method"], "session/cancel");
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        assert!(matches!(
+            stream.recv().await.unwrap().unwrap(),
+            PromptSessionEvent::Retrying { retry: 1, .. }
+        ));
+        fixture
+            .agent
+            .send(AgentInput::Finish(
+                "parent".to_string(),
+                StopReason::EndTurn,
+            ))
+            .unwrap();
+        assert_eq!(completion(&mut stream).await, StopReason::EndTurn);
+        fixture.shutdown().await;
+    });
+}
+
 /// Explicit cancellation still obtains the actual provider fence after an arbitrarily long wait.
 #[test]
 fn waiting_prompt_remains_cancellable_and_reusable() {
