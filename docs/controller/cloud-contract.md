@@ -50,6 +50,12 @@ without a result.
 
 ## Obtaining and generating the contract
 
+The plugin install plan's `agent_configuration` is part of Cloud's frozen input. The Controller
+must preserve it when reading an operation snapshot, registering dispatch and recovering an
+execution, including an association message whose fields are empty. Omitting it causes Cloud's
+frozen-input equality check to reject dispatch. Wire round-trip regressions and real gRPC
+operation tests cover this boundary in addition to generated-code checks.
+
 `third_party/cloud` is a git submodule of the Cloud repository whose gitlink pins the contract commit.
 Its working tree is a partial clone (`--filter=blob:none`) with a sparse checkout limited to `proto/`.
 

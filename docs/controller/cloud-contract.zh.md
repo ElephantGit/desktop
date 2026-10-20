@@ -26,6 +26,10 @@
 
 ## 获取与生成契约
 
+插件安装计划中的 `agent_configuration` 是 Cloud 冻结输入的一部分。Controller 从操作快照读取、
+登记派发以及恢复执行时必须保留它，包括存在但字段为空的关联消息；省略它会使 Cloud 的冻结输入
+一致性检查拒绝派发。协议生成检查之外，wire 往返回归和真实 gRPC 操作测试覆盖这条边界。
+
 `third_party/cloud` 是 Cloud 仓库的 git submodule，它的 gitlink 固定了契约的 commit。工作树是部分 clone（`--filter=blob:none`），sparse checkout 只包含 `proto/`。
 
 - `task proto:init`（Linux 和 macOS）clone 并检出固定的 commit，或把已初始化的 submodule 移到该 commit。它使用 `PATH` 或 `~/.local/bin` 中的 `buf`，没有时从官方 GitHub release 安装 Buf 到 `~/.local/bin`，不需要 sudo（需要网络）。普通的 `git clone` 不会初始化 submodule。Windows 构建使用已提交的生成客户端，既不需要 submodule 也不需要 `buf`。
