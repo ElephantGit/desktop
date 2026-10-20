@@ -1,6 +1,7 @@
 //! Cloud remains the only durable authority for session dispatches, Thread receipts and commands.
 mod downloads;
 pub(super) mod mapping;
+mod previews;
 use super::{CloudStore, fault};
 use crate::*;
 use ora_controller_proto::v1::{self as proto, agent_run_service_client::AgentRunServiceClient};
@@ -83,6 +84,9 @@ impl CloudStore {
                     turn_id: event.payload.turn_id.as_ref().map(|v| v.as_str().into()),
                     record: serde_json::to_string(&event.payload.record)?,
                     truncated: event.payload.truncated,
+                    visible_text: event.payload.visible_text.clone(),
+                    visible_text_truncated: event.payload.visible_text_truncated,
+                    history_sequence: event.payload.history_sequence,
                 })
             })
             .collect::<Result<Vec<_>, Error>>()?;

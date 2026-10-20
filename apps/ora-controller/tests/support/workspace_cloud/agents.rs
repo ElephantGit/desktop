@@ -275,6 +275,14 @@ impl WorkspaceCloud {
 }
 #[tonic::async_trait]
 impl AgentRunService for WorkspaceCloud {
+    /// This workspace fixture does not negotiate previews; focused adapter tests serve the RPC.
+    async fn publish_thread_preview(
+        &self,
+        _request: Request<proto::PublishThreadPreviewRequest>,
+    ) -> Result<Response<proto::PublishThreadPreviewResponse>, Status> {
+        Err(Status::unimplemented("previews not negotiated"))
+    }
+
     async fn take_over_thread_events(
         &self,
         request: Request<proto::TakeOverThreadEventsRequest>,
