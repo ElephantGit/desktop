@@ -14,22 +14,26 @@ import { PlanBlock } from "./plan-block";
 export function SubagentGroup({
   group,
   turnStatus,
+  parentEnded,
   userName,
 }: {
   group: SubagentGroupItem;
   turnStatus: ChatTurnStatus;
+  /** A real turn fence or live failure/cancellation, never an inferred historical EOF. */
+  parentEnded: boolean;
   userName: string;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const name = group.title ?? t("chat.subagentUnnamed", { index: group.index });
   const label = t("chat.subagentTitle", { name });
-  const status =
-    turnStatus === "streaming"
-      ? "active"
-      : turnStatus === "completed"
-        ? "ended"
-        : "stopped";
+  // Plain OpenCode projection carries attribution, not a negotiated child terminal state.
+  // Parent completion only closes the observation channel; it cannot settle the child itself.
+  const status = parentEnded
+    ? "chat.subagentProjectionStopped"
+    : turnStatus === "streaming"
+      ? "chat.subagentStateUnreported"
+      : "chat.subagentStateUnknown";
   return (
     <section
       data-subagent-group={group.sourceId}
@@ -52,10 +56,11 @@ export function SubagentGroup({
               })}
             </span>
           </span>
-          <span className="text-[11px] text-muted-foreground">
-            {t("chat.subagentStateUnknown")}
-            <span aria-hidden="true"> · </span>
-            <span data-subagent-status>{t(`chat.subagentTurn.${status}`)}</span>
+          <span
+            data-subagent-status
+            className="text-[11px] text-muted-foreground"
+          >
+            {t(status)}
           </span>
           <IconChevronDown
             className={`size-3.5 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`}
@@ -74,6 +79,7 @@ export function SubagentGroup({
                   key={item.id}
                   group={item}
                   turnStatus={turnStatus}
+                  parentEnded={parentEnded}
                   userName={userName}
                 />
               ) : (

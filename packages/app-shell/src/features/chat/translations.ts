@@ -244,9 +244,8 @@ export const chatTranslations = {
     "chat.subagentUnnamed": "子代理 {{index}}",
     "chat.subagentCounts":
       "{{messages}} 条文本 · {{thoughts}} 段思考 · {{tools}} 个工具",
-    "chat.subagentTurn.active": "本轮进行中",
-    "chat.subagentTurn.ended": "本轮已结束",
-    "chat.subagentTurn.stopped": "本轮已停止",
+    "chat.subagentProjectionStopped": "后续未知（投影已停止）",
+    "chat.subagentStateUnreported": "状态未上报（观察中）",
     "chat.subagentThought": "思考",
     "chat.subagentStateUnknown": "状态未知",
     "chat.toolCompleted": "已完成",
@@ -641,9 +640,9 @@ export const chatTranslations = {
     "chat.subagentUnnamed": "Worker {{index}}",
     "chat.subagentCounts":
       "{{messages}} messages · {{thoughts}} thoughts · {{tools}} tools",
-    "chat.subagentTurn.active": "Turn in progress",
-    "chat.subagentTurn.ended": "Turn ended",
-    "chat.subagentTurn.stopped": "Turn stopped",
+    "chat.subagentProjectionStopped":
+      "Further state unknown (projection stopped)",
+    "chat.subagentStateUnreported": "State not reported (observing)",
     "chat.subagentThought": "Thought",
     "chat.subagentStateUnknown": "Status unknown",
     "chat.toolCompleted": "Completed",

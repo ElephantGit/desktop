@@ -12,6 +12,14 @@ const item = (id: string, parentID: string, depth: number): ChatTurnItem => ({
 });
 
 describe("explicit child projection tree", () => {
+  it("keeps concurrent siblings separate instead of nesting by depth", () => {
+    expect(
+      groupSubagentItems([item("left", "root", 1), item("right", "root", 1)]),
+    ).toMatchObject([
+      { sourceId: "left", children: [] },
+      { sourceId: "right", children: [] },
+    ]);
+  });
   it("connects a late parent and keeps unrelated root content", () => {
     const root: ChatTurnItem = {
       kind: "message",

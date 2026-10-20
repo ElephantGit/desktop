@@ -7,8 +7,12 @@ its text, thoughts, plans and tool input/output; nested cards follow the explici
 Parent replies remain in the ordinary timeline. The original Stop action controls the parent prompt;
 these cards do not add child cancellation, steering or closing.
 
-Child state is unknown unless a supported provider report establishes it. A completed launch tool or
-ended parent turn does not establish the child's outcome. An unfinished child tool displays an unknown
+Child state is unreported while its parent is still observed, unless a supported report establishes it.
+After a parent completion, failure or cancellation with no child terminal report, the card explicitly
+shows **Further state unknown (projection stopped)**. It describes missing subsequent observations,
+not a completed, cancelled or stopped child; live, warm and cold replay derive the same label from
+the parent ending. Historical EOF without a recorded turn fence remains unknown instead of inventing
+that ending. A completed launch tool never establishes the child's outcome. An unfinished child tool displays an unknown
 outcome when the parent turn ends. Missing or cyclic relationships remain independent readable cards.
 
 Attribution comes from `_meta["opencode/child-session"]`, never from a tool title, ID prefix, or depth

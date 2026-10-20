@@ -78,6 +78,11 @@ export function DisplayTurnItemView({
         <SubagentGroup
           group={item}
           turnStatus={turn.status}
+          parentEnded={
+            turn.stopReason !== null ||
+            turn.status === "failed" ||
+            turn.status === "cancelled"
+          }
           userName={userName}
         />
       );
