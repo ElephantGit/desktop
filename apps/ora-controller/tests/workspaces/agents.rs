@@ -58,7 +58,7 @@ impl AgentNode {
         &self,
         sent: &mut HashSet<(String, u64)>,
     ) -> Option<NodeToControllerMessage> {
-        let mut data = self.data.lock().unwrap();
+        let data = self.data.lock().unwrap();
         let (key, event) = data.outbox.iter().find(|(key, _)| !sent.contains(*key))?;
         sent.insert(key.clone());
         Some(event.clone())
