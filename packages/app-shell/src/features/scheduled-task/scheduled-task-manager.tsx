@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ScheduledTask } from "@ora/contracts";
 import { Button, cn, Spinner, Switch } from "@ora/ui";
@@ -65,7 +65,12 @@ export function ScheduledTaskManager() {
   );
 
   // A one-shot history deep link (for example from a notification) resolves against the
-  // definition list at render time; closing the dialog clears it like a navigation.
+  // definition list at render time; closing the dialog or leaving the pane clears it, so a
+  // stale request never re-opens a dialog on the next visit.
+  useEffect(
+    () => clearScheduledTaskHistoryRequest,
+    [clearScheduledTaskHistoryRequest],
+  );
   const requestedHistoryTask =
     historyRequest === null
       ? null

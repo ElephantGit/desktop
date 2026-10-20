@@ -50,48 +50,83 @@ function surfaceableFactAt(entry: ScheduledTaskHistoryEntry): number | null {
 }
 
 /**
+ * Serializes every baseline-advancing pass.
+ *
+ * The startup surface and the live-event dedupe both read, decide, and advance the same
+ * durable baseline. Running them concurrently would let a live event advance the baseline
+ * over older facts the in-flight surface has not shown yet, silently dropping them (the
+ * dedupe must only prevent repeats, never lose facts). One shared chain keeps each pass's
+ * reads and baseline write contiguous; live toasts may wait one surface pass, which is
+ * bounded by the per-task history reads.
+ */
+let baselineChain: Promise<void> = Promise.resolve();
+
+function serializeBaselineTurn<T>(turn: () => Promise<T>): Promise<T> {
+  const result = baselineChain.then(turn, turn);
+  baselineChain = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
+/**
  * Records the newest persisted failure or missed fact for one task after its live event was
  * delivered. This prevents a reconnect from replaying a toast that the event stream already
  * surfaced, and a live fact also establishes a sensible baseline after an upgrade.
  */
-export async function markScheduledTaskHistorySeen(
+export function markScheduledTaskHistorySeen(
   client: ContractsClient,
   queryClient: QueryClient,
   taskId: string,
 ): Promise<void> {
-  try {
-    const entries = await client.scheduledTask
-      .listHistory({ taskId })
-      .then((response) => response.entries);
-    queryClient.setQueryData(scheduledTaskKeys.history(taskId), entries);
-    const newest = entries.reduce((latest, entry) => {
-      const factAt = surfaceableFactAt(entry);
-      return factAt === null ? latest : Math.max(latest, factAt);
-    }, readSeenBaseline());
-    advanceSeenBaseline(newest);
-  } catch {
-    // The event remains actionable even when its history refresh is temporarily unavailable.
-  }
+  return serializeBaselineTurn(async () => {
+    try {
+      const entries = await client.scheduledTask
+        .listHistory({ taskId })
+        .then((response) => response.entries);
+      queryClient.setQueryData(scheduledTaskKeys.history(taskId), entries);
+      const newest = entries.reduce((latest, entry) => {
+        const factAt = surfaceableFactAt(entry);
+        return factAt === null ? latest : Math.max(latest, factAt);
+      }, readSeenBaseline());
+      advanceSeenBaseline(newest);
+    } catch {
+      // The event remains actionable even when its history refresh is temporarily unavailable.
+    }
+  });
 }
 
 let startupSurfaceInFlight: Promise<void> | null = null;
+let startupSurfaceQueued = false;
 
 /**
  * Surfaces persisted Scheduled Task facts that were recorded while the shell could not
  * receive application events: startup-recovered missed occurrences and interrupted failed
  * runs. Facts newer than the persisted baseline are surfaced once, then the baseline
  * advances; notifications stay best-effort and never rewrite run facts.
+ *
+ * A request made while a pass is in flight queues exactly one follow-up pass instead of
+ * reusing the in-flight promise: facts persisted during the first pass (for example while
+ * a reconnect window had no subscriber) would otherwise wait for the next restart.
  */
 export function surfaceStartupScheduledFacts(
   client: ContractsClient,
   queryClient: QueryClient,
   platform: PlatformAdapter | null,
 ): Promise<void> {
-  if (startupSurfaceInFlight !== null) return startupSurfaceInFlight;
-  const surface = surfaceStartupScheduledFactsOnce(
-    client,
-    queryClient,
-    platform,
+  if (startupSurfaceInFlight !== null) {
+    if (!startupSurfaceQueued) {
+      startupSurfaceQueued = true;
+      void startupSurfaceInFlight.then(() => {
+        startupSurfaceQueued = false;
+        void surfaceStartupScheduledFacts(client, queryClient, platform);
+      });
+    }
+    return Promise.resolve();
+  }
+  const surface = serializeBaselineTurn(() =>
+    surfaceStartupScheduledFactsOnce(client, queryClient, platform),
   );
   startupSurfaceInFlight = surface;
   void surface.finally(() => {

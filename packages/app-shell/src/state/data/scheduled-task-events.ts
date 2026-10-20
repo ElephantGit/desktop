@@ -96,6 +96,11 @@ async function showOsNotification(
   platform: PlatformAdapter | null,
   fact: PendingFact,
 ): Promise<void> {
+  // The navigation entry is queued before the await: a slow or failing host call must not
+  // leave the fact without its retained in-app entry.
+  pendingFacts.push(fact);
+  if (pendingFacts.length > MAX_PENDING_FACTS) pendingFacts.shift();
+  registerFocusFlush();
   try {
     await platform?.desktopNotifications?.show({
       title: fact.title,
@@ -104,13 +109,14 @@ async function showOsNotification(
   } catch {
     // A notification failure never rewrites run facts; the next refresh shows history.
   }
-  pendingFacts.push(fact);
-  if (pendingFacts.length > MAX_PENDING_FACTS) pendingFacts.shift();
-  registerFocusFlush();
 }
 
 /** Renders one failed-or-missed fact as an actionable in-app toast right now. */
-function toastFailedFact(title: string, body: string, onClick?: () => void): void {
+function toastFailedFact(
+  title: string,
+  body: string,
+  onClick?: () => void,
+): void {
   toast.error(title, {
     description: body,
     action: onClick
@@ -169,10 +175,18 @@ export async function surfaceScheduledTaskEvent(
     const onClick = () =>
       openRunSession(event.sessionId, event.worktreeTaskId, event.projectId);
     if (document.visibilityState === "visible") {
-      toast.success(title, { description: body, action: { label: t("scheduledTask.view"), onClick } });
+      toast.success(title, {
+        description: body,
+        action: { label: t("scheduledTask.view"), onClick },
+      });
       return;
     }
-    await showOsNotification(platform, { variant: "success", title, body, onClick });
+    await showOsNotification(platform, {
+      variant: "success",
+      title,
+      body,
+      onClick,
+    });
     return;
   }
 
