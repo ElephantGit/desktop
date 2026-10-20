@@ -1,5 +1,23 @@
 # @ora-space/plugin-sdk
 
+## Versioned model adapter startup
+
+`AgentStartContext.modelContext` is present only for an authorized, frozen Cloud
+execution. It contains a non-secret `configuration` (exact
+plugin/package/target/declaration identity, adapter version, revision, model and
+`settingsJson`) plus an in-memory gateway endpoint and temporary token. Preserve
+`settingsJson` as text until your adapter parses it with appropriate numeric
+precision; the host never converts large integers or precise decimals into
+JavaScript numbers. Never log or persist the sensitive context, include it in an
+ACP frame, or put token literals in files.
+
+Apply CLI routing, model/auxiliary model restrictions and options before
+returning an `AgentModelApplied` acknowledgement with the exact adapter version,
+declaration fingerprint and configuration revision. Returning void for a
+declared context fails startup. Legacy starts omit the context and continue
+returning void. CLI-specific conversion belongs to the plugin; the host owns
+grant renewal, revocation, process leases and isolated execution directories.
+
 The Ora plugin SDK runs JavaScript plugins as persistent Deno processes. A
 plugin registers its complete method set before calling `run()`:
 
@@ -28,15 +46,15 @@ to stderr; the Ora host persists them into the plugin's own log file, filtered
 by the level the user chose for that plugin, and never into its own runtime log.
 When `run()` starts with the default Deno transport, the SDK — before it writes
 the first protocol frame — also routes five `console` methods through that
-logger (`console.debug` → `DEBUG`, `console.info`/`log` → `INFO`,
-`console.warn` → `WARN`, `console.error` → `ERROR`) so multi-line output stays
-one record and nothing ever reaches stdout, which carries the protocol. The
-takeover is never undone: it survives initialization failures, `ora/shutdown`,
-and the end of every handler, and dependencies calling the global methods later
-go through it too. Output before `run()` (module evaluation, `createPlugin`,
-`registerMethod` bodies), methods captured before the takeover, other workers,
-and other `console` methods are outside that guarantee. If the console cannot be
-taken over, `run()` throws before entering protocol operation.
+logger (`console.debug` → `DEBUG`, `console.info`/`log` → `INFO`, `console.warn`
+→ `WARN`, `console.error` → `ERROR`) so multi-line output stays one record and
+nothing ever reaches stdout, which carries the protocol. The takeover is never
+undone: it survives initialization failures, `ora/shutdown`, and the end of
+every handler, and dependencies calling the global methods later go through it
+too. Output before `run()` (module evaluation, `createPlugin`, `registerMethod`
+bodies), methods captured before the takeover, other workers, and other
+`console` methods are outside that guarantee. If the console cannot be taken
+over, `run()` throws before entering protocol operation.
 
 ```ts
 plugin.logger.info("synced", { target: "sync", context: { items: 3 } });

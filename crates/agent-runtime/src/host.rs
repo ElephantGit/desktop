@@ -109,6 +109,11 @@ pub trait AgentAttach: Send + Sync + 'static {
     /// Why the host could not stop a plugin; the runtime only logs it.
     type StopError: Error + Send + Sync + 'static;
 
+    /// Supplies a live, sensitive startup context only for this host's frozen execution.
+    fn model_context(&self) -> Option<ora_plugin_protocol::AgentModelContext> {
+        None
+    }
+
     /// Lists the canonical ids of installed plugins that contribute an agent.
     fn installed_agent_plugins(&self) -> Vec<PluginId>;
 

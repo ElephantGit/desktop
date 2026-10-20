@@ -23,9 +23,20 @@ export type AgentProtocol = "acp";
 /**
  * Host context handed to an agent when its underlying process starts.
  */
-export type AgentStartContext = { cwd: string; hostVersion: string };
+export type AgentStartContext = {
+  cwd: string;
+  hostVersion: string;
+  /**
+   * Present only for the versioned platform-model path, and never stored in session history.
+   */
+  modelContext?: import("./model_context.ts").AgentModelContext;
+};
 
 /**
  * Confirmation that a started agent is ready to receive ACP frames.
  */
-export type AgentStartResult = { protocol: AgentProtocol; acpVersion: number };
+export type AgentStartResult = {
+  protocol: AgentProtocol;
+  acpVersion: number;
+  modelApplied?: import("./model_context.ts").AgentModelApplied;
+};
