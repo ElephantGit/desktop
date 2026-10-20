@@ -1,4 +1,4 @@
-use agent_client_protocol_schema::v1::{SessionUpdate, ToolCallId, ToolCallStatus};
+use agent_client_protocol_schema::v1::{SessionUpdate, ToolCallId, ToolCallStatus, ToolCallUpdate};
 use ora_domain::PromptInactivityPolicy;
 use std::collections::HashSet;
 use std::time::Duration;
@@ -170,7 +170,15 @@ impl PromptLiveness {
     }
 
     /// Rearms a full window after an awaited permission round trip.
-    pub(super) fn permission_settled(&mut self) {
+    pub(super) fn permission_settled(&mut self, tool: &ToolCallUpdate) {
+        if self.projected_tools.contains(&tool.tool_call_id)
+            || tool
+                .meta
+                .as_ref()
+                .is_some_and(|meta| meta.contains_key("opencode/child-session"))
+        {
+            return;
+        }
         self.reset_at(Instant::now());
     }
 
@@ -218,6 +226,22 @@ mod tests {
         Duration::from_secs(60),
         Duration::from_secs(90),
     ];
+
+    /// A background child's permission roundtrip does not prove parent progress either.
+    #[tokio::test(start_paused = true)]
+    async fn child_permission_does_not_renew_the_parent_deadline() {
+        let mut liveness = PromptLiveness::new(&SINGLE_WINDOW);
+        let original = liveness.deadline();
+        tokio::time::advance(Duration::from_secs(20)).await;
+        let child = serde_json::from_value(serde_json::json!({
+            "toolCallId":"child:tool", "_meta":{"opencode/child-session":{"id":"child","parentID":"root","depth":1}}
+        })).unwrap();
+        liveness.permission_settled(&child);
+        assert_eq!(liveness.deadline(), original);
+        let parent = serde_json::from_value(serde_json::json!({"toolCallId":"delegate"})).unwrap();
+        liveness.permission_settled(&parent);
+        assert_eq!(liveness.deadline(), Some(Instant::now() + SINGLE_WINDOW[0]));
+    }
 
     /// Diagnostics distinguish currently pending work from ids remembered for rearm deduplication.
     #[tokio::test(start_paused = true)]
