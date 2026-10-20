@@ -194,7 +194,8 @@ export function markScheduledTaskHistorySeen(
         entries,
       );
       const fact = liveFact(entries, event);
-      const key = fact === null ? null : factKey(event.taskId, fact);
+      if (fact === null) return true;
+      const key = factKey(event.taskId, fact);
       if (key === null) return true;
       if (hasSeenFact(key)) return false;
       markFactSeen(key, surfaceableFactAt(fact) ?? Date.now());
