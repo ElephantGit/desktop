@@ -1,5 +1,5 @@
 import { PlatformProvider, type PlatformAdapter } from "../../platform";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { AppI18nProvider } from "../../i18n/i18n";
@@ -258,5 +258,185 @@ describe("EntityDialog submit loading", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       /Options are still loading|选项仍在加载/,
     );
+  });
+});
+
+describe("EntityDialog searchable select", () => {
+  const longName = `feature/${"a".repeat(80)}`;
+  const branchFields: EntityField[] = [
+    {
+      kind: "searchable-select",
+      name: "baseBranch",
+      label: "Base branch",
+      value: "refs/heads/main",
+      options: [
+        { label: "main", value: "refs/heads/main", keywords: "main" },
+        {
+          label: "213124",
+          value: "refs/heads/ora/6f9888a9",
+          keywords: "ora/6f9888a9",
+        },
+        { label: longName, value: "refs/heads/long", keywords: longName },
+      ],
+    },
+  ];
+
+  async function openBranchMenu() {
+    const user = userEvent.setup();
+    const search = screen.getByRole("combobox", { name: "Base branch" });
+    await user.click(search);
+    return { user, search };
+  }
+
+  it("wraps a long branch name inside the menu", async () => {
+    renderSubmitDialog({ onSubmit: async () => {}, fields: branchFields });
+    await openBranchMenu();
+
+    const option = await screen.findByRole("option", { name: longName });
+    expect(option.textContent).toBe(longName);
+    expect(option.className).not.toContain("last-child]:hidden");
+    expect(option.querySelector("span")?.className).toContain("wrap-break-word");
+    expect(option.querySelector("span")?.className).toContain("whitespace-normal");
+  });
+
+  it("filters by the git branch name behind a task title", async () => {
+    renderSubmitDialog({ onSubmit: async () => {}, fields: branchFields });
+    const { user, search } = await openBranchMenu();
+    await user.clear(search);
+    await user.type(search, "6f9888a9");
+
+    expect(await screen.findByRole("option", { name: "213124" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "main" })).toBeNull();
+    expect(screen.queryByRole("option", { name: longName })).toBeNull();
+  });
+
+  it("shows an empty state when nothing matches", async () => {
+    renderSubmitDialog({ onSubmit: async () => {}, fields: branchFields });
+    const { user, search } = await openBranchMenu();
+    await user.clear(search);
+    await user.type(search, "missing-branch");
+
+    expect(
+      screen.getByText(/No matching branches|没有匹配的分支/),
+    ).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "main" })).toBeNull();
+  });
+
+  it("submits the ref of the branch chosen from search", async () => {
+    const onSubmit = vi.fn(async () => {});
+    renderSubmitDialog({ onSubmit, fields: branchFields });
+    const { user, search } = await openBranchMenu();
+    await user.clear(search);
+    await user.type(search, "6f9888a9");
+    await user.click(await screen.findByRole("option", { name: "213124" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith({
+        baseBranch: "refs/heads/ora/6f9888a9",
+      }),
+    );
+  });
+
+  it("wraps a Chinese name and an unbroken string inside the menu", async () => {
+    const chinese =
+      "测试/这是一条用来检查基础分支下拉框的超长中文分支名看文字会不会被裁掉";
+    const unbroken = "a".repeat(80);
+    renderSubmitDialog({
+      onSubmit: async () => {},
+      fields: [
+        {
+          kind: "searchable-select",
+          name: "baseBranch",
+          label: "Base branch",
+          value: "refs/heads/main",
+          options: [
+            { label: "main", value: "refs/heads/main", keywords: "main" },
+            { label: chinese, value: "refs/heads/zh", keywords: chinese },
+            { label: unbroken, value: "refs/heads/unbroken", keywords: unbroken },
+          ],
+        },
+      ],
+    });
+    await openBranchMenu();
+
+    const menu = document.querySelector("[data-slot=combobox-content]");
+    expect(menu?.className).toContain("max-w-(--anchor-width)");
+    for (const name of [chinese, unbroken]) {
+      const option = await screen.findByRole("option", { name });
+      const label = option.querySelector("span");
+      expect(option.textContent).toBe(name);
+      expect(label?.className).toContain("wrap-break-word");
+      expect(label?.className).toContain("whitespace-normal");
+      expect(label?.className).not.toMatch(/truncate|line-clamp|text-ellipsis/);
+    }
+  });
+
+  it("submits the ref of the last branch in a list longer than 20", async () => {
+    const options = Array.from({ length: 21 }, (_, index) => {
+      const name = `branch-${String(index + 1).padStart(2, "0")}`;
+      return {
+        label: name,
+        value: `refs/heads/${name}`,
+        keywords: name,
+      };
+    });
+    const last = options[20]!;
+    const onSubmit = vi.fn(async () => {});
+    renderSubmitDialog({
+      onSubmit,
+      fields: [
+        {
+          kind: "searchable-select",
+          name: "baseBranch",
+          label: "Base branch",
+          value: options[0]!.value,
+          options,
+        },
+      ],
+    });
+    const { user } = await openBranchMenu();
+
+    const list = document.querySelector("[data-slot=combobox-list]");
+    expect(list?.className).toContain("max-h-52");
+    expect(list?.className).toContain("overflow-y-auto");
+    expect(screen.getAllByRole("option")).toHaveLength(21);
+    await user.click(screen.getByRole("option", { name: last.label }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith({ baseBranch: last.value }),
+    );
+  });
+
+  it("shows the full branch name when the selected text overflows", async () => {
+    const user = userEvent.setup();
+    renderSubmitDialog({
+      onSubmit: async () => {},
+      fields: [{ ...branchFields[0]!, value: "refs/heads/long" }],
+    });
+    const input = screen.getByRole("combobox", { name: "Base branch" });
+    Object.defineProperty(input, "scrollWidth", { configurable: true, value: 400 });
+    Object.defineProperty(input, "clientWidth", { configurable: true, value: 80 });
+
+    await user.hover(input);
+
+    expect(await screen.findByText(longName)).toBeTruthy();
+  });
+
+  it("leaves a fitting branch name without a preview", async () => {
+    const user = userEvent.setup();
+    renderSubmitDialog({ onSubmit: async () => {}, fields: branchFields });
+    const input = screen.getByRole("combobox", { name: "Base branch" });
+    Object.defineProperty(input, "scrollWidth", { configurable: true, value: 40 });
+    Object.defineProperty(input, "clientWidth", { configurable: true, value: 80 });
+
+    await user.hover(input);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+
+    expect(screen.queryByRole("dialog", { name: "main" })).toBeNull();
+    expect(document.querySelector("[data-slot=popover-content]")).toBeNull();
   });
 });
