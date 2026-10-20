@@ -109,8 +109,8 @@ pub struct AgentConfig {
     #[serde(default)]
     pub workload_directory: Option<PathBuf>,
     /// Directory for the per-session `ora-git` sockets, normally `/run/ora-git`. The Node owns it
-    /// (`0711`) and clears it when it starts; without it, or without git-access, sessions get no
-    /// `ora-git`.
+    /// (`0711`), creates it when missing and removes its own leftover sockets when it starts;
+    /// without it, or without git-access, sessions get no `ora-git`.
     #[serde(default)]
     pub ora_git_directory: Option<PathBuf>,
 }

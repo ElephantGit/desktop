@@ -4,7 +4,8 @@
 //! its path reaches the agent plugin as `ORA_GIT_SOCKET`. A request belongs to the session whose
 //! socket it arrived on, never to anything it declares; the peer must be the workload user, and
 //! the session must still be running. One request runs at a time per session. The socket is
-//! removed when the session leaves the runtime, and the directory is cleared when the Node starts.
+//! removed when the session leaves the runtime, and the Node removes the sockets a previous process
+//! left when it starts.
 
 mod operations;
 
@@ -17,7 +18,7 @@ use ora_node_db::{ClonedCheckout, SessionJournal};
 use ora_node_protocol::{ExecutionId, WorkspaceListing};
 use std::fs;
 use std::io;
-use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, FileTypeExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -88,6 +89,18 @@ impl Drop for OraGitSocket {
     }
 }
 
+/// Whether `name` is one [`OraGitBroker::open`] gives a socket: 32 lowercase hex digits and `.sock`.
+fn is_socket_name(name: &std::ffi::OsStr) -> bool {
+    name.to_str()
+        .and_then(|name| name.strip_suffix(".sock"))
+        .is_some_and(|stem| {
+            stem.len() == 32
+                && stem
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        })
+}
+
 /// Everything `ora-git` requests run with, shared by every session of the Node.
 pub(crate) struct OraGitService<R: Send + 'static, N: Send + 'static> {
     directory: PathBuf,
@@ -117,21 +130,14 @@ pub(crate) struct OraGitParts<R: Send + 'static, N: Send + 'static> {
 }
 
 impl<R: Send + 'static, N: Send + 'static> OraGitService<R, N> {
-    /// Prepares the socket directory: Node-owned, traversable but not listable by others, and
-    /// emptied of every socket a previous Node process left.
+    /// Prepares the socket directory, which the service configuration already checked: created
+    /// when missing, Node-owned, traversable but not listable by others, and emptied of the
+    /// sockets a previous Node process left. Only entries that are sockets named as [`open`]
+    /// names them are removed; anything else in the directory is left alone.
+    ///
+    /// [`open`]: OraGitBroker::open
     pub(crate) fn new(parts: OraGitParts<R, N>) -> io::Result<Self> {
-        match fs::remove_dir_all(&parts.directory) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            // A deployment-mounted directory itself may not be removable; its contents are.
-            Err(_) => {
-                for entry in fs::read_dir(&parts.directory)? {
-                    let _ = fs::remove_file(entry?.path());
-                }
-            }
-        }
         match fs::DirBuilder::new()
-            .recursive(/*recursive*/ true)
             .mode(/*mode*/ 0o711)
             .create(&parts.directory)
         {
@@ -140,6 +146,12 @@ impl<R: Send + 'static, N: Send + 'static> OraGitService<R, N> {
             Err(error) => return Err(error),
         }
         fs::set_permissions(&parts.directory, fs::Permissions::from_mode(/*mode*/ 0o711))?;
+        for entry in fs::read_dir(&parts.directory)? {
+            let entry = entry?;
+            if entry.file_type()?.is_socket() && is_socket_name(&entry.file_name()) {
+                fs::remove_file(entry.path())?;
+            }
+        }
         Ok(Self {
             directory: parts.directory,
             peer_uid: parts.peer_uid,

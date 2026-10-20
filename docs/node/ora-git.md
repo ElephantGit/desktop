@@ -17,8 +17,11 @@ request with its own git-access identity. The decision is
 ```
 
 - `agent.ora_git_directory` enables `ora-git`; without it, or without `git_access`, sessions get no
-  socket. The Node owns the directory (`0711`, traversable but not listable by others) and empties it
-  when it starts.
+  socket. It must be an absolute path whose parent only trusted owners control, either missing (the
+  Node creates it) or a Node-owned directory nobody else can read or write, and it must not overlap the
+  Node home, the host directory, the clone root or the workload directory; the Node refuses to start
+  otherwise. The Node keeps it at `0711` (traversable but not listable by others) and, when it starts,
+  removes only the sockets an earlier Node process named there.
 - The Node image installs the binary at `/usr/local/bin/ora-git` on the workload `PATH`, see
   [Container images](../operations/container-images.md). The socket client is Unix-only; built for
   another platform, `ora-git` answers `internal`.

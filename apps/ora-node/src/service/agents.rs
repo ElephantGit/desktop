@@ -61,13 +61,18 @@ pub(super) fn restorer(
 /// serve. The directory must already exist as the deployment's: owned by the Node's own identity
 /// (root in a sandbox) and writable by nobody else, because the Node creates, links and removes
 /// trees inside it with that authority. It must also not overlap any state or checkout root, so
-/// purging it can never reach them.
+/// purging it can never reach them. The `ora-git` directory is checked by [`validate_ora_git`].
 pub(super) fn validate(agent: &AgentConfig, config: &ServiceConfig) -> io::Result<()> {
     if !agent.deno_path.is_absolute() || agent.ready_timeout_ms == 0 {
         return Err(io::Error::other(
             "agent needs an absolute Deno path and a positive ready timeout",
         ));
     }
+    validate_workload(agent, config)?;
+    validate_ora_git(agent, config)
+}
+
+fn validate_workload(agent: &AgentConfig, config: &ServiceConfig) -> io::Result<()> {
     let directory = match (&agent.workload_directory, config.process.workload_uid) {
         (None, None) => return Ok(()),
         (Some(directory), Some(_)) => directory,
@@ -95,6 +100,68 @@ pub(super) fn validate(agent: &AgentConfig, config: &ServiceConfig) -> io::Resul
             "agent workload directory must belong to the Node identity and be writable by no one else",
         ));
     }
+    if overlaps(directory, config, &[]) {
+        return Err(io::Error::other(
+            "agent workload directory overlaps Node state, host state or the clone root",
+        ));
+    }
+    Ok(())
+}
+
+/// Checks the `ora-git` socket directory, which the Node creates when missing and clears of its
+/// own sockets when it starts: the same absolute path rules as the workload directory, owned by
+/// the Node identity with no one else allowed to list or change it (so `/run` or `/tmp` are
+/// refused), under a parent only trusted owners control, and overlapping no Node, host, clone or
+/// workload directory.
+fn validate_ora_git(agent: &AgentConfig, config: &ServiceConfig) -> io::Result<()> {
+    let Some(directory) = agent.ora_git_directory.as_deref() else {
+        return Ok(());
+    };
+    let refuse = |reason: &str| {
+        Err(io::Error::other(format!(
+            "agent ora_git_directory {reason}"
+        )))
+    };
+    let Some(parent) = directory.parent().filter(|_| {
+        directory.is_absolute()
+            && directory.to_str().is_some()
+            && !directory
+                .components()
+                .any(|component| matches!(component, Component::ParentDir))
+    }) else {
+        return refuse("must be an absolute UTF-8 path without parent traversal, below the root");
+    };
+    // SAFETY: geteuid only reads the process identity.
+    let owner = unsafe { libc::geteuid() };
+    match open_trusted_path(directory, owner, TrustedPathKind::Directory) {
+        Ok(opened) => {
+            let metadata = opened.metadata()?;
+            if metadata.uid() != owner || metadata.mode() & 0o066 != 0 {
+                return refuse(
+                    "must belong to the Node identity and be readable and writable by no one else",
+                );
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            if open_trusted_path(parent, owner, TrustedPathKind::Directory).is_err() {
+                return refuse("must be created under a directory only trusted owners control");
+            }
+        }
+        Err(_) => return refuse("must be a directory only trusted owners control"),
+    }
+    let workload = agent.workload_directory.as_deref();
+    if overlaps(directory, config, &[workload]) {
+        return refuse("overlaps Node state, host state, the clone root or the workload directory");
+    }
+    Ok(())
+}
+
+/// Whether `directory` contains, or is contained in, a directory whose contents the Node manages.
+fn overlaps(
+    directory: &std::path::Path,
+    config: &ServiceConfig,
+    others: &[Option<&std::path::Path>],
+) -> bool {
     let directory = canonicalize_longest_existing_prefix(directory);
     let protected = [
         Some(config.node.home_directory.as_path()),
@@ -104,15 +171,14 @@ pub(super) fn validate(agent: &AgentConfig, config: &ServiceConfig) -> io::Resul
             .as_ref()
             .map(|clone| clone.repository_root.as_path()),
     ];
-    for path in protected.into_iter().flatten() {
-        let path = canonicalize_longest_existing_prefix(path);
-        if path.starts_with(&directory) || directory.starts_with(&path) {
-            return Err(io::Error::other(
-                "agent workload directory overlaps Node state, host state or the clone root",
-            ));
-        }
-    }
-    Ok(())
+    protected
+        .into_iter()
+        .chain(others.iter().copied())
+        .flatten()
+        .any(|path| {
+            let path = canonicalize_longest_existing_prefix(path);
+            path.starts_with(&directory) || directory.starts_with(&path)
+        })
 }
 
 /// Derives where and as whom agents run from configuration [`validate`] already accepted.

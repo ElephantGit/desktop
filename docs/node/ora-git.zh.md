@@ -16,8 +16,10 @@ Git Server 允许各执行写什么，见
 "agent": { "deno_path": "/opt/ora/bin/deno", "ready_timeout_ms": 30000, "ora_git_directory": "/run/ora-git" }
 ```
 
-- `agent.ora_git_directory` 启用 `ora-git`；没有它，或没有 `git_access`，会话就没有 socket。目录归 Node 所有（`0711`，
-  其他用户可以穿过但不能列出），Node 启动时清空它。
+- `agent.ora_git_directory` 启用 `ora-git`；没有它，或没有 `git_access`，会话就没有 socket。它必须是绝对路径，父目录只由
+  可信属主控制；要么尚不存在（由 Node 创建），要么是归 Node 所有、其他人不能读写的目录；且不能与 Node home、host 目录、
+  clone 根目录或 workload 目录重叠，否则 Node 拒绝启动。Node 把它保持为 `0711`（其他用户可以穿过但不能列出），启动时只删除
+  以前的 Node 进程在其中按自己命名规则创建的 socket。
 - Node 镜像把可执行文件安装在 workload `PATH` 上的 `/usr/local/bin/ora-git`，见 [容器镜像](../operations/container-images.zh.md)。
   socket 客户端只支持 Unix；为其他平台构建时，`ora-git` 回答 `internal`。
 

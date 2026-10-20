@@ -673,13 +673,17 @@ fn a_stale_lease_already_at_the_commit_is_success_and_pushes_leave_the_checkout(
     );
 }
 
-/// The service empties its socket directory of whatever an earlier Node process left.
+/// The service removes the sockets an earlier Node process left and nothing else: a file and a
+/// socket it never names stay, so a misconfigured directory loses nothing that is not the Node's.
 #[test]
-fn the_socket_directory_is_cleared_when_the_service_starts() {
+fn the_socket_directory_loses_only_the_sockets_an_earlier_node_left() {
     let fixture = Fixture::new();
     let directory = fixture._root.path().join("stale-sockets");
     fs::create_dir(&directory).unwrap();
-    fs::write(directory.join("old.sock"), "").unwrap();
+    let stale = directory.join(format!("{}.sock", uuid::Uuid::new_v4().simple()));
+    let _stale = std::os::unix::net::UnixListener::bind(&stale).unwrap();
+    let _foreign = std::os::unix::net::UnixListener::bind(directory.join("other.sock")).unwrap();
+    fs::write(directory.join("0123456789abcdef0123456789abcdef.sock"), "").unwrap();
     let service = OraGitService::new(OraGitParts {
         directory: directory.clone(),
         peer_uid: fixture.service.peer_uid,
@@ -698,12 +702,23 @@ fn the_socket_directory_is_cleared_when_the_service_starts() {
         shutdown: Shutdown::default(),
     })
     .unwrap();
+    let mut left: Vec<_> = fs::read_dir(&directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    left.sort();
     assert_eq!(
         (
-            fs::read_dir(&directory).unwrap().count(),
+            left,
             fs::metadata(&directory).unwrap().permissions().mode() & 0o777,
         ),
-        (0, 0o711)
+        (
+            vec![
+                "0123456789abcdef0123456789abcdef.sock".to_string(),
+                "other.sock".to_string(),
+            ],
+            0o711
+        )
     );
     drop(service);
 }
