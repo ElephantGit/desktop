@@ -111,12 +111,14 @@ stdout 只承载协议帧：四字节大端长度（含类型字节）、一字�
 
 ## 配置
 
-包可以在 `assets/config.json` 中声明设置，它有三种互斥的形状：只有设置；MCP 配置（设置加恰好一个 `stdio` 或 `http` 传输）；或 Hook 配置（设置加一个 `hook` 描述符）。同时包含 `transport` 和 `hook` 的文件按失败处理；MCP 包要求 MCP 形状，Hook 包要求 Hook 形状。
+包可以在 `assets/config.json` 中声明配置，它有四种互斥的形状：v1 的纯设置；MCP 配置（设置加恰好一个 `stdio` 或 `http` 传输）；Hook 配置（设置加一个 `hook` 描述符）；或 v2 Agent 声明（`agent.modelAccess` 加可选 Settings）。混合 contribution 键的文件按失败处理；MCP 和 Hook 包各自要求对应形状，只有 Agent 包可以携带 Agent 形状。
 
-已存的值是插件全局的，与安装的版本无关，存在 `data/<namespace>/<name>/store.json` 中。保存时原子地替换完整的覆盖集合，并使用乐观的 revision 加声明指纹，所以过期的编辑器不能覆盖较新的状态。恢复时格式错误的存储会以备份名保留。声明无效的包仍然可见但无法启动。列表响应包含每个插件的配置完整性。MCP 设置只支持 `string`、`number` 和 `boolean`；HTTP header 必须通过设置引用绑定，所以凭据不能写死在包里。
+v1 形态已存的值是插件全局的，与安装的版本无关，存在 `data/<namespace>/<name>/store.json` 中。保存时原子地替换完整的覆盖集合，并使用乐观的 revision 加声明指纹，所以过期的编辑器不能覆盖较新的状态。恢复时格式错误的存储会以备份名保留。声明无效的包仍然可见但无法启动。列表响应包含每个插件的配置完整性。MCP 设置只支持 `string`、`number` 和 `boolean`；HTTP header 必须通过设置引用绑定，所以凭据不能写死在包里。
 
-独立的 [Agent 声明编译器](agent-configuration.zh.md) 校验静态模型访问能力和可选 Settings，并生成
-原始字节身份。安装配置分发器拒绝这一 v2 形态；编译声明不会启用个人模型配置或授予执行权限。
+[Agent 配置声明](agent-configuration.zh.md) 记录静态模型访问能力和可选 Settings，并生成原始字节
+身份。release 清单和 Node 安装计划可以把该身份绑定到包，安装器在提交前核对包内声明。Agent 的
+Settings 子集以声明的原始字节指纹进入本地设置存储和编辑器，模型访问能力在本地没有执行语义；
+编译或安装声明都不会启用个人模型配置或授予执行权限。
 
 ## Hook
 

@@ -231,5 +231,33 @@
     "expected": {
       "error": "invalid_json"
     }
+  },
+  {
+    "name": "schema-version-with-wrong-cardinality",
+    "source": "{\"schemaVersion\":3,\"agent\":{\"modelAccess\":{\"contractVersion\":1,\"protocols\":[\"anthropic-messages\"],\"modelCardinality\":\"multiple\"}}}",
+    "expected": {
+      "error": "invalid_structure"
+    }
+  },
+  {
+    "name": "schema-version-with-unknown-member",
+    "source": "{\"schemaVersion\":3,\"agent\":{\"modelAccess\":{\"contractVersion\":1,\"protocols\":[\"anthropic-messages\"],\"modelCardinality\":\"single\",\"role\":\"main\"}}}",
+    "expected": {
+      "error": "invalid_structure"
+    }
+  },
+  {
+    "name": "schema-version-with-non-string-protocols",
+    "source": "{\"schemaVersion\":3,\"agent\":{\"modelAccess\":{\"contractVersion\":1,\"protocols\":[1],\"modelCardinality\":\"single\"}}}",
+    "expected": {
+      "error": "invalid_structure"
+    }
+  },
+  {
+    "name": "contract-version-with-wrong-cardinality",
+    "source": "{\"schemaVersion\":2,\"agent\":{\"modelAccess\":{\"contractVersion\":2,\"protocols\":[\"anthropic-messages\"],\"modelCardinality\":\"multiple\"}}}",
+    "expected": {
+      "error": "invalid_structure"
+    }
   }
 ]

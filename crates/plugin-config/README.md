@@ -10,7 +10,7 @@ including dotted name segments such as `ora-space.tavily-search`; they are not r
 [`Slug`](../utils/src/slug.rs) spelling.
 
 The installed `assets/config.json` dispatcher supports three mutually exclusive version-one
-shapes, distinguished by top-level keys.
+shapes and the version-two Agent shape, distinguished by top-level keys.
 Without `transport` or `hook`, the file is a settings-only Setting Declaration. With `transport`,
 it is an MCP Configuration: the same settings subset plus exactly one MCP Transport (`stdio`
 with a package-contained command, or `http` with an HTTPS URL and credential-free headers). With
@@ -22,7 +22,7 @@ carry two contribution shapes. `compile_configuration_file` performs that dispat
 which shape it compiled, so kind-aware callers can refuse a transport-bearing file on a non-MCP
 package or a hook-bearing file on a non-hook package. The settings subset of an MCP or Hook
 Configuration feeds the same editor and `store.json` machinery as a settings-only file.
-Phase 1 restricts MCP setting types to `string`, `number`, and `boolean`; `secret`, `file`, and
+MCP setting types are restricted to `string`, `number`, and `boolean`; `secret`, `file`, and
 `directory` are rejected with a dedicated error. HTTP headers must bind
 through Setting references — a literal header value would be a way to bake credentials into the
 package. HTTP URLs must be HTTPS, must not carry userinfo, must not contain a query string, and
@@ -38,10 +38,13 @@ ACP `mcpServers` mapping and live Session refresh belong to `ora-backend` Sessio
 `compile_agent_configuration` is a separate, side-effect-free entry point for a version-two
 Agent declaration. It reuses the scalar Settings compiler, validates the model-access capability,
 and fingerprints the exact input bytes. Its diagnostics do not echo rejected values.
-The existing `compile_configuration_file` dispatcher and configuration store still accept only
-their existing shapes; this compiler alone does not enable package installation, personal
-configuration, or model execution. Consumers must bind the declaration to the exact release and
-negotiate model access before connecting that route.
+`compile_configuration_file` routes the Agent shape to this compiler and rejects mixed contribution
+keys. Kind-aware package validation allows the shape only for Agent packages. The local configuration
+store and editor serve the Agent shape's Settings subset under the declaration's raw-byte fingerprint;
+the model-access half has no desktop-local execution semantics, and a settings-free Agent declaration
+has nothing to edit locally. Release-associated installs check the declaration's
+schema version and exact-byte fingerprint against the expected identity before committing; compiling
+or installing a declaration alone does not enable personal configuration or model execution.
 
 The byte-stable JSON input/output vectors in
 [`tests/fixtures/agent-configuration-contract.json`](tests/fixtures/agent-configuration-contract.json)

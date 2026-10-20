@@ -31,6 +31,13 @@ logic never sees gRPC. Cloud answers a stale operation snapshot (`stale_operatio
 `FAILED_PRECONDITION` as a stale lease; the adapter classifies it as a conflict, so only the lease
 verdict drops the held epoch.
 
+## Plugin declaration association
+
+An `install_plugins` item can carry the Agent declaration identity frozen by Cloud: its schema version
+and declaration SHA-256. The Controller maps it unchanged into the Node plan. Node verifies the actual
+package declaration, including exact-version reuse; a mismatch fails that item. The association belongs
+to the original execution input and is never refreshed from the marketplace during retry.
+
 ## Revision upload checksums
 
 `GrantRevisionUploadRequest.checksums` maps each fixed object key to its lowercase SHA-256. Every
