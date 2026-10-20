@@ -49,8 +49,9 @@ React Flow–based canvas for the workspace workflow editor.
   lift above everything unselected, and edge insert controls (rendered
   through `EdgeLabelRenderer`) sit above every node and edge elevation React Flow
   computes, because edges that touch parented members otherwise cover their own
-  insert buttons. Top-level canvas edges expose the same insert control on hover
-  or selection; iteration-internal edges keep the control always visible.
+  insert buttons. Top-level canvas edges and iteration-internal edges both keep
+  that midpoint insert control visible so it is not lost when the pointer is
+  over a nearby node or handle.
 - Published versions open in a read-only canvas preview; activating a version
   copies that graph into the editable draft.
 - A muted caption beside the history icon shows unpublished vs the active
