@@ -528,6 +528,77 @@ async fn unmatched_target_never_downloads() {
 /// One valid Agent declaration, exactly the bytes a release would associate.
 const DECLARATION: &[u8] = br#"{"schemaVersion":2,"agent":{"modelAccess":{"contractVersion":1,"protocols":["anthropic-messages"],"modelCardinality":"single"}}}"#;
 
+/// Reusing a version must prove the new plan's declaration even while a session leases it.
+#[tokio::test]
+async fn an_installed_version_must_match_the_new_plan_declaration() {
+    let _logging = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::level_filters::LevelFilter::TRACE)
+            .with_test_writer()
+            .finish(),
+    );
+    for (name, declaration, accepted) in [
+        ("missing", None, false),
+        ("different", Some(REFORMATTED_DECLARATION), false),
+        ("matching", Some(DECLARATION), true),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let source = match declaration {
+            Some(bytes) => declared_archive(root.path(), "source.orax", "1.0.0", bytes),
+            None => archive(root.path(), "1.0.0"),
+        };
+        let count = Arc::default();
+        let installer = PluginInstaller::new(
+            root.path().join("home"),
+            ArchiveDownload {
+                archive: source.clone(),
+                count: Arc::clone(&count),
+            },
+            /*host_target*/ None,
+        );
+        let installed = result(PluginItemOutcome::Installed {
+            version: PluginVersion::new("1.0.0"),
+        });
+        assert_eq!(
+            installer.execute(&command(&source, "1.0.0"), &node()).await,
+            installed
+        );
+        let catalog = installer.catalog();
+        let id = PluginId::new("official/ora-space.echo");
+        let path = catalog
+            .installed(&id, &PluginVersion::new("1.0.0"))
+            .unwrap();
+        let expected = if accepted {
+            installed
+        } else {
+            result(PluginItemOutcome::Failed {
+                failure: PluginFailureCode::InvalidPackage,
+            })
+        };
+        for leased in [false, true] {
+            let _lease = leased.then(|| catalog.lease(&id));
+            assert_eq!(
+                installer
+                    .execute(&declared_command(&source, "1.0.0", DECLARATION), &node())
+                    .await,
+                expected,
+                "{name}, leased={leased}"
+            );
+            assert_eq!(
+                std::fs::read(path.join("assets").join("config.json"))
+                    .ok()
+                    .as_deref(),
+                declaration
+            );
+        }
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            1,
+            "revalidation never downloads or replaces the installed version"
+        );
+    }
+}
+
 /// The same declaration, reformatted: identical semantics, different bytes and digest.
 const REFORMATTED_DECLARATION: &[u8] = br#"{
   "schemaVersion": 2,

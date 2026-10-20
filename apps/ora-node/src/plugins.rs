@@ -124,7 +124,16 @@ impl<D: HttpDownload> PluginInstaller<D> {
     /// Verifies the planned identity before using it in a path and selects only an exact target.
     async fn install(&self, plugin: &PluginInstall) -> Result<(), PluginFailureCode> {
         let (id, version) = catalog::identity(&plugin.plugin_id, &plugin.version)?;
-        if self.catalog.already_installed(&id, &version)? {
+        // Both reuse and fresh installation must prove the frozen declaration identity.
+        let declaration = plugin
+            .agent_configuration
+            .as_ref()
+            .map(declaration_expectation)
+            .transpose()?;
+        if self
+            .catalog
+            .already_installed(&id, &version, declaration.as_ref())?
+        {
             return Ok(());
         }
         let (download, target) = match &plugin.release {
@@ -165,13 +174,6 @@ impl<D: HttpDownload> PluginInstaller<D> {
             }
             None => ResolvedReleaseSource::universal(DownloadSource::Url(url), digest),
         };
-        // Cloud froze the declaration association into the plan when the selected catalog entry
-        // declared one; an absent association installs without a declaration binding to prove.
-        let declaration = plugin
-            .agent_configuration
-            .as_ref()
-            .map(declaration_expectation)
-            .transpose()?;
         let prepared = self
             .installer
             .prepare_release(

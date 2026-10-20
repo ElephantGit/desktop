@@ -4,7 +4,7 @@ mod cache;
 pub(crate) mod declaration;
 pub(crate) mod package;
 
-pub use declaration::ExpectedAgentDeclaration;
+pub use declaration::{ExpectedAgentDeclaration, verify_agent_declaration};
 
 use crate::discovery::installed_root;
 use crate::limits::package_extract_limits;

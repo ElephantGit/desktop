@@ -49,7 +49,7 @@ impl ExpectedAgentDeclaration {
 /// The check is deliberately independent of package validation: validation proves the declaration
 /// is *legal*, this proves it is *the one the marketplace published*. Both must hold for a
 /// package whose listing declares the association.
-pub(crate) fn verify_agent_declaration(
+pub fn verify_agent_declaration(
     package_root: &Path,
     expected: &ExpectedAgentDeclaration,
 ) -> Result<(), InstallError> {

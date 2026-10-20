@@ -168,7 +168,7 @@ fn io_error(path: &Path, source: std::io::Error) -> InstallError {
 
 #[cfg(test)]
 mod tests {
-    use super::{ExpectedAgentDeclaration, inspect_planned_package};
+    use super::{ExpectedAgentDeclaration, inspect_planned_package, verify_agent_declaration};
     use crate::InstallError;
     use futures::executor::block_on;
     use ora_domain::{PluginId, PluginNamespace};
@@ -249,15 +249,24 @@ mod tests {
             2,
             Sha256Digest::parse(&hex(Sha256::digest(DECLARATION).into())).unwrap(),
         );
-        // Inspection proves identity and validation; the declaration binding is proven by
-        // `prepare_release`, which this exercise keeps to the shared package tree shape.
+        // Exact-version reuse checks identity and the same declaration verifier as staging.
         inspect_planned_package(
             &temp_dir.path().join("package"),
             &plugin_id(),
             &"0.3.18".parse().unwrap(),
         )
         .unwrap();
-        assert_eq!(expectation.schema_version(), 2);
+        verify_agent_declaration(&temp_dir.path().join("package"), &expectation).unwrap();
+        std::fs::write(
+            temp_dir
+                .path()
+                .join("package")
+                .join("assets")
+                .join("config.json"),
+            b"{}",
+        )
+        .unwrap();
+        assert!(verify_agent_declaration(&temp_dir.path().join("package"), &expectation).is_err());
     }
 
     /// A plan whose frozen association names these declaration bytes stages a package carrying

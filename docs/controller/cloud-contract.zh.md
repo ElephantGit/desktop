@@ -18,6 +18,12 @@
 
 失败以 gRPC 状态码作为主要分类，并附带 `ErrorDetail { ErrorCode }`。Rust 一侧在 Cloud RPC 适配器内部一次性把它们映射为协调类别（冲突、缺失、不可用、未知、资格过期），所以协调逻辑从不看到 gRPC。Cloud 对过期的操作快照（`stale_operation`）返回与过期租约相同的 `FAILED_PRECONDITION`；适配器把它归为冲突，所以只有租约判定才会丢弃持有的 epoch。
 
+## 插件声明关联
+
+`install_plugins` 的插件项可以携带 Cloud 冻结的 Agent 声明身份：schema 版本与声明 SHA-256。
+Controller 原样映射到 Node 安装计划。Node 核对实际包内声明，复用已安装的精确版本也一样；不匹配则该项失败。
+声明关联属于原执行输入，重试不从市场刷新。
+
 ## Revision 上传校验和
 
 `GrantRevisionUploadRequest.checksums` 把每个固定的对象 key 映射到它的小写 SHA-256。返回的每个授权都签名 `x-amz-checksum-sha256` 和 `If-None-Match: *`，所以未过期的授权也不能覆盖 Cloud 已经校验过的对象；得到 412 的重试保留第一个对象，并提交原始元数据供校验。上传方在 PUT 中发送返回的每个 header。授权留在内存中，从不进入日志、环境变量、参数或文件，部署用的原始 S3 凭据从不到达 Node。每个执行在第一次 PUT 之前冻结对象字节和元数据，所以重启后用新授权复用它们；内容变化需要新的 Cloud 工作条目和 key。Cloud 校验存在性、大小和存储的 SHA-256，然后原子地记录 Node 证据、回执和 Revision。
