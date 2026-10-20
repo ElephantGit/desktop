@@ -118,6 +118,125 @@ describe("iteration insert actions", () => {
     expect(screen.getByTestId("edge-insertion")).toHaveTextContent("null");
   });
 
+  it("offers a canvas-edge insertion on top-level connections", () => {
+    const edge: Edge = { id: "e1", source: "start", target: "output" };
+    render(
+      <WorkflowIterationActionsProvider
+        capabilities={createMockWorkflowCapabilities("en-US")}
+        nodes={[
+          {
+            id: "start",
+            type: "workflow",
+            position: { x: 0, y: 0 },
+            data: { kind: "start", title: "Start", description: "" },
+          },
+          {
+            id: "output",
+            type: "workflow",
+            position: { x: 400, y: 0 },
+            data: { kind: "output", title: "Output", description: "" },
+          },
+        ]}
+        edges={[edge]}
+        readOnly={false}
+        onInsert={vi.fn()}
+        onToggleCollapsed={vi.fn()}
+      >
+        <EdgeInsertionProbe edge={edge} />
+      </WorkflowIterationActionsProvider>,
+    );
+
+    expect(screen.getByTestId("edge-insertion")).toHaveTextContent(
+      JSON.stringify({ type: "canvas-edge", edgeId: "e1" }),
+    );
+  });
+
+  it("does not offer canvas insertion on a loop member edge", () => {
+    const edge: Edge = {
+      id: "inner",
+      source: "loop-start",
+      target: "loop-agent",
+    };
+    render(
+      <WorkflowIterationActionsProvider
+        capabilities={createMockWorkflowCapabilities("en-US")}
+        nodes={[
+          {
+            id: "loop",
+            type: "workflow",
+            position: { x: 0, y: 0 },
+            data: { kind: "loop", title: "Loop", description: "" },
+          },
+          {
+            id: "loop-start",
+            type: "workflow",
+            parentId: "loop",
+            position: { x: 40, y: 145 },
+            data: {
+              kind: "start",
+              title: "Round start",
+              description: "",
+              containerId: "loop",
+            },
+          },
+          {
+            id: "loop-agent",
+            type: "workflow",
+            parentId: "loop",
+            position: { x: 350, y: 145 },
+            data: {
+              kind: "agent",
+              title: "Loop Agent",
+              description: "",
+              containerId: "loop",
+            },
+          },
+        ]}
+        edges={[edge]}
+        readOnly={false}
+        onInsert={vi.fn()}
+        onToggleCollapsed={vi.fn()}
+      >
+        <EdgeInsertionProbe edge={edge} />
+      </WorkflowIterationActionsProvider>,
+    );
+
+    expect(screen.getByTestId("edge-insertion")).toHaveTextContent("null");
+  });
+
+  it("lists canvas catalog kinds without Start when inserting on a canvas edge", async () => {
+    const user = userEvent.setup();
+    const onInsert = vi.fn();
+    render(
+      <AppI18nProvider>
+        <WorkflowIterationActionsProvider
+          capabilities={createMockWorkflowCapabilities("en-US")}
+          nodes={[]}
+          edges={[]}
+          readOnly={false}
+          onInsert={onInsert}
+          onToggleCollapsed={vi.fn()}
+        >
+          <IterationInsertMenu
+            insertion={{ type: "canvas-edge", edgeId: "e1" }}
+            label="Insert on edge"
+          />
+        </WorkflowIterationActionsProvider>
+      </AppI18nProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Insert on edge" }));
+    expect(
+      await screen.findByRole("menuitem", { name: "Agent" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("menuitem", { name: "Start" })).toBeNull();
+    await user.click(screen.getByRole("menuitem", { name: "Agent" }));
+    expect(onInsert).toHaveBeenCalledWith("agent", {
+      type: "canvas-edge",
+      edgeId: "e1",
+    });
+  });
+
   it("keeps other cards from redrawing when only node config changes", () => {
     const renders = { current: {} as Record<string, number> };
     const capabilities = createMockWorkflowCapabilities("en-US");

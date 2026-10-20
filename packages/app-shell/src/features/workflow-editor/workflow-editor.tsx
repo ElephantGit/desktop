@@ -1,4 +1,5 @@
 import type { WorkflowContainerInsertion } from "./workflow-container-insertion";
+import { insertOnCanvasEdge } from "./workflow-canvas-graph";
 import { insertLoopMember } from "./workflow-loop-graph";
 import {
   excludedWorkflowNodeIds,
@@ -1707,6 +1708,10 @@ function WorkflowEditorContent({
     kind: WorkflowNodeKind,
     insertion: WorkflowContainerInsertion,
   ): void {
+    if (insertion.type === "canvas-edge") {
+      insertCanvasNodeOnEdge(kind, insertion.edgeId);
+      return;
+    }
     const currentWorkflow = workflowRef.current ?? workflow;
     const nodeType = capabilities.nodeTypes.find(
       (candidate) => candidate.kind === kind,
@@ -1750,6 +1755,109 @@ function WorkflowEditorContent({
           ? insertLoopMember(graph, insertion, node)
           : insertIterationMember(graph, insertion, node);
       },
+      {
+        history: {
+          event: "node.add",
+          meta: {
+            nodeIds: [node.id],
+            subject: node.data.title,
+            nodeTitle: node.data.title,
+            nodeKind: kind,
+          },
+        },
+      },
+    );
+    expandInspector();
+  }
+
+  /** Inserts a catalog node on a top-level canvas edge, splitting that edge in one history step. */
+  function insertCanvasNodeOnEdge(
+    kind: WorkflowNodeKind,
+    edgeId: string,
+  ): void {
+    const nodeType = capabilities.nodeTypes.find(
+      (candidate) => candidate.kind === kind,
+    );
+    if (
+      !nodeType ||
+      kind === "start" ||
+      !supportsWorkflowNodeScope(nodeType, "workflow")
+    ) {
+      return;
+    }
+    const currentWorkflow = workflowRef.current ?? workflow;
+    if (currentWorkflow === null) {
+      return;
+    }
+    const { sequence } = uniqueGraphId(kind, [
+      ...currentWorkflow.nodes.map((node) => node.id),
+      ...(currentWorkflow.annotations ?? []).map((node) => node.id),
+      ...currentWorkflow.edges.map((edge) => edge.id),
+    ]);
+    if (kind === "loop") {
+      const group = createMockWorkflowLoopGroup({
+        sequence,
+        position: { x: 0, y: 0 },
+        locale,
+        agentConfig: capabilities.defaultAgentConfig,
+      });
+      const loop = group.nodes[0]!;
+      updateWorkflow(
+        (current) =>
+          insertOnCanvasEdge(
+            {
+              ...current,
+              nodes: current.nodes.map((candidate) => ({
+                ...candidate,
+                selected: false,
+              })),
+            },
+            edgeId,
+            group.nodes,
+            loop.id,
+            group.edges,
+          ),
+        {
+          history: {
+            event: "node.add",
+            meta: {
+              nodeIds: group.nodes.map((candidate) => candidate.id),
+              edgeIds: group.edges.map((edge) => edge.id),
+              subject: loop.data.title,
+              nodeTitle: loop.data.title,
+              nodeKind: kind,
+            },
+          },
+        },
+      );
+      expandInspector();
+      return;
+    }
+    const node = {
+      ...createMockWorkflowNode({
+        kind,
+        sequence,
+        position: { x: 0, y: 0 },
+        locale,
+        agentConfig:
+          kind === "agent" ? capabilities.defaultAgentConfig : undefined,
+      }),
+      selected: true,
+    };
+    updateWorkflow(
+      (current) =>
+        insertOnCanvasEdge(
+          {
+            ...current,
+            nodes: current.nodes.map((candidate) => ({
+              ...candidate,
+              selected: false,
+            })),
+          },
+          edgeId,
+          [node],
+          node.id,
+        ),
       {
         history: {
           event: "node.add",

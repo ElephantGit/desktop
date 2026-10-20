@@ -48,6 +48,10 @@ export const WorkflowFlowEdgeView = memo(function WorkflowFlowEdgeView({
   const edgeColor = selected
     ? "var(--ring)"
     : "color-mix(in oklch, var(--foreground) 46%, transparent)";
+  const insertLabel =
+    insertion?.type === "canvas-edge"
+      ? t("settings.workflow.insertOnEdge")
+      : t("settings.workflow.iteration.insertOnEdge");
 
   return (
     <>
@@ -98,10 +102,11 @@ export const WorkflowFlowEdgeView = memo(function WorkflowFlowEdgeView({
               // elevation or the edge hit target swallows its clicks.
               zIndex: WORKFLOW_EDGE_CONTROL_Z_INDEX,
             }}
+            onClick={(event) => event.stopPropagation()}
           >
             <IterationInsertMenu
               insertion={insertion}
-              label={t("settings.workflow.iteration.insertOnEdge")}
+              label={insertLabel}
               side="top"
             />
           </div>
