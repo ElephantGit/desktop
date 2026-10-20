@@ -40,7 +40,7 @@
 
 **Agent**
 
-- [Agent 运行时](agents/agent-runtime.zh.md)：来自插件的 Agent、监督、会话、流控、限制、宿主
+- [Agent 运行时](agents/agent-runtime.zh.md)：来自插件的 Agent、监督、会话、流控、限制、宿主预览
 - [会话历史](agents/session-history.zh.md)：记录、切换 Agent、降级的历史、删除
 - [Session MCP](agents/session-mcp.zh.md)：选择、投递、实时刷新、Host MCP 健康状态
 - [Agent 定义与 Skill](agents/agents-and-skills.zh.md)：角色、Skill 目录、包与导入
@@ -66,7 +66,7 @@
 
 **Controller**
 
-- [Controller](controller/controller.zh.md)：协调存储、可执行文件、cloud 形态与 Workspace 沙盒
+- [Controller](controller/controller.zh.md)：协调存储、预览能力选择、可执行文件、cloud 形态与 Workspace 沙盒
 - [Agent 中继](controller/agent-relay.zh.md)：会话、Thread 事件、命令、Revision 交付与授权
 - [Cloud 契约](controller/cloud-contract.zh.md)：服务、上传校验和、生成与升级契约
 - [运行时控制](controller/runtime-control.zh.md)：身份、经过认证的通道、关闭与强制停止
@@ -78,7 +78,7 @@
 - [Controller–Node 协议](node/protocol.zh.md)：分帧、能力、消息契约、编解码器
 - [仓库 clone](node/repository-clone.zh.md)
 - [Worktree 执行](node/worktree-execution.zh.md)
-- [Node Agent 会话](node/agent-sessions.zh.md)：每个执行一个运行时、工作负载用户、账本、模型访问
+- [Node Agent 会话](node/agent-sessions.zh.md)：每个执行一个运行时、工作负载用户、实时预览、正文投影、账本、模型访问
 - [Revision](node/revisions.zh.md)：交付、上传与恢复上一个 Revision
 - [Node 插件](node/plugins.zh.md)
 

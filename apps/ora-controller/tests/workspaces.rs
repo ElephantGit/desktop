@@ -181,7 +181,7 @@ impl Node {
                     match message {
                         ControllerToNodeMessage::Hello(_) => { greeted = true; Some(NodeToControllerMessage::HelloAccepted(HelloAcceptedMessage {
                             protocol_version: CURRENT_PROTOCOL_VERSION,
-                            payload: HelloAccepted {
+                            payload: HelloAccepted { thread_previews: false,
                                 selected_version: CURRENT_PROTOCOL_VERSION,
                                 node: identity.clone(),
                                 capabilities: plugins::capabilities(self),

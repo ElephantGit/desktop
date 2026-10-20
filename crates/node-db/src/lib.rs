@@ -26,8 +26,13 @@ pub use session::{
 use ora_node_protocol::NodeId;
 use ora_utils::fs::{ExclusiveFileLock, ExclusiveLockError};
 use rusqlite::Connection;
-use std::{fs::OpenOptions, path::Path, sync::Arc};
+use std::{fs::OpenOptions, path::Path, sync::Arc, time::Duration};
 use thiserror::Error;
+
+// Session actor connections use SQLite immediate transactions to allocate one shared event
+// sequence. A transient competing writer should wait instead of turning a valid concurrent Thread
+// append into a DatabaseBusy failure, particularly on slower Windows filesystems.
+const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Storage failures never authorize a caller to proceed with an external mutation.
 #[derive(Debug, Error)]
@@ -124,6 +129,7 @@ impl<G: WriteGuard> NodeDatabase<G> {
                 }
             })?;
         let mut connection = Connection::open(path)?;
+        connection.busy_timeout(SQLITE_BUSY_TIMEOUT)?;
         let node_id = schema::initialize(&mut connection, created, &identity)?;
         connection.pragma_update(/*schema_name*/ None, "foreign_keys", "ON")?;
         connection.pragma_update(/*schema_name*/ None, "synchronous", "FULL")?;

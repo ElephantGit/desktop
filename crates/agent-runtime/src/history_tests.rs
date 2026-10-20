@@ -31,6 +31,52 @@ const NEW_PROVIDER_SESSION_ID: &str = "provider-2";
 /// The instant every line carries, fixed so recorded output stays comparable.
 const RECORDED_AT: &str = "2026-08-03T14:22:31.418+08:00";
 
+/// A preview host observes pending content before the durable assembler settles it.
+#[test]
+fn live_preview_precedes_durable_message_and_clears_at_turn_end() {
+    use crate::RuntimeEvents;
+    use std::sync::{Arc, Mutex};
+    #[derive(Clone, Default)]
+    struct PreviewEvents(Arc<Mutex<Vec<Vec<ora_history::AssembledRecord>>>>);
+    impl RuntimeEvents for PreviewEvents {
+        fn session_title_updated(&self, _session: &SessionId) {}
+        fn agent_models_invalidated(&self, _agent: &AgentRef) {}
+        fn record_settled(&self, _session: &SessionId, _line: &HistoryLine) {}
+        fn wants_record_previews(&self) -> bool {
+            true
+        }
+        fn record_preview(&self, _session: &SessionId, records: &[ora_history::AssembledRecord]) {
+            self.0.lock().unwrap().push(records.to_vec());
+        }
+    }
+    let root = TempDir::new().unwrap();
+    let events = PreviewEvents::default();
+    let mut recorder = SessionRecorder::open(
+        root.path(),
+        SESSION_ID,
+        0,
+        &HistoryState::Writable,
+        events.clone(),
+        FixedHistoryClock::new(datetime!(2026-08-03 14:22:31.418 +08:00)),
+    )
+    .unwrap();
+    let update = SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::Text(
+        TextContent::new("first real chunk"),
+    )));
+    recorder.record_update(&update);
+    assert_eq!(
+        events.0.lock().unwrap()[0][0].record,
+        HistoryRecord::Update {
+            update: Box::new(update),
+            tool_timing: None
+        }
+    );
+    assert_eq!(recorder.durable_bytes(), 0);
+    recorder.record_turn_end(agent_client_protocol_schema::v1::StopReason::EndTurn);
+    assert!(events.0.lock().unwrap().last().unwrap().is_empty());
+    assert!(recorder.durable_bytes() > 0);
+}
+
 fn recorder(
     root: &Path,
     next_seq: u32,

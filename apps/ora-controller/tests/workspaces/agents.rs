@@ -94,6 +94,9 @@ impl AgentNode {
                     turn_id: Some(TurnId::new("first-turn")),
                     record: serde_json::from_value(json!({"text": "x".repeat(size)})).unwrap(),
                     truncated: false,
+                    visible_text: None,
+                    visible_text_truncated: false,
+                    history_sequence: None,
                 },
             }),
         );

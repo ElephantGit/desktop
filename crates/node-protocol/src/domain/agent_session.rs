@@ -12,6 +12,8 @@ use serde_json::{Map, Value};
 /// session history, so one huge tool output never crowds control frames or exceeds Cloud's entry
 /// limit.
 pub const MAX_THREAD_RECORD_BYTES: usize = 256 * 1024;
+/// Largest assistant-text projection on one event; Cloud may reuse it in a later run's context.
+pub const MAX_VISIBLE_TEXT_BYTES: usize = 64 * 1024;
 /// Largest total text of one user turn, matching Cloud's public message limit.
 pub const MAX_USER_TURN_TEXT_BYTES: usize = 64 * 1024;
 
@@ -214,6 +216,15 @@ pub struct ThreadEvent {
     /// The Node replaced an oversized record with a shortened one; the history keeps the original.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub truncated: bool,
+    /// Typed assistant text extracted by Node; absent for thoughts, tools and unknown records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible_text: Option<String>,
+    /// The projection was clipped without changing the original history record.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub visible_text_truncated: bool,
+    /// Stable history position used to replace an earlier live preview.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_sequence: Option<u32>,
 }
 
 impl ThreadEvent {
@@ -226,6 +237,14 @@ impl ThreadEvent {
             .map_err(|_| MessageValidationError::ThreadRecordTooLarge)?;
         if encoded.len() > MAX_THREAD_RECORD_BYTES {
             return Err(MessageValidationError::ThreadRecordTooLarge);
+        }
+        if self
+            .visible_text
+            .as_ref()
+            .is_some_and(|text| text.len() > MAX_VISIBLE_TEXT_BYTES)
+            || self.visible_text_truncated && self.visible_text.is_none()
+        {
+            return Err(MessageValidationError::VisibleTextTooLarge);
         }
         Ok(())
     }

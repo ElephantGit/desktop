@@ -27,6 +27,7 @@ fn hello() -> ControllerToNodeMessage {
     ControllerToNodeMessage::Hello(HelloMessage {
         protocol_version: CURRENT_PROTOCOL_VERSION,
         payload: Hello {
+            thread_previews: false,
             controller_id: ControllerId::new("owner"),
             supported_versions: vec![CURRENT_PROTOCOL_VERSION],
         },
