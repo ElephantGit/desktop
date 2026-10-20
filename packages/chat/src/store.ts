@@ -476,6 +476,13 @@ export function createChatStore(
         chunk: acp.ContentChunk,
       ) => {
         if (chunk.content.type !== "text") return;
+        if (
+          pendingTextChunk !== null &&
+          (pendingTextChunk.itemKind !== itemKind ||
+            pendingTextChunk.messageId !== (chunk.messageId ?? undefined))
+        ) {
+          flushPendingTextChunk();
+        }
         pendingDiagnostics = observeDiagnostics(
           pendingDiagnostics ?? get().conversations[key]?.diagnostics,
           {
@@ -487,13 +494,6 @@ export function createChatStore(
           },
           now(),
         );
-        if (
-          pendingTextChunk !== null &&
-          (pendingTextChunk.itemKind !== itemKind ||
-            pendingTextChunk.messageId !== (chunk.messageId ?? undefined))
-        ) {
-          flushPendingTextChunk();
-        }
         if (pendingTextChunk === null) {
           pendingTextChunk = {
             itemKind,
