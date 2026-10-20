@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   BaseEdge,
@@ -9,6 +9,7 @@ import {
 import { cn } from "@ora/ui";
 import { IterationInsertMenu } from "./iteration-actions";
 import { useWorkflowIterationActions } from "./iteration-actions-context";
+import { useWorkflowEdgeHover } from "./workflow-edge-hover";
 import { WORKFLOW_EDGE_CONTROL_Z_INDEX } from "./z-index";
 
 /** Draws a selectable workflow edge with an accessible hit target and optional branch label. */
@@ -31,12 +32,14 @@ export const WorkflowFlowEdgeView = memo(function WorkflowFlowEdgeView({
 }: EdgeProps) {
   const { t } = useTranslation();
   const { insertionForEdge } = useWorkflowIterationActions();
+  const { hoveredEdgeId, reveal, concealSoon } = useWorkflowEdgeHover();
   const insertion = insertionForEdge({
     id,
     source,
     sourceHandle: sourceHandleId,
     target,
   });
+  const [menuOpen, setMenuOpen] = useState(false);
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
@@ -52,6 +55,12 @@ export const WorkflowFlowEdgeView = memo(function WorkflowFlowEdgeView({
     insertion?.type === "canvas-edge"
       ? t("settings.workflow.insertOnEdge")
       : t("settings.workflow.iteration.insertOnEdge");
+  const showInsert =
+    insertion !== null &&
+    (insertion.type !== "canvas-edge" ||
+      hoveredEdgeId === id ||
+      selected ||
+      menuOpen);
 
   return (
     <>
@@ -92,7 +101,7 @@ export const WorkflowFlowEdgeView = memo(function WorkflowFlowEdgeView({
         </g>
       )}
       <EdgeLabelRenderer>
-        {insertion !== null && (
+        {showInsert && insertion !== null && (
           <div
             className="nodrag nopan pointer-events-auto absolute"
             style={{
@@ -102,12 +111,16 @@ export const WorkflowFlowEdgeView = memo(function WorkflowFlowEdgeView({
               // elevation or the edge hit target swallows its clicks.
               zIndex: WORKFLOW_EDGE_CONTROL_Z_INDEX,
             }}
+            onMouseEnter={() => reveal(id)}
+            onMouseLeave={concealSoon}
             onClick={(event) => event.stopPropagation()}
           >
             <IterationInsertMenu
               insertion={insertion}
               label={insertLabel}
               side="top"
+              open={menuOpen}
+              onOpenChange={setMenuOpen}
             />
           </div>
         )}

@@ -237,6 +237,28 @@ describe("iteration insert actions", () => {
     });
   });
 
+  it("hides the canvas insert control while the canvas is read-only", () => {
+    render(
+      <AppI18nProvider>
+        <WorkflowIterationActionsProvider
+          capabilities={createMockWorkflowCapabilities("en-US")}
+          nodes={[]}
+          edges={[]}
+          readOnly
+          onInsert={vi.fn()}
+          onToggleCollapsed={vi.fn()}
+        >
+          <IterationInsertMenu
+            insertion={{ type: "canvas-edge", edgeId: "e1" }}
+            label="Insert on edge"
+          />
+        </WorkflowIterationActionsProvider>
+      </AppI18nProvider>,
+    );
+
+    expect(screen.queryByRole("button", { name: "Insert on edge" })).toBeNull();
+  });
+
   it("keeps other cards from redrawing when only node config changes", () => {
     const renders = { current: {} as Record<string, number> };
     const capabilities = createMockWorkflowCapabilities("en-US");
