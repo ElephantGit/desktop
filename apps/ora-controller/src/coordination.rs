@@ -107,6 +107,7 @@ pub async fn take_over<S: CoordinationStore>(
         // Session workers handle these ordered events, correlated replies and memory-only grant
         // requests; this single-message boundary cannot bypass them.
         | NodeToControllerMessage::ThreadEvent(_)
+        | NodeToControllerMessage::ThreadPreview(_)
         | NodeToControllerMessage::AgentSessionEnded(_)
         | NodeToControllerMessage::SessionCommandAccepted(_)
         | NodeToControllerMessage::SessionCommandRejected(_)

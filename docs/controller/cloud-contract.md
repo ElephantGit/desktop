@@ -21,7 +21,7 @@ uses each service is in [Controller](controller.md) and [Agent relay](agent-rela
 | `ControlSignalService` | `Watch` (server stream) | `WorkAvailable`, `OperationAvailable`, `Drain`, `NodeAssignment`; at most once, not persisted, changes no ownership |
 | `WorkspaceOperationService` | `ClaimOperation`, `PlanEffect`, `RecordEffectResult`, `AdvanceOperation`, `DeferOperation`, `ListLiveSandboxes` | Writes fenced by `epoch` and the operation `version`; the clone and plugin steps dispatch through `ExecutionService` with the operation's id |
 | `NodeReportService` | `RegisterNode`, `ReportNodeStatus`, `ReportNodeIdle`, `EndNode` | Sandbox Nodes the Controller holds sessions with; `RegisterNode` is idempotent per (sandbox, incarnation) and a second live incarnation conflicts until the first ends |
-| `AgentRunService` | `TakeOverThreadEvents`, `ClaimThreadCommands`, `RecordThreadCommandDelivered`, `GrantRevisionUpload` | Thread relay and the upload grants of Revision history |
+| `AgentRunService` | `PublishThreadPreview`, `TakeOverThreadEvents`, `ClaimThreadCommands`, `RecordThreadCommandDelivered`, `GrantRevisionUpload` | Thread relay, live previews and the upload grants of Revision history |
 | `RuntimeControlService` | `ListBindings`, `AcknowledgeBinding`, `GetExecutionPermit`, `GetEffectPermit`, `ListForceStops`, `ConfirmForceStop` | Fenced runtime control, see [Runtime control](runtime-control.md) |
 
 Failures use the gRPC status code as the primary classification with an attached
@@ -30,6 +30,13 @@ coordination classes (conflict, missing, unavailable, unknown, stale eligibility
 logic never sees gRPC. Cloud answers a stale operation snapshot (`stale_operation`) with the same
 `FAILED_PRECONDITION` as a stale lease; the adapter classifies it as a conflict, so only the lease
 verdict drops the held epoch.
+
+## Plugin declaration association
+
+An `install_plugins` item can carry the Agent declaration identity frozen by Cloud: its schema version
+and declaration SHA-256. The Controller maps it unchanged into the Node plan. Node verifies the actual
+package declaration, including exact-version reuse; a mismatch fails that item. The association belongs
+to the original execution input and is never refreshed from the marketplace during retry.
 
 ## Revision upload checksums
 
@@ -54,6 +61,12 @@ The clone step's `clone_input` is the frozen snapshot input described in
 [snapshot clone input and execution ref grants](https://github.com/ora-space/specs/blob/main/decisions/cloud/controller-integration/20261016-snapshot-clone-input-and-execution-ref-grants.md).
 
 ## Obtaining and generating the contract
+
+The plugin install plan's `agent_configuration` is part of Cloud's frozen input. The Controller
+must preserve it when reading an operation snapshot, registering dispatch and recovering an
+execution, including an association message whose fields are empty. Omitting it causes Cloud's
+frozen-input equality check to reject dispatch. Wire round-trip regressions and real gRPC
+operation tests cover this boundary in addition to generated-code checks.
 
 `third_party/cloud` is a git submodule of the Cloud repository whose gitlink pins the contract commit.
 Its working tree is a partial clone (`--filter=blob:none`) with a sparse checkout limited to `proto/`.

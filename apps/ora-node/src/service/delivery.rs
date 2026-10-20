@@ -65,6 +65,7 @@ fn event_key(message: &NodeToControllerMessage) -> Option<(&ExecutionId, Sequenc
         NodeToControllerMessage::RevisionResult(m) => Some((&m.execution_id, m.sequence)),
         NodeToControllerMessage::HelloAccepted(_)
         | NodeToControllerMessage::Heartbeat(_)
+        | NodeToControllerMessage::ThreadPreview(_)
         | NodeToControllerMessage::ExecutionStatus(_)
         | NodeToControllerMessage::RuntimeControlState(_)
         | NodeToControllerMessage::SessionCommandAccepted(_)

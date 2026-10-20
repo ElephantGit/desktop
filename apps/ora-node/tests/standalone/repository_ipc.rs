@@ -79,6 +79,7 @@ pub(super) async fn connect(path: &Path, owner: &str) -> UnixStream {
         &ControllerToNodeMessage::Hello(HelloMessage {
             protocol_version: CURRENT_PROTOCOL_VERSION,
             payload: Hello {
+                thread_previews: false,
                 controller_id: ControllerId::new(owner),
                 supported_versions: vec![CURRENT_PROTOCOL_VERSION],
             },
@@ -287,6 +288,7 @@ fn git_server_capabilities_follow_the_git_access_identity() {
                         payload: Hello {
                             controller_id: ControllerId::new("owner"),
                             supported_versions: vec![CURRENT_PROTOCOL_VERSION],
+                            thread_previews: false,
                         },
                     }),
                 )

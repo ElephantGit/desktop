@@ -96,6 +96,9 @@ prompt 是有序的 ACP `ContentBlock`（文本、图片、音频、资源链接
 
 ## 宿主
 
+宿主可选择启用 `RuntimeEvents::record_preview`，在定型前观察已合并的待完成记录。通知最多每秒十次，轮次结束发送空的
+完整替换。回调为尽力而为，不产生确认，也不改变 `record_settled` 原有持久顺序。未选择启用的宿主不复制待完成快照。
+
 宿主通过 `AgentRuntimeHost` 组装运行时，它的关联类型提供五个接口；它们是泛型参数，所以每个宿主得到自己单态化的运行时。
 
 | 接口 | 运行时需要 | Desktop | Node |

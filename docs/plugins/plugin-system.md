@@ -174,18 +174,26 @@ and emit `PluginStatusChanged`.
 
 ## Configuration
 
-A package may declare settings in `assets/config.json`, which has three mutually exclusive shapes:
-settings only; an MCP configuration (settings plus exactly one `stdio` or `http` transport); or a
-Hook configuration (settings plus a `hook` descriptor). A file mixing `transport` and `hook` fails
-closed, an MCP package requires the MCP shape and a Hook package the Hook shape.
+A package may declare configuration in `assets/config.json`, which has four mutually exclusive
+shapes: version-one settings only; an MCP configuration (settings plus exactly one `stdio` or `http`
+transport); a Hook configuration (settings plus a `hook` descriptor); or a version-two Agent
+declaration (`agent.modelAccess` and optional Settings). Mixing contribution keys fails closed.
+MCP and Hook packages require their respective shapes; only an Agent package may carry the Agent shape.
 
-Stored values are plugin-global, independent of installed versions, and live in
+Stored values for the version-one shapes are plugin-global, independent of installed versions, and live in
 `data/<namespace>/<name>/store.json`. Saves replace the complete override set atomically and use an
 optimistic revision plus a declaration fingerprint, so a stale editor cannot overwrite newer state.
 A malformed store is kept under a backup name on recovery. A package with an invalid declaration
 stays visible but cannot start. List responses include each plugin's configuration completeness.
 MCP settings are limited to `string`, `number` and `boolean`; HTTP headers must bind through setting
 references, so credentials cannot be baked into a package.
+
+The [Agent configuration declaration](agent-configuration.md) records static model-access
+capabilities and optional Settings with an exact-byte identity. Release listings and Node install
+plans may bind that identity to a package; the installer checks the package's declaration before
+committing. The Agent Settings subset feeds the local settings store and editor under the
+declaration's raw-byte fingerprint, while the model-access half has no local execution semantics;
+neither compiling nor installing a declaration enables a personal model configuration or authorizes execution.
 
 ## Hooks
 

@@ -16,6 +16,18 @@ use std::{collections::BTreeMap, future::Future, io};
 /// - Reads distinguish an unknown identity (conflict or `None`) from an accepted execution whose
 ///   result is not known yet.
 pub trait CoordinationStore: Clone + Send + Sync + 'static {
+    /// A store advertises previews only after its actual downstream adapter implements the contract.
+    fn supports_thread_previews(&self) -> bool {
+        false
+    }
+    /// Optional best-effort content relay. It never writes execution evidence or returns a Node Ack.
+    fn publish_thread_preview(
+        &self,
+        _session: &NodeRuntimeIdentity,
+        _preview: &ThreadPreviewMessage,
+    ) -> impl Future<Output = Result<(), Error>> + Send {
+        async { Err(Error::Conflict) }
+    }
     /// The persistent coordinator identity presented to Nodes; never a process or connection identity.
     fn id(&self) -> &ControllerId;
 

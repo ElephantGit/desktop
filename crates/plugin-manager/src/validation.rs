@@ -197,6 +197,23 @@ pub(crate) fn validate(
             ),
         ));
     }
+    // The Agent shape is exclusive to the agent kind: any other kind shipping a personal-model
+    // declaration is either a mispackaged agent or an attempt to claim model-binding capabilities
+    // from a contribution the host would never wire to a model access path.
+    if !matches!(manifest.kind(), PluginKind::Agent)
+        && matches!(
+            configuration_file,
+            Ok(Some(CompiledConfigurationFile::Agent(_)))
+        )
+    {
+        return Err(invalid(
+            CONFIGURATION_FILE,
+            format!(
+                "only `agent` packages may declare an Agent configuration (kind is `{}`)",
+                manifest.kind()
+            ),
+        ));
+    }
     let contributes = match manifest.kind() {
         PluginKind::Agent => PluginContribution::Agent(InstalledPluginAgent {
             display_name: manifest.title().to_owned(),
@@ -252,6 +269,17 @@ pub(crate) fn validate(
                 PluginConfigurationDeclarationValidity::Valid
             } else {
                 PluginConfigurationDeclarationValidity::NotDeclared
+            }
+        }
+        // An Agent declaration's Settings subset feeds the desktop-local editor, so Configure
+        // follows the subset's presence exactly as it does for MCP and Hook. The model-access
+        // half has no desktop-local execution semantics and never offers Configure on its own;
+        // a file that failed the shape's own compilation is reported as Invalid below.
+        Ok(Some(CompiledConfigurationFile::Agent(agent))) => {
+            if agent.settings.is_empty() {
+                PluginConfigurationDeclarationValidity::NotDeclared
+            } else {
+                PluginConfigurationDeclarationValidity::Valid
             }
         }
         Err(error) => PluginConfigurationDeclarationValidity::Invalid {

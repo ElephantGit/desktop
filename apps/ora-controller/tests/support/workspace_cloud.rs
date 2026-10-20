@@ -54,6 +54,10 @@ pub const EPOCH: i64 = 1;
 /// One observable decision, from whichever party saw it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
+    PreviewPublished {
+        execution: String,
+        version: i64,
+    },
     AgentRegistered {
         run: String,
     },
@@ -681,6 +685,16 @@ impl ControlSignalService for WorkspaceCloud {
 
 #[tonic::async_trait]
 impl WorkspaceOperationService for WorkspaceCloud {
+    /// The fixture does not exercise provisioning reconciliation from the newer Cloud contract.
+    async fn record_provisioning_fact(
+        &self,
+        _request: Request<proto::RecordProvisioningFactRequest>,
+    ) -> Result<Response<proto::RecordProvisioningFactResponse>, Status> {
+        Err(Status::unimplemented(
+            "provisioning reconciliation not exercised",
+        ))
+    }
+
     async fn claim_operation(
         &self,
         request: Request<proto::ClaimOperationRequest>,
@@ -900,16 +914,6 @@ impl WorkspaceOperationService for WorkspaceCloud {
         Ok(Response::new(proto::DeferOperationResponse {
             operation: Some(operation),
         }))
-    }
-
-    /// The Controller does not submit late provisioning facts yet, so the fake never expects one.
-    async fn record_provisioning_fact(
-        &self,
-        _request: Request<proto::RecordProvisioningFactRequest>,
-    ) -> Result<Response<proto::RecordProvisioningFactResponse>, Status> {
-        Err(Status::unimplemented(
-            "the fake Cloud records no provisioning facts",
-        ))
     }
 
     async fn list_live_sandboxes(

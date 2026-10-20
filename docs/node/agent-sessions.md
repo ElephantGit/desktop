@@ -94,7 +94,25 @@ Only a successful ACP completion admits another turn. A prompt error or unexpect
 the session as `agent_failed` with `agent_turn_failed` or `agent_stream_closed`; no raw provider
 diagnostic enters history or logs, and an `EndSession` already queued keeps its explicit reason.
 
+## Live previews
+
+Live previews require both peers to opt into the optional Hello/HelloAccepted `thread_previews`
+field. Runtime emits pending prose, thought and tool replacements at most every 100 ms. Node retains
+only the latest version per execution: at most 32 blocks and 256 KiB per snapshot, up to 64 sessions.
+Blocks keep their assigned history position; settled `ThreadEvent.history_sequence` supersedes
+that position. Previews never enter SQLite, carry no event sequence or Ack, and disconnects or slow
+consumers never end the Agent. Reconnect reads a full current snapshot. Peers without negotiation
+retain durable-only delivery. Store capability selection is described in
+[Controller](../controller/controller.md#coordination-store).
+
 ## Record order and crashes
+
+A settled assistant message carries an optional plain-text projection in the Node protocol for a
+later task handoff. Node derives it from typed `AgentMessageChunk` content; thoughts, tools and
+non-text blocks produce none. Each projection is bounded to 64 KiB and clipped at a UTF-8 boundary
+with an explicit truncation flag. The original JSONL and Thread record remain unchanged. Consumers
+must treat an absent projection as unavailable history instead of guessing from tool or thought
+records.
 
 The runtime calls `record_settled` synchronously after a line is in the file and before the next is
 written, and the Node appends the Thread event there, so every Thread record is in the JSONL in the same

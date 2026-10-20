@@ -298,6 +298,7 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
     let response = NodeToControllerMessage::HelloAccepted(HelloAcceptedMessage {
         protocol_version: CURRENT_PROTOCOL_VERSION,
         payload: HelloAccepted {
+            thread_previews: hello.payload.thread_previews && info.agents.is_some(),
             selected_version: CURRENT_PROTOCOL_VERSION,
             node: info.identity.clone(),
             capabilities: info.capabilities.clone(),
@@ -424,6 +425,8 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
     // Grant requests are unsolicited and not durable: a request missed while disconnected is
     // repeated by the waiting upload, so a lagging receiver simply skips ahead.
     let mut grant_requests = info.grants.subscribe();
+    let previews_enabled = hello.payload.thread_previews && info.agents.is_some();
+
     let write = async {
         // A restarted Controller remembers no grant request, so every waiting upload asks again
         // as soon as a Controller connects instead of after its periodic re-send.
@@ -438,8 +441,22 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
                 .map_err(|_| Failure::silent())??;
         }
         let mut tick = interval(Duration::from_millis(config.heartbeat_ms));
+        let mut preview_tick = interval(Duration::from_millis(100));
+        let mut pending_previews = std::collections::VecDeque::new();
+        let mut sent_previews = std::collections::HashMap::new();
         loop {
             let message = tokio::select! {
+                _ = preview_tick.tick(), if previews_enabled => {
+                    let snapshots = info.agents.as_ref().map_or_else(Vec::new, agents::SessionHost::preview_snapshots);
+                    sent_previews.retain(|execution, _| snapshots.iter().any(|snapshot| &snapshot.execution_id == execution));
+                    pending_previews = snapshots.into_iter().filter(|snapshot| sent_previews.get(&snapshot.execution_id).is_none_or(|version| *version < snapshot.payload.version)).collect();
+                    continue;
+                },
+                preview = async { pending_previews.pop_front() }, if !pending_previews.is_empty() => {
+                    let Some(preview) = preview else { continue; };
+                    sent_previews.insert(preview.execution_id.clone(), preview.payload.version);
+                    NodeToControllerMessage::ThreadPreview(preview)
+                },
                 message = messages.recv() => { let Some(message) = message else { return Ok::<(), Failure>(()); }; message }
                 request = grant_requests.recv() => match request {
                     Ok(request) => NodeToControllerMessage::UploadGrantNeeded(request),
@@ -448,7 +465,10 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
                         return Err(Failure::local(CloseReason::InternalError, "grant requests closed"));
                     }
                 },
-                _ = tick.tick() => NodeToControllerMessage::Heartbeat(HeartbeatMessage { protocol_version: CURRENT_PROTOCOL_VERSION, payload: Heartbeat { node: info.identity.clone() } }),
+                _ = tick.tick() => {
+                    sent_previews.clear();
+                    NodeToControllerMessage::Heartbeat(HeartbeatMessage { protocol_version: CURRENT_PROTOCOL_VERSION, payload: Heartbeat { node: info.identity.clone() } })
+                },
             };
             timeout(deadline, transmit(writer, &message))
                 .await

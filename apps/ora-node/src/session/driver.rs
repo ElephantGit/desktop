@@ -236,7 +236,13 @@ where
         return SessionEnd::agent_failed("agent_plugin_unavailable");
     }
 
-    let mirror = ThreadMirror::new(shared.ledger.clone(), execution.clone(), wake.clone());
+    let mirror = ThreadMirror::new(
+        shared.ledger.clone(),
+        operation.clone(),
+        execution.clone(),
+        wake.clone(),
+        shared.previews.clone(),
+    );
     let scheduler = Scheduler::new(shared.config.timezone);
     let agent_home = model_access.as_ref().map_or_else(
         || checkout.clone(),

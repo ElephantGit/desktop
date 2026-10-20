@@ -5,8 +5,10 @@ mod repository;
 mod revision;
 mod runtime_control;
 mod session;
+mod thread_preview;
 mod validation;
 mod worktree;
+pub use thread_preview::{ThreadPreview, ThreadPreviewBlock, ThreadPreviewMessage};
 
 pub use agent_session::{
     AgentSessionEndedMessage, EndSession, EndSessionMessage, EndSessionReason,
@@ -115,6 +117,8 @@ pub enum NodeToControllerMessage {
     WorktreeRemovalFailed(WorktreeRemovalFailedMessage),
     PluginsResult(PluginsResultMessage),
     ThreadEvent(ThreadEventMessage),
+    /// Optional, lossy and never acknowledged.
+    ThreadPreview(ThreadPreviewMessage),
     AgentSessionEnded(AgentSessionEndedMessage),
     SessionCommandAccepted(SessionCommandAcceptedMessage),
     SessionCommandRejected(SessionCommandRejectedMessage),
@@ -137,6 +141,7 @@ impl ValidateMessage for NodeToControllerMessage {
             Self::WorktreeRemovalFailed(message) => message.validate(),
             Self::PluginsResult(message) => message.validate(),
             Self::ThreadEvent(message) => message.validate(),
+            Self::ThreadPreview(message) => message.validate(),
             Self::AgentSessionEnded(message) => message.validate(),
             Self::SessionCommandAccepted(message) => message.validate(),
             Self::SessionCommandRejected(message) => message.validate(),

@@ -31,6 +31,9 @@ pub enum NodeCapability {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Hello {
+    /// Optional live-preview opt-in; omitted by older Controllers.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub thread_previews: bool,
     pub controller_id: ControllerId,
     pub supported_versions: Vec<ProtocolVersion>,
 }
@@ -39,6 +42,9 @@ pub struct Hello {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct HelloAccepted {
+    /// True only when both peers opted into ephemeral preview messages.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub thread_previews: bool,
     pub selected_version: ProtocolVersion,
     pub node: NodeRuntimeIdentity,
     pub capabilities: Vec<NodeCapability>,
@@ -137,6 +143,10 @@ impl ValidateMessage for HelloAcceptedMessage {
             });
         }
         let mut capabilities = HashSet::with_capacity(payload.capabilities.len());
+        if payload.thread_previews && !payload.capabilities.contains(&NodeCapability::AgentSession)
+        {
+            return Err(MessageValidationError::InvalidThreadPreview);
+        }
         for capability in &payload.capabilities {
             if !capabilities.insert(*capability) {
                 return Err(MessageValidationError::DuplicateCapability);

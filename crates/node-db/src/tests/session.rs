@@ -55,6 +55,9 @@ fn event() -> ThreadEvent {
         turn_id: None,
         record: serde_json::Map::new(),
         truncated: false,
+        visible_text: None,
+        visible_text_truncated: false,
+        history_sequence: None,
     }
 }
 
@@ -403,4 +406,36 @@ fn session_stops_running_once_an_end_is_requested() {
         .unwrap();
     observed.push(journal.session_running(&execution).unwrap());
     assert_eq!(observed, vec![false, true, true, false, false]);
+}
+
+/// A brief competing SQLite writer should delay a Thread append, not fail the session.
+#[test]
+fn thread_append_waits_for_a_competing_writer() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db");
+    let mut db = NodeDatabase::open(&path, NodeIdentity::Require(NodeId::new("node"))).unwrap();
+    db.accept_session(&command()).unwrap();
+    db.start_session(&command(), &NodeIncarnationId::new("first"))
+        .unwrap();
+    let journal = db.session_journal().unwrap();
+    let mut competitor = rusqlite::Connection::open(&path).unwrap();
+    let held = competitor
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .unwrap();
+    let (started, ready) = std::sync::mpsc::channel();
+    let (finished, completion) = std::sync::mpsc::channel();
+    let writer = std::thread::spawn(move || {
+        started.send(()).unwrap();
+        let result = journal.append_thread_event(&command().execution_id, event());
+        finished.send(()).unwrap();
+        result
+    });
+    ready.recv().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert!(matches!(
+        completion.try_recv(),
+        Err(std::sync::mpsc::TryRecvError::Empty)
+    ));
+    held.commit().unwrap();
+    assert_eq!(writer.join().unwrap().unwrap(), Sequence::new(/*value*/ 1));
 }

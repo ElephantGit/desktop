@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 #[derive(Default)]
 pub(super) struct AgentState {
+    previews: Vec<proto::PublishThreadPreviewRequest>,
     pub(super) work: Vec<proto::WorkItem>,
     commands: Vec<proto::ThreadCommand>,
     delivered: HashSet<String>,
@@ -17,6 +18,10 @@ pub(super) struct AgentState {
     pub(super) deliveries: super::deliveries::DeliveryState,
 }
 impl WorkspaceCloud {
+    /// Returns optional calls separately from durable records.
+    pub fn thread_previews(&self) -> Vec<proto::PublishThreadPreviewRequest> {
+        self.lock().agents.previews.clone()
+    }
     /// Changes current permission without changing the historical registered dispatch.
     pub fn close_agent_input(&self, closed: bool) {
         self.lock().agents.input_closed = closed;
@@ -297,6 +302,32 @@ impl WorkspaceCloud {
 }
 #[tonic::async_trait]
 impl AgentRunService for WorkspaceCloud {
+    /// Checks the authoritative run identity and lease on the real generated RPC boundary.
+    async fn publish_thread_preview(
+        &self,
+        request: Request<proto::PublishThreadPreviewRequest>,
+    ) -> Result<Response<proto::PublishThreadPreviewResponse>, Status> {
+        let message = request.into_inner();
+        let mut state = self.lock();
+        if message.epoch != EPOCH
+            || !state.clones.iter().any(|record| {
+                record.execution_id == message.execution_id
+                    && record.operation_id == message.operation_id
+                    && record.result.is_none()
+            })
+        {
+            return Err(conflict("invalid_preview_owner"));
+        }
+        let event = Event::PreviewPublished {
+            execution: message.execution_id.clone(),
+            version: message.version,
+        };
+        state.agents.previews.push(message);
+        drop(state);
+        self.timeline.push(event);
+        Ok(Response::new(proto::PublishThreadPreviewResponse {}))
+    }
+
     async fn take_over_thread_events(
         &self,
         request: Request<proto::TakeOverThreadEventsRequest>,

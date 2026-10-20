@@ -7,6 +7,7 @@ mod domain;
 mod frame;
 mod identity;
 mod message;
+pub use message::{ThreadPreview, ThreadPreviewBlock, ThreadPreviewMessage};
 
 pub use domain::{
     AgentSessionEndReason, AgentSessionEnded, AgentSessionResult, AgentSessionSpec, BranchName,
@@ -14,18 +15,18 @@ pub use domain::{
     CloneResidual, CommitId, ContentBlock, DELIVERY_REF_PREFIX, DeliverRevisionSpec, DeliveryRef,
     ExecutionResult, GitIdentity, GitRef, GitRepositoryUrl, InstallPluginsSpec,
     InvalidGitRepositoryUrl, InvalidGitServerRef, MAX_THREAD_RECORD_BYTES,
-    MAX_USER_TURN_TEXT_BYTES, MAX_WORKSPACE_BRANCH_BYTES, MAX_WORKSPACE_DIRECTORY,
-    MainWorkspaceBinding, NodePath, ObjectKey, ObjectUploadGrant, PluginDownload,
-    PluginExecutionResult, PluginFailureCode, PluginId, PluginInstall, PluginItemOutcome,
-    PluginItemResult, PluginRelease, PluginRemoval, PluginTargetDownload, PluginVersion,
-    PluginsCompleted, PluginsFailed, PluginsFailureCode, PresignedUrl, PriorRevision,
-    PriorRevisionCommit, REVISION_REF_PREFIX, RemovePluginsSpec, RepositoryRef, RevisionDelivered,
-    RevisionExecutionResult, RevisionFailed, RevisionFailureCode, RevisionRef, RevisionUnchanged,
-    Sha256Digest, SnapshotRef, StoredObject, ThreadEvent, UploadMethod, UserTurn, WorkspaceListing,
-    WorkspaceRef, WorktreeExecutionResult, WorktreeExecutionSpec, WorktreeFacts, WorktreeFailed,
-    WorktreeFailure, WorktreeFailureCode, WorktreePathPolicy, WorktreeReady, WorktreeRemovalFailed,
-    WorktreeRemovalOutcome, WorktreeRemoved, is_canonical_uuid, is_full_lowercase_commit,
-    is_workspace_branch,
+    MAX_USER_TURN_TEXT_BYTES, MAX_VISIBLE_TEXT_BYTES, MAX_WORKSPACE_BRANCH_BYTES,
+    MAX_WORKSPACE_DIRECTORY, MainWorkspaceBinding, NodePath, ObjectKey, ObjectUploadGrant,
+    PluginAgentConfiguration, PluginDownload, PluginExecutionResult, PluginFailureCode, PluginId,
+    PluginInstall, PluginItemOutcome, PluginItemResult, PluginRelease, PluginRemoval,
+    PluginTargetDownload, PluginVersion, PluginsCompleted, PluginsFailed, PluginsFailureCode,
+    PresignedUrl, PriorRevision, PriorRevisionCommit, REVISION_REF_PREFIX, RemovePluginsSpec,
+    RepositoryRef, RevisionDelivered, RevisionExecutionResult, RevisionFailed, RevisionFailureCode,
+    RevisionRef, RevisionUnchanged, Sha256Digest, SnapshotRef, StoredObject, ThreadEvent,
+    UploadMethod, UserTurn, WorkspaceListing, WorkspaceRef, WorktreeExecutionResult,
+    WorktreeExecutionSpec, WorktreeFacts, WorktreeFailed, WorktreeFailure, WorktreeFailureCode,
+    WorktreePathPolicy, WorktreeReady, WorktreeRemovalFailed, WorktreeRemovalOutcome,
+    WorktreeRemoved, is_canonical_uuid, is_full_lowercase_commit, is_workspace_branch,
 };
 pub use frame::{
     FrameError, MAX_FRAME_LENGTH, NODE_MESSAGE_FRAME_TYPE, decode_controller_frame,

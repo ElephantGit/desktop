@@ -813,6 +813,35 @@ pub mod agent_run_service_client {
             self.inner = self.inner.max_encoding_message_size(limit);
             self
         }
+        pub async fn publish_thread_preview(
+            &mut self,
+            request: impl tonic::IntoRequest<super::PublishThreadPreviewRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::PublishThreadPreviewResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/ora.cloud.internal.v1.AgentRunService/PublishThreadPreview",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "ora.cloud.internal.v1.AgentRunService",
+                        "PublishThreadPreview",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
         pub async fn take_over_thread_events(
             &mut self,
             request: impl tonic::IntoRequest<super::TakeOverThreadEventsRequest>,
@@ -945,6 +974,13 @@ pub mod agent_run_service_server {
     /// Generated trait containing gRPC methods that should be implemented for use with AgentRunServiceServer.
     #[async_trait]
     pub trait AgentRunService: std::marker::Send + std::marker::Sync + 'static {
+        async fn publish_thread_preview(
+            &self,
+            request: tonic::Request<super::PublishThreadPreviewRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::PublishThreadPreviewResponse>,
+            tonic::Status,
+        >;
         async fn take_over_thread_events(
             &self,
             request: tonic::Request<super::TakeOverThreadEventsRequest>,
@@ -1050,6 +1086,55 @@ pub mod agent_run_service_server {
         }
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             match req.uri().path() {
+                "/ora.cloud.internal.v1.AgentRunService/PublishThreadPreview" => {
+                    #[allow(non_camel_case_types)]
+                    struct PublishThreadPreviewSvc<T: AgentRunService>(pub Arc<T>);
+                    impl<
+                        T: AgentRunService,
+                    > tonic::server::UnaryService<super::PublishThreadPreviewRequest>
+                    for PublishThreadPreviewSvc<T> {
+                        type Response = super::PublishThreadPreviewResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::PublishThreadPreviewRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as AgentRunService>::publish_thread_preview(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = PublishThreadPreviewSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
                 "/ora.cloud.internal.v1.AgentRunService/TakeOverThreadEvents" => {
                     #[allow(non_camel_case_types)]
                     struct TakeOverThreadEventsSvc<T: AgentRunService>(pub Arc<T>);

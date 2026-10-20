@@ -17,7 +17,7 @@ use ora_domain::{AgentRef, PluginId, SessionId, WorkspaceId};
 use ora_effect::ConsumerDeclaration;
 use ora_history::HistoryLine;
 use ora_logging::ora_warn;
-use ora_node_protocol::{ExecutionId, GitIdentity, TurnId};
+use ora_node_protocol::{ExecutionId, GitIdentity, OperationId, TurnId};
 use ora_plugin_lifecycle::{
     ChildProcessEnvironmentProvider, ConnectionError, DenoPluginRuntimeLauncher, GenerationTaps,
     PluginLifecycle, PluginLifecycleError, PluginStatusPublisher,
@@ -220,16 +220,27 @@ pub(super) struct ThreadMirror<L> {
     turn: Arc<Mutex<Option<TurnId>>>,
     broken: Arc<AtomicBool>,
     wake: Arc<Notify>,
+    operation: OperationId,
+    previews: super::preview::PreviewBuffer,
 }
 
 impl<L: SessionLedger> ThreadMirror<L> {
-    pub(super) fn new(ledger: L, execution: ExecutionId, wake: Arc<Notify>) -> Self {
+    /// Couples one reliable ledger stream with an independently bounded optional preview cache.
+    pub(super) fn new(
+        ledger: L,
+        operation: OperationId,
+        execution: ExecutionId,
+        wake: Arc<Notify>,
+        previews: super::preview::PreviewBuffer,
+    ) -> Self {
         Self {
             ledger,
             execution,
             turn: Arc::new(Mutex::new(None)),
             broken: Arc::new(AtomicBool::new(false)),
             wake,
+            operation,
+            previews,
         }
     }
 
@@ -256,6 +267,24 @@ impl<L: SessionLedger> ThreadMirror<L> {
 }
 
 impl<L: SessionLedger> RuntimeEvents for ThreadMirror<L> {
+    /// Only Node hosts mirror pending records; other runtime hosts keep the default off.
+    fn wants_record_previews(&self) -> bool {
+        true
+    }
+
+    /// A failed durable mirror cannot keep publishing content as if its history were healthy.
+    fn record_preview(&self, _session_id: &SessionId, records: &[ora_history::AssembledRecord]) {
+        if self.is_broken() {
+            return;
+        }
+        let turn = self
+            .turn
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        self.previews
+            .replace(&self.operation, &self.execution, turn, records);
+    }
     /// A Thread has no title of its own; Cloud names the run.
     fn session_title_updated(&self, _session_id: &SessionId) {}
 

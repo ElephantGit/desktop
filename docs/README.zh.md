@@ -40,7 +40,7 @@
 
 **Agent**
 
-- [Agent 运行时](agents/agent-runtime.zh.md)：来自插件的 Agent、监督、会话、流控、限制、宿主
+- [Agent 运行时](agents/agent-runtime.zh.md)：来自插件的 Agent、监督、会话、流控、限制、宿主预览
 - [会话历史](agents/session-history.zh.md)：记录、切换 Agent、降级的历史、删除
 - [Session MCP](agents/session-mcp.zh.md)：选择、投递、实时刷新、Host MCP 健康状态
 - [Agent 定义与 Skill](agents/agents-and-skills.zh.md)：角色、Skill 目录、包与导入
@@ -49,6 +49,7 @@
 **插件**
 
 - [插件系统](plugins/plugin-system.zh.md)：种类、布局、生命周期、协议与 SDK、配置、Hook
+- [Agent 配置](plugins/agent-configuration.zh.md)：静态声明、模型能力、发行关联与安装核对
 - [Marketplace](plugins/marketplace.zh.md)：源、同步与索引、安装、pack
 - [Surface](plugins/surfaces.zh.md)：workbench 和 webview 插件界面
 - [插件日志](plugins/plugin-logging.zh.md)：由宿主拥有的按插件区分的日志
@@ -66,7 +67,7 @@
 
 **Controller**
 
-- [Controller](controller/controller.zh.md)：协调存储、可执行文件、cloud 形态与 Workspace 沙盒
+- [Controller](controller/controller.zh.md)：协调存储、预览能力选择、可执行文件、cloud 形态与 Workspace 沙盒
 - [Agent 中继](controller/agent-relay.zh.md)：会话、Thread 事件、命令、Revision 交付与授权
 - [Cloud 契约](controller/cloud-contract.zh.md)：服务、上传校验和、生成与升级契约
 - [运行时控制](controller/runtime-control.zh.md)：身份、经过认证的通道、关闭与强制停止
@@ -78,7 +79,7 @@
 - [Controller–Node 协议](node/protocol.zh.md)：分帧、能力、消息契约、编解码器
 - [仓库 clone](node/repository-clone.zh.md)：Git Server 快照输入、传输仓库、失败与记录
 - [Worktree 执行](node/worktree-execution.zh.md)
-- [Node Agent 会话](node/agent-sessions.zh.md)：每个执行一个运行时、工作负载用户、账本、模型访问
+- [Node Agent 会话](node/agent-sessions.zh.md)：每个执行一个运行时、工作负载用户、实时预览、正文投影、账本、模型访问
 - [Revision](node/revisions.zh.md)：经 Git 交付、会话历史上传与恢复上一个 Revision
 - [ora-git](node/ora-git.zh.md)：Agent 使用的 Git 命令、每个会话的 socket、动词、推送与退出码
 - [Node 插件](node/plugins.zh.md)

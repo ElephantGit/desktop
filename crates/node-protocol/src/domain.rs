@@ -10,8 +10,8 @@ mod worktree;
 
 pub use agent_session::{
     AgentSessionEndReason, AgentSessionEnded, AgentSessionResult, AgentSessionSpec, ContentBlock,
-    GitIdentity, MAX_THREAD_RECORD_BYTES, MAX_USER_TURN_TEXT_BYTES, MAX_WORKSPACE_DIRECTORY,
-    ThreadEvent, UserTurn, WorkspaceListing,
+    GitIdentity, MAX_THREAD_RECORD_BYTES, MAX_USER_TURN_TEXT_BYTES, MAX_VISIBLE_TEXT_BYTES,
+    MAX_WORKSPACE_DIRECTORY, ThreadEvent, UserTurn, WorkspaceListing,
 };
 pub use execution::ExecutionResult;
 pub use git_server::{
@@ -20,10 +20,10 @@ pub use git_server::{
     is_full_lowercase_commit, is_workspace_branch,
 };
 pub use plugin::{
-    InstallPluginsSpec, PluginDownload, PluginExecutionResult, PluginFailureCode, PluginId,
-    PluginInstall, PluginItemOutcome, PluginItemResult, PluginRelease, PluginRemoval,
-    PluginTargetDownload, PluginVersion, PluginsCompleted, PluginsFailed, PluginsFailureCode,
-    RemovePluginsSpec, Sha256Digest,
+    InstallPluginsSpec, PluginAgentConfiguration, PluginDownload, PluginExecutionResult,
+    PluginFailureCode, PluginId, PluginInstall, PluginItemOutcome, PluginItemResult, PluginRelease,
+    PluginRemoval, PluginTargetDownload, PluginVersion, PluginsCompleted, PluginsFailed,
+    PluginsFailureCode, RemovePluginsSpec, Sha256Digest,
 };
 pub use repository::CloneExecutionSpec;
 pub use repository_result::{

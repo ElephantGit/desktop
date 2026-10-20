@@ -338,6 +338,22 @@ pub struct PluginInstall {
     pub universal: ::core::option::Option<PluginDownload>,
     #[prost(message, repeated, tag="4")]
     pub targets: ::prost::alloc::vec::Vec<PluginTargetDownload>,
+    /// The Agent declaration association the catalog entry declared, when it declared one: the
+    /// package's in-archive declaration bytes must compile and fingerprint to this digest.
+    #[prost(message, optional, tag="5")]
+    pub agent_configuration: ::core::option::Option<PluginAgentConfiguration>,
+}
+/// The declaration identity one install plan freezes from Cloud's catalog snapshot. The plugin
+/// id, version, target, and package digest all live on the surrounding plan, which is what makes
+/// this a binding to an exact release rather than a free-floating schema claim.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PluginAgentConfiguration {
+    /// Declaration schema version the associated copy declares.
+    #[prost(uint32, tag="1")]
+    pub schema_version: u32,
+    /// Lowercase hexadecimal SHA-256 of the exact declaration bytes.
+    #[prost(string, tag="2")]
+    pub declaration_sha256: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PluginRemoval {
@@ -776,6 +792,45 @@ pub struct ThreadEvent {
     /// original.
     #[prost(bool, tag="4")]
     pub truncated: bool,
+    /// Node-projected assistant text. Cloud never parses ACP content to derive this field.
+    #[prost(string, optional, tag="5")]
+    pub visible_text: ::core::option::Option<::prost::alloc::string::String>,
+    /// The text projection was clipped at a UTF-8 boundary for bounded context transfer.
+    #[prost(bool, tag="6")]
+    pub visible_text_truncated: bool,
+    /// Stable ora-history position, assigned before the record settles.
+    #[prost(uint32, optional, tag="7")]
+    pub history_sequence: ::core::option::Option<u32>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ThreadPreviewBlock {
+    #[prost(uint32, tag="1")]
+    pub history_sequence: u32,
+    #[prost(string, tag="2")]
+    pub turn_id: ::prost::alloc::string::String,
+    /// One Node-owned pending history record JSON object, at most 64 KiB.
+    #[prost(string, tag="3")]
+    pub record: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PublishThreadPreviewRequest {
+    #[prost(int64, tag="1")]
+    pub epoch: i64,
+    #[prost(string, tag="2")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub execution_id: ::prost::alloc::string::String,
+    /// Monotonically increasing within this execution; complete replacement, never a text delta.
+    #[prost(int64, tag="4")]
+    pub version: i64,
+    /// Up to 32 blocks and 256 KiB total. Empty clears all still-open previews.
+    #[prost(message, repeated, tag="5")]
+    pub blocks: ::prost::alloc::vec::Vec<ThreadPreviewBlock>,
+    #[prost(bool, tag="6")]
+    pub incomplete: bool,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PublishThreadPreviewResponse {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TakeOverThreadEventsRequest {
