@@ -1,5 +1,7 @@
 use crate::RepositoryError;
-use ora_domain::{Task, Worktree, WorktreeProvisioningLease, WorktreeProvisioningLeaseId};
+use ora_domain::{
+    ScheduledRunId, Task, Worktree, WorktreeProvisioningLease, WorktreeProvisioningLeaseId,
+};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -40,11 +42,24 @@ pub trait WorktreeProvisioningLeaseStore: Clone + Send + 'static {
 }
 
 /// Reports whether one task-creation commit went through or lost to a
-/// concurrent project deletion.
+/// concurrent project deletion or an inadmissible Scheduled Run binding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkspaceCommitOutcome {
     Committed,
     ProjectNotVisible,
+    /// The targeted Scheduled Run was no longer `accepted` for this project, or
+    /// was already bound: the whole task creation rolled back so the lease keeps
+    /// ownership for the existing compensation paths.
+    RunNotAdmissible,
+}
+
+/// The Scheduled Run binding written inside the same commit transaction that
+/// creates the worktree-backed task, so no crash leaves the provisioned Git
+/// resources without a durable owner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScheduledRunWorktreeLink {
+    pub run_id: ScheduledRunId,
+    pub worktree_path: String,
 }
 
 /// Commits task creation atomically against concurrent project deletion.
@@ -61,6 +76,21 @@ pub trait TaskWorkspaceCommit {
         task: &Task,
         worktree: &Worktree,
         lease_id: &WorktreeProvisioningLeaseId,
+    ) -> Result<WorkspaceCommitOutcome, RepositoryError>;
+
+    /// Atomically persists a worktree-backed task, binds the Scheduled Run's
+    /// worktree ownership, and releases its lease in one transaction.
+    ///
+    /// The run must still be `accepted` for the task's project and unbound;
+    /// otherwise the commit reports `RunNotAdmissible` and rolls back, so a run
+    /// the startup recovery already settled can never own a freshly provisioned
+    /// task silently.
+    fn commit_worktree_task_for_scheduled_run(
+        &self,
+        task: &Task,
+        worktree: &Worktree,
+        lease_id: &WorktreeProvisioningLeaseId,
+        run_link: &ScheduledRunWorktreeLink,
     ) -> Result<WorkspaceCommitOutcome, RepositoryError>;
 }
 

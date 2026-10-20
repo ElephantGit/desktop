@@ -6,6 +6,7 @@ mod id_generator;
 mod mapper;
 mod ports;
 mod provisioning;
+mod scheduled_provisioning;
 mod worktree_provisioner;
 
 #[cfg(test)]
@@ -26,7 +27,11 @@ pub use ports::{
     TaskWorktreeProvisioner, TaskWorktreeProvisionerError,
 };
 pub use provisioning::{
-    PROVISIONING_LEASE_DURATION_MS, ProvisioningLeaseRenewal, TaskWorkspaceCommit,
-    WorkspaceCommitOutcome, WorktreeProvisioningLeaseStore,
+    PROVISIONING_LEASE_DURATION_MS, ProvisioningLeaseRenewal, ScheduledRunWorktreeLink,
+    TaskWorkspaceCommit, WorkspaceCommitOutcome, WorktreeProvisioningLeaseStore,
+};
+pub use scheduled_provisioning::{
+    CreateScheduledWorktreeTaskHandler, CreateScheduledWorktreeTaskRequest,
+    CreateScheduledWorktreeTaskResponse,
 };
 pub use worktree_provisioner::GitTaskWorktreeProvisioner;
