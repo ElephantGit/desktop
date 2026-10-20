@@ -88,7 +88,8 @@ cancellation never write a failure; the delivery resumes from its frozen plan af
 A session with `prior_revision` (its identity, final and base commits, `git_repository_url` and
 `delivery_ref`) restores it after resolving the checkout and checking the plugin, and before the checkout
 is handed to the workload user or any plugin starts. The repository must be the one the checkout was
-cloned from.
+cloned from; any other `git_repository_url` ends the session as `agent_failed{prior_revision_unavailable}`
+without contacting the Git Server.
 
 1. As the Node, with the session execution's identity, fetch `delivery_ref` into a private transport
    repository that borrows the checkout's objects, negotiating only from the clone's base commit. The

@@ -73,6 +73,44 @@ async fn a_failed_restore_ends_the_session_before_any_plugin_starts() {
     }
 }
 
+/// A prior Revision delivered to another repository than the one the checkout was cloned from
+/// ends the session with `prior_revision_unavailable` without any restore, so the Git Server is
+/// never asked and no plugin starts.
+///
+/// Evidence for specs/decisions/node/revision/20261017-push-delivery-ref-and-restore-from-git-server.md D5
+#[tokio::test(flavor = "multi_thread")]
+async fn a_prior_revision_from_another_repository_is_refused_before_any_restore() {
+    let fixture = Fixture::new();
+    let sessions = fixture.sessions(PLUGIN_VERSION);
+    let foreign = PriorRevision {
+        git_repository_url: GitRepositoryUrl::parse("https://git.ora.test/tenant/other.git")
+            .unwrap(),
+        ..prior()
+    };
+    fixture.start_resuming(&sessions, PLUGIN_VERSION, "hello", Some(foreign));
+    let ended = fixture.ended().await;
+    assert_eq!(
+        (
+            ended,
+            fixture.restorer.requests.lock().unwrap().len(),
+            fixture.plugin_pids(),
+            fixture.ledger.events(),
+            fixture.leases.load(std::sync::atomic::Ordering::SeqCst),
+        ),
+        (
+            AgentSessionEnded {
+                node: fixture.node(),
+                reason: AgentSessionEndReason::AgentFailed,
+                detail: Some("prior_revision_unavailable".to_string()),
+            },
+            0,
+            Vec::new(),
+            Vec::new(),
+            0,
+        ),
+    );
+}
+
 /// After a restore onto rewritten remote history, the first turn ends with one fixed note naming
 /// the restored commit, its lost base and the remote branch; a fresh session restores nothing.
 ///

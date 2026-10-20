@@ -68,7 +68,8 @@ Git Server 的暂时性失败最多尝试三次，间隔 5 秒和 30 秒；401�
 ## 恢复上一个 Revision
 
 带 `prior_revision`（其身份、最终提交与基础提交、`git_repository_url` 和 `delivery_ref`）的会话，在定位 checkout 并检查
-插件之后、把 checkout 交给工作负载用户或启动任何插件之前恢复它。仓库必须是 checkout 当初 clone 所用的仓库。
+插件之后、把 checkout 交给工作负载用户或启动任何插件之前恢复它。仓库必须是 checkout 当初 clone 所用的仓库；`git_repository_url`
+是其他仓库时，会话以 `agent_failed{prior_revision_unavailable}` 结束，不访问 Git Server。
 
 1. 以 Node 身份、使用会话执行的身份，把 `delivery_ref` 拉进一个借用 checkout 对象的私有传输仓库，只以 clone 的基础提交
    协商。拉到的提交必须等于上一个 Revision 的最终提交。

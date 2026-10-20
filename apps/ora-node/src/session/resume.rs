@@ -35,6 +35,14 @@ pub(super) async fn restore_prior<R: PriorRevisionRestore>(
     let Some(prior) = spec.prior_revision.clone() else {
         return Ok(());
     };
+    // The prior delivery ref must live in the repository this checkout was cloned from (Node
+    // delivery push ADR D5 step 1); any other address is refused before the Git Server is asked.
+    if prior.git_repository_url != checkout.spec.repository_url {
+        ora_warn!(execution_id = %execution, "prior Revision names another repository than the checkout's clone; the agent does not start");
+        return Err(SessionEnd::agent_failed(
+            RestoreFailure::Unavailable.detail(),
+        ));
+    }
     let request = RestoreRequest {
         operation: operation.clone(),
         execution: execution.clone(),
