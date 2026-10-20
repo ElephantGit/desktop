@@ -60,4 +60,4 @@ reconciler 在准备时、应用后和就绪后取样业务时间；同一个 At
 - 包适配器在发布之前计算不可变的指纹；SQLite 保存摘要和指纹，但从不通过 Resource 适配器读取包目录。
 - Skill Effect 变更与 MCP 刷新共用 Agent Session Barrier，见 [Session MCP](session-mcp.zh.md#实时刷新)。
 
-Schema：迁移 `0006`（Scope、Source 与 Revision、Desired State、Consumer 与 Target、Resource 与绑定、投影、所有权、状态、Condition、请求与 claim、Attempt、Operation 与 Artifact、回执、审计事件）、`0010`（独立的恢复检测时间）和 `0016`（`finalized_without_effect` 关闭阶段，通过暂存副本重建操作日志引入）。见[持久化](../core/persistence.zh.md)。
+Schema：迁移 `0006`（Scope、Source 与 Revision、Desired State、Consumer 与 Target、Resource 与绑定、投影、所有权、状态、Condition、请求与 claim、Attempt、Operation 与 Artifact、回执、审计事件）、`0010`（独立的恢复检测时间）和 `0019`（`finalized_without_effect` 关闭阶段，通过暂存副本重建操作日志引入）。见[持久化](../core/persistence.zh.md)。

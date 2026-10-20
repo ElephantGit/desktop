@@ -149,5 +149,5 @@ revision key; an unchanged publication creates no revision.
 Schema: migration `0006` (Scopes, Sources and Revisions, Desired State, Consumers and Targets,
 Resources and bindings, projections, ownership, statuses, Conditions, requests and claims,
 Attempts, Operations and Artifacts, receipts, audit events), `0010` (independent recovery
-detection time) and `0016` (the `finalized_without_effect` closure phase, added by rebuilding the
+detection time) and `0019` (the `finalized_without_effect` closure phase, added by rebuilding the
 operation journal through staging copies). See [Persistence](../core/persistence.md).
