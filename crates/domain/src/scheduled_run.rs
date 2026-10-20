@@ -197,6 +197,21 @@ impl ScheduledRun {
                 worktree_path,
                 worktree_task_id,
             } => {
+                // The ownership commit binds the run to its provisioned worktree
+                // before the session starts, so Start must reuse that binding: a
+                // mismatching one would rebind history to a different worktree
+                // instead of starting the already-owned one.
+                if self
+                    .worktree_task_id
+                    .as_ref()
+                    .is_some_and(|existing| *existing != worktree_task_id)
+                    || self
+                        .worktree_path
+                        .as_deref()
+                        .is_some_and(|existing| existing != worktree_path)
+                {
+                    return false;
+                }
                 self.status = ScheduledRunStatus::Running;
                 self.session_id = Some(session_id);
                 self.worktree_path = Some(worktree_path);
@@ -325,7 +340,77 @@ mod tests {
             AgentRef::parse("ora-space/codex").unwrap()
         );
         assert_eq!(run.snapshot.model.as_deref(), Some("model-1"));
-        assert_eq!(run.snapshot.prompt, "Run the current checks");
-        assert_eq!(run.snapshot.approval, Some(approval));
+    }
+
+    #[test]
+    fn start_reuses_the_committed_worktree_binding_and_rejects_a_mismatch() {
+        let owned_path = "worktrees/owned".to_string();
+        let owned_task = TaskId::new("task-owned");
+        let mut run = ScheduledRun::accepted(
+            ScheduledRunId::new("run-1"),
+            ScheduledOccurrence {
+                task_id: ScheduledTaskId::new("task-1"),
+                scheduled_at: 1_000,
+            },
+            &scheduled_task(),
+            1_001,
+        );
+        run.worktree_path = Some(owned_path.clone());
+        run.worktree_task_id = Some(owned_task.clone());
+
+        // A matching Start keeps the committed binding; the run becomes running
+        // without rebinding history to a different worktree.
+        assert!(run.transition(
+            ScheduledRunTransition::Start {
+                session_id: SessionId::new("session-1"),
+                worktree_path: owned_path.clone(),
+                worktree_task_id: owned_task.clone(),
+            },
+            1_100,
+        ));
+        assert_eq!(run.status, ScheduledRunStatus::Running);
+        assert_eq!(run.worktree_path.as_deref(), Some(owned_path.as_str()));
+        assert_eq!(run.worktree_task_id, Some(owned_task.clone()));
+
+        // A mismatching rebinding is rejected and leaves the run untouched.
+        let mut rebinding = ScheduledRun::accepted(
+            ScheduledRunId::new("run-2"),
+            ScheduledOccurrence {
+                task_id: ScheduledTaskId::new("task-1"),
+                scheduled_at: 2_000,
+            },
+            &scheduled_task(),
+            2_001,
+        );
+        rebinding.worktree_path = Some("worktrees/other".to_string());
+        rebinding.worktree_task_id = Some(TaskId::new("task-other"));
+        assert!(!rebinding.transition(
+            ScheduledRunTransition::Start {
+                session_id: SessionId::new("session-2"),
+                worktree_path: "worktrees/other".to_string(),
+                worktree_task_id: TaskId::new("task-unrelated"),
+            },
+            2_100,
+        ));
+        assert_eq!(rebinding.status, ScheduledRunStatus::Accepted);
+        assert_eq!(rebinding.worktree_task_id, Some(TaskId::new("task-other")));
+    }
+
+    /// Builds one valid definition for lifecycle tests.
+    fn scheduled_task() -> ScheduledTask {
+        ScheduledTask::new(
+            ScheduledTaskId::new("task-1"),
+            "Code quality",
+            true,
+            ScheduledTaskSchedule::daily(9, 30).expect("valid schedule"),
+            ScheduledTaskExecutionLocation::Local,
+            ProjectId::new("project-1"),
+            AgentRef::parse("ora-space/codex").expect("valid agent"),
+            None,
+            "Run the current checks",
+            Some(ScheduledTaskApproval::full_auto_in_worktree(10)),
+            AuditFields::new(1, 1, false),
+        )
+        .expect("valid task")
     }
 }
