@@ -9,9 +9,7 @@ same code for Cloud runs. Recording, switching and history are in [Session histo
 MCP delivery is in [Session MCP](session-mcp.md). Crate internals are in
 [`crates/agent-runtime/src/README.md`](../../crates/agent-runtime/src/README.md).
 
-## Agents come from plugins
-
-### Runtime observations
+## Runtime observations
 
 Workspace and workflow conversation views expose read-only run details: the latest live content,
 tool or plan observation and its client receipt time, known pending permission requests, active
@@ -23,6 +21,8 @@ OpenCode child-session projections remain visible, but do not independently rese
 parent prompt's inactivity window. A child tool retains this exclusion across metadata-free deltas.
 The parent delegate's own in-progress update still pauses its existing timer; explicit Wait and
 cancel/error cleanup remain unchanged.
+
+## Agents come from plugins
 
 Every agent is supplied by an installed `agent`-kind plugin; nothing is bundled, and Ora ships with
 no agents until the user installs packages that supply them (one agent per package). The plugin
