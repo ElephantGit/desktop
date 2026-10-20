@@ -53,6 +53,16 @@ function missedFact(observedAt: bigint): ScheduledTaskHistoryEntry {
   };
 }
 
+/** Like missedFact but with a distinct scheduledAt so several facts can share one task. */
+function missedAt(scheduledAt: bigint): ScheduledTaskHistoryEntry {
+  return {
+    kind: "missed",
+    scheduledAt,
+    reason: "app_not_running",
+    observedAt: scheduledAt,
+  };
+}
+
 function failedRun(updatedAt: bigint, id = "run-1"): ScheduledTaskHistoryEntry {
   return {
     kind: "run",
@@ -463,5 +473,187 @@ describe("startup surface of persisted scheduled task facts", () => {
     expect(window.localStorage.getItem("ora.scheduledTaskFactsSeenAt")).toBe(
       "6000",
     );
+  });
+
+  describe("dedupe edge cases from circus#333", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("surfaces facts recorded after a failed first migration pass instead of adopting them", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(10_000);
+      window.localStorage.clear();
+      const oldMissed = missedAt(8_000n);
+      const interimMissed = missedAt(12_000n);
+      const bMissed = missedAt(9_000n);
+      let taskAReads = 0;
+      const handlers: TestHandlers = {
+        listScheduledTasks: async () => ({ tasks: [TASK, TASK_B] }),
+        listScheduledTaskHistory: async ({ taskId }) => {
+          if (taskId === TASK.id) {
+            taskAReads += 1;
+            // The first migration pass cannot read task A, so the initialized marker
+            // stays unwritten and a later pass repeats migration.
+            if (taskAReads === 1) throw new Error("history unavailable");
+            return { entries: [oldMissed, interimMissed] };
+          }
+          return { entries: [bMissed] };
+        },
+      };
+      const client = createTestClient(handlers);
+      const queryClient = createTestQueryClient();
+      const { platform } = createPlatform();
+
+      await surfaceStartupScheduledFacts(client, queryClient, platform);
+      expect(
+        window.localStorage.getItem("ora.scheduledTaskFactsSeenInitialized"),
+      ).toBeNull();
+      expect(
+        window.localStorage.getItem("ora.scheduledTaskFactsFirstPassStartedAt"),
+      ).toBe("10000");
+
+      // The repeat migration pass adopts task A's pre-cutoff fact but must surface the
+      // fact recorded after the first pass began instead of silently adopting it.
+      await surfaceStartupScheduledFacts(client, queryClient, platform);
+      expect(
+        window.localStorage.getItem("ora.scheduledTaskFactsSeenInitialized"),
+      ).toBe("1");
+      expect(
+        window.localStorage.getItem("ora.scheduledTaskFactsFirstPassStartedAt"),
+      ).toBe("10000");
+      expect(errorToast).toHaveBeenCalledTimes(1);
+      expect(toastCalls(errorToast)[0]?.description).toContain("已错过");
+      const seen =
+        window.localStorage.getItem("ora.scheduledTaskFactsSeen") ?? "";
+      expect(seen).toContain("missed:scheduled-1:8000");
+      expect(seen).toContain("missed:scheduled-1:12000");
+      expect(seen).toContain("missed:scheduled-2:9000");
+
+      await surfaceStartupScheduledFacts(client, queryClient, platform);
+      expect(errorToast).toHaveBeenCalledTimes(1);
+    });
+
+    it("still surfaces a fact that lands after the pass read its task when later facts race the baseline", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(10_000);
+      const firstMissed = missedAt(5_000n);
+      const lateMissed = missedAt(12_000n);
+      const racingFailed = failedRun(13_000n);
+      let taskAReads = 0;
+      const handlers: TestHandlers = {
+        listScheduledTasks: async () => ({ tasks: [TASK, TASK_B] }),
+        listScheduledTaskHistory: async ({ taskId }) => {
+          if (taskId === TASK.id) {
+            taskAReads += 1;
+            // The late fact is recorded after the first pass has already read task A,
+            // so only the second pass can observe it.
+            return {
+              entries:
+                taskAReads === 1 ? [firstMissed] : [firstMissed, lateMissed],
+            };
+          }
+          return { entries: [racingFailed] };
+        },
+      };
+      const client = createTestClient(handlers);
+      const queryClient = createTestQueryClient();
+      const { platform } = createPlatform();
+
+      await surfaceStartupScheduledFacts(client, queryClient, platform);
+      // The baseline must not race past the late fact: it advances only to the pass's
+      // start, not to the newest fact the pass happened to observe.
+      expect(window.localStorage.getItem("ora.scheduledTaskFactsSeenAt")).toBe(
+        "10000",
+      );
+
+      await surfaceStartupScheduledFacts(client, queryClient, platform);
+      expect(errorToast).toHaveBeenCalledTimes(3);
+      const descriptions = toastCalls(errorToast).map(
+        (call) => call.description ?? "",
+      );
+      expect(
+        descriptions.filter((description) => description.includes("已错过")),
+      ).toHaveLength(2);
+      expect(
+        window.localStorage.getItem("ora.scheduledTaskFactsSeen") ?? "",
+      ).toContain("missed:scheduled-1:12000");
+
+      await surfaceStartupScheduledFacts(client, queryClient, platform);
+      expect(errorToast).toHaveBeenCalledTimes(3);
+    });
+
+    it("surfaces a live fact when its history refresh fails and leaves it for the backfill pass", async () => {
+      const failing = createTestClient({
+        listScheduledTasks: async () => ({ tasks: [TASK] }),
+        listScheduledTaskHistory: async () => {
+          throw new Error("history unavailable");
+        },
+      });
+      const queryClient = createTestQueryClient();
+
+      const shouldSurface = await markScheduledTaskHistorySeen(
+        failing,
+        queryClient,
+        {
+          kind: "run_finished",
+          taskId: TASK.id,
+          runId: "run-1",
+          status: "failed",
+          failureReason: "timeout",
+        },
+      );
+      expect(shouldSurface).toBe(true);
+      expect(
+        window.localStorage.getItem("ora.scheduledTaskFactsSeen") ?? "",
+      ).not.toContain("run:scheduled-1:run-1");
+
+      // The registered trade-off: the unclaimed fact repeats on the next successful
+      // startup pass, because a duplicate beats a silent loss.
+      const { platform } = createPlatform();
+      const storage = harness([failedRun(5_000n)]);
+      await surfaceStartupScheduledFacts(
+        storage.client,
+        storage.queryClient,
+        platform,
+      );
+      expect(errorToast).toHaveBeenCalledTimes(1);
+      expect(toastCalls(errorToast)[0]?.description).toContain(
+        "失败：运行超时",
+      );
+    });
+
+    it("suppresses a live fact whose history refresh fails after it was already claimed", async () => {
+      let historyFails = false;
+      const handlers: TestHandlers = {
+        listScheduledTasks: async () => ({ tasks: [TASK] }),
+        listScheduledTaskHistory: async () => {
+          if (historyFails) throw new Error("history unavailable");
+          return { entries: [failedRun(5_000n)] };
+        },
+      };
+      const client = createTestClient(handlers);
+      const queryClient = createTestQueryClient();
+      const { platform } = createPlatform();
+
+      // The startup pass surfaces and claims the fact first.
+      await surfaceStartupScheduledFacts(client, queryClient, platform);
+      expect(errorToast).toHaveBeenCalledTimes(1);
+
+      historyFails = true;
+      const shouldSurface = await markScheduledTaskHistorySeen(
+        client,
+        queryClient,
+        {
+          kind: "run_finished",
+          taskId: TASK.id,
+          runId: "run-1",
+          status: "failed",
+          failureReason: "timeout",
+        },
+      );
+      expect(shouldSurface).toBe(false);
+      expect(errorToast).toHaveBeenCalledTimes(1);
+    });
   });
 });

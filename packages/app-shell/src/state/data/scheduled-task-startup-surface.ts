@@ -15,6 +15,8 @@ const SEEN_STORAGE_KEY = "ora.scheduledTaskFactsSeenAt";
 const SEEN_FACTS_STORAGE_KEY = "ora.scheduledTaskFactsSeen";
 const SEEN_FACTS_INITIALIZED_STORAGE_KEY =
   "ora.scheduledTaskFactsSeenInitialized";
+const SEEN_FACTS_FIRST_PASS_STARTED_AT_STORAGE_KEY =
+  "ora.scheduledTaskFactsFirstPassStartedAt";
 const MAX_SEEN_FACTS = 1_000;
 
 /** Reads the timestamp up to which persisted facts were already surfaced to the user. */
@@ -102,6 +104,45 @@ function markSeenFactsInitialized(): void {
   }
 }
 
+/** Reads when the first migration pass began, or null before any pass has run. */
+function readFirstPassStartedAt(): number | null {
+  try {
+    const raw = window.localStorage.getItem(
+      SEEN_FACTS_FIRST_PASS_STARTED_AT_STORAGE_KEY,
+    );
+    if (raw === null) return null;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Writes the first-pass cutoff once so a later migration pass can never move it forward:
+ * facts recorded after the first pass began were recorded while the feature was already
+ * live and must surface, so only a cutoff frozen at that first pass separates them from
+ * legacy history when an unwritten initialized marker repeats migration. A lost write only
+ * widens adoption on an install whose storage is unavailable.
+ */
+function writeFirstPassStartedAtOnce(at: number): void {
+  try {
+    if (
+      window.localStorage.getItem(
+        SEEN_FACTS_FIRST_PASS_STARTED_AT_STORAGE_KEY,
+      ) === null
+    ) {
+      window.localStorage.setItem(
+        SEEN_FACTS_FIRST_PASS_STARTED_AT_STORAGE_KEY,
+        String(at),
+      );
+    }
+  } catch {
+    // Without storage every pass falls back to its own start as the cutoff, which keeps
+    // the adopt-everything migration behavior for storage-less environments.
+  }
+}
+
 function asMillis(value: bigint): number {
   return Number(value);
 }
@@ -121,6 +162,25 @@ function factKey(
     return `missed:${taskId}:${entry.scheduledAt}`;
   }
   return entry.failureReason === null ? null : `run:${taskId}:${entry.id}`;
+}
+
+/**
+ * Derives the durable fact key straight from a live event, without its history entry; the
+ * format must match `factKey`, which derives the same key from the matched entry (live
+ * facts are matched by exactly these ids).
+ */
+function eventFactKey(
+  event: Extract<
+    ScheduledTaskEvent,
+    { kind: "run_finished" | "occurrence_missed" }
+  >,
+): string | null {
+  if (event.kind === "occurrence_missed") {
+    return `missed:${event.taskId}:${event.scheduledAt}`;
+  }
+  return event.failureReason === null
+    ? null
+    : `run:${event.taskId}:${event.runId}`;
 }
 
 function liveFact(
@@ -170,6 +230,9 @@ function serializeBaselineTurn<T>(turn: () => Promise<T>): Promise<T> {
 /**
  * Claims one persisted fact for a live event. The caller surfaces the toast only when this
  * returns true, so a startup pass and the live stream cannot toast the same fact twice.
+ * When the history refresh fails the fact still surfaces but stays unclaimed, so a later
+ * startup pass may repeat it — a registered trade-off, since a duplicate beats a silent
+ * loss; an already-claimed fact is still suppressed via its deterministic key.
  */
 export function markScheduledTaskHistorySeen(
   client: ContractsClient,
@@ -196,8 +259,13 @@ export function markScheduledTaskHistorySeen(
       markFactSeen(key, surfaceableFactAt(fact) ?? Date.now());
       return true;
     } catch {
-      // The event remains actionable even when its history refresh is temporarily unavailable.
-      return true;
+      // The event remains actionable even when its history refresh is temporarily
+      // unavailable, so it surfaces without being claimed here (see the doc comment for
+      // the registered duplicate-over-loss trade-off). The deterministic key still
+      // suppresses the repeat when the fact was claimed earlier, for example by a startup
+      // surface pass.
+      const key = eventFactKey(event);
+      return key === null ? true : !hasSeenFact(key);
     }
   });
 }
@@ -247,9 +315,18 @@ async function surfaceStartupScheduledFactsOnce(
   platform: PlatformAdapter | null,
 ): Promise<void> {
   const t = appI18n.t.bind(appI18n);
+  const passStartedAt = Date.now();
   // The very first run on an install adopts the existing history as already seen instead of
   // replaying every historical failure as a notification storm.
   const migrateOnly = !seenFactsInitialized();
+  // When an earlier migration pass could not read every history, its unwritten initialized
+  // marker makes this pass repeat migration. Adoption is bounded by a cutoff frozen at the
+  // first pass: facts recorded after it were recorded while the feature was already live
+  // and must surface instead of being silently adopted.
+  const firstPassCutoff = migrateOnly
+    ? (readFirstPassStartedAt() ?? passStartedAt)
+    : 0;
+  if (migrateOnly) writeFirstPassStartedAtOnce(firstPassCutoff);
   const legacyBaseline = migrateOnly ? readSeenBaseline() : 0;
   let newest = legacyBaseline;
   let historiesComplete = true;
@@ -290,11 +367,13 @@ async function surfaceStartupScheduledFactsOnce(
       const factAt = surfaceableFactAt(entry);
       const key = factKey(task.id, entry);
       if (factAt === null || key === null || hasSeen(key)) continue;
-      if (migrateOnly || factAt <= baseline) {
+      if (factAt <= baseline || (migrateOnly && factAt <= firstPassCutoff)) {
         // Facts recorded before this feature (or already covered by the legacy baseline,
         // including entries evicted from the bounded seen map) are adopted as seen without
         // replaying them as notifications. The baseline still advances so these facts stay
-        // suppressed even when the bounded seen map later evicts them.
+        // suppressed even when the bounded seen map later evicts them. During migration
+        // the first-pass cutoff bounds adoption so facts recorded after that pass began
+        // surface even though the initialized marker is still unwritten.
         newest = Math.max(newest, factAt);
         markSeen(key, factAt);
         continue;
@@ -320,6 +399,13 @@ async function surfaceStartupScheduledFactsOnce(
   }
 
   if (seenDirty) writeSeenFacts(seen);
-  if (newest > legacyBaseline) advanceSeenBaseline(newest);
+  if (newest > legacyBaseline) {
+    // Advancing only to this pass's start: a fact recorded after the pass read its task
+    // carries a timestamp past this point, so the next pass still surfaces it instead of
+    // silently absorbing it under a baseline that raced ahead. The exact seen keys already
+    // cover everything this pass observed, so the cap only withholds suppression for facts
+    // no pass has seen.
+    advanceSeenBaseline(Math.min(newest, passStartedAt));
+  }
   if (historiesComplete) markSeenFactsInitialized();
 }
