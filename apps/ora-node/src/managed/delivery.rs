@@ -5,10 +5,17 @@
 //! interrupted before freezing prepares again from scratch, and the guardian ends a Run whose
 //! Node exited. Each Run gets its own Scope, closed before the next command starts.
 use super::{CloneHost, RunAs, transport};
+use crate::revision::RestoreGitRunner;
 use gitlancer::{GitCommand, GitExecError, GitOutput, GitRunner};
 use ora_process_client::ProcessHost;
 use ora_process_protocol::*;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+/// A restore caps execution only; delivery and cleanup keep their independent configured budgets.
+enum Budget {
+    Command,
+    Restore(Instant),
+}
 
 /// The same host Runs as the Node identity, for Git Server access from transport repositories;
 /// it borrows or owns its host side.
@@ -27,9 +34,13 @@ impl<H: std::borrow::Borrow<CloneHost>> GitRunner for AsNode<H> {
         stdout: usize,
         stderr: usize,
     ) -> Result<GitOutput, GitExecError> {
-        self.0
-            .borrow()
-            .run_scoped(command, stdout, stderr, RunAs::Node)
+        self.0.borrow().run_scoped(
+            command,
+            stdout,
+            stderr,
+            RunAs::Node,
+            Budget::Command,
+        )
     }
 }
 
@@ -47,7 +58,26 @@ impl GitRunner for CloneHost {
         stdout: usize,
         stderr: usize,
     ) -> Result<GitOutput, GitExecError> {
-        self.run_scoped(command, stdout, stderr, RunAs::Workload)
+        self.run_scoped(command, stdout, stderr, RunAs::Workload, Budget::Command)
+    }
+}
+
+impl RestoreGitRunner for CloneHost {
+    /// Caps the host exchange as well as process polling without clipping Scope cleanup.
+    fn run_bounded_before(
+        &self,
+        command: &GitCommand,
+        stdout: usize,
+        stderr: usize,
+        deadline: Instant,
+    ) -> Result<GitOutput, GitExecError> {
+        self.run_scoped(
+            command,
+            stdout,
+            stderr,
+            RunAs::Workload,
+            Budget::Restore(deadline),
+        )
     }
 }
 
@@ -59,6 +89,7 @@ impl CloneHost {
         stdout: usize,
         stderr: usize,
         identity: RunAs,
+        budget: Budget,
     ) -> Result<GitOutput, GitExecError> {
         let fail = |source| GitExecError::OutputReadFailed {
             stream: "delivery Git",
@@ -66,6 +97,14 @@ impl CloneHost {
         };
         if self.shutdown.requested() {
             return Err(fail(std::io::Error::other("Node is stopping")));
+        }
+        if let Budget::Restore(deadline) = budget
+            && Instant::now() >= deadline
+        {
+            return Err(fail(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "restore execution deadline expired",
+            )));
         }
         let client = ProcessHost::new(self.config.host_directory.clone(), self.config.expected_uid);
         let intent = HostRunIntent {
@@ -81,13 +120,24 @@ impl CloneHost {
             ),
             host_disconnect: GuardianHostDisconnect::KeepRunning,
         };
-        let result = self.runtime.block_on(transport::execute(
-            &client,
-            &intent,
-            self.config.budget_for(command),
-            &self.config,
-            &self.shutdown,
-        ));
+        let command_budget = self.config.budget_for(command);
+        let result = match budget {
+            Budget::Command => self.runtime.block_on(transport::execute(
+                &client,
+                &intent,
+                command_budget,
+                &self.config,
+                &self.shutdown,
+            )),
+            Budget::Restore(deadline) => self.runtime.block_on(transport::execute_before(
+                &client,
+                &intent,
+                command_budget,
+                &self.config,
+                &self.shutdown,
+                deadline,
+            )),
+        };
         self.runtime
             .block_on(transport::close(
                 &client,

@@ -101,7 +101,10 @@ without contacting the Git Server.
    the restored commit, its base and the branch, and recommending `ora-git fetch upstream`, is appended to
    the first turn.
 
-The fetch and the import share one 5-minute deadline, retries included. A missing delivery ref, a 403
+The fetch and the import share one absolute deadline, retries included. It defaults to five minutes and is
+configured in the Node service file as `"restore": { "deadline_ms": 300000 }`. The value must be a positive
+integer representing a finite, representable duration; invalid values refuse service startup. Waiting for
+the restore Git lock, retries and late host exchanges never reset this cutoff. A missing delivery ref, a 403
 or another 4xx other than 401 and 429 ends the session as `agent_failed{prior_revision_base_unavailable}`:
 the prior Revision's Git content is out of reach for good. A 401 only says the Node's own git-access
 identity did not authenticate, so it ends the session as `agent_failed{prior_revision_unavailable}`,
@@ -112,6 +115,14 @@ started in either case. A Node stop or an `EndSession` during the restore stops 
 command and waits for the running one, so the session ends only once the restore no longer writes the
 checkout. A restart during a restore ends the session `interrupted`. Transport repositories are removed
 after use and swept at startup.
+
+Each supervised Git command receives the earlier of its own command deadline and the restore cutoff.
+No new command starts after expiry; a pending host exchange is bounded by that same cutoff, so it
+cannot defer the close request until a longer transport timeout. Cleanup and original Scope closure
+use their independent cleanup budget after execution expires. A late ancestor check cannot turn an
+expired restore into success. Expiry is not proof that a process stopped: durable unconfirmed-stop
+ownership, delivery isolation and the residual-evidence bound remain separate obligations of the
+[approved restore deadline ADR](https://github.com/ora-space/specs/blob/main/decisions/node/revision/20261018-complete-restore-deadline-and-cancel-confirmation.md).
 
 ## Git Server access material
 

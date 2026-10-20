@@ -6,9 +6,15 @@
 //! checkout lacks is sent, and checks that it is the prior final commit. The workload user then
 //! takes the objects from the transport repository into the checkout and moves the Workspace
 //! branch there. Everything runs on a blocking thread; the transport repository is removed when
-//! the restore ends, whatever the outcome.
+//! the restore ends, whatever the outcome. One absolute deadline, owned by the deployment, bounds
+//! the fetch and every workload Git command; neither a retry nor a wait grants more time.
 
+mod config;
 mod git;
+mod runner;
+
+pub use config::RestoreConfig;
+pub(crate) use runner::RestoreGitRunner;
 
 use super::snapshot::DeliveryGit;
 use crate::git_server::{GitServerAccess, GitServerFailure, TimeLimit, TransportRepository};
@@ -23,9 +29,20 @@ use std::time::{Duration, Instant};
 
 /// Kind of the transport repositories restores use.
 const TRANSPORT_KIND: &str = "restore";
-/// The fetch from the Git Server and the workload's import share this deadline, retries included
-/// (Node delivery push ADR D5); `network_timeout_ms` does not apply.
-const RESTORE_LIMIT: Duration = Duration::from_secs(5 * 60);
+
+/// One restore's execution timing; cleanup keeps its independent managed-process budget.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RestorePolicy {
+    /// One absolute budget shared by the Git Server fetch and all workload Git steps.
+    pub(crate) deadline: Duration,
+}
+
+impl RestorePolicy {
+    /// The approved default: five minutes, shared from the first fetch exchange.
+    pub(crate) const DEFAULT: Self = Self {
+        deadline: Duration::from_millis(config::DEFAULT_DEADLINE_MS),
+    };
+}
 
 /// The workload user's Git and the Node identity's Git a restore runs.
 type RestoreGit<R, N> = (DeliveryGit<R>, N);
@@ -44,10 +61,11 @@ pub(crate) struct RevisionRestorer<R: Send + 'static, N: Send + 'static> {
     owner: Option<u32>,
     /// Ends the waits between Git Server attempts when the Node stops.
     shutdown: crate::Shutdown,
-    limit: Duration,
+    policy: RestorePolicy,
 }
 
 impl<R: Send + 'static, N: Send + 'static> RevisionRestorer<R, N> {
+    /// Composes one restorer for the Node's lifetime; only the deployment chooses its deadline.
     pub(crate) fn new(
         git: DeliveryGit<R>,
         node: N,
@@ -55,6 +73,7 @@ impl<R: Send + 'static, N: Send + 'static> RevisionRestorer<R, N> {
         repository_root: PathBuf,
         owner: Option<u32>,
         shutdown: crate::Shutdown,
+        policy: RestorePolicy,
     ) -> Self {
         Self {
             git: Arc::new(Mutex::new(Some((git, node)))),
@@ -62,14 +81,14 @@ impl<R: Send + 'static, N: Send + 'static> RevisionRestorer<R, N> {
             repository_root,
             owner,
             shutdown,
-            limit: RESTORE_LIMIT,
+            policy,
         }
     }
 
     /// The same restorer with a shorter deadline, for tests that run it out.
     #[cfg(test)]
     pub(super) fn within(mut self, limit: Duration) -> Self {
-        self.limit = limit;
+        self.policy.deadline = limit;
         self
     }
 }
@@ -91,18 +110,23 @@ impl<R: Send + 'static, N: Send + 'static> Drop for RevisionRestorer<R, N> {
 
 impl<R, N> PriorRevisionRestore for RevisionRestorer<R, N>
 where
-    R: GitRunner + Send + 'static,
+    R: RestoreGitRunner + Send + 'static,
     N: GitRunner + Send + 'static,
 {
     /// Fetches, verifies and checks out the prior final commit on a blocking thread, which
-    /// starts no further Git once the Node stops or the session is cancelled.
+    /// starts no further Git once the Node stops, the session is cancelled or the deadline ends.
     async fn restore(
         &self,
         request: RestoreRequest,
         cancel: RestoreCancel,
     ) -> Result<Restored, RestoreFailure> {
+        if self.policy.deadline.is_zero() {
+            return Err(RestoreFailure::Unavailable);
+        }
+        let deadline = Instant::now()
+            .checked_add(self.policy.deadline)
+            .ok_or(RestoreFailure::Unavailable)?;
         let git = Arc::clone(&self.git);
-        let deadline = Instant::now() + self.limit;
         let access = self.access.limited(TimeLimit::Until(deadline));
         let root = self.repository_root.clone();
         let owner = self.owner;

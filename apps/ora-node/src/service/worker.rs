@@ -70,8 +70,13 @@ pub(super) fn run(
         let grants = crate::revision::GrantStore::new();
         let revisions =
             Revisions::start(&node, grants.clone(), shutdown.clone()).map_err(|e| e.to_string())?;
-        let restorer = agents::restorer(&node, config.agent.as_ref(), shutdown.clone())
-            .map_err(|e| e.to_string())?;
+        let restorer = agents::restorer(
+            &node,
+            config.agent.as_ref(),
+            shutdown.clone(),
+            config.restore.policy().map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
         let agents = agents::open(
             &mut node,
             config.agent.as_ref(),

@@ -28,6 +28,7 @@ pub(super) fn restorer(
     node: &ManagedNode,
     agent: Option<&AgentConfig>,
     shutdown: crate::Shutdown,
+    restore_policy: crate::revision::RestorePolicy,
 ) -> Result<Option<Restorer>, crate::Error> {
     let (Some(_), Some(policy), Some(access), Some(config)) = (
         agent,
@@ -50,6 +51,7 @@ pub(super) fn restorer(
         config.repository_root.clone(),
         node.git.runner().process_config().workload_uid,
         shutdown,
+        restore_policy,
     )))
 }
 

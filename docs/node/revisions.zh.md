@@ -78,12 +78,20 @@ Git Server 的暂时性失败最多尝试三次，间隔 5 秒和 30 秒；401�
 3. 如果上一个 Revision 的基础提交不在当前快照的历史中，就在第一轮输入后追加一段固定的英文说明，写明恢复的提交、它的基础
    提交和分支，并建议运行 `ora-git fetch upstream`。
 
-拉取和导入共享一个 5 分钟的截止时间，重试也计算在内。交付 ref 不存在、403 或 401 与 429 以外的其他 4xx 时，会话以
+拉取和导入共享一个绝对截止，重试也计算在内。它默认 5 分钟，通过 Node 服务配置
+`"restore": { "deadline_ms": 300000 }` 调整；该值必须是正整数，表示有限且可表达的时长，非法配置拒绝服务启动。等待恢复
+Git 锁、重试和迟到的 host 交换都不重置截止。交付 ref 不存在、403 或 401 与 429 以外的其他 4xx 时，会话以
 `agent_failed{prior_revision_base_unavailable}` 结束：前序 Revision 的 Git 内容永久取不到。401 只说明 Node 自己的
 git-access 身份没有通过认证，所以会话以可由之后的运行再续的 `agent_failed{prior_revision_unavailable}` 结束；同一材料重试
 不会通过，时限内也不重试。其他拉取、校验或检出失败，以及截止时间到期，同样以 `agent_failed{prior_revision_unavailable}` 结束。两种情况都不会启动插件进程。恢复期间 Node 停止或收到 `EndSession`，
 恢复会在下一条 Git 命令之前停下并等待正在运行的那条，所以会话只在恢复不再写 checkout 之后才结束。恢复期间重启，会话
 以 `interrupted` 结束。传输仓库用完即删，启动时也会清扫。
+
+每条受管 Git 命令使用自身命令截止和恢复截止中更早的值。到期后不再启动新命令；进行中的 host 交换同样受这个截止约束，
+不能因更长的传输超时推迟关闭请求。执行到期后的清理与原 Scope 关闭确认使用独立的清理预算。迟到的祖先检查不能把已经到期的
+恢复改判成功。到期不是停止证据：未知停止证据的持久责任、交付隔离和残留证据上限仍是
+[已批准的恢复截止 ADR](https://github.com/ora-space/specs/blob/main/decisions/node/revision/20261018-complete-restore-deadline-and-cancel-confirmation.md)
+的独立落地义务。
 
 ## Git Server 访问材料
 
