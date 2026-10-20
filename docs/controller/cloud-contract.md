@@ -21,7 +21,7 @@ uses each service is in [Controller](controller.md) and [Agent relay](agent-rela
 | `ControlSignalService` | `Watch` (server stream) | `WorkAvailable`, `OperationAvailable`, `Drain`, `NodeAssignment`; at most once, not persisted, changes no ownership |
 | `WorkspaceOperationService` | `ClaimOperation`, `PlanEffect`, `RecordEffectResult`, `AdvanceOperation`, `DeferOperation`, `ListLiveSandboxes` | Writes fenced by `epoch` and the operation `version`; the clone and plugin steps dispatch through `ExecutionService` with the operation's id |
 | `NodeReportService` | `RegisterNode`, `ReportNodeStatus`, `ReportNodeIdle`, `EndNode` | Sandbox Nodes the Controller holds sessions with; `RegisterNode` is idempotent per (sandbox, incarnation) and a second live incarnation conflicts until the first ends |
-| `AgentRunService` | `TakeOverThreadEvents`, `ClaimThreadCommands`, `RecordThreadCommandDelivered`, `GrantRevisionUpload`, `GrantRevisionDownload` | Thread relay and Revision grants |
+| `AgentRunService` | `PublishThreadPreview`, `TakeOverThreadEvents`, `ClaimThreadCommands`, `RecordThreadCommandDelivered`, `GrantRevisionUpload`, `GrantRevisionDownload` | Thread relay and Revision grants |
 | `RuntimeControlService` | `ListBindings`, `AcknowledgeBinding`, `GetExecutionPermit`, `GetEffectPermit`, `ListForceStops`, `ConfirmForceStop` | Fenced runtime control, see [Runtime control](runtime-control.md) |
 
 Failures use the gRPC status code as the primary classification with an attached

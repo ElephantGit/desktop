@@ -13,7 +13,7 @@
 | `ControlSignalService` | `Watch`（服务端流） | `WorkAvailable`、`OperationAvailable`、`Drain`、`NodeAssignment`；至多一次，不持久化，不改变任何归属 |
 | `WorkspaceOperationService` | `ClaimOperation`、`PlanEffect`、`RecordEffectResult`、`AdvanceOperation`、`DeferOperation`、`ListLiveSandboxes` | 写入以 `epoch` 和操作的 `version` 设置栅栏；clone 和 plugin 步骤以操作的 id 通过 `ExecutionService` 派发 |
 | `NodeReportService` | `RegisterNode`、`ReportNodeStatus`、`ReportNodeIdle`、`EndNode` | Controller 持有会话的沙盒 Node；`RegisterNode` 按（沙盒、incarnation）幂等，第一个结束之前第二个活跃的 incarnation 会冲突 |
-| `AgentRunService` | `TakeOverThreadEvents`、`ClaimThreadCommands`、`RecordThreadCommandDelivered`、`GrantRevisionUpload`、`GrantRevisionDownload` | Thread 中继和 Revision 授权 |
+| `AgentRunService` | `PublishThreadPreview`、`TakeOverThreadEvents`、`ClaimThreadCommands`、`RecordThreadCommandDelivered`、`GrantRevisionUpload`、`GrantRevisionDownload` | Thread 中继和 Revision 授权 |
 | `RuntimeControlService` | `ListBindings`、`AcknowledgeBinding`、`GetExecutionPermit`、`GetEffectPermit`、`ListForceStops`、`ConfirmForceStop` | 带栅栏的运行时控制，见[运行时控制](runtime-control.zh.md) |
 
 失败以 gRPC 状态码作为主要分类，并附带 `ErrorDetail { ErrorCode }`。Rust 一侧在 Cloud RPC 适配器内部一次性把它们映射为协调类别（冲突、缺失、不可用、未知、资格过期），所以协调逻辑从不看到 gRPC。Cloud 对过期的操作快照（`stale_operation`）返回与过期租约相同的 `FAILED_PRECONDITION`；适配器把它归为冲突，所以只有租约判定才会丢弃持有的 epoch。
