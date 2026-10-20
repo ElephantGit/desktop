@@ -18,7 +18,12 @@ const text = (
 ): acp.SessionUpdate => ({
   sessionUpdate: "agent_message_chunk",
   ...(messageId ? { messageId } : {}),
-  content: { type: "text", text: body, _meta: { format: "plain" } },
+  content: {
+    type: "text",
+    text: body,
+    _meta: { format: "plain" },
+    annotations: { audience: ["assistant"] },
+  },
   _meta: source(id),
 });
 
@@ -63,14 +68,12 @@ test("live batching and reload keep colliding child text ids and annotations dis
   await store.getState().sendMessage({ oraSessionId: "live", text: "go" });
   await store.getState().loadSession("cold");
   const summary = (id: string) =>
-    store
-      .getState()
-      .conversations[id]!.turns[0]!.items.map((item) => ({
-        kind: item.kind,
-        metadata: item.metadata,
-        context: item.contentContext,
-        text: item.kind === "message" ? item.content : "",
-      }));
+    store.getState().conversations[id]!.turns[0]!.items.map((item) => ({
+      kind: item.kind,
+      metadata: item.metadata,
+      context: item.contentContext,
+      text: item.kind === "message" ? item.content : "",
+    }));
   assert.deepEqual(summary("live"), summary("cold"));
   assert.deepEqual(
     summary("live").map((x) => x.text),
@@ -128,6 +131,31 @@ test("late attribution, opaque replacement and unknown child outcomes survive fi
   assert.equal(
     childSessionSource({ "opencode/child-session": null }),
     undefined,
+  );
+  store.getState().dispose();
+});
+
+test("a source switch does not discard leading whitespace or merge unidentified runs", async () => {
+  const updates = [text("left", " "), text("right", "B"), text("left", "A")];
+  const client: ChatSessionClient = {
+    prompt: () =>
+      events<PromptSessionEvent>([
+        ...updates.map((update) => ({
+          type: "session_update" as const,
+          update,
+        })),
+        { type: "completed", stopReason: "end_turn" },
+      ]),
+    load: () => events<LoadSessionEvent>([]),
+    setConfig: async () => ({ configOptions: [] }),
+    respondToPermission: async () => ({}),
+  };
+  const store = createChatStore(client);
+  await store.getState().sendMessage({ oraSessionId: "one", text: "go" });
+  const items = store.getState().conversations.one!.turns[0]!.items;
+  assert.deepEqual(
+    items.map((item) => (item.kind === "message" ? item.content : null)),
+    [" ", "B", "A"],
   );
   store.getState().dispose();
 });

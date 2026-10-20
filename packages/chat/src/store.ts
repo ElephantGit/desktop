@@ -1285,8 +1285,9 @@ function appendTextContentChunk(
   if (itemIndex === -1) {
     // An agent switching to a tool call commonly emits empty or newline-only
     // deltas first. Opening a run on those would place a blank block ahead of
-    // the work that follows it, so a run starts where its content does.
-    if (text.trim() === "") return turn;
+    // the work that follows it, so an ordinary run starts where its content does. Attributed
+    // chunks retain even leading whitespace so a source switch cannot silently discard content.
+    if (text.trim() === "" && parent === undefined) return turn;
     // Implicit runs are numbered by where they begin, which keeps them distinct
     // now that one turn can hold several.
     const sourceSuffix =
