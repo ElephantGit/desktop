@@ -111,6 +111,35 @@ pub enum ScheduledRunFailureReason {
     ExecutionError,
 }
 
+/// Independent, machine-readable business conclusion a run's agent reports in
+/// addition to the execution-layer status. It never derives from [`ScheduledRunStatus`]
+/// or [`ScheduledRunFailureReason`]: a run can be `Succeeded` while its business
+/// verdict is `Fail`, and vice versa for infrastructure-only outcomes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScheduledRunVerdict {
+    Pass,
+    Warn,
+    Fail,
+    Blocked,
+    Idle,
+    RangeUnresolved,
+}
+
+impl ScheduledRunVerdict {
+    /// Returns the stable column and contract representation of this verdict.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Warn => "warn",
+            Self::Fail => "fail",
+            Self::Blocked => "blocked",
+            Self::Idle => "idle",
+            Self::RangeUnresolved => "range_unresolved",
+        }
+    }
+}
+
 /// Names one forward-only lifecycle change requested by the local execution adapter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScheduledRunTransition {
@@ -151,6 +180,11 @@ pub struct ScheduledRun {
     /// The task-owned worktree created for this run, kept for retained-worktree history.
     pub worktree_task_id: Option<TaskId>,
     pub failure_reason: Option<ScheduledRunFailureReason>,
+    /// Independent business conclusion reported by the run's agent; `None` until reported,
+    /// and displayed as "not reported" without affecting the execution-layer status.
+    pub verdict: Option<ScheduledRunVerdict>,
+    /// Free-text detail the agent attaches to the verdict, bounded by the application layer.
+    pub verdict_detail: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -180,6 +214,8 @@ impl ScheduledRun {
             worktree_path: None,
             worktree_task_id: None,
             failure_reason: None,
+            verdict: None,
+            verdict_detail: None,
             created_at: accepted_at,
             updated_at: accepted_at,
         }
@@ -412,5 +448,34 @@ mod tests {
             AuditFields::new(1, 1, false),
         )
         .expect("valid task")
+    }
+
+    /// Verifies the stable column/contract representation and the default absence of a
+    /// verdict on a freshly admitted run.
+    #[test]
+    fn verdict_has_a_stable_representation_and_defaults_to_unreported() {
+        use crate::ScheduledRunVerdict;
+
+        assert_eq!(ScheduledRunVerdict::Pass.as_str(), "pass");
+        assert_eq!(ScheduledRunVerdict::Warn.as_str(), "warn");
+        assert_eq!(ScheduledRunVerdict::Fail.as_str(), "fail");
+        assert_eq!(ScheduledRunVerdict::Blocked.as_str(), "blocked");
+        assert_eq!(ScheduledRunVerdict::Idle.as_str(), "idle");
+        assert_eq!(
+            ScheduledRunVerdict::RangeUnresolved.as_str(),
+            "range_unresolved"
+        );
+
+        let run = ScheduledRun::accepted(
+            ScheduledRunId::new("run-1"),
+            ScheduledOccurrence {
+                task_id: ScheduledTaskId::new("task-1"),
+                scheduled_at: 1_000,
+            },
+            &scheduled_task(),
+            1_001,
+        );
+        assert_eq!(run.verdict, None);
+        assert_eq!(run.verdict_detail, None);
     }
 }
