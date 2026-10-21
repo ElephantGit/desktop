@@ -248,3 +248,31 @@ fn unidentified_source_switches_preserve_order_through_disk_reload() {
     assert_eq!(payloads(&records), expected);
     assert_eq!(crate::SCHEMA_VERSION, 2);
 }
+
+#[test]
+fn delegation_results_survive_a_late_snapshot_and_reload() {
+    let mut assembler = HistoryAssembler::new(0);
+    assembler.push_update(&update(json!({
+        "sessionUpdate":"tool_call","toolCallId":"delegate","title":"subagent","kind":"think",
+        "status":"in_progress","rawInput":{"prompt":"survey"}
+    })));
+    let settled = assembler.push_update(&update(json!({
+        "sessionUpdate":"tool_call_update","toolCallId":"delegate","status":"completed",
+        "rawOutput":{"metadata":{"sessionID":"ses_child","status":"completed"}}
+    })));
+    assert_eq!(settled.len(), 1);
+    // A later snapshot that only repeats the status must keep the provider's delegation link,
+    // because the child group is identified by this raw output rather than by the tool title.
+    let late = assembler.push_update(&update(json!({
+        "sessionUpdate":"tool_call_update","toolCallId":"delegate","status":"completed"
+    })));
+    let expected = vec![update(json!({
+        "sessionUpdate":"tool_call","toolCallId":"delegate","title":"subagent","kind":"think",
+        "status":"completed","rawInput":{"prompt":"survey"},
+        "rawOutput":{"metadata":{"sessionID":"ses_child","status":"completed"}}
+    }))];
+    assert_eq!(payloads(&late), expected);
+    assert_eq!(reload_payloads(&late), expected);
+    // The settled snapshot was written already, so ending the turn must not add another copy.
+    assert!(payloads(&assembler.end_turn(StopReason::EndTurn)).is_empty());
+}
