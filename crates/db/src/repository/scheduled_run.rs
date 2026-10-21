@@ -100,7 +100,7 @@ impl ScheduledTaskHistoryRepository for SqliteScheduledRunRepository {
                             r.worktree_base_branch, r.agent_ref, r.model, r.prompt, r.approval_policy,
                             r.approval_consented_at, r.status, r.session_id,
                             r.worktree_path, r.worktree_task_id, r.failure_reason,
-                            r.verdict, r.verdict_detail,
+                            r.verdict, r.verdict_detail, r.verdict_at,
                             r.created_at, r.updated_at
                       FROM scheduled_occurrences o
                       LEFT JOIN scheduled_runs r
@@ -149,7 +149,7 @@ impl ScheduledRunLifecycleRepository for SqliteScheduledRunRepository {
                             worktree_base_branch, agent_ref, model, prompt,
                             approval_policy, approval_consented_at, status,
                             session_id, worktree_path, worktree_task_id, failure_reason,
-                            verdict, verdict_detail, created_at, updated_at
+                            verdict, verdict_detail, verdict_at, created_at, updated_at
                      FROM scheduled_runs
                      WHERE status NOT IN ('accepted', 'running')
                        AND worktree_task_id IS NOT NULL
@@ -191,7 +191,7 @@ impl ScheduledRunLifecycleRepository for SqliteScheduledRunRepository {
             .with_connection_mut(|connection| {
                 let updated = connection.execute(
                     "UPDATE scheduled_runs
-                     SET verdict = ?1, verdict_detail = ?2, updated_at = ?3
+                     SET verdict = ?1, verdict_detail = ?2, verdict_at = ?3
                      WHERE id = ?4",
                     params![verdict.as_str(), detail, annotated_at, run_id.as_ref(),],
                 )?;
@@ -434,7 +434,7 @@ fn load_scheduled_run(
     let mut statement = transaction.prepare(
         "SELECT id, task_id, scheduled_at, task_revision, project_id, worktree_base_branch, agent_ref,
                 model, prompt, approval_policy, approval_consented_at, status,
-                session_id, worktree_path, worktree_task_id, failure_reason, verdict, verdict_detail, created_at, updated_at
+                session_id, worktree_path, worktree_task_id, failure_reason, verdict, verdict_detail, verdict_at, created_at, updated_at
          FROM scheduled_runs
          WHERE task_id = ?1 AND scheduled_at = ?2",
     )?;
@@ -453,7 +453,7 @@ fn load_scheduled_run_by_id(
     let mut statement = transaction.prepare(
         "SELECT id, task_id, scheduled_at, task_revision, project_id, worktree_base_branch, agent_ref,
                 model, prompt, approval_policy, approval_consented_at, status,
-                session_id, worktree_path, worktree_task_id, failure_reason, verdict, verdict_detail, created_at, updated_at
+                session_id, worktree_path, worktree_task_id, failure_reason, verdict, verdict_detail, verdict_at, created_at, updated_at
          FROM scheduled_runs
          WHERE id = ?1",
     )?;
@@ -505,6 +505,7 @@ fn map_scheduled_run_row(row: &Row<'_>) -> Result<ScheduledRun, crate::DatabaseE
             .map(|value| parse_verdict(&value))
             .transpose()?,
         verdict_detail: row.get("verdict_detail")?,
+        verdict_at: row.get("verdict_at")?,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
     })
@@ -1446,6 +1447,11 @@ mod tests {
         assert_eq!(
             run.verdict_detail.as_deref(),
             Some("Critical: unhandled overflow")
+        );
+        assert_eq!(run.verdict_at, Some(300));
+        assert_eq!(
+            run.updated_at, 200,
+            "verdict write must not touch updated_at"
         );
     }
 }

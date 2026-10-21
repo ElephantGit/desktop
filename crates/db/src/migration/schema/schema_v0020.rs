@@ -3,6 +3,7 @@ use super::Migration;
 const UP_STATEMENTS: &[&str] = &[
     "ALTER TABLE scheduled_runs ADD COLUMN verdict TEXT NULL;",
     "ALTER TABLE scheduled_runs ADD COLUMN verdict_detail TEXT NULL;",
+    "ALTER TABLE scheduled_runs ADD COLUMN verdict_at INTEGER NULL;",
 ];
 
 /// Adds the nullable business verdict and its free-text detail to run rows, so a run
@@ -33,14 +34,15 @@ mod tests {
                 .expect("apply migration");
         }
 
-        let (verdict, detail): (Option<String>, Option<String>) = connection
+        let (verdict, detail, at): (Option<String>, Option<String>, Option<i64>) = connection
             .query_row(
-                "SELECT verdict, verdict_detail FROM scheduled_runs WHERE id = 'legacy-run'",
+                "SELECT verdict, verdict_detail, verdict_at FROM scheduled_runs WHERE id = 'legacy-run'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .expect("read migrated history");
         assert_eq!(verdict, None);
         assert_eq!(detail, None);
+        assert_eq!(at, None);
     }
 }

@@ -185,6 +185,9 @@ pub struct ScheduledRun {
     pub verdict: Option<ScheduledRunVerdict>,
     /// Free-text detail the agent attaches to the verdict, bounded by the application layer.
     pub verdict_detail: Option<String>,
+    /// When the verdict was annotated, independent of `updated_at` so retention ordering
+    /// (which sorts by `updated_at`) is never affected by a verdict write.
+    pub verdict_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -216,6 +219,7 @@ impl ScheduledRun {
             failure_reason: None,
             verdict: None,
             verdict_detail: None,
+            verdict_at: None,
             created_at: accepted_at,
             updated_at: accepted_at,
         }
