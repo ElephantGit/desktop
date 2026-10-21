@@ -138,8 +138,8 @@ where
 mod tests {
     use super::*;
     use crate::task::ports::{
-        CreateTaskWorktreeRequest, DeleteTaskWorktreeRequest, TaskWorktreeDeletionMode,
-        TaskWorktreeProvisioner, TaskWorktreeProvisionerError,
+        CreateTaskWorktreeRequest, DeleteTaskWorktreeRequest, TaskWorktreeProvisioner,
+        TaskWorktreeProvisionerError,
     };
     use crate::task::provisioning::WorkspaceCommitOutcome;
     use crate::{ApplicationError, Clock, RepositoryError};
@@ -148,7 +148,7 @@ mod tests {
         WorktreeProvisioningLeaseId,
     };
     use pretty_assertions::assert_eq;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
     #[derive(Clone)]
