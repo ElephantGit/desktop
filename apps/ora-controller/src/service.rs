@@ -4,8 +4,8 @@ use std::{future::Future, io};
 use tokio::{sync::watch, task::JoinHandle};
 
 /// One process hosting the sole Controller owner and optionally its Node. It opens no listener in
-/// any persistence mode: a cloud deployment dials out to Cloud, and a local one accepts work only
-/// through the embedding [`ControllerHandle`].
+/// any persistence mode: a cloud deployment dials out to Cloud, and a local one only reconciles
+/// the dispatches its database already holds.
 pub struct Service<S: CoordinationStore> {
     runtime: ControllerRuntime<S>,
     managed: Option<ManagedNode>,

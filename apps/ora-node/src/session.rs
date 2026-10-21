@@ -20,8 +20,8 @@ mod workload;
 
 pub use ports::{
     CheckoutResolver, CommandSettlement, HistoryUnavailable, PluginCatalog, PriorRevisionRestore,
-    QueuedCommand, RestoreFailure, RestoreRequest, Restored, SessionCommand, SessionHost,
-    SessionLedger,
+    QueuedCommand, RestoreCancel, RestoreFailure, RestoreRequest, Restored, SessionCommand,
+    SessionHost, SessionLedger,
 };
 pub use workload::SessionWorkload;
 pub(crate) use workload::purge_workload_directory;
@@ -64,6 +64,8 @@ pub(crate) struct Shared<L, C, P, R> {
     catalog: P,
     /// Restores the prior Revision of a resumed session before its agent starts.
     restorer: R,
+    /// Serves each running session's `ora-git` socket, when the Node can reach the Git Server.
+    ora_git: Option<Arc<dyn crate::ora_git::OraGitBroker>>,
     /// Wake handles of the sessions running in this process, by execution.
     live: Mutex<HashMap<ExecutionId, Arc<Notify>>>,
     stopping: tokio::sync::watch::Sender<bool>,
@@ -135,6 +137,7 @@ where
                 checkouts,
                 catalog,
                 restorer,
+                ora_git: None,
                 live: Mutex::new(HashMap::new()),
                 stopping: tokio::sync::watch::channel(/*init*/ false).0,
                 finished: Notify::new(),
@@ -146,6 +149,15 @@ where
 }
 
 impl<L, C, P, R> AgentSessions<L, C, P, R> {
+    /// Gives every session an `ora-git` socket served by `broker`. Composition calls it before
+    /// any session starts, while it still holds the only handle.
+    pub(crate) fn with_ora_git(mut self, broker: Arc<dyn crate::ora_git::OraGitBroker>) -> Self {
+        if let Some(shared) = Arc::get_mut(&mut self.shared) {
+            shared.ora_git = Some(broker);
+        }
+        self
+    }
+
     /// The transport flushes replacements independently of durable event replay and Ack.
     pub(crate) fn preview_snapshots(&self) -> Vec<ora_node_protocol::ThreadPreviewMessage> {
         self.shared.previews.snapshots()

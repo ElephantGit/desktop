@@ -37,6 +37,7 @@ fn config(
         deno_path: PathBuf::from("/usr/bin/deno"),
         ready_timeout_ms: 1000,
         workload_directory,
+        ora_git_directory: None,
     });
     config
 }
@@ -92,6 +93,69 @@ async fn serve_refuses_an_agent_workload_that_does_not_match_the_process_workloa
                 .to_string(),
         ]
     );
+}
+
+/// The `ora-git` directory is the Node's alone: an absolute path that is missing (the Node creates
+/// it) or a Node-owned directory nobody else can list or change, overlapping none of the
+/// directories the Node manages; `serve` refuses anything else before it removes any socket.
+#[tokio::test]
+async fn serve_refuses_an_ora_git_directory_that_is_not_the_nodes_alone() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path();
+    // The tempdir itself is one of the cases: Node-owned and private, so only the overlap refuses it.
+    fs::set_permissions(root, fs::Permissions::from_mode(0o700)).expect("set mode");
+    let with = |ora_git: PathBuf| {
+        let mut config = config(root, None, None);
+        config.agent.as_mut().expect("agent").ora_git_directory = Some(ora_git);
+        config
+    };
+    let shared = directory(&root.join("shared"), 0o755);
+    let home = directory(&root.join("node"), 0o700);
+    let mut workload = config(
+        root,
+        Some(1000),
+        Some(directory(&root.join("agent"), 0o711)),
+    );
+    workload.agent.as_mut().expect("agent").ora_git_directory = Some(root.join("agent/ora-git"));
+    let cases = [
+        with(PathBuf::from("relative")),
+        with(PathBuf::from("/")),
+        with(shared),
+        with(root.join("missing/ora-git")),
+        with(root.to_path_buf()),
+        with(home.join("ora-git")),
+        workload,
+    ];
+
+    let mut errors = Vec::new();
+    for case in cases {
+        errors.push(
+            super::validate(case.agent.as_ref().expect("agent"), &case)
+                .expect_err("the configuration is refused")
+                .to_string(),
+        );
+    }
+
+    let overlap = "agent ora_git_directory overlaps Node state, host state, the clone root or the workload directory";
+    assert_eq!(
+        errors,
+        vec![
+            "agent ora_git_directory must be an absolute UTF-8 path without parent traversal, below the root",
+            "agent ora_git_directory must be an absolute UTF-8 path without parent traversal, below the root",
+            "agent ora_git_directory must belong to the Node identity and be readable and writable by no one else",
+            "agent ora_git_directory must be created under a directory only trusted owners control",
+            overlap,
+            overlap,
+            overlap,
+        ]
+    );
+    for accepted in [
+        root.join("ora-git"),
+        directory(&root.join("sockets"), 0o711),
+    ] {
+        let case = with(accepted);
+        super::validate(case.agent.as_ref().expect("agent"), &case).expect("accepted");
+    }
 }
 
 /// Without a workload user agents share the Node identity; with one they take exactly that user,

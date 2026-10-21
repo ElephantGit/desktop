@@ -6,8 +6,8 @@ use pretty_assertions::assert_eq;
 fn negotiated_preview_streams_before_the_agent_turn_finishes() {
     ora_logging::with_trace_logging(|| {
         let fixture = Fixture::new();
-        fixture.git(&["update-server-info"]);
-        let server = HttpsRepository::new(fixture.path(), fixture.path().join("main").join(".git"));
+        let server =
+            GitServerFixture::new(fixture.path(), fixture.path().join("main").join(".git"));
         let config = configuration(&fixture, &server);
         prepare(&fixture, &config, &server);
         let mut child = launch(&fixture, &config);

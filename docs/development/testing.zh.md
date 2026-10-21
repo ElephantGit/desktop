@@ -41,5 +41,5 @@ Windows 上运行。迭代时使用最小的相关任务；Desktop 的改动需�
 
 - Node 独立测试运行真实的 Node、宿主和 guardian 可执行文件；先用
   `cargo build -p ora-node -p ora-controller -p ora-process-host -p ora-process-guardian` 构建它们。
-- 通过 SSH 的 clone 测试需要 OpenSSH 客户端和服务端以及系统的 `/run/sshd` 目录；夹具守护进程以普通测试用户在临时端口上运行。
+- clone、交付、恢复和 `ora-git` 的测试运行一个本地 Git Server 替身，它要求客户端证书 TLS、由 `git http-backend` 支撑（`ora-test-support` 的 `git-server` feature），只在 Linux 上构建。
 - 特权 helper 测试默认被忽略，见 [Linux helper](../process/linux-helper.zh.md#启动闸门)。

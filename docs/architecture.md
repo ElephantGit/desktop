@@ -54,8 +54,9 @@ Ora Cloud ◀── mTLS gRPC, dialed out ── ora-controller ── Substrate
   permissions. The Controller claims Cloud's work, drives sandbox lifecycles and relays Node events and
   Thread records back, never deciding business state itself, see [Controller](controller/controller.md)
   and [Cloud contract](controller/cloud-contract.md).
-- In each sandbox a Node clones the repository, installs plugins, runs Agent sessions with the same agent
-  runtime Desktop uses, and delivers Revisions, see [Node](node/node.md).
+- In each sandbox a Node clones the Workspace from a Git Server snapshot, installs plugins, runs Agent
+  sessions with the same agent runtime Desktop uses, and delivers Revisions to the Git Server, see
+  [Node](node/node.md).
 - Every Git command a Node runs goes through the process host and a per-Scope guardian, so launches and
   cleanups are durable facts, see [Process runtime](process/process-runtime.md).
 - Authority is fenced end to end: Cloud authorizes, the Controller fetches a fresh permit per dispatch,

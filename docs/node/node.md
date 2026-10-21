@@ -35,7 +35,9 @@ configuration:
 
 Further sections enable capabilities: `clone` ([Repository clone](repository-clone.md)), `control`
 ([Control session](control-session.md)), `agent` ([Agent sessions](agent-sessions.md)), `plugins`
-([Plugins](plugins.md)) and `git_access` ([Revisions](revisions.md#git-server-access-material)).
+([Plugins](plugins.md)) and `git_access` ([Revisions](revisions.md#git-server-access-material)),
+which clone, Revision delivery and [ora-git](ora-git.md) require; a Cloud-mode Node refuses to start
+without it.
 `process.workload_uid` runs Git workloads and agents as a separate user.
 
 - `"Discover"` keeps an existing NodeId or generates the first one; `{ "Require": "id" }` enforces a
@@ -96,6 +98,7 @@ event records; the host and guardian own separate journals.
 | 7 | `plugin_executions`, `plugin_outbox` |
 | 8 | `node_executions`, `execution_events`, `session_commands`: Agent sessions |
 | 9 | `revision_deliveries`, `revision_outbox` |
+| 10 | `workspace_branch_heads`: the own Workspace branch values `ora-git` pushes declare |
 
 Every execution family shares `execution_identities`, which prevents key collisions across families.
 Completion commits resource facts, the terminal result and its original event together; status reads
