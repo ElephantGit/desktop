@@ -1,4 +1,10 @@
-import { childSessionSource, type ChatTurnItem } from "@ora/chat";
+import {
+  childSessionSource,
+  delegationResultCompleted,
+  delegationSessionId,
+  type ChatToolCall,
+  type ChatTurnItem,
+} from "@ora/chat";
 
 /** One explicitly reported source with a cycle-safe nested view of the same timeline. */
 export interface SubagentGroupItem {
@@ -92,4 +98,25 @@ export function groupSubagentItems(
     }
   }
   return result;
+}
+
+/**
+ * Reports whether the latest delegation to this child in one source stream returned a
+ * finished result.
+ *
+ * Positions are the persisted ones: the latest call is the last match in stream order, not
+ * the newest timestamp, and a later turn continuing the same child session never revises
+ * an earlier turn. A child without an associable delegation keeps the projection-stopped
+ * wording, because the absence of a link is not evidence of a running worker.
+ */
+export function delegationReturned(
+  streamItems: ChatTurnItem[],
+  childId: string,
+): boolean {
+  let latest: ChatToolCall | undefined;
+  for (const item of streamItems) {
+    if (item.kind === "toolCall" && delegationSessionId(item) === childId)
+      latest = item;
+  }
+  return latest !== undefined && delegationResultCompleted(latest);
 }

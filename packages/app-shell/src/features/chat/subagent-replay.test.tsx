@@ -320,3 +320,185 @@ it.each([true, false])(
     store.getState().dispose();
   },
 );
+
+/** Builds the parent-side events that delegate to one child and report the provider's result. */
+function delegation(
+  toolCallId: string,
+  sessionID: string,
+  status: string,
+  meta?: Record<string, unknown>,
+): PromptSessionEvent[] {
+  return [
+    {
+      type: "session_update",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId,
+        title: "subagent",
+        kind: "think",
+        status: "in_progress",
+        rawInput: { prompt: "work" },
+        ...(meta ? { _meta: meta } : {}),
+      },
+    },
+    {
+      type: "session_update",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId,
+        status: "completed",
+        rawOutput: { metadata: { sessionID, status } },
+      },
+    },
+  ];
+}
+
+const childText = (
+  id: string,
+  body: string,
+  meta: Record<string, unknown>,
+): PromptSessionEvent => ({
+  type: "session_update",
+  update: {
+    sessionUpdate: "agent_message_chunk",
+    messageId: id,
+    content: { type: "text", text: body },
+    _meta: meta,
+  },
+});
+
+/** Renders one ended turn and returns the status labels of its visible subagent cards. */
+async function childStatusLabels(
+  turn: ChatTurn,
+  openOuter = false,
+): Promise<string[]> {
+  const view = render(<ResponseTurn turn={turn} userName="Reader" />);
+  if (openOuter) {
+    // Nested cards mount only after their parent card is expanded.
+    await userEvent.click(
+      screen.getByRole("button", { name: /Subagent · Outer worker/ }),
+    );
+  }
+  const labels = Array.from(
+    document.querySelectorAll("[data-subagent-status]"),
+  ).map((node) => node.textContent);
+  view.unmount();
+  return labels;
+}
+
+it("settles a child only from the delegation that names it in live, warm and cold views", async () => {
+  const updates = [
+    ...delegation("outer-delegate", "worker", "completed"),
+    childText("worker-result", "WORKER_RESULT", worker),
+    ...delegation("inner-delegate", "nested", "completed", worker),
+    childText("nested-result", "NESTED_RESULT", nested),
+  ].flatMap(
+    (event): Extract<PromptSessionEvent, { type: "session_update" }>[] =>
+      event.type === "session_update" ? [event] : [],
+  );
+  const history: LoadSessionEvent[] = [
+    {
+      type: "session_update",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        content: { type: "text", text: "go" },
+      },
+    },
+    ...updates,
+    { type: "turn_ended", stopReason: "end_turn" },
+    { type: "completed" },
+  ];
+  const client = createTestClient({
+    async *promptSession() {
+      yield* stream(updates);
+      yield {
+        type: "completed",
+        stopReason: "end_turn",
+      } satisfies PromptSessionEvent;
+    },
+    loadSession: () => stream(history),
+  });
+  const store = createChatStore(client.session, { now: () => 100 });
+  await store.getState().sendMessage({ oraSessionId: "one", text: "go" });
+  // The foreground delegation returned, and the nested one is read from its own parent stream;
+  // neither call settles the child, so only the "returned" wording may appear.
+  expect(
+    await childStatusLabels(
+      store.getState().conversations.one!.turns[0]!,
+      true,
+    ),
+  ).toEqual(["Delegation returned", "Delegation returned"]);
+  await store.getState().loadSession("one");
+  expect(
+    await childStatusLabels(
+      store.getState().conversations.one!.turns[0]!,
+      true,
+    ),
+  ).toEqual(["Delegation returned", "Delegation returned"]);
+  const cold = createChatStore(client.session, { now: () => 999 });
+  await cold.getState().loadSession("one");
+  expect(
+    await childStatusLabels(cold.getState().conversations.one!.turns[0]!, true),
+  ).toEqual(["Delegation returned", "Delegation returned"]);
+  store.getState().dispose();
+  cold.getState().dispose();
+});
+
+it("keeps a background delegation's child on the projection-stopped wording", async () => {
+  const updates = [
+    ...delegation("outer-delegate", "worker", "running"),
+    childText("worker-result", "WORKER_RESULT", worker),
+  ].flatMap(
+    (event): Extract<PromptSessionEvent, { type: "session_update" }>[] =>
+      event.type === "session_update" ? [event] : [],
+  );
+  const client = createTestClient({
+    async *promptSession() {
+      yield* stream(updates);
+      yield {
+        type: "completed",
+        stopReason: "end_turn",
+      } satisfies PromptSessionEvent;
+    },
+  });
+  const store = createChatStore(client.session, { now: () => 100 });
+  await store.getState().sendMessage({ oraSessionId: "one", text: "go" });
+  expect(
+    await childStatusLabels(store.getState().conversations.one!.turns[0]!),
+  ).toEqual(["Further state unknown (projection stopped)"]);
+  store.getState().dispose();
+});
+
+it("keeps an earlier turn's returned delegation after the same child is resumed", async () => {
+  let calls = 0;
+  const client = createTestClient({
+    async *promptSession() {
+      calls += 1;
+      if (calls === 1) {
+        yield* stream([
+          ...delegation("first-delegate", "worker", "completed"),
+          childText("worker-result", "WORKER_RESULT", worker),
+        ] satisfies PromptSessionEvent[]);
+      } else {
+        // The later turn continues the same child session in the background.
+        yield* stream([
+          ...delegation("second-delegate", "worker", "running"),
+          childText("worker-later", "WORKER_LATER", worker),
+        ] satisfies PromptSessionEvent[]);
+      }
+      yield {
+        type: "completed",
+        stopReason: "end_turn",
+      } satisfies PromptSessionEvent;
+    },
+  });
+  const store = createChatStore(client.session, { now: () => 100 });
+  await store.getState().sendMessage({ oraSessionId: "one", text: "first" });
+  await store.getState().sendMessage({ oraSessionId: "one", text: "second" });
+  const turns = store.getState().conversations.one!.turns;
+  expect(await childStatusLabels(turns[0]!)).toEqual(["Delegation returned"]);
+  expect(await childStatusLabels(turns[1]!)).toEqual([
+    "Further state unknown (projection stopped)",
+  ]);
+  store.getState().dispose();
+});

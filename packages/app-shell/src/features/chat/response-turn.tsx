@@ -77,6 +77,7 @@ export function DisplayTurnItemView({
       return (
         <SubagentGroup
           group={item}
+          parentItems={turn.items}
           turnStatus={turn.status}
           parentEnded={
             turn.stopReason !== null ||

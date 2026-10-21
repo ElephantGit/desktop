@@ -4,6 +4,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@ora/ui";
 import { useTranslation } from "react-i18next";
 import type { ChatTurnItem, ChatTurnStatus } from "@ora/chat";
 import type { SubagentGroupItem } from "./subagent-items";
+import { delegationReturned } from "./subagent-items";
 import { MessageBubble } from "./message-bubble";
 import { MarkdownMessage } from "./markdown-message";
 import { ToolCallBlock } from "./tool-call-block";
@@ -13,11 +14,14 @@ import { PlanBlock } from "./plan-block";
 /** Presents a worker's own timeline without interpreting a launch tool as its lifecycle. */
 export function SubagentGroup({
   group,
+  parentItems,
   turnStatus,
   parentEnded,
   userName,
 }: {
   group: SubagentGroupItem;
+  /** Items of the stream that launched this group: the parent turn or its parent group. */
+  parentItems: ChatTurnItem[];
   turnStatus: ChatTurnStatus;
   /** A real turn fence or live failure/cancellation, never an inferred historical EOF. */
   parentEnded: boolean;
@@ -29,11 +33,16 @@ export function SubagentGroup({
   const label = t("chat.subagentTitle", { name });
   // Plain OpenCode projection carries attribution, not a negotiated child terminal state.
   // Parent completion only closes the observation channel; it cannot settle the child itself.
-  const status = parentEnded
-    ? "chat.subagentProjectionStopped"
-    : turnStatus === "streaming"
+  // The only settled fact is the provider's own delegation result, and only when the call
+  // that names this child returned one; a missing or conflicting relationship cannot.
+  const status = !parentEnded
+    ? turnStatus === "streaming"
       ? "chat.subagentStateUnreported"
-      : "chat.subagentStateUnknown";
+      : "chat.subagentStateUnknown"
+    : !group.relationshipUnknown &&
+        delegationReturned(parentItems, group.sourceId)
+      ? "chat.subagentDelegationReturned"
+      : "chat.subagentProjectionStopped";
   return (
     <section
       data-subagent-group={group.sourceId}
@@ -78,6 +87,7 @@ export function SubagentGroup({
                 <SubagentGroup
                   key={item.id}
                   group={item}
+                  parentItems={group.items}
                   turnStatus={turnStatus}
                   parentEnded={parentEnded}
                   userName={userName}
