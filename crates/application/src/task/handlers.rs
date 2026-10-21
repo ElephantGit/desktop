@@ -7,7 +7,7 @@ use crate::task::provisioning::{
     PROVISIONING_LEASE_DURATION_MS, ProvisioningLeaseRenewal, TaskWorkspaceCommit,
     WorkspaceCommitOutcome, WorktreeProvisioningLeaseStore,
 };
-use crate::{ApplicationError, Clock};
+use crate::{ApplicationError, Clock, RepositoryError};
 use ora_contracts::{
     CreateTaskRequest, CreateTaskResponse, GetTaskRequest, GetTaskResponse, ListTasksRequest,
     ListTasksResponse, UpdateTaskRequest, UpdateTaskResponse,
@@ -23,6 +23,212 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 const MAX_TASK_ID_GENERATION_ATTEMPTS: usize = 3;
+
+/// One worktree-backed task that committed successfully, with the owned
+/// worktree path that future recovery and retention paths resolve against.
+pub(super) struct ProvisionedWorktreeTask {
+    pub task: DomainTask,
+    pub worktree_path: String,
+}
+
+/// Shared provisioning flow for worktree-backed tasks: identity selection, the
+/// write-ahead lease, Git worktree creation, and one atomic commit through
+/// `commit`.
+///
+/// Every non-committed outcome hands the lease to durable cleanup before
+/// returning, so the provisioned Git resources always keep an owner: the lease
+/// before the commit, the committed rows after it.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn provision_worktree_task<
+    LeaseStorePort,
+    TaskIdGeneratorPort,
+    WorktreeProvisioner,
+    ClockSource,
+    Commit,
+>(
+    lease_store: &LeaseStorePort,
+    task_id_generator: &TaskIdGeneratorPort,
+    worktree_provisioner: &WorktreeProvisioner,
+    repository_root: &Path,
+    work_dir: &Path,
+    clock: &ClockSource,
+    project_id: ProjectId,
+    title: String,
+    base_branch: String,
+    commit: Commit,
+) -> Result<ProvisionedWorktreeTask, ApplicationError>
+where
+    LeaseStorePort: WorktreeProvisioningLeaseStore,
+    TaskIdGeneratorPort: TaskIdGenerator,
+    WorktreeProvisioner: TaskWorktreeProvisioner,
+    // Clone + Send + 'static keep the lease renewal thread available for slow
+    // Git work, mirroring the handler-level composition requirements.
+    ClockSource: Clock + Clone + Send + 'static,
+    Commit: FnOnce(
+        &DomainTask,
+        &DomainWorktree,
+        &WorktreeProvisioningLeaseId,
+        &str,
+    ) -> Result<WorkspaceCommitOutcome, RepositoryError>,
+{
+    let base_reference_name = base_branch.trim().to_owned();
+    if base_reference_name.is_empty() {
+        return Err(ApplicationError::TaskBaseBranchRequired);
+    }
+    worktree_provisioner
+        .validate_repository()
+        .map_err(ApplicationError::from_task_worktree_provisioner_error)?;
+    let (task_id, workspace_id, branch_name, worktree_path) =
+        select_available_task_workspace_identity(
+            task_id_generator,
+            worktree_provisioner,
+            work_dir,
+        )?;
+    // Write-ahead lease: from here on the provisioned Git resources are
+    // always owned by something durable — the lease, then the committed
+    // rows — so no crash or lost race can orphan them.
+    let now = clock.now_timestamp_millis();
+    let lease = WorktreeProvisioningLease::new(
+        WorktreeProvisioningLeaseId::new(Uuid::new_v4().to_string()),
+        project_id.clone(),
+        workspace_id.clone(),
+        repository_root.to_string_lossy().into_owned(),
+        worktree_path.to_string_lossy().into_owned(),
+        branch_name.clone(),
+        now + PROVISIONING_LEASE_DURATION_MS,
+        now,
+    );
+    lease_store
+        .create_lease(&lease)
+        .map_err(ApplicationError::from_worktree_repository_error)?;
+    let renewal = ProvisioningLeaseRenewal::spawn(lease_store.clone(), lease.id.clone(), {
+        let clock = clock.clone();
+        move || clock.now_timestamp_millis()
+    });
+
+    let provisioned_worktree =
+        match worktree_provisioner.create_task_worktree(CreateTaskWorktreeRequest {
+            branch_name: branch_name.clone(),
+            base_reference_name,
+            worktree_path,
+        }) {
+            Ok(provisioned) => provisioned,
+            Err(error) => {
+                drop(renewal);
+                release_lease_to_cleanup(lease_store, clock, &lease.id);
+                return Err(ApplicationError::from_task_worktree_provisioner_error(
+                    error,
+                ));
+            }
+        };
+
+    let now = clock.now_timestamp_millis();
+    let baseline = match ora_domain::WorktreeBaseline::recorded(provisioned_worktree.base_commit_id)
+    {
+        Ok(baseline) => baseline,
+        Err(error) => {
+            drop(renewal);
+            release_lease_to_cleanup(lease_store, clock, &lease.id);
+            return Err(ApplicationError::TaskWorktreeProvisioner {
+                source: crate::TaskWorktreeProvisionerError::operation_failed(
+                    "failed to record task worktree baseline",
+                    error,
+                ),
+            });
+        }
+    };
+    let worktree = DomainWorktree::new(
+        workspace_id.clone(),
+        Some(branch_name),
+        baseline,
+        DomainWorktreeActivity::Active,
+        AuditFields::new(now, now, false),
+    );
+    let task = DomainTask::new(
+        task_id,
+        project_id.clone(),
+        workspace_id,
+        title,
+        AuditFields::new(now, now, false),
+    );
+
+    let worktree_path_string = lease.checkout_root.clone();
+    let committed = commit(&task, &worktree, &lease.id, &worktree_path_string);
+    drop(renewal);
+    match committed {
+        Ok(WorkspaceCommitOutcome::Committed) => Ok(ProvisionedWorktreeTask {
+            task,
+            worktree_path: worktree_path_string,
+        }),
+        Ok(WorkspaceCommitOutcome::ProjectNotVisible) => {
+            release_lease_to_cleanup(lease_store, clock, &lease.id);
+            Err(ApplicationError::ProjectNotFound {
+                project_id: project_id.to_string(),
+            })
+        }
+        Ok(WorkspaceCommitOutcome::RunNotAdmissible) => {
+            release_lease_to_cleanup(lease_store, clock, &lease.id);
+            Err(ApplicationError::ScheduledRunNotAdmissible)
+        }
+        Err(error) => {
+            release_lease_to_cleanup(lease_store, clock, &lease.id);
+            Err(ApplicationError::from_task_repository_error(error))
+        }
+    }
+}
+
+/// Hands the lease's Git resources to the durable cleanup path.
+///
+/// Failure is deliberately tolerated: the lease then simply expires and the
+/// cleanup worker reclaims it on schedule.
+pub(super) fn release_lease_to_cleanup<LeaseStorePort, ClockSource>(
+    lease_store: &LeaseStorePort,
+    clock: &ClockSource,
+    lease_id: &WorktreeProvisioningLeaseId,
+) where
+    LeaseStorePort: WorktreeProvisioningLeaseStore,
+    ClockSource: Clock,
+{
+    let _ = lease_store.release_to_cleanup(lease_id, clock.now_timestamp_millis());
+}
+
+/// Generates independent Task and Workspace identities without colliding with Git resources.
+pub(super) fn select_available_task_workspace_identity<TaskIdGeneratorPort, WorktreeProvisioner>(
+    task_id_generator: &TaskIdGeneratorPort,
+    worktree_provisioner: &WorktreeProvisioner,
+    work_dir: &Path,
+) -> Result<(TaskId, WorkspaceId, String, PathBuf), ApplicationError>
+where
+    TaskIdGeneratorPort: TaskIdGenerator,
+    WorktreeProvisioner: TaskWorktreeProvisioner,
+{
+    for _ in 0..MAX_TASK_ID_GENERATION_ATTEMPTS {
+        let task_id = task_id_generator.generate_task_id();
+        let workspace_id = WorkspaceId::new(Uuid::new_v4().to_string());
+        let branch_prefix = workspace_branch_prefix(&workspace_id);
+
+        if workspace_branch_prefix_exists_in_work_dir(work_dir, &branch_prefix)? {
+            continue;
+        }
+
+        let branch_name = branch_name_for_workspace(&workspace_id);
+        let branch_exists = worktree_provisioner
+            .task_branch_exists(&branch_name)
+            .map_err(ApplicationError::from_task_worktree_provisioner_error)?;
+        if !branch_exists {
+            return Ok((
+                task_id,
+                workspace_id.clone(),
+                branch_name,
+                worktree_path_for_workspace(work_dir, &workspace_id),
+            ));
+        }
+    }
+
+    Err(ApplicationError::TaskWorkspaceIdExhausted {
+        attempts: MAX_TASK_ID_GENERATION_ATTEMPTS,
+    })
+}
 
 /// Handles task creation without depending on transport-specific concerns.
 pub struct CreateTaskHandler<
@@ -101,153 +307,30 @@ where
         &self,
         request: CreateTaskRequest,
     ) -> Result<CreateTaskResponse, ApplicationError> {
-        let base_reference_name = request
+        let base_branch = request
             .base_branch
             .as_deref()
             .map(str::trim)
             .filter(|branch| !branch.is_empty())
             .ok_or(ApplicationError::TaskBaseBranchRequired)?
             .to_string();
-        self.worktree_provisioner
-            .validate_repository()
-            .map_err(ApplicationError::from_task_worktree_provisioner_error)?;
-        let (task_id, workspace_id, branch_name, worktree_path) =
-            self.select_available_task_workspace_identity()?;
-        // Write-ahead lease: from here on the provisioned Git resources are
-        // always owned by something durable — the lease, then the committed
-        // rows — so no crash or lost race can orphan them.
-        let project_id = ProjectId::new(request.project_id.clone());
-        let now = self.clock.now_timestamp_millis();
-        let lease = WorktreeProvisioningLease::new(
-            WorktreeProvisioningLeaseId::new(Uuid::new_v4().to_string()),
-            project_id.clone(),
-            workspace_id.clone(),
-            self.repository_root.to_string_lossy().into_owned(),
-            worktree_path.to_string_lossy().into_owned(),
-            branch_name.clone(),
-            now + PROVISIONING_LEASE_DURATION_MS,
-            now,
-        );
-        self.lease_store
-            .create_lease(&lease)
-            .map_err(ApplicationError::from_worktree_repository_error)?;
-        let renewal =
-            ProvisioningLeaseRenewal::spawn(self.lease_store.clone(), lease.id.clone(), {
-                let clock = self.clock.clone();
-                move || clock.now_timestamp_millis()
-            });
-
-        let provisioned_worktree =
-            match self
-                .worktree_provisioner
-                .create_task_worktree(CreateTaskWorktreeRequest {
-                    branch_name: branch_name.clone(),
-                    base_reference_name,
-                    worktree_path,
-                }) {
-                Ok(provisioned) => provisioned,
-                Err(error) => {
-                    drop(renewal);
-                    self.release_lease_to_cleanup(&lease.id);
-                    return Err(ApplicationError::from_task_worktree_provisioner_error(
-                        error,
-                    ));
-                }
-            };
-
-        let now = self.clock.now_timestamp_millis();
-        let baseline =
-            match ora_domain::WorktreeBaseline::recorded(provisioned_worktree.base_commit_id) {
-                Ok(baseline) => baseline,
-                Err(error) => {
-                    drop(renewal);
-                    self.release_lease_to_cleanup(&lease.id);
-                    return Err(ApplicationError::TaskWorktreeProvisioner {
-                        source: crate::TaskWorktreeProvisionerError::operation_failed(
-                            "failed to record task worktree baseline",
-                            error,
-                        ),
-                    });
-                }
-            };
-        let worktree = DomainWorktree::new(
-            workspace_id.clone(),
-            Some(branch_name),
-            baseline,
-            DomainWorktreeActivity::Active,
-            AuditFields::new(now, now, false),
-        );
-        let task = DomainTask::new(
-            task_id,
-            project_id.clone(),
-            workspace_id,
+        let provisioned = provision_worktree_task(
+            &self.lease_store,
+            &self.task_id_generator,
+            &self.worktree_provisioner,
+            &self.repository_root,
+            &self.work_dir,
+            &self.clock,
+            ProjectId::new(request.project_id.clone()),
             request.title,
-            AuditFields::new(now, now, false),
-        );
-
-        let committed = self
-            .workspace_commit
-            .commit_worktree_task(&task, &worktree, &lease.id);
-        drop(renewal);
-        match committed {
-            Ok(WorkspaceCommitOutcome::Committed) => Ok(CreateTaskResponse {
-                task: map_task(task),
-            }),
-            // The owning project was deleted while Git work ran; the durable
-            // cleanup path reclaims both the worktree and the branch.
-            Ok(WorkspaceCommitOutcome::ProjectNotVisible) => {
-                self.release_lease_to_cleanup(&lease.id);
-                Err(ApplicationError::ProjectNotFound {
-                    project_id: project_id.to_string(),
-                })
-            }
-            Err(error) => {
-                self.release_lease_to_cleanup(&lease.id);
-                Err(ApplicationError::from_task_repository_error(error))
-            }
-        }
-    }
-
-    /// Hands the lease's Git resources to the durable cleanup path.
-    ///
-    /// Failure is deliberately tolerated: the lease then simply expires and the
-    /// cleanup worker reclaims it on schedule.
-    fn release_lease_to_cleanup(&self, lease_id: &WorktreeProvisioningLeaseId) {
-        let _ = self
-            .lease_store
-            .release_to_cleanup(lease_id, self.clock.now_timestamp_millis());
-    }
-
-    /// Generates independent Task and Workspace identities without colliding with Git resources.
-    fn select_available_task_workspace_identity(
-        &self,
-    ) -> Result<(TaskId, WorkspaceId, String, PathBuf), ApplicationError> {
-        for _ in 0..MAX_TASK_ID_GENERATION_ATTEMPTS {
-            let task_id = self.task_id_generator.generate_task_id();
-            let workspace_id = WorkspaceId::new(Uuid::new_v4().to_string());
-            let branch_prefix = workspace_branch_prefix(&workspace_id);
-
-            if workspace_branch_prefix_exists_in_work_dir(&self.work_dir, &branch_prefix)? {
-                continue;
-            }
-
-            let branch_name = branch_name_for_workspace(&workspace_id);
-            let branch_exists = self
-                .worktree_provisioner
-                .task_branch_exists(&branch_name)
-                .map_err(ApplicationError::from_task_worktree_provisioner_error)?;
-            if !branch_exists {
-                return Ok((
-                    task_id,
-                    workspace_id.clone(),
-                    branch_name,
-                    worktree_path_for_workspace(&self.work_dir, &workspace_id),
-                ));
-            }
-        }
-
-        Err(ApplicationError::TaskWorkspaceIdExhausted {
-            attempts: MAX_TASK_ID_GENERATION_ATTEMPTS,
+            base_branch,
+            |task, worktree, lease_id, _worktree_path| {
+                self.workspace_commit
+                    .commit_worktree_task(task, worktree, lease_id)
+            },
+        )?;
+        Ok(CreateTaskResponse {
+            task: map_task(provisioned.task),
         })
     }
 }

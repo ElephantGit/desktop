@@ -120,6 +120,11 @@ pub enum ApplicationError {
     TaskWorktreeProvisioner {
         source: TaskWorktreeProvisionerError,
     },
+    /// The Scheduled Run targeted by an ownership commit was no longer `accepted`
+    /// for the task's project, or was already bound to another worktree task: the
+    /// task creation rolled back so the provisioning lease keeps compensation.
+    #[error("scheduled run is no longer admissible for worktree ownership")]
+    ScheduledRunNotAdmissible,
     #[error("workspace diff operation failed")]
     WorkspaceDiff {
         #[source]
@@ -505,6 +510,7 @@ impl PartialEq for ApplicationError {
             | (ProjectBranchListing { .. }, ProjectBranchListing { .. })
             | (TaskRepository { .. }, TaskRepository { .. })
             | (TaskWorktreeProvisioner { .. }, TaskWorktreeProvisioner { .. })
+            | (ScheduledRunNotAdmissible, ScheduledRunNotAdmissible)
             | (WorkspaceDiffCommitMessageBlank, WorkspaceDiffCommitMessageBlank)
             | (WorktreeRepository { .. }, WorktreeRepository { .. })
             | (SessionRepository { .. }, SessionRepository { .. })

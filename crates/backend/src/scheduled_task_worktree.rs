@@ -10,9 +10,10 @@ use ora_application::{
 };
 use ora_contracts::DeleteTaskRequest;
 use ora_db::{
-    RepositoryPool, SqliteScheduledRunRepository, SqliteTaskRepository, SqliteWorktreeRepository,
+    RepositoryPool, SqliteScheduledRunRepository, SqliteTaskRepository, SqliteWorkspaceRepository,
+    SqliteWorktreeRepository,
 };
-use ora_domain::{ScheduledRun, ScheduledRunId, TaskId};
+use ora_domain::{ScheduledRun, ScheduledRunId, TaskId, WorkspaceId, WorkspaceLocation};
 
 use crate::task::{TaskApi, resolve_project_cwd};
 
@@ -50,6 +51,7 @@ pub(super) struct ScheduledWorktreeJanitor {
     runs: SqliteScheduledRunRepository,
     task_rows: SqliteTaskRepository,
     worktrees: SqliteWorktreeRepository,
+    workspaces: SqliteWorkspaceRepository,
 }
 
 impl ScheduledWorktreeJanitor {
@@ -64,6 +66,7 @@ impl ScheduledWorktreeJanitor {
             runs: SqliteScheduledRunRepository::new(pool.clone()),
             task_rows: SqliteTaskRepository::new(pool.clone()),
             worktrees: SqliteWorktreeRepository::new(pool.clone()),
+            workspaces: SqliteWorkspaceRepository::new(pool.clone()),
             pool,
         }
     }
@@ -97,6 +100,12 @@ impl ScheduledWorktreeJanitor {
     /// worktrees first. Also discards worktrees that provably carry no changes, which
     /// covers runs a previous process finished without cleanup. In-use worktrees are
     /// excluded from both deletion and the retained count, so the cap governs the unused set.
+    ///
+    /// Existence is checked before path handling: a deleted task's stale link is cleared
+    /// even when the run has no recorded path, or it would be exempt from history pruning
+    /// forever. A run without a recorded path (an ownership commit that crashed before
+    /// `Start`) is classified against the path resolved from its committed workspace
+    /// identity — a missing path is never treated as evidence of a clean worktree.
     pub(super) async fn enforce_retention(&self) {
         let Ok(runs) = self.runs.list_scheduled_runs_with_retained_worktrees() else {
             return;
@@ -106,14 +115,11 @@ impl ScheduledWorktreeJanitor {
             let Some(task_id) = run.worktree_task_id.clone() else {
                 continue;
             };
-            let Some(worktree_path) = run.worktree_path.clone() else {
-                continue;
-            };
-            match self.task_exists(&task_id) {
+            let owned_task = match self.task_rows.find_task(&task_id) {
                 // A transient probe failure must keep the link for the next sweep instead of
                 // unlinking a worktree that probably still exists.
-                None => continue,
-                Some(false) => {
+                Err(_) => continue,
+                Ok(None) => {
                     // History actions may delete a retained worktree through the ordinary
                     // Task API. Treat the missing row as an already-completed discard so
                     // this run can be pruned again.
@@ -126,8 +132,22 @@ impl ScheduledWorktreeJanitor {
                     }
                     continue;
                 }
-                Some(true) => {}
-            }
+                Ok(Some(task)) => task,
+            };
+            let worktree_path = match run.worktree_path.clone() {
+                Some(path) => path,
+                // Resolve the committed workspace's persisted location, never the live
+                // worktree root: a root change between provisioning and recovery must not
+                // classify a missing inferred path as a clean (discardable) checkout.
+                None => {
+                    let Some(path) = self.resolve_committed_checkout_path(&owned_task.workspace_id)
+                    else {
+                        // Unresolvable: keep the run and its link rather than guessing.
+                        continue;
+                    };
+                    path
+                }
+            };
             let in_use = self.task_in_use(&task_id);
             let has_changes = self.classify_worktree(&run, &task_id, &worktree_path);
             candidates.push(RetentionCandidate {
@@ -140,6 +160,19 @@ impl ScheduledWorktreeJanitor {
         }
         for (task_id, run_id) in retention_discards(&candidates, MAX_RETAINED_SCHEDULED_WORKTREES) {
             self.discard_task(&task_id, &run_id).await;
+        }
+    }
+
+    /// Resolves the persisted local-filesystem checkout path for a committed workspace.
+    ///
+    /// Returns `None` when the workspace row is missing, its location is not a local
+    /// filesystem path, or the read failed — every such case must conservatively keep
+    /// the run instead of treating an unknown path as clean.
+    fn resolve_committed_checkout_path(&self, workspace_id: &WorkspaceId) -> Option<String> {
+        let workspace = self.workspaces.find_workspace(workspace_id).ok()??;
+        match workspace.location {
+            WorkspaceLocation::LocalFilesystem { path } => Some(path),
+            WorkspaceLocation::Ssh { .. } | WorkspaceLocation::RemoteTarget { .. } => None,
         }
     }
 
@@ -725,7 +758,7 @@ mod tests {
         run_integration(async {
             use ora_application::{
                 ScheduledOccurrenceRepository, ScheduledRunLifecycleRepository,
-                ScheduledTaskHistoryRepository, ScheduledTaskRepository, TaskRepository,
+                ScheduledTaskHistoryRepository, ScheduledTaskRepository,
             };
             use ora_contracts::{CreateProjectRequest, CreateTaskRequest, DeleteTaskRequest};
             use ora_db::{
@@ -882,6 +915,796 @@ mod tests {
             assert!(
                 prunable_left.is_empty(),
                 "the unlinked run is pruned like any other history fact"
+            );
+        });
+    }
+
+    /// The real scheduled provisioning entry binds the run to its worktree task
+    /// and path inside the task-creation transaction; a run the startup recovery
+    /// settled before its session started is then reclaimed by retention.
+    #[test]
+    fn integration_retention_reclaims_a_never_started_run_after_ownership_commit() {
+        run_integration(async {
+            use ora_application::{
+                ScheduledOccurrenceRepository, ScheduledRunLifecycleRepository,
+                ScheduledTaskRepository, TaskRepository,
+            };
+            use ora_contracts::CreateProjectRequest;
+            use ora_db::{
+                DatabaseBootstrapper, DatabaseLocation, SqliteScheduledRunRepository,
+                SqliteScheduledTaskRepository, SqliteTaskRepository, default_migration_catalog,
+            };
+            use ora_domain::{
+                ScheduledOccurrence, ScheduledRun, ScheduledRunId, ScheduledRunTransition,
+            };
+            use tempfile::TempDir;
+
+            let temporary = TempDir::new().expect("backend fixture");
+            let git = GitTestScaffold::new("scheduled-worktree-recovery").expect("Git fixture");
+            git.write_file(git.repo_path(), "README.md", "fixture\n")
+                .expect("seed repository");
+            git.stage_all_and_commit("initial").expect("initial commit");
+            let backend = crate::Backend::open(crate::test_backend::backend_paths(
+                temporary.path(),
+                temporary.path(),
+            ))
+            .expect("backend");
+            let tasks = backend.tasks();
+            let project = backend
+                .projects()
+                .create(CreateProjectRequest {
+                    name: "Retention fixture".to_string(),
+                    main_workspace_path: git.repo_path().to_string_lossy().into_owned(),
+                })
+                .expect("project")
+                .project;
+
+            let database_path = temporary.path().join("ora.sqlite3");
+            let pool = DatabaseBootstrapper::system()
+                .bootstrap_repository_pool(
+                    &DatabaseLocation::path(&database_path),
+                    &default_migration_catalog().expect("migration catalog"),
+                )
+                .expect("reopen database pool");
+            let definition = integration_scheduled_task(&project.id);
+            SqliteScheduledTaskRepository::new(pool.clone())
+                .create_scheduled_task(definition.clone())
+                .expect("create definition");
+            let runs = SqliteScheduledRunRepository::new(pool.clone());
+            let run_id = ScheduledRunId::new("run-a-prime");
+            let run = ScheduledRun::accepted(
+                run_id.clone(),
+                ScheduledOccurrence {
+                    task_id: definition.id.clone(),
+                    scheduled_at: 1_000,
+                },
+                &definition,
+                1_001,
+            );
+            runs.resolve_scheduled_occurrence(ora_application::ScheduledOccurrenceCandidate::run(
+                run,
+            ))
+            .expect("admit run");
+
+            // The real scheduled provisioning entry: the ownership commit binds
+            // the run to the worktree task and its path in the task-creation
+            // transaction, so the freshly provisioned worktree has a durable
+            // owner before the session ever starts.
+            let created = tasks
+                .create_for_scheduled_run(crate::task::ScheduledRunWorktreeCommand {
+                    project_id: project.id.clone(),
+                    title: "Scheduled run run-a-prime".to_string(),
+                    base_branch: "main".to_string(),
+                    run_id: run_id.to_string(),
+                })
+                .expect("scheduled provisioning");
+            let worktree_task_id = ora_domain::TaskId::new(&created.task.id);
+            // The projection can differ in spelling (8.3 short names on Windows,
+            // /var symlinks on macOS) from the committed path; both name the same
+            // directory, so compare their canonical forms.
+            assert_eq!(
+                std::fs::canonicalize(&created.worktree_path).expect("committed path exists"),
+                std::fs::canonicalize(
+                    tasks
+                        .workspace(ora_contracts::GetTaskWorkspaceRequest {
+                            task_id: created.task.id.clone(),
+                        })
+                        .expect("worktree workspace")
+                        .workspace
+                        .root_path
+                )
+                .expect("projected path exists"),
+                "the committed path matches the workspace projection"
+            );
+            // The run row carries the binding while still `accepted`.
+            assert_eq!(
+                runs.list_scheduled_runs_with_retained_worktrees()
+                    .expect("retained list")
+                    .into_iter()
+                    .filter(|run| run.id == run_id)
+                    .count(),
+                0,
+                "an accepted run is not yet part of the retained history"
+            );
+
+            // Startup recovery settles the run while its session never started;
+            // the bound worktree is now retention's responsibility.
+            runs.transition_scheduled_run(
+                &run_id,
+                ScheduledRunTransition::Fail {
+                    reason: ora_domain::ScheduledRunFailureReason::ExecutionError,
+                },
+                1_100,
+            )
+            .expect("settle run");
+
+            let janitor = super::ScheduledWorktreeJanitor::new(
+                tasks.clone(),
+                pool.clone(),
+                temporary.path().to_path_buf(),
+            );
+            janitor.enforce_retention().await;
+
+            // The never-started worktree is provably clean against its committed
+            // path, so the sweep discards the task and clears the link.
+            assert!(
+                SqliteTaskRepository::new(pool.clone())
+                    .find_task(&worktree_task_id)
+                    .expect("task probe")
+                    .is_none(),
+                "the clean never-started worktree task is discarded"
+            );
+            let linked = runs
+                .list_scheduled_runs_with_retained_worktrees()
+                .expect("retained list")
+                .into_iter()
+                .filter(|run| run.id == run_id)
+                .count();
+            assert_eq!(linked, 0, "the link is cleared after the discard");
+        });
+    }
+
+    /// Bootstrap ordering regression (the A′ acceptance's AC4): the agent runtime's
+    /// session reconciliation must run before the scheduled recovery/cleanup, so a
+    /// leftover `Running` session row is `Stopped` before the janitor classifies the
+    /// bound worktree. A clean worktree of a settled run is then reclaimed; had the
+    /// order been reversed, the stale session would have kept it in use forever.
+    #[test]
+    fn integration_bootstrap_stops_sessions_before_scheduled_cleanup() {
+        run_integration(async {
+            use ora_application::{
+                ProjectRepository, ScheduledOccurrenceRepository, ScheduledRunLifecycleRepository,
+                ScheduledTaskRepository, SessionRepository, TaskRepository, TaskWorkspaceCommit,
+            };
+            use ora_db::{
+                DatabaseBootstrapper, DatabaseLocation, SqliteProjectRepository,
+                SqliteScheduledRunRepository, SqliteScheduledTaskRepository,
+                SqliteSessionRepository, SqliteTaskRepository, SqliteTaskWorkspaceRepository,
+                SqliteWorktreeProvisioningLeaseRepository, default_migration_catalog,
+            };
+            use ora_domain::{
+                AuditFields, Project, ScheduledOccurrence, ScheduledRun, ScheduledRunId,
+                ScheduledTask, ScheduledTaskApproval, ScheduledTaskExecutionLocation,
+                ScheduledTaskId, ScheduledTaskSchedule, Session, SessionId, SessionMcpSelection,
+                SessionStatus, Task, WorkspaceId, Worktree, WorktreeActivity, WorktreeBaseline,
+                WorktreeProvisioningLease, WorktreeProvisioningLeaseId,
+            };
+            use tempfile::TempDir;
+
+            ora_logging::initialize_test_clock();
+            let temporary = TempDir::new().expect("backend fixture");
+            let git = GitTestScaffold::new("scheduled-bootstrap-recovery").expect("Git fixture");
+            git.write_file(git.repo_path(), "README.md", "fixture\n")
+                .expect("seed repository");
+            git.stage_all_and_commit("initial").expect("initial commit");
+            let baseline = git
+                .run_git(["rev-parse", "HEAD"])
+                .expect("read baseline commit")
+                .trim()
+                .to_string();
+
+            // Preseed the database exactly where `Backend::open` will find it, so the
+            // real bootstrap runs its recovery over the crashed-process state.
+            let database_path = temporary.path().join("ora.sqlite3");
+            let pool = DatabaseBootstrapper::system()
+                .bootstrap_repository_pool(
+                    &DatabaseLocation::path(&database_path),
+                    &default_migration_catalog().expect("migration catalog"),
+                )
+                .expect("bootstrap database");
+            let project_root = temporary.path().join("fixture-repository");
+            std::fs::create_dir_all(&project_root).expect("create project workspace");
+            let project =
+                SqliteProjectRepository::with_clock(pool.clone(), crate::clock::SystemClock)
+                    .create_project(
+                        Project::new(
+                            ora_domain::ProjectId::new("project-1"),
+                            "Bootstrap fixture",
+                            AuditFields::new(10, 10, /*is_deleted*/ false),
+                        ),
+                        ora_domain::WorkspaceLocation::local_filesystem(
+                            git.repo_path().to_string_lossy().into_owned(),
+                        ),
+                    )
+                    .expect("create project");
+            let definition = ScheduledTask::new(
+                ScheduledTaskId::new("scheduled-task-it"),
+                "Integration task",
+                true,
+                ScheduledTaskSchedule::daily(9, 0).expect("daily schedule"),
+                ScheduledTaskExecutionLocation::Local,
+                project.id.clone(),
+                ora_domain::AgentRef::parse("ora/agent").expect("agent ref"),
+                Some("default".to_string()),
+                "Run the integration prompt",
+                Some(ScheduledTaskApproval::full_auto_in_worktree(10)),
+                AuditFields::new(10, 10, false),
+            )
+            .expect("task");
+            SqliteScheduledTaskRepository::new(pool.clone())
+                .create_scheduled_task(definition.clone())
+                .expect("create definition");
+            let run_id = ScheduledRunId::new("run-bootstrap");
+            let run = ScheduledRun::accepted(
+                run_id.clone(),
+                ScheduledOccurrence {
+                    task_id: definition.id.clone(),
+                    scheduled_at: 1_000,
+                },
+                &definition,
+                1_001,
+            );
+            SqliteScheduledRunRepository::new(pool.clone())
+                .resolve_scheduled_occurrence(ora_application::ScheduledOccurrenceCandidate::run(
+                    run,
+                ))
+                .expect("admit run");
+
+            // The A′ ownership commit binds the run and persists the task rows in
+            // one transaction, exactly like the scheduled provisioning entry would.
+            let worktree_root = temporary.path().join("worktrees");
+            let workspace_id = WorkspaceId::new("workspace-run-bootstrap");
+            let worktree_path = worktree_root.join(workspace_id.as_ref());
+            let lease = WorktreeProvisioningLease::new(
+                WorktreeProvisioningLeaseId::new("lease-bootstrap"),
+                project.id.clone(),
+                workspace_id.clone(),
+                git.repo_path().to_string_lossy().into_owned(),
+                worktree_path.to_string_lossy().into_owned(),
+                "ora/task-run-bootstrap".to_string(),
+                /*lease_expires_at*/ i64::MAX,
+                /*now*/ 10,
+            );
+            SqliteWorktreeProvisioningLeaseRepository::new(pool.clone())
+                .create_lease(&lease)
+                .expect("create lease");
+            let owned_task = Task::new(
+                TaskId::new("task-run-bootstrap"),
+                project.id.clone(),
+                workspace_id.clone(),
+                "Scheduled run run-bootstrap",
+                AuditFields::new(10, 10, /*is_deleted*/ false),
+            );
+            let owned_worktree = Worktree::new(
+                workspace_id.clone(),
+                Some("ora/task-run-bootstrap".to_string()),
+                WorktreeBaseline::recorded(baseline.clone()).expect("baseline"),
+                WorktreeActivity::Active,
+                AuditFields::new(10, 10, /*is_deleted*/ false),
+            );
+            let outcome =
+                SqliteTaskWorkspaceRepository::with_clock(pool.clone(), crate::clock::SystemClock)
+                    .commit_worktree_task_for_scheduled_run(
+                        &owned_task,
+                        &owned_worktree,
+                        &WorktreeProvisioningLeaseId::new("lease-bootstrap"),
+                        &ora_application::ScheduledRunWorktreeLink {
+                            run_id: run_id.clone(),
+                            worktree_path: worktree_path.to_string_lossy().into_owned(),
+                        },
+                    )
+                    .expect("ownership commit");
+            assert!(
+                matches!(outcome, ora_application::WorkspaceCommitOutcome::Committed),
+                "the ownership commit binds the run and persists the task"
+            );
+
+            // A real, clean checkout at the committed path, plus the live session
+            // the crashed process left behind.
+            git.run_git([
+                std::ffi::OsStr::new("worktree"),
+                std::ffi::OsStr::new("add"),
+                std::ffi::OsStr::new("-b"),
+                std::ffi::OsStr::new("ora/task-run-bootstrap"),
+                worktree_path.as_os_str(),
+            ])
+            .expect("create the provisioned worktree");
+            let session_id = SessionId::new("session-bootstrap");
+            let now = <crate::clock::SystemClock as ora_application::Clock>::now_timestamp_millis(
+                &crate::clock::SystemClock,
+            );
+            SqliteSessionRepository::new(pool.clone())
+                .create_session(Session::new(
+                    session_id.clone(),
+                    workspace_id.clone(),
+                    ora_domain::AgentRef::parse("ora-space.fixture").expect("agent identity"),
+                    "provider-session",
+                    SessionStatus::Running,
+                    SessionMcpSelection::Automatic,
+                    AuditFields::new(now, now, /*is_deleted*/ false),
+                ))
+                .expect("leftover running session");
+
+            // Crash: drop the pool without any graceful cleanup, then reboot.
+            drop(pool);
+            let backend = crate::Backend::open(crate::test_backend::backend_paths(
+                temporary.path(),
+                temporary.path(),
+            ))
+            .expect("backend");
+
+            // The session reconciliation must have converged the leftover row
+            // before the scheduled sweep touched the worktree.
+            let reopened = ora_db::DatabaseBootstrapper::system()
+                .bootstrap_repository_pool(
+                    &DatabaseLocation::path(&database_path),
+                    &default_migration_catalog().expect("migration catalog"),
+                )
+                .expect("reopen pool");
+            let session = ora_application::SessionRepository::find_session(
+                &SqliteSessionRepository::new(reopened.clone()),
+                &session_id,
+            )
+            .expect("session probe")
+            .expect("session row survives");
+            assert_eq!(
+                session.status,
+                SessionStatus::Stopped,
+                "bootstrap reconciles the leftover running session"
+            );
+            // The settled run's clean worktree is reclaimed by the sweep, which
+            // proves the janitor ran after the session reconciliation: a still
+            // `Running` row would have kept the worktree in use. The sweep is
+            // scheduled asynchronously at restore, so poll until it converges.
+            let task_probe = SqliteTaskRepository::new(reopened.clone());
+            let mut reclaimed = false;
+            for _ in 0..100 {
+                if task_probe
+                    .find_task(&TaskId::new("task-run-bootstrap"))
+                    .expect("task probe")
+                    .is_none()
+                {
+                    reclaimed = true;
+                    break;
+                }
+                // Async sleep: blocking here would starve the current-thread
+                // runtime that also drives the scheduler's sweep task.
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            if !reclaimed {
+                let retained: Vec<_> = SqliteScheduledRunRepository::new(reopened.clone())
+                    .list_scheduled_runs_with_retained_worktrees()
+                    .expect("retained list")
+                    .into_iter()
+                    .map(|run| {
+                        (
+                            run.id.to_string(),
+                            format!("{:?}", run.status),
+                            run.worktree_task_id.map(|task| task.to_string()),
+                            run.worktree_path,
+                        )
+                    })
+                    .collect();
+                eprintln!("retention diagnostics: retained={retained:?}");
+            }
+            assert!(
+                reclaimed,
+                "the settled run's clean worktree is reclaimed after the session stopped"
+            );
+            let _ = backend;
+        });
+    }
+
+    /// The retained-worktree sweep must resolve a run without a recorded path
+    /// from the committed workspace's persisted location, never from the live
+    /// worktree root: after the root moves, a guessed path would be missing and
+    /// a dirty checkout under the old root could be force-deleted as if clean.
+    #[test]
+    fn integration_retention_resolves_a_missing_path_from_the_committed_workspace() {
+        run_integration(async {
+            use ora_application::{
+                ScheduledOccurrenceRepository, ScheduledRunLifecycleRepository,
+                ScheduledTaskRepository, TaskRepository,
+            };
+            use ora_contracts::CreateProjectRequest;
+            use ora_db::{
+                DatabaseBootstrapper, DatabaseLocation, SqliteScheduledRunRepository,
+                SqliteScheduledTaskRepository, SqliteTaskRepository, default_migration_catalog,
+            };
+            use ora_domain::{
+                ScheduledOccurrence, ScheduledRun, ScheduledRunId, ScheduledRunTransition,
+            };
+            use tempfile::TempDir;
+
+            ora_logging::initialize_test_clock();
+            let temporary = TempDir::new().expect("backend fixture");
+            let git = GitTestScaffold::new("scheduled-null-path-recovery").expect("Git fixture");
+            git.write_file(git.repo_path(), "README.md", "fixture\n")
+                .expect("seed repository");
+            git.stage_all_and_commit("initial").expect("initial commit");
+            let backend = crate::Backend::open(crate::test_backend::backend_paths(
+                temporary.path(),
+                temporary.path(),
+            ))
+            .expect("backend");
+            let tasks = backend.tasks();
+            let project = backend
+                .projects()
+                .create(CreateProjectRequest {
+                    name: "Null-path fixture".to_string(),
+                    main_workspace_path: git.repo_path().to_string_lossy().into_owned(),
+                })
+                .expect("project")
+                .project;
+
+            let database_path = temporary.path().join("ora.sqlite3");
+            let pool = DatabaseBootstrapper::system()
+                .bootstrap_repository_pool(
+                    &DatabaseLocation::path(&database_path),
+                    &default_migration_catalog().expect("migration catalog"),
+                )
+                .expect("reopen database pool");
+            let definition = integration_scheduled_task(&project.id);
+            SqliteScheduledTaskRepository::new(pool.clone())
+                .create_scheduled_task(definition.clone())
+                .expect("create definition");
+            let runs = SqliteScheduledRunRepository::new(pool.clone());
+            let run_id = ScheduledRunId::new("run-null-path");
+            let run = ScheduledRun::accepted(
+                run_id.clone(),
+                ScheduledOccurrence {
+                    task_id: definition.id.clone(),
+                    scheduled_at: 1_000,
+                },
+                &definition,
+                1_001,
+            );
+            runs.resolve_scheduled_occurrence(ora_application::ScheduledOccurrenceCandidate::run(
+                run,
+            ))
+            .expect("admit run");
+            let created = tasks
+                .create_for_scheduled_run(crate::task::ScheduledRunWorktreeCommand {
+                    project_id: project.id.clone(),
+                    title: "Scheduled run run-null-path".to_string(),
+                    base_branch: "main".to_string(),
+                    run_id: run_id.to_string(),
+                })
+                .expect("scheduled provisioning");
+            let worktree_task_id = ora_domain::TaskId::new(&created.task.id);
+            // A dirty result left in the committed checkout, then the recorded
+            // path is lost (legacy/corrupted row) — recovery must still find the
+            // persisted checkout and keep the dirty result instead of discarding.
+            std::fs::write(
+                std::path::PathBuf::from(&created.worktree_path).join("uncommitted.txt"),
+                "keep me",
+            )
+            .expect("dirty the worktree");
+            // Simulate the runtime switching its worktree root after provisioning:
+            // the committed checkout stays at its persisted absolute location,
+            // which the live root no longer names. A root-based guess would now
+            // resolve a missing path and treat the dirty checkout as clean.
+            {
+                let relocated_root = temporary.path().join("relocated-worktrees");
+                std::fs::create_dir_all(&relocated_root).expect("relocated root");
+                backend
+                    .workspaces()
+                    .set_worktree_root(relocated_root)
+                    .expect("relocate the worktree root");
+            }
+            runs.transition_scheduled_run(
+                &run_id,
+                ScheduledRunTransition::Fail {
+                    reason: ora_domain::ScheduledRunFailureReason::ExecutionError,
+                },
+                1_100,
+            )
+            .expect("settle run");
+            // Manufacture the defensive NULL-path state through a raw connection.
+            {
+                let connection = rusqlite::Connection::open(&database_path).expect("raw sqlite");
+                connection
+                    .execute(
+                        "UPDATE scheduled_runs SET worktree_path = NULL WHERE id = 'run-null-path'",
+                        [],
+                    )
+                    .expect("null the recorded path");
+            }
+
+            let janitor = super::ScheduledWorktreeJanitor::new(
+                tasks.clone(),
+                pool.clone(),
+                temporary.path().to_path_buf(),
+            );
+            janitor.enforce_retention().await;
+
+            // The dirty checkout is resolved from the persisted workspace location
+            // and must be kept, not silently discarded.
+            assert!(
+                SqliteTaskRepository::new(pool.clone())
+                    .find_task(&worktree_task_id)
+                    .expect("task probe")
+                    .is_some(),
+                "a dirty worktree behind a missing recorded path is kept"
+            );
+            let retained = runs
+                .list_scheduled_runs_with_retained_worktrees()
+                .expect("retained list")
+                .into_iter()
+                .filter(|run| run.id == run_id)
+                .count();
+            assert_eq!(retained, 1, "the dirty worktree stays retained");
+            // The on-disk result under the original checkout must survive: no
+            // inferred-missing-path deletion.
+            assert!(
+                std::path::PathBuf::from(&created.worktree_path)
+                    .join("uncommitted.txt")
+                    .exists(),
+                "the dirty result file survives the root switch"
+            );
+        });
+    }
+
+    /// A real restart replays recovery: a write-ahead lease with a physically
+    /// created checkout, abandoned before its ownership commit, is reclaimed by
+    /// the production cleanup worker into a job that removes the checkout and
+    /// branch — and a second restart must not duplicate any side effect.
+    #[test]
+    fn integration_expired_lease_is_reclaimed_after_a_crash_before_commit() {
+        run_integration(async {
+            use ora_application::{
+                ProjectRepository, ScheduledOccurrenceRepository, ScheduledTaskRepository,
+                TaskRepository,
+            };
+            use ora_db::{
+                DatabaseBootstrapper, DatabaseLocation, SqliteGitCleanupJobRepository,
+                SqliteProjectRepository, SqliteScheduledRunRepository,
+                SqliteScheduledTaskRepository, SqliteTaskRepository,
+                SqliteWorktreeProvisioningLeaseRepository, default_migration_catalog,
+            };
+            use ora_domain::{
+                AuditFields, Project, ProjectId, ScheduledOccurrence, ScheduledRun, ScheduledRunId,
+                ScheduledTask, ScheduledTaskApproval, ScheduledTaskExecutionLocation,
+                ScheduledTaskId, ScheduledTaskSchedule, WorkspaceId, WorkspaceLocation,
+                WorktreeProvisioningLease, WorktreeProvisioningLeaseId,
+            };
+            use tempfile::TempDir;
+
+            ora_logging::initialize_test_clock();
+            let temporary = TempDir::new().expect("backend fixture");
+            let git = GitTestScaffold::new("scheduled-lease-recovery").expect("Git fixture");
+            git.write_file(git.repo_path(), "README.md", "fixture\n")
+                .expect("seed repository");
+            git.stage_all_and_commit("initial").expect("initial commit");
+
+            let database_path = temporary.path().join("ora.sqlite3");
+            let pool = DatabaseBootstrapper::system()
+                .bootstrap_repository_pool(
+                    &DatabaseLocation::path(&database_path),
+                    &default_migration_catalog().expect("migration catalog"),
+                )
+                .expect("bootstrap database");
+            SqliteProjectRepository::with_clock(pool.clone(), crate::clock::SystemClock)
+                .create_project(
+                    Project::new(
+                        ProjectId::new("project-1"),
+                        "Lease recovery fixture",
+                        AuditFields::new(10, 10, /*is_deleted*/ false),
+                    ),
+                    WorkspaceLocation::local_filesystem(
+                        git.repo_path().to_string_lossy().into_owned(),
+                    ),
+                )
+                .expect("create project");
+            let definition = ScheduledTask::new(
+                ScheduledTaskId::new("scheduled-task-it"),
+                "Integration task",
+                true,
+                ScheduledTaskSchedule::daily(9, 0).expect("daily schedule"),
+                ScheduledTaskExecutionLocation::Local,
+                ProjectId::new("project-1"),
+                ora_domain::AgentRef::parse("ora/agent").expect("agent ref"),
+                None,
+                "Run the integration prompt",
+                Some(ScheduledTaskApproval::full_auto_in_worktree(10)),
+                AuditFields::new(10, 10, /*is_deleted*/ false),
+            )
+            .expect("task");
+            SqliteScheduledTaskRepository::new(pool.clone())
+                .create_scheduled_task(definition.clone())
+                .expect("create definition");
+            let run_id = ScheduledRunId::new("run-lease-recovery");
+            let run = ScheduledRun::accepted(
+                run_id.clone(),
+                ScheduledOccurrence {
+                    task_id: definition.id.clone(),
+                    scheduled_at: 1_000,
+                },
+                &definition,
+                1_001,
+            );
+            SqliteScheduledRunRepository::new(pool.clone())
+                .resolve_scheduled_occurrence(ora_application::ScheduledOccurrenceCandidate::run(
+                    run,
+                ))
+                .expect("admit run");
+
+            // A write-ahead lease whose checkout was physically created, then the
+            // process died before the ownership commit: no compensation runs.
+            let workspace_id = WorkspaceId::new("5c2a8e7d-3f4a-4b6c-9d8e-1a2b3c4d5e6f");
+            let checkout = temporary
+                .path()
+                .join("orphaned-worktrees")
+                .join("lease-recovery");
+            // The branch must match the production identity derivation, or the
+            // cleanup job fails identity validation before any Git call.
+            let branch = ora_application::branch_name_for_workspace(&workspace_id);
+            let lease = WorktreeProvisioningLease::new(
+                WorktreeProvisioningLeaseId::new("lease-recovery"),
+                ProjectId::new("project-1"),
+                workspace_id.clone(),
+                git.repo_path().to_string_lossy().into_owned(),
+                checkout.to_string_lossy().into_owned(),
+                branch.clone(),
+                /*lease_expires_at*/ 1_000, // already expired when the worker runs
+                /*now*/ 900,
+            );
+            SqliteWorktreeProvisioningLeaseRepository::new(pool.clone())
+                .create_lease(&lease)
+                .expect("create lease");
+            git.run_git([
+                std::ffi::OsStr::new("worktree"),
+                std::ffi::OsStr::new("add"),
+                std::ffi::OsStr::new("-b"),
+                std::ffi::OsStr::new(&branch),
+                checkout.as_os_str(),
+            ])
+            .expect("create the physical checkout");
+
+            // Crash: drop the pool without any commit or compensation.
+            drop(pool);
+
+            let backend = crate::Backend::open(crate::test_backend::backend_paths(
+                temporary.path(),
+                temporary.path(),
+            ))
+            .expect("backend");
+
+            // The cleanup worker's first pass reclaims the expired lease into a
+            // job and completes it, removing the physical checkout and branch.
+            // Read failures are hard errors here: a claim of recovery must not
+            // pass on a probe that silently failed.
+            let reopen = || {
+                DatabaseBootstrapper::system()
+                    .bootstrap_repository_pool(
+                        &DatabaseLocation::path(&database_path),
+                        &default_migration_catalog().expect("migration catalog"),
+                    )
+                    .expect("reopen database")
+            };
+            let mut recovered = false;
+            for _ in 0..300 {
+                let probe = reopen();
+                let leases_gone = SqliteWorktreeProvisioningLeaseRepository::new(probe.clone())
+                    .list_leases()
+                    .expect("list leases")
+                    .is_empty();
+                let jobs = ora_db::SqliteGitCleanupJobRepository::new(probe)
+                    .list_jobs()
+                    .expect("list cleanup jobs");
+                let completed = jobs.len() == 1
+                    && matches!(jobs[0].state, ora_domain::GitCleanupJobState::Completed);
+                if leases_gone && completed && !checkout.exists() {
+                    recovered = true;
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            assert!(
+                recovered,
+                "the expired lease's checkout and branch are reclaimed after restart"
+            );
+            assert!(
+                git.run_git(["branch", "--list", &branch])
+                    .expect("list branch")
+                    .trim()
+                    .is_empty(),
+                "the branch is removed"
+            );
+
+            // A second production recovery pass must not duplicate the job or
+            // any side effect. Drive it through the typed worker boundary: the
+            // first worker's detached loop survives `drop(backend)`, so only a
+            // fresh `run_pass` over a reopened pool counts as a second recovery.
+            drop(backend);
+            let second_pass = {
+                let probe = reopen();
+                let worker = crate::git_cleanup::GitCleanupWorker::new(
+                    probe.clone(),
+                    std::sync::Arc::new(std::sync::RwLock::new(
+                        temporary.path().join("second-root"),
+                    )),
+                    crate::clock::SystemClock,
+                );
+                worker.run_pass();
+                probe
+            };
+            assert!(
+                SqliteWorktreeProvisioningLeaseRepository::new(second_pass.clone())
+                    .list_leases()
+                    .expect("list leases")
+                    .is_empty(),
+                "no lease remains after a second recovery pass"
+            );
+            let jobs = ora_db::SqliteGitCleanupJobRepository::new(second_pass.clone())
+                .list_jobs()
+                .expect("list cleanup jobs");
+            assert_eq!(
+                jobs.len(),
+                1,
+                "no duplicate cleanup job after a second recovery pass"
+            );
+            assert!(
+                matches!(jobs[0].state, ora_domain::GitCleanupJobState::Completed),
+                "the single job stays Completed after a second recovery pass"
+            );
+            assert_eq!(
+                SqliteTaskRepository::new(second_pass.clone())
+                    .list_tasks()
+                    .expect("list tasks"),
+                Vec::new(),
+                "no task row was half-committed"
+            );
+            assert!(
+                !checkout.exists(),
+                "the physical checkout stays removed after a second recovery pass"
+            );
+        });
+    }
+
+    /// A workspace that cannot be resolved must be kept, not treated as clean.
+    #[test]
+    fn resolve_committed_checkout_path_is_conservative_when_the_workspace_is_gone() {
+        run_integration(async {
+            use ora_db::{
+                DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog,
+            };
+            use tempfile::TempDir;
+
+            ora_logging::initialize_test_clock();
+            let temporary = TempDir::new().expect("fixture");
+            let pool: RepositoryPool = DatabaseBootstrapper::system()
+                .bootstrap_repository_pool(
+                    &DatabaseLocation::path(temporary.path().join("ora.sqlite3")),
+                    &default_migration_catalog().expect("catalog"),
+                )
+                .expect("bootstrap");
+            let janitor = super::ScheduledWorktreeJanitor::new(
+                crate::Backend::open(crate::test_backend::backend_paths(
+                    temporary.path(),
+                    temporary.path(),
+                ))
+                .expect("backend")
+                .tasks(),
+                pool,
+                temporary.path().to_path_buf(),
+            );
+            assert_eq!(
+                janitor.resolve_committed_checkout_path(&ora_domain::WorkspaceId::new(
+                    "missing-workspace"
+                )),
+                None,
+                "a missing workspace keeps the run instead of guessing a path"
             );
         });
     }

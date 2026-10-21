@@ -55,11 +55,13 @@ pub use skill_import::{
     SkillImportService, UuidSkillImportIdGenerator,
 };
 pub use task::{
-    CleanupJobDisposition, CleanupStage, CreateTaskHandler, CreateTaskWorktreeRequest,
-    CreateTaskWorktreeResponse, DeleteTaskWorktreeRequest, GetTaskHandler, GitCleanupError,
-    GitTaskResourceCleaner, GitTaskWorktreeProvisioner, ListTasksHandler, RemoveTaskBranchRequest,
-    RemoveTaskWorktreeRequest, ResourceRemoval, TaskActivityRepository, TaskGitResourceCleaner,
-    TaskIdGenerator, TaskRepository, TaskWorktreeDeletionMode, TaskWorktreeProvisioner,
+    CleanupJobDisposition, CleanupStage, CreateScheduledWorktreeTaskHandler,
+    CreateScheduledWorktreeTaskRequest, CreateScheduledWorktreeTaskResponse, CreateTaskHandler,
+    CreateTaskWorktreeRequest, CreateTaskWorktreeResponse, DeleteTaskWorktreeRequest,
+    GetTaskHandler, GitCleanupError, GitTaskResourceCleaner, GitTaskWorktreeProvisioner,
+    ListTasksHandler, RemoveTaskBranchRequest, RemoveTaskWorktreeRequest, ResourceRemoval,
+    ScheduledRunWorktreeLink, TaskActivityRepository, TaskGitResourceCleaner, TaskIdGenerator,
+    TaskRepository, TaskWorktreeDeletionMode, TaskWorktreeProvisioner,
     TaskWorktreeProvisionerError, UpdateTaskHandler, UuidTaskIdGenerator, WorkspaceCommitOutcome,
     WorktreeProvisioningLeaseStore, WorktreeRemoval, branch_name_for_workspace,
     legacy_checkout_probe, reduce_cleanup_outcomes, validate_cleanup_identity,

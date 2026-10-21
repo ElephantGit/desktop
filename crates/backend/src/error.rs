@@ -542,6 +542,10 @@ impl From<ApplicationError> for BackendError {
             | ApplicationError::TaskWorktreeRootUnavailable
             | ApplicationError::TaskFilesystem { .. }
             | ApplicationError::TaskWorktreeProvisioner { .. }
+            // The run was settled or rebound concurrently while its worktree task
+            // provisioned; the lease keeps the Git resources, so this is an
+            // internal race outcome, not a client error.
+            | ApplicationError::ScheduledRunNotAdmissible
             | ApplicationError::WorkspaceDiff { .. }
             | ApplicationError::WorkspaceRepository { .. }
             | ApplicationError::WorktreeRepository { .. }

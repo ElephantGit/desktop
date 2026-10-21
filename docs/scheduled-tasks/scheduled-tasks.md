@@ -65,3 +65,19 @@ The domain fixes the semantics the scheduler will follow:
   `target_unavailable`, `model_unavailable`, `worktree_failed`, `approval_policy_invalid`, `timeout`
   and `execution_error`.
 - History keeps at most 100 run and missed entries per task, and deleting a task does not delete them.
+
+## Leftover worktree tasks from older versions
+
+Before the [worktree ownership commit](https://github.com/ora-space/specs/blob/main/decisions/desktop/core/scheduled-task/20261020-worktree-ownership-atomic-commit.md)
+ADR (`approved`), a crash between provisioning and run start could leave an isolated worktree task that
+no scheduled cleanup path could reclaim. Those tasks show up as ordinary tasks in the task list and are
+never deleted automatically. To clean one up manually:
+
+1. Look for a task titled `Scheduled run <UUID>` that has no linked scheduled run in its history.
+2. Delete it from the task list as you would any task; the regular task cascade removes its worktree and
+   branch.
+
+The title is only a recognition hint, not a proof of ownership, so never delete a task on that pattern
+alone if you are unsure where it came from. New runs no longer produce these leftovers; if such a task
+cannot be seen or deleted in the UI, report it as a separate issue.
+

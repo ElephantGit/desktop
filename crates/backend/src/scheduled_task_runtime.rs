@@ -12,8 +12,7 @@ use ora_application::{
     UuidScheduledRunIdGenerator,
 };
 use ora_contracts::{
-    CreateTaskRequest, GetTaskWorkspaceRequest, PromptSessionEvent, PromptSessionRequest,
-    StartSessionRequest, StopSessionRequest,
+    PromptSessionEvent, PromptSessionRequest, StartSessionRequest, StopSessionRequest,
 };
 use ora_db::{RepositoryPool, SqliteScheduledRunRepository, SqliteScheduledTaskRepository};
 use ora_domain::{
@@ -25,6 +24,7 @@ use ora_logging::ora_warn;
 use ora_scheduler::{BoxFuture, CronHandle, DelayHandle, Job, Scheduler};
 
 use crate::app_event::AppEventPublisher;
+use crate::task::ScheduledRunWorktreeCommand;
 use crate::{Sessions, TaskApi, clock::SystemClock};
 
 use super::worktree::ScheduledWorktreeJanitor;
@@ -361,11 +361,14 @@ impl DesktopScheduledRunExecutor {
                 .await;
             return;
         };
-        let created = match self.tasks.create(CreateTaskRequest {
-            project_id: run.snapshot.project_id.to_string(),
-            title: format!("Scheduled run {}", run.id),
-            base_branch: Some(base_branch.to_string()),
-        }) {
+        let created = match self
+            .tasks
+            .create_for_scheduled_run(ScheduledRunWorktreeCommand {
+                project_id: run.snapshot.project_id.to_string(),
+                title: format!("Scheduled run {}", run.id),
+                base_branch: base_branch.to_string(),
+                run_id: run.id.to_string(),
+            }) {
             Ok(created) => created,
             Err(error) => {
                 ora_warn!(run_id = %run.id, error = %error, "scheduled run worktree creation failed");
@@ -374,25 +377,11 @@ impl DesktopScheduledRunExecutor {
                 return;
             }
         };
+        // The ownership commit already bound this task and path to the run row in
+        // the same transaction that created it, so no crash after this point can
+        // leave the freshly provisioned worktree without a durable owner.
         let worktree_task_id = TaskId::new(created.task.id.clone());
-        let workspace = match self.tasks.workspace(GetTaskWorkspaceRequest {
-            task_id: created.task.id.clone(),
-        }) {
-            Ok(workspace) => workspace.workspace,
-            Err(error) => {
-                ora_warn!(run_id = %run.id, error = %error, "scheduled run workspace lookup failed");
-                self.finish(
-                    &run,
-                    Some(&worktree_task_id),
-                    None,
-                    ScheduledRunTransition::Fail {
-                        reason: ScheduledRunFailureReason::WorktreeFailed,
-                    },
-                )
-                .await;
-                return;
-            }
-        };
+        let worktree_path = created.worktree_path;
         let started = match self
             .sessions
             .start(StartSessionRequest {
@@ -418,7 +407,6 @@ impl DesktopScheduledRunExecutor {
             }
         };
         let session_id = SessionId::new(started.session.id);
-        let worktree_path = workspace.root_path;
         if !self.transition(
             &run,
             ScheduledRunTransition::Start {
