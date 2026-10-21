@@ -439,6 +439,13 @@ impl<'a> Round<'a> {
         use super::substrate::SubstrateError;
         ora_logging::ora_warn!(effect_id = %effect.id, error = %error, "Substrate effect call failed");
         match error {
+            SubstrateError::PermitExpired => {
+                self.defer(
+                    proto::DeferState::RetryWait,
+                    proto::DeferReason::ExternalFailure,
+                )
+                .await
+            }
             SubstrateError::Unreachable(_) => {
                 self.defer(
                     proto::DeferState::RetryWait,

@@ -154,10 +154,11 @@ async fn assert_dispatch_admission(kind: proto::EffectKind, case: &str) {
         });
         assert_eq!(*fixture.puts.lock().unwrap(), vec![expected]);
     } else {
-        assert!(
-            matches!(result, Err(SubstrateError::Rejected(_))),
-            "{case}: {result:?}"
-        );
+        let expected_error = match case {
+            "expired" => matches!(&result, Err(SubstrateError::PermitExpired)),
+            _ => matches!(&result, Err(SubstrateError::Rejected(_))),
+        };
+        assert!(expected_error, "{case}: {result:?}");
         assert_eq!(*fixture.puts.lock().unwrap(), Vec::<Value>::new());
     }
     server.abort();

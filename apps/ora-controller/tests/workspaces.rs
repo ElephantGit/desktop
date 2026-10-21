@@ -13,6 +13,8 @@ mod agents;
 mod deliveries;
 #[path = "workspaces/force_stop.rs"]
 mod force_stop;
+#[path = "workspaces/permit_expiry.rs"]
+mod permit_expiry;
 #[path = "workspaces/plugins.rs"]
 mod plugins;
 #[path = "workspaces/restores.rs"]
@@ -68,6 +70,7 @@ struct EffectReplies {
     ensure: Option<(StatusCode, Value)>,
     puts: Vec<(String, Value)>,
     unanswered: std::collections::HashSet<String>,
+    get_barrier: Option<(oneshot::Sender<String>, oneshot::Receiver<()>)>,
 }
 
 async fn effects(
@@ -77,6 +80,11 @@ async fn effects(
     body: Option<Json<Value>>,
 ) -> (StatusCode, Json<Value>) {
     if method == Method::GET {
+        let barrier = substrate.replies.lock().unwrap().get_barrier.take();
+        if let Some((arrived, release)) = barrier {
+            let _ = arrived.send(id.clone());
+            let _ = release.await;
+        }
         let entry = substrate.journal.lock().unwrap().get(&id).cloned();
         if let Some(entry) = &entry {
             substrate.timeline.push(Event::Substrate {

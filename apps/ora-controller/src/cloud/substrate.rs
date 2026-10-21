@@ -29,6 +29,9 @@ pub(super) enum Observation {
 /// Why an effect produced no observation.
 #[derive(Debug, thiserror::Error)]
 pub(super) enum SubstrateError {
+    /// The lease is still current, but a fresh permit is needed before dispatching this effect.
+    #[error("runtime effect permit expired before dispatch")]
+    PermitExpired,
     /// No answer, or no journal entry even after the request may have been sent: retry the same
     /// effect later. Never proof that nothing happened.
     #[error("substrate unreachable: {0}")]
@@ -240,10 +243,13 @@ fn validate_permit(
     current_epoch: Option<i64>,
     now_ms: i64,
 ) -> Result<(), SubstrateError> {
-    if current_epoch != Some(permit.controller_epoch) || now_ms >= permit.expires_at_ms {
+    if current_epoch != Some(permit.controller_epoch) {
         return Err(SubstrateError::Rejected(
             "stale_runtime_effect_permission".into(),
         ));
+    }
+    if now_ms >= permit.expires_at_ms {
+        return Err(SubstrateError::PermitExpired);
     }
     Ok(())
 }

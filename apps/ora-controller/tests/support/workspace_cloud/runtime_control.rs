@@ -10,9 +10,23 @@ pub(super) struct ForceState {
     permits: HashMap<String, Result<proto::RuntimeEffectPermit, Status>>,
     requests: Vec<proto::GetEffectPermitRequest>,
     confirmations: Vec<proto::ConfirmForceStopRequest>,
+    next_permit_lifetime: Option<Duration>,
+    replies: Vec<(proto::GetEffectPermitRequest, proto::RuntimeEffectPermit)>,
 }
 
 impl WorkspaceCloud {
+    /// Changes only the next permit, so a resumed operation receives normal fresh authority.
+    pub fn next_effect_permit_lifetime(&self, lifetime: Duration) {
+        self.lock().force.next_permit_lifetime = Some(lifetime);
+    }
+
+    /// Preserves the exact authority issued for each effect across Controller restarts.
+    pub fn effect_permit_replies(
+        &self,
+    ) -> Vec<(proto::GetEffectPermitRequest, proto::RuntimeEffectPermit)> {
+        self.lock().force.replies.clone()
+    }
+
     /// Installs exact plans and optional permit outcomes before the next Controller wake.
     pub fn force_plans(
         &self,
@@ -212,17 +226,24 @@ impl RuntimeControlService for WorkspaceCloud {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64;
+        let lifetime = state
+            .force
+            .next_permit_lifetime
+            .take()
+            .unwrap_or(Duration::from_secs(/*secs*/ 10));
+        let permit = proto::RuntimeEffectPermit {
+            tenant_id: "tenant".into(),
+            workspace_id: WORKSPACE.into(),
+            sandbox_id,
+            runtime_generation: state.workspace.runtime_generation,
+            controller_epoch: EPOCH,
+            control_epoch: 1,
+            issued_at_ms: now,
+            expires_at_ms: now + lifetime.as_millis() as i64,
+        };
+        state.force.replies.push((message, permit.clone()));
         Ok(Response::new(proto::GetEffectPermitResponse {
-            permit: Some(proto::RuntimeEffectPermit {
-                tenant_id: "tenant".into(),
-                workspace_id: WORKSPACE.into(),
-                sandbox_id,
-                runtime_generation: state.workspace.runtime_generation,
-                controller_epoch: EPOCH,
-                control_epoch: 1,
-                issued_at_ms: now,
-                expires_at_ms: now + 10000,
-            }),
+            permit: Some(permit),
         }))
     }
     async fn list_force_stops(
