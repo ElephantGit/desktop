@@ -113,27 +113,27 @@ fn unknown_stop_retains_clock_terminal_and_checkout_responsibility()
     Ok(())
 }
 
-/// A v10 process with no journal cannot be called interrupted or used as delivery evidence.
+/// A v10 session that was accepted but never started has no restore process, so the upgrade keeps
+/// its pending phase and startup recovery may end it as interrupted without stop evidence.
 #[test]
-fn upgrade_keeps_unjournaled_restore_unknown() -> Result<(), Box<dyn std::error::Error>> {
+fn upgrade_keeps_an_accepted_restore_pending() -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("db");
     let mut db = NodeDatabase::open(&path, NodeIdentity::Require(NodeId::new("node")))?;
     let input = resumed();
     db.accept_session(&input)?;
     drop(db);
-    let db = reopen_after_v10_downgrade(&path)?;
+    let mut db = reopen_after_v10_downgrade(&path)?;
     let journal = db.session_journal()?;
+    // Accepted never started an actor, so no restore process can exist for it.
     assert_eq!(
         journal.restore_phase(&input.execution_id)?,
-        Some(RestorePhase::LegacyUnknown)
+        Some(RestorePhase::Pending)
     );
-    assert!(matches!(
-        journal.end_session(&input.execution_id, ended()),
-        Err(Error::ResourceConflict)
-    ));
-    assert!(journal.agent_admitted(&input.execution_id).is_err());
-    assert!(db.pending_events()?.is_empty());
+    journal.end_session(&input.execution_id, ended())?;
+    assert!(db.unfinished_runtime_executions()?.is_empty());
+    let scope = super::super::repository::runtime_scope(db.node_id());
+    assert_eq!(db.bind_runtime(&scope)?, Vec::<String>::new());
     Ok(())
 }
 
@@ -207,6 +207,7 @@ fn upgrade_keeps_inflight_legacy_restore_fenced() -> Result<(), Box<dyn std::err
     let mut db = NodeDatabase::open(&path, NodeIdentity::Require(NodeId::new("node")))?;
     let input = resumed();
     db.accept_session(&input)?;
+    assert!(db.start_session(&input, &NodeIncarnationId::new("original"))?);
     drop(db);
     let mut db = reopen_after_v10_downgrade(&path)?;
     let journal = db.session_journal()?;
@@ -232,10 +233,11 @@ fn upgrade_keeps_inflight_legacy_restore_fenced() -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-/// An in-flight v10 restore whose Agent produced thread events had finished restoring; the
-/// upgrade releases both admission fences instead of blocking the Node forever.
+/// An in-flight v10 restore whose Agent produced thread events had finished restoring. The
+/// Controller's acknowledgements delete those events, so the upgrade must read the sequence the
+/// database keeps instead and release both admission fences.
 #[test]
-fn upgrade_releases_inflight_restore_proven_by_agent_thread_event()
+fn upgrade_releases_inflight_restore_proven_after_events_were_acknowledged()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("db");
@@ -244,8 +246,11 @@ fn upgrade_releases_inflight_restore_proven_by_agent_thread_event()
     db.accept_session(&input)?;
     let journal = db.session_journal()?;
     assert!(db.start_session(&input, &NodeIncarnationId::new("original"))?);
-    journal.append_thread_event(&input.execution_id, event())?;
+    let sequence = journal.append_thread_event(&input.execution_id, event())?;
     drop(journal);
+    // The production path: an online Controller acknowledges the event it consumed.
+    db.acknowledge(&ack(sequence.value()))?;
+    assert!(db.pending_events()?.is_empty());
     drop(db);
     let mut db = reopen_after_v10_downgrade(&path)?;
     let journal = db.session_journal()?;
