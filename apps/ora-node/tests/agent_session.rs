@@ -684,9 +684,12 @@ fn grant_routes(gateway: &gateway::Gateway) -> Vec<String> {
 
 /// A configured session hands its grant to the adapter in the startup context alone: the adapter
 /// answers with the frozen model and the platform proxy, the token never reaches its environment,
-/// history or Thread, and ending the session revokes the grant.
+/// history or Thread, none of the Node's own environment is inherited, and ending the session
+/// revokes the grant.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_configured_adapter_receives_its_grant_only_in_the_startup_context() {
+    // The probe is the test runner's own environment, which the Node process inherits.
+    assert!(std::env::vars().any(|(name, _)| name.starts_with("CARGO")));
     let fixture = Fixture::new();
     let gateway = gateway::Gateway::new(&fixture.home());
     let sessions = fixture.model_sessions(gateway.config.clone());
@@ -713,7 +716,7 @@ async fn a_configured_adapter_receives_its_grant_only_in_the_startup_context() {
         (answer, ended.reason),
         (
             format!(
-                "model=team/model proxy=https://localhost:{port}/runtime/openai/v1 token_in_environment=false"
+                "model=team/model proxy=https://localhost:{port}/runtime/openai/v1 token_in_environment=false host_environment=false"
             ),
             AgentSessionEndReason::UserEnded,
         )

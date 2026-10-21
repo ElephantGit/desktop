@@ -266,14 +266,16 @@ impl EchoAgent {
             return respond(output, id, &PromptResponse::new(StopReason::EndTurn)).await;
         }
         let answer = if text.contains("[model]") {
-            // Reports what the adapter received, and whether the token also leaked into the
-            // environment every process the plugin spawns would inherit.
+            // Reports what the adapter received, whether the token also leaked into the
+            // environment every process the plugin spawns would inherit, and whether the Node's
+            // own environment (here the test runner's `CARGO*` variables) reached it at all.
             match &self.model {
                 Some(model) => format!(
-                    "model={} proxy={} token_in_environment={}",
+                    "model={} proxy={} token_in_environment={} host_environment={}",
                     model.configuration.model.id,
                     model.proxy_base_url,
                     std::env::vars().any(|(_, value)| value.contains(&model.token)),
+                    std::env::vars().any(|(name, _)| name.starts_with("CARGO")),
                 ),
                 None => "model=none".to_string(),
             }

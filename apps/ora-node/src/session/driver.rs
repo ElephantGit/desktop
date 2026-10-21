@@ -254,7 +254,9 @@ where
         None => None,
     };
     let taps = GenerationTaps::default();
-    let launcher = placement.launcher(&spec.git_identity, &package_root, environment);
+    let isolation =
+        super::process::ModelProcessIsolation::for_session(spec.agent_configuration.is_some());
+    let launcher = placement.launcher(&spec.git_identity, &package_root, environment, isolation);
     let lifecycle = match open_lifecycle(&shared.config, launcher, &taps) {
         Ok(lifecycle) => lifecycle,
         Err(error) => {

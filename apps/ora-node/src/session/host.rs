@@ -60,9 +60,10 @@ impl<L: SessionLedger> AgentRuntimeHost for NodeRuntimeHost<L> {
 /// identity always, and in a separate workload placement the session's own home.
 ///
 /// Set on the plugin process, so a process the plugin spawns directly inherits it, and on every
-/// process the host spawns for the plugin, which inherits the host's environment instead. Nothing
-/// is written to a Git configuration. The rest of the host environment (model credentials, proxy
-/// settings) still reaches the agent: these variables are layered on top of it, never instead.
+/// process the host spawns for the plugin. Nothing is written to a Git configuration. A session
+/// without a frozen configuration layers these variables on top of the host environment; a
+/// configured session starts from an empty environment instead, so nothing of the Node's own
+/// (model credentials, provider base URLs, CLI configuration) reaches its adapter or CLI.
 #[derive(Clone)]
 pub(super) struct SessionEnvironment {
     variables: BTreeMap<String, String>,
