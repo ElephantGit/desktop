@@ -143,7 +143,7 @@ pub trait ScheduledRunLifecycleRepository {
 
     /// Persists one independent business verdict and its detail onto a run row, leaving the
     /// execution-layer status and failure reason untouched. Returns `false` when the run no
-    /// longer exists; the caller maps that to a not-found outcome.
+    /// longer exists or has not reached `succeeded`, the only annotatable state.
     fn annotate_scheduled_run_verdict(
         &self,
         run_id: &ScheduledRunId,

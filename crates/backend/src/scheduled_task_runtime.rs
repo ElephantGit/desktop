@@ -19,7 +19,9 @@ use ora_domain::{
     MAX_SCHEDULED_OCCURRENCE_LATENESS_MILLIS, ScheduledRun, ScheduledRunFailureReason,
     ScheduledRunStatus, ScheduledRunTransition, ScheduledTask, ScheduledTaskExecutionLocation,
     ScheduledTaskId, ScheduledTaskSchedule, ScheduledTaskWeekday, SessionId, TaskId,
+    parse_scheduled_run_verdict,
 };
+use ora_history::{final_assistant_message, read_session_history};
 use ora_logging::ora_warn;
 use ora_scheduler::{BoxFuture, CronHandle, DelayHandle, Job, Scheduler};
 
@@ -488,13 +490,24 @@ impl DesktopScheduledRunExecutor {
                         // Running; stop it so the worktree cleanup path cannot hit the
                         // ActiveSession conflict on every terminal branch.
                         self.stop_session_quietly(&session_id).await;
-                        self.finish(
-                            &run,
-                            Some(&worktree_task_id),
-                            Some(&worktree_path),
-                            scheduled_run_completion_transition(stop_reason),
-                        )
-                        .await;
+                        let transition = scheduled_run_completion_transition(stop_reason);
+                        if transition == ScheduledRunTransition::Succeed {
+                            self.finish_succeeded(
+                                &run,
+                                &worktree_task_id,
+                                &worktree_path,
+                                &session_id,
+                            )
+                            .await;
+                        } else {
+                            self.finish(
+                                &run,
+                                Some(&worktree_task_id),
+                                Some(&worktree_path),
+                                transition,
+                            )
+                            .await;
+                        }
                         return;
                     }
                     Some(Ok(_)) => {}
@@ -560,6 +573,54 @@ impl DesktopScheduledRunExecutor {
             self.janitor
                 .run_finished(run, worktree_task_id, worktree_path)
                 .await;
+        }
+    }
+
+    /// Finishes a run that ended its turn normally: persist `succeeded`, annotate the
+    /// business verdict from the final Assistant turn, then publish and hand the worktree
+    /// to the janitor. The verdict write happens after the terminal transition and before
+    /// `RunFinished`, and is best-effort — a missing sentinel, an illegal value, an
+    /// over-long detail, or a run that is no longer `succeeded` leaves it "not reported".
+    async fn finish_succeeded(
+        &self,
+        run: &ScheduledRun,
+        worktree_task_id: &TaskId,
+        worktree_path: &str,
+        session_id: &SessionId,
+    ) {
+        if !self.transition(run, ScheduledRunTransition::Succeed) {
+            return;
+        }
+        self.annotate_verdict(run, session_id);
+        self.publish_finished(run, &ScheduledRunTransition::Succeed);
+        self.janitor
+            .run_finished(run, worktree_task_id, Some(worktree_path))
+            .await;
+    }
+
+    /// Parses the documented verdict sentinel out of the run's final Assistant turn and
+    /// persists it once, without rewriting any execution-layer fact.
+    fn annotate_verdict(&self, run: &ScheduledRun, session_id: &SessionId) {
+        let history = match read_session_history(self.tasks.sessions_root(), session_id.as_ref()) {
+            Ok(history) => history,
+            Err(error) => {
+                ora_warn!(run_id = %run.id, error = %error, "scheduled run verdict could not read session history");
+                return;
+            }
+        };
+        let Some(assistant) = final_assistant_message(&history) else {
+            return;
+        };
+        let Some(annotation) = parse_scheduled_run_verdict(&assistant) else {
+            return;
+        };
+        if let Err(error) = self.runs.annotate_scheduled_run_verdict(
+            &run.id,
+            annotation.verdict,
+            annotation.detail.as_deref(),
+            self.clock.now_timestamp_millis(),
+        ) {
+            ora_warn!(run_id = %run.id, error = %error, "scheduled run verdict annotation failed");
         }
     }
 

@@ -179,7 +179,8 @@ impl ScheduledRunLifecycleRepository for SqliteScheduledRunRepository {
 
     /// Persists one independent business verdict and its detail onto a run row,
     /// leaving the execution-layer status and failure reason untouched. The
-    /// write is bounded to runs that still exist.
+    /// write is bounded to runs that still exist and have reached `succeeded`,
+    /// the only state the verdict contract allows to carry one.
     fn annotate_scheduled_run_verdict(
         &self,
         run_id: &ScheduledRunId,
@@ -192,7 +193,7 @@ impl ScheduledRunLifecycleRepository for SqliteScheduledRunRepository {
                 let updated = connection.execute(
                     "UPDATE scheduled_runs
                      SET verdict = ?1, verdict_detail = ?2, verdict_at = ?3
-                     WHERE id = ?4",
+                     WHERE id = ?4 AND status = 'succeeded'",
                     params![verdict.as_str(), detail, annotated_at, run_id.as_ref(),],
                 )?;
                 Ok(updated == 1)
@@ -1452,6 +1453,44 @@ mod tests {
         assert_eq!(
             run.updated_at, 200,
             "verdict write must not touch updated_at"
+        );
+    }
+
+    #[test]
+    fn annotate_verdict_rejects_a_run_that_has_not_succeeded() {
+        let (temp_dir, pool) = bootstrapped_pool();
+        seed_definition(&pool, temp_dir.path());
+        let repository = SqliteScheduledRunRepository::new(pool.clone());
+        let run = ScheduledRun::accepted(
+            ScheduledRunId::new("run-still-running"),
+            occurrence(91),
+            &scheduled_task(),
+            92,
+        );
+        repository
+            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::run(run))
+            .expect("admit run");
+        repository
+            .transition_scheduled_run(
+                &ScheduledRunId::new("run-still-running"),
+                ScheduledRunTransition::Start {
+                    session_id: SessionId::new("session-1"),
+                    worktree_path: "worktrees/run-still-running".to_string(),
+                    worktree_task_id: TaskId::new("task-running"),
+                },
+                100,
+            )
+            .expect("start run");
+
+        assert!(
+            !repository
+                .annotate_scheduled_run_verdict(
+                    &ScheduledRunId::new("run-still-running"),
+                    ScheduledRunVerdict::Fail,
+                    None,
+                    200,
+                )
+                .expect("annotate running run")
         );
     }
 }

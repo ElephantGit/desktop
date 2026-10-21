@@ -219,6 +219,11 @@ impl TaskApi {
         &self.relative_path_base
     }
 
+    /// Root directory holding sessions' recorded history files.
+    pub(crate) fn sessions_root(&self) -> &Path {
+        &self.sessions_root
+    }
+
     /// Soft-deletes the task and Ora worktree record without touching Git state.
     fn delete_persisted(
         &self,
