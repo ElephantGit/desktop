@@ -32,7 +32,7 @@ mod store_tests;
 pub use assembler::{AssembledRecord, HistoryAssembler};
 pub use clock::{FixedHistoryClock, HistoryClock};
 pub use error::HistoryError;
-pub use handoff::{binding_needs_handoff, render_handoff};
+pub use handoff::{binding_needs_handoff, final_assistant_message, render_handoff};
 pub use metadata::child_source_id;
 pub use path::history_path;
 pub use reader::{
