@@ -1390,6 +1390,18 @@ mod tests {
                 "keep me",
             )
             .expect("dirty the worktree");
+            // Simulate the runtime switching its worktree root after provisioning:
+            // the committed checkout stays at its persisted absolute location,
+            // which the live root no longer names. A root-based guess would now
+            // resolve a missing path and treat the dirty checkout as clean.
+            {
+                let relocated_root = temporary.path().join("relocated-worktrees");
+                std::fs::create_dir_all(&relocated_root).expect("relocated root");
+                backend
+                    .workspaces()
+                    .set_worktree_root(relocated_root)
+                    .expect("relocate the worktree root");
+            }
             runs.transition_scheduled_run(
                 &run_id,
                 ScheduledRunTransition::Fail {
@@ -1432,6 +1444,14 @@ mod tests {
                 .filter(|run| run.id == run_id)
                 .count();
             assert_eq!(retained, 1, "the dirty worktree stays retained");
+            // The on-disk result under the original checkout must survive: no
+            // inferred-missing-path deletion.
+            assert!(
+                std::path::PathBuf::from(&created.worktree_path)
+                    .join("uncommitted.txt")
+                    .exists(),
+                "the dirty result file survives the root switch"
+            );
         });
     }
 
