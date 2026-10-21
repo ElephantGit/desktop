@@ -1468,9 +1468,9 @@ mod tests {
             };
             use ora_db::{
                 DatabaseBootstrapper, DatabaseLocation, SqliteGitCleanupJobRepository,
-                SqliteProjectRepository, SqliteScheduledRunRepository, SqliteScheduledTaskRepository,
-                SqliteTaskRepository, SqliteWorktreeProvisioningLeaseRepository,
-                default_migration_catalog,
+                SqliteProjectRepository, SqliteScheduledRunRepository,
+                SqliteScheduledTaskRepository, SqliteTaskRepository,
+                SqliteWorktreeProvisioningLeaseRepository, default_migration_catalog,
             };
             use ora_domain::{
                 AuditFields, Project, ProjectId, ScheduledOccurrence, ScheduledRun, ScheduledRunId,
