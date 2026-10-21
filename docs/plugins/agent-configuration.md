@@ -88,6 +88,19 @@ compile to the associated schema version and exact-byte digest, or the installer
 in staging. An Agent package may carry a declaration without an association as inert package metadata;
 the declaration alone grants no personal configuration or model access.
 
+After publishing a package, the Node keeps a receipt outside the package content naming the archive
+digest and target it verified; republishing the same version clears the old receipt first. A session
+with a frozen configuration checks again while it holds the package lease and before it requests
+model access: the receipt matches the frozen package digest and target; the installed declaration's
+fingerprint, schema and adapter contract version match the frozen values; the frozen Settings
+validate against that declaration; and the declaration offers the frozen protocol. Otherwise the
+session ends with `agent_model_configuration_invalid` or `agent_model_protocol_mismatch` and no
+plugin process starts. Such a session's plugin, and every process the host spawns for it, starts from
+an empty environment with only `PATH`, `LANG`, `LC_ALL`, `TMPDIR` and the session's own variables,
+so credentials and CLI configuration in the Node's environment never reach it. A model binding
+without a frozen configuration is accepted only for the legacy `official/ora-space.opencode`; any
+other plugin ends with `agent_model_configuration_required`.
+
 ## Decisions
 
 - [Agent configuration declarations](https://github.com/ora-space/specs/blob/main/decisions/desktop/plugin/manifest/20261017-agent-configuration-declarations.md)

@@ -73,6 +73,15 @@ section 内的未知键都会被拒绝。副本路径由 `/` 分隔的 ASCII 段
 包内 `assets/config.json` 必须编译到关联的 schema 版本且原始字节摘要一致，否则安装器在 staging
 阶段拒绝包。Agent 包可以携带没有发行关联的惰性声明元数据；声明本身不授予个人配置或模型访问权。
 
+Node 发布包后，在包内容之外记一份收据，写明本机核对过的归档摘要和 target；重新发布同一版本前
+先清掉旧收据。带冻结配置的会话启动时，在持有包租约、申请模型授权之前再核对一次：收据与冻结的
+包摘要和 target 一致，已安装声明的指纹、schema 和 adapter 契约版本与冻结值一致，冻结的
+Settings 按该声明校验通过，且声明提供冻结的协议。任一不满足就以
+`agent_model_configuration_invalid` 或 `agent_model_protocol_mismatch` 结束，插件进程不会启动。
+这类会话的插件及宿主为它拉起的进程从空环境启动，只补 `PATH`、`LANG`、`LC_ALL`、`TMPDIR` 和
+会话自己的变量，Node 环境里的凭据和 CLI 配置不会传进去。没有冻结配置的模型绑定只能用于旧版
+`official/ora-space.opencode`，其他插件以 `agent_model_configuration_required` 结束。
+
 ## 决策
 
 - [Agent 配置声明](https://github.com/ora-space/specs/blob/main/decisions/desktop/plugin/manifest/20261017-agent-configuration-declarations.md)
