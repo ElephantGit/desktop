@@ -10,8 +10,9 @@ use serde::{Deserialize, Serialize};
 /// The only adapter contract this protocol version can describe.
 pub const MODEL_ADAPTER_CONTRACT_VERSION: u32 = 1;
 
-/// Largest frozen Settings document; declarations bound their fields far below this.
-pub const MAX_AGENT_SETTINGS_BYTES: usize = 64 * 1024;
+/// Largest frozen Settings document: the bound Cloud stores and the plugin SDK accepts, so a
+/// configuration Cloud saved is never refused only by the Node on the way to the adapter.
+pub const MAX_AGENT_SETTINGS_BYTES: usize = 256 * 1024;
 
 /// Model wire protocols a platform proxy serves to an adapter.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]

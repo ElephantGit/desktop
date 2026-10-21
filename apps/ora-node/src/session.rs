@@ -150,6 +150,10 @@ where
     }
 }
 
+/// Targets Cloud accepts in an adapter capability; advertising any other would make Cloud refuse
+/// the whole registration instead of only this capability.
+const ADAPTER_TARGETS: [&str; 2] = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"];
+
 impl<L, C, P, R> AgentSessions<L, C, P, R> {
     /// Gives every session an `ora-git` socket served by `broker`. Composition calls it before
     /// any session starts, while it still holds the only handle.
@@ -178,7 +182,7 @@ impl<L, C, P, R> AgentSessions<L, C, P, R> {
     /// outside the supported Linux targets keeps only the legacy OpenCode route.
     pub(crate) fn model_adapter(&self) -> Option<ora_node_protocol::ModelAdapterCapability> {
         let target = ora_plugin_registry::current_host_target()?;
-        (self.model_capable() && target.as_str().ends_with("-unknown-linux-gnu")).then(|| {
+        (self.model_capable() && ADAPTER_TARGETS.contains(&target.as_str())).then(|| {
             ora_node_protocol::ModelAdapterCapability {
                 contract_version: ora_node_protocol::MODEL_ADAPTER_CONTRACT_VERSION,
                 target: target.as_str().to_string(),
