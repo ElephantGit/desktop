@@ -60,9 +60,10 @@ pub use revision::RestoreConfig;
 pub use service::{AgentConfig, ControlConfig, ControlListen, RuntimeScope, ServiceConfig, serve};
 #[cfg(target_os = "linux")]
 pub use session::{
-    AgentSessions, CheckoutResolver, CommandSettlement, HistoryUnavailable, PluginCatalog,
-    PriorRevisionRestore, QueuedCommand, RestoreCancel, RestoreFailure, RestoreRequest, Restored,
-    SessionCommand, SessionConfig, SessionHost, SessionLedger, SessionWorkload,
+    AgentSessions, CheckoutResolver, CommandSettlement, HistoryUnavailable,
+    InstalledConfigurationError, PluginCatalog, PriorRevisionRestore, QueuedCommand, RestoreCancel,
+    RestoreFailure, RestoreRequest, Restored, SessionCommand, SessionConfig, SessionHost,
+    SessionLedger, SessionWorkload,
 };
 #[cfg(target_os = "linux")]
 pub type ManagedNode = Node<gitlancer::Git<ManagedGitRunner>>;

@@ -26,6 +26,7 @@ pub(super) fn start() -> Case {
                 execution_id: ExecutionId::new(EXECUTION),
                 payload: StartAgentSession {
                     spec: AgentSessionSpec {
+                        agent_configuration: None,
                         node_id: NodeId::new("node-1"),
                         agent_plugin_id: PluginId::new("ora.1a2b/claude-code"),
                         agent_plugin_version: PluginVersion::new("1.2.0"),
@@ -197,6 +198,116 @@ async fn model_bound_session_round_trips_and_rejects_empty_binding() -> Result<(
         MessageValidationError::EmptyField {
             field: "model_binding_id",
         },
+    )
+    .await
+}
+
+/// A frozen adapter configuration crosses with its binding, Settings kept as exact JSON text.
+#[tokio::test]
+async fn configured_session_round_trips_and_rejects_inconsistent_configuration()
+-> Result<(), TestError> {
+    let mut case = start();
+    let Message::Controller(ControllerToNodeMessage::StartAgentSession(command)) =
+        &mut case.message
+    else {
+        panic!("fixture must be a session start")
+    };
+    command.payload.spec.model_binding_id = Some(ModelBindingId::new("binding-1"));
+    command.payload.spec.agent_configuration = Some(FrozenAgentConfiguration {
+        plugin_id: PluginId::new("ora.1a2b/claude-code"),
+        plugin_version: PluginVersion::new("1.2.0"),
+        target: "x86_64-unknown-linux-gnu".into(),
+        package_sha256: Sha256Digest::new("a".repeat(64)),
+        schema_version: 2,
+        declaration_fingerprint: Sha256Digest::new("b".repeat(64)),
+        adapter_version: MODEL_ADAPTER_CONTRACT_VERSION,
+        configuration_revision: 3,
+        settings_json: r#"{"limit":12345678901234567890}"#.into(),
+        protocol: ModelProtocol::AnthropicMessages,
+        model: BoundModel {
+            id: "team/model".into(),
+            name: "Team model".into(),
+            context_window: 200_000,
+            max_tokens: 8192,
+        },
+    });
+    case.wire["payload"]["spec"]["model_binding_id"] = json!("binding-1");
+    case.wire["payload"]["spec"]["agent_configuration"] = json!({
+        "plugin_id": "ora.1a2b/claude-code",
+        "plugin_version": "1.2.0",
+        "target": "x86_64-unknown-linux-gnu",
+        "package_sha256": "a".repeat(64),
+        "schema_version": 2,
+        "declaration_fingerprint": "b".repeat(64),
+        "adapter_version": 1,
+        "configuration_revision": 3,
+        "settings_json": r#"{"limit":12345678901234567890}"#,
+        "protocol": "anthropic-messages",
+        "model": {"id": "team/model", "name": "Team model",
+            "context_window": 200_000, "max_tokens": 8192},
+    });
+    case.assert_wire().await?;
+    case.assert_round_trip().await?;
+    // An Agent on the personal model default with no declared Settings was never saved, so its
+    // frozen revision is zero; the rejections below each fail for their own field from that base.
+    let Message::Controller(ControllerToNodeMessage::StartAgentSession(command)) =
+        &mut case.message
+    else {
+        panic!("fixture must be a session start")
+    };
+    if let Some(configuration) = command.payload.spec.agent_configuration.as_mut() {
+        configuration.configuration_revision = 0;
+    }
+    case.wire["payload"]["spec"]["agent_configuration"]["configuration_revision"] = json!(0);
+    case.assert_wire().await?;
+    case.assert_round_trip().await?;
+    let configuration = "/payload/spec/agent_configuration";
+    for (path, value) in [
+        (
+            format!("{configuration}/plugin_id"),
+            json!("ora.1a2b/other"),
+        ),
+        (format!("{configuration}/plugin_version"), json!("1.2.1")),
+        (format!("{configuration}/target"), json!("")),
+        (format!("{configuration}/adapter_version"), json!(2)),
+        (format!("{configuration}/settings_json"), json!("[1]")),
+        (format!("{configuration}/settings_json"), json!("{")),
+        (format!("{configuration}/model/id"), json!("")),
+    ] {
+        let mut wire = case.wire.clone();
+        replace(&mut wire, &path, value);
+        reject_semantics(
+            Peer::Controller,
+            &wire,
+            &path,
+            MessageValidationError::InvalidAgentConfiguration,
+        )
+        .await?;
+    }
+    // Without a binding an adapter could only fall back to whatever the host holds.
+    let mut wire = case.wire.clone();
+    wire["payload"]["spec"]
+        .as_object_mut()
+        .unwrap()
+        .remove("model_binding_id");
+    reject_semantics(
+        Peer::Controller,
+        &wire,
+        "missing binding",
+        MessageValidationError::InvalidAgentConfiguration,
+    )
+    .await?;
+    let mut wire = case.wire.clone();
+    replace(
+        &mut wire,
+        &format!("{configuration}/package_sha256"),
+        json!("A".repeat(64)),
+    );
+    reject_semantics(
+        Peer::Controller,
+        &wire,
+        "uppercase digest",
+        MessageValidationError::InvalidSha256,
     )
     .await
 }

@@ -47,6 +47,48 @@ impl CompiledAgentConfiguration {
     }
 }
 
+/// Validates frozen effective Settings with the editor's scalar and completeness rules.
+///
+/// A host re-checks the values Cloud froze against the declaration it actually installed, so a
+/// configuration saved for another declaration cannot start an adapter.
+pub fn validate_agent_settings(
+    declaration: &CompiledAgentConfiguration,
+    settings: &serde_json::Map<String, Value>,
+) -> bool {
+    let Ok(values) = settings
+        .iter()
+        .map(|(key, value)| {
+            serde_json::from_value::<crate::SettingValue>(value.clone())
+                .map(|value| (key.clone(), value))
+        })
+        .collect::<Result<std::collections::BTreeMap<_, _>, _>>()
+    else {
+        return false;
+    };
+    let compiled = CompiledDeclaration {
+        schema_version: 1,
+        settings: declaration.settings.clone(),
+        fingerprint: declaration.fingerprint.clone(),
+    };
+    if !crate::values::validate_values(&compiled, &values).is_empty() {
+        return false;
+    }
+    let details = crate::values::details_from(
+        compiled,
+        crate::values::StoredConfiguration {
+            schema_version: 1,
+            revision: 0,
+            values,
+        },
+    );
+    matches!(
+        details.summary,
+        crate::ConfigurationSummary::Available {
+            completeness: crate::ConfigurationCompleteness::Complete
+        }
+    )
+}
+
 /// What a plugin can consume; actual protocol availability and authorization remain host-owned.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]

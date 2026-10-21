@@ -13,6 +13,7 @@ mod ledger;
 mod model;
 mod ports;
 mod preview;
+mod process;
 mod queue;
 mod resume;
 mod thread;
@@ -20,9 +21,9 @@ mod workload;
 
 pub(crate) use model::seal_unstarted_history;
 pub use ports::{
-    CheckoutResolver, CommandSettlement, HistoryUnavailable, PluginCatalog, PriorRevisionRestore,
-    QueuedCommand, RestoreCancel, RestoreFailure, RestoreRequest, Restored, SessionCommand,
-    SessionHost, SessionLedger,
+    CheckoutResolver, CommandSettlement, HistoryUnavailable, InstalledConfigurationError,
+    PluginCatalog, PriorRevisionRestore, QueuedCommand, RestoreCancel, RestoreFailure,
+    RestoreRequest, Restored, SessionCommand, SessionHost, SessionLedger,
 };
 pub use workload::SessionWorkload;
 pub(crate) use workload::purge_workload_directory;
@@ -149,6 +150,10 @@ where
     }
 }
 
+/// Targets Cloud accepts in an adapter capability; advertising any other would make Cloud refuse
+/// the whole registration instead of only this capability.
+const ADAPTER_TARGETS: [&str; 2] = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"];
+
 impl<L, C, P, R> AgentSessions<L, C, P, R> {
     /// Gives every session an `ora-git` socket served by `broker`. Composition calls it before
     /// any session starts, while it still holds the only handle.
@@ -171,6 +176,22 @@ impl<L, C, P, R> AgentSessions<L, C, P, R> {
     /// Model-bound sessions require this additional negotiated capability.
     pub(crate) fn model_capable(&self) -> bool {
         self.shared.config.model_proxy.is_some()
+    }
+
+    /// The adapter path needs model access and a target plugin packages are built for; a host
+    /// outside the supported Linux targets keeps only the legacy OpenCode route.
+    pub(crate) fn model_adapter(&self) -> Option<ora_node_protocol::ModelAdapterCapability> {
+        let target = ora_plugin_registry::current_host_target()?;
+        (self.model_capable() && ADAPTER_TARGETS.contains(&target.as_str())).then(|| {
+            ora_node_protocol::ModelAdapterCapability {
+                contract_version: ora_node_protocol::MODEL_ADAPTER_CONTRACT_VERSION,
+                target: target.as_str().to_string(),
+                protocols: vec![
+                    ora_node_protocol::ModelProtocol::OpenaiCompletions,
+                    ora_node_protocol::ModelProtocol::AnthropicMessages,
+                ],
+            }
+        })
     }
     /// A lost actor or failed terminal write stops admission instead of stranding a Running row.
     pub(crate) fn failed(&self) -> bool {

@@ -12,7 +12,7 @@ use super::queue::{Plan, plan};
 use super::resume;
 use super::workload::SessionPlacement;
 use super::{SessionConfig, Shared};
-use crate::model_proxy::{ModelAccess, ModelAccessStatus};
+use crate::model_proxy::{ModelAccess, ModelAccessStatus, ModelRoute};
 use agent_client_protocol_schema::v1::{ContentBlock as AcpContentBlock, MessageId, TextContent};
 use ora_agent_runtime::{AgentRuntimeManager, AgentRuntimeSetup, MemorySessionStore, NoSessionMcp};
 use ora_contracts::{
@@ -31,6 +31,10 @@ use ora_scheduler::Scheduler;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Notify;
+
+/// The one package the Node may still configure for a model binding without a frozen
+/// configuration: the OpenCode build that predates plugin-owned adapters.
+const LEGACY_OPENCODE_PLUGIN: &str = "official/ora-space.opencode";
 
 /// Runs one session execution to its end and writes the terminal result.
 ///
@@ -125,6 +129,13 @@ where
     let Ok(plugin_id) = PluginId::parse(spec.agent_plugin_id.as_str()) else {
         return SessionEnd::agent_failed("agent_plugin_unavailable");
     };
+    // Admission checked a declaration Cloud holds; under the lease the Node proves the installed
+    // bytes, declaration and Settings are that same one before any model authority exists.
+    if let Some(configuration) = &spec.agent_configuration
+        && let Err(error) = shared.catalog.check_configuration(configuration)
+    {
+        return SessionEnd::agent_failed(error.code());
+    }
     // The checkout still has the clone's owner here; the hand-back below covers what Git wrote.
     let stopping = shared.stopping.subscribe();
     let restored = resume::restore_prior(
@@ -170,8 +181,19 @@ where
             let Some(config) = shared.config.model_proxy.clone() else {
                 return SessionEnd::agent_failed("model_proxy_unavailable");
             };
-            match ModelAccess::open(config, binding, execution, &shared.config.home_directory).await
-            {
+            // A frozen configuration hands the grant to the plugin's adapter; without one only
+            // the legacy OpenCode package, whose configuration the Node still writes, may run.
+            // Any other plugin would receive a live token it never declared, so it is refused
+            // before a grant exists.
+            let route = match &spec.agent_configuration {
+                Some(configuration) => ModelRoute::Adapter(configuration),
+                None if spec.agent_plugin_id.as_str() == LEGACY_OPENCODE_PLUGIN => {
+                    ModelRoute::LegacyOpenCode
+                }
+                None => return SessionEnd::agent_failed("agent_model_configuration_required"),
+            };
+            let home = &shared.config.home_directory;
+            match ModelAccess::open(config, binding, execution, home, route).await {
                 Ok(access) => Some(access),
                 Err(error) if error.0 == "model_session_ending" => {
                     return match super::model::reconcile(
@@ -241,7 +263,9 @@ where
         None => None,
     };
     let taps = GenerationTaps::default();
-    let launcher = placement.launcher(&spec.git_identity, &package_root, environment);
+    let isolation =
+        super::process::ModelProcessIsolation::for_session(spec.agent_configuration.is_some());
+    let launcher = placement.launcher(&spec.git_identity, &package_root, environment, isolation);
     let lifecycle = match open_lifecycle(&shared.config, launcher, &taps) {
         Ok(lifecycle) => lifecycle,
         Err(error) => {
@@ -281,6 +305,9 @@ where
             lifecycle: lifecycle.clone(),
             taps,
             plugin_id: plugin_id.clone(),
+            model_context: model_access
+                .as_ref()
+                .and_then(|access| access.context.clone()),
         }),
         store: MemorySessionStore::default(),
         directory: CheckoutDirectory(checkout.clone()),

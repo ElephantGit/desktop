@@ -22,6 +22,7 @@ impl Control {
         identity: NodeRuntimeIdentity,
         period: Duration,
         capabilities: Vec<NodeCapability>,
+        model_adapter: Option<ModelAdapterCapability>,
         commands: mpsc::Sender<commands::Reply>,
         grants: mpsc::Sender<grants::Request>,
     ) -> Self {
@@ -42,6 +43,7 @@ impl Control {
             store,
             identity,
             capabilities,
+            model_adapter,
             receive,
             Workers { commands, grants },
             output,
@@ -144,6 +146,7 @@ async fn reconcile<S: CoordinationStore>(
     store: S,
     identity: NodeRuntimeIdentity,
     capabilities: Vec<NodeCapability>,
+    model_adapter: Option<ModelAdapterCapability>,
     mut input: mpsc::Receiver<NodeToControllerMessage>,
     workers: Workers,
     output: mpsc::Sender<Action>,
@@ -216,9 +219,17 @@ async fn reconcile<S: CoordinationStore>(
                     .original_agent_dispatch(&identity, &status.operation_id, &status.execution_id)
                     .await?
                 {
+                    // A configured session retransmits only to an incarnation that still admits it.
                     if agent_capable
                         && (agent.payload.spec.model_binding_id.is_none()
                             || capabilities.contains(&NodeCapability::ModelProxy))
+                        && agent.payload.spec.agent_configuration.as_ref().is_none_or(
+                            |configuration| {
+                                model_adapter
+                                    .as_ref()
+                                    .is_some_and(|adapter| adapter.admits(configuration))
+                            },
+                        )
                     {
                         store.dispatch_agent(agent).await?
                     } else {

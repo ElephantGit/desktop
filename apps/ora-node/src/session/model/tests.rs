@@ -56,6 +56,12 @@ impl crate::PluginCatalog for CheckoutPath {
     ) -> Option<std::path::PathBuf> {
         Some(self.0.clone())
     }
+    fn check_configuration(
+        &self,
+        _configuration: &ora_node_protocol::FrozenAgentConfiguration,
+    ) -> Result<(), crate::InstalledConfigurationError> {
+        Ok(())
+    }
 }
 
 #[derive(Default)]
@@ -190,6 +196,7 @@ async fn initial_grant_ending_preserves_delayed_user_end_and_seals_empty_history
         &ModelBindingId::new("binding-1"),
         &execution,
         root.path(),
+        crate::model_proxy::ModelRoute::LegacyOpenCode,
     )
     .await;
     let Err(error) = grant else {
@@ -255,8 +262,9 @@ async fn production_driver_reconciles_early_user_end_without_launching_a_plugin(
         ora_node_protocol::OperationId::new("operation-1"),
         execution.clone(),
         AgentSessionSpec {
+            agent_configuration: None,
             node_id: node.node_id.clone(),
-            agent_plugin_id: PluginId::new("official/ora-space.echo"),
+            agent_plugin_id: PluginId::new("official/ora-space.opencode"),
             agent_plugin_version: PluginVersion::new("1.0.0"),
             checkout_execution_id: ExecutionId::new("clone-1"),
             model_binding_id: Some(ModelBindingId::new("binding-1")),
@@ -311,6 +319,7 @@ async fn renewal_ending_revokes_before_reconciling_exact_cancelled_reason() {
         &ModelBindingId::new("binding-1"),
         &execution,
         root.path(),
+        crate::model_proxy::ModelRoute::LegacyOpenCode,
     )
     .await
     .unwrap();
@@ -430,6 +439,7 @@ fn production_driver_defers_unknown_restore_without_releasing_terminal_history()
                     execution.clone(),
                     AgentSessionSpec {
                         workspace_directory: Vec::new(),
+                        agent_configuration: None,
                         node_id: node.node_id.clone(),
                         agent_plugin_id: PluginId::new("official/ora-space.echo"),
                         agent_plugin_version: PluginVersion::new("1.0.0"),

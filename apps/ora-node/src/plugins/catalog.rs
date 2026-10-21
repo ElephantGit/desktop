@@ -1,4 +1,5 @@
 //! Package discovery and use leases share the same short critical section as publish/remove.
+use super::model_configuration::PackageArtifact;
 use crate::session::PluginCatalog;
 use ora_node_protocol::{PluginFailureCode, PluginId, PluginVersion};
 use ora_plugin_manager::{
@@ -57,7 +58,7 @@ impl DirectoryPluginCatalog {
     }
 
     /// Returns the location derived only from plugin-domain validated segments.
-    fn path(&self, id: &ora_domain::PluginId, version: &semver::Version) -> PathBuf {
+    pub(super) fn path(&self, id: &ora_domain::PluginId, version: &semver::Version) -> PathBuf {
         installed_root(&self.home)
             .join(id.namespace())
             .join(id.name())
@@ -70,6 +71,7 @@ impl DirectoryPluginCatalog {
         id: &ora_domain::PluginId,
         version: &semver::Version,
         declaration: Option<&ExpectedAgentDeclaration>,
+        artifact: &PackageArtifact<'_>,
     ) -> Result<bool, PluginFailureCode> {
         let uses = self.uses();
         let path = self.path(id, version);
@@ -82,7 +84,11 @@ impl DirectoryPluginCatalog {
                 verify_agent_declaration(&path, expected)
                     .map_err(|_| PluginFailureCode::InvalidPackage)?;
             }
-            return Ok(true);
+            // A declared package installed without a receipt (or from other bytes) is
+            // reinstalled, so the configured session that follows can prove its artifact.
+            if declaration.is_none() || self.package_recorded(id, version, artifact) {
+                return Ok(true);
+            }
         }
         if uses.contains_key(&id.canonical()) {
             return Err(PluginFailureCode::PluginInUse);
@@ -96,11 +102,14 @@ impl DirectoryPluginCatalog {
         id: &ora_domain::PluginId,
         version: &semver::Version,
         prepared: PreparedPlugin,
+        artifact: &PackageArtifact<'_>,
     ) -> Result<(), PluginFailureCode> {
         let uses = self.uses();
         if uses.contains_key(&id.canonical()) {
             return Err(PluginFailureCode::PluginInUse);
         }
+        self.clear_package_record(id, version)
+            .map_err(|_| PluginFailureCode::InstallFailed)?;
         let destination = prepared.commit(&self.home).map_err(super::failure)?;
         // Retire only version directories belonging to this plugin; its data/config live elsewhere.
         let parent = destination
@@ -116,7 +125,8 @@ impl DirectoryPluginCatalog {
                     .map_err(|_| PluginFailureCode::InstallFailed)?;
             }
         }
-        Ok(())
+        self.record_package(id, version, artifact)
+            .map_err(|_| PluginFailureCode::InstallFailed)
     }
 
     /// Removes the requested package identity without following a link or deleting plugin data.
@@ -162,6 +172,14 @@ impl PluginCatalog for DirectoryPluginCatalog {
         ora_utils::path::check_directory_without_symlinks(&path).ok()?;
         inspect_planned_package(&path, &id, &version).ok()?;
         Some(path)
+    }
+
+    fn check_configuration(
+        &self,
+        configuration: &ora_node_protocol::FrozenAgentConfiguration,
+    ) -> Result<(), crate::session::InstalledConfigurationError> {
+        let _uses = self.uses();
+        self.check_installed_configuration(configuration)
     }
 }
 

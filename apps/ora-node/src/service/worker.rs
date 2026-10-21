@@ -135,7 +135,9 @@ pub(super) fn run(
     if agents.is_some() && revisions.is_some() {
         capabilities.push(NodeCapability::RevisionRestore);
     }
+    let model_adapter = agents.as_ref().and_then(agents::SessionHost::model_adapter);
     let info = SessionInfo {
+        model_adapter,
         agents: agents.clone(),
         grants,
         identity: node.identity().clone(),

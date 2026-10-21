@@ -440,6 +440,14 @@ pub(super) fn start(
     if input.payload.spec.model_binding_id.is_some() && !host.model_capable() {
         return Err(crate::Error::UnsupportedMessage);
     }
+    // The Controller dispatches only on an advertised match; anything else is a protocol fault.
+    if let Some(configuration) = &input.payload.spec.agent_configuration
+        && !host
+            .model_adapter()
+            .is_some_and(|adapter| adapter.admits(configuration))
+    {
+        return Err(crate::Error::UnsupportedMessage);
+    }
     node.database.check_controller_execution(
         controller,
         &input.operation_id,

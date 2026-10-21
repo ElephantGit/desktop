@@ -118,7 +118,12 @@ pub(crate) trait SessionObserver: Send + Sync {
     /// The handshake completed with this Node incarnation; the session is live from here on.
     fn established(&self, node: &NodeRuntimeIdentity);
     /// Records the negotiated capabilities before publishing the connected identity.
-    fn capabilities(&self, _capabilities: &[NodeCapability]) {}
+    fn capabilities(
+        &self,
+        _capabilities: &[NodeCapability],
+        _model_adapter: Option<&ModelAdapterCapability>,
+    ) {
+    }
     /// The Node still answers `Unknown` for an execution after this connection retransmitted its
     /// original command once. It may be a retained uncertain attempt or a command the Node has not
     /// admitted yet; the owner decides how long that may last.
@@ -330,8 +335,12 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
         .payload
         .capabilities
         .contains(&NodeCapability::RevisionDelivery);
-    observer.capabilities(&hello.payload.capabilities);
+    observer.capabilities(
+        &hello.payload.capabilities,
+        hello.payload.model_adapter.as_ref(),
+    );
     let capabilities = hello.payload.capabilities;
+    let model_adapter = hello.payload.model_adapter;
     let identity = hello.payload.node;
     observer.established(&identity);
     let mut tick = interval(Duration::from_millis(config.query_interval_ms));
@@ -350,6 +359,7 @@ async fn coordinate<S: CoordinationStore, R: FrameReceiver, W: FrameSender, O: S
         identity.clone(),
         Duration::from_millis(config.query_interval_ms),
         capabilities,
+        model_adapter,
         commands.input.clone(),
         grants.input.clone(),
     );

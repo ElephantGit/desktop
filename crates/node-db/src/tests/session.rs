@@ -13,6 +13,7 @@ pub(super) fn command() -> StartAgentSessionMessage {
         execution_id: ExecutionId::new("session-execution"),
         payload: StartAgentSession {
             spec: AgentSessionSpec {
+                agent_configuration: None,
                 node_id: NodeId::new("node"),
                 agent_plugin_id: PluginId::new("official/agent"),
                 agent_plugin_version: PluginVersion::new("1.0.0"),

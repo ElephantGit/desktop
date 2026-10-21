@@ -1,7 +1,7 @@
 use super::validation::{
     MessageValidationError, ValidateMessage, validate_identity, validate_protocol_version,
 };
-use crate::{ControllerId, NodeRuntimeIdentity, ProtocolVersion};
+use crate::{ControllerId, ModelAdapterCapability, NodeRuntimeIdentity, ProtocolVersion};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -48,6 +48,9 @@ pub struct HelloAccepted {
     pub selected_version: ProtocolVersion,
     pub node: NodeRuntimeIdentity,
     pub capabilities: Vec<NodeCapability>,
+    /// Present only beside `model_proxy`; older Nodes omit it and receive no configured session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_adapter: Option<ModelAdapterCapability>,
 }
 
 /// Liveness signal from the current Node incarnation.
@@ -154,6 +157,12 @@ impl ValidateMessage for HelloAcceptedMessage {
         }
         if capabilities.is_empty() {
             return Err(MessageValidationError::NoExecutionCapabilities);
+        }
+        if let Some(adapter) = &payload.model_adapter {
+            if !capabilities.contains(&NodeCapability::ModelProxy) {
+                return Err(MessageValidationError::InvalidModelAdapterCapability);
+            }
+            adapter.validate()?;
         }
         Ok(())
     }

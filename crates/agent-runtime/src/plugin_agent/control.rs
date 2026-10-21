@@ -53,6 +53,21 @@ impl From<PluginRuntimeError> for PluginAgentError {
     }
 }
 
+/// Classifies a configured start failure by its code alone; the plugin's message is dropped.
+pub(super) fn sensitive_start_error(error: &PluginRuntimeError) -> PluginAgentError {
+    match error {
+        PluginRuntimeError::Remote {
+            code: AGENT_NOT_INSTALLED_CODE,
+            ..
+        } => PluginAgentError::AgentNotInstalled,
+        PluginRuntimeError::Remote {
+            code: AGENT_UNUSABLE_CODE,
+            ..
+        } => PluginAgentError::AgentUnusable("agent_model_adapter_failed".into()),
+        _ => PluginAgentError::Failed("agent_model_adapter_failed".into()),
+    }
+}
+
 /// Describes one model an agent plugin offers before any session exists.
 ///
 /// This is deliberately separate from ACP session config options, which only exist after
@@ -129,13 +144,15 @@ pub(super) async fn start_agent(
         model_context,
     })
     .map_err(|error| PluginAgentError::Failed(error.to_string()))?;
-    // Remote errors may contain arbitrary plugin text. Sensitive startup must never echo it.
+    // Remote errors may contain arbitrary plugin text. Sensitive startup must never echo it, but
+    // it keeps the error code, so a missing or unusable CLI stays an unavailable agent that is
+    // retried quietly rather than a failure that trips the restart circuit.
     let result = runtime
         .invoke(AGENT_START_METHOD, params)
         .await
         .map_err(|error| {
             if expected.is_some() {
-                PluginAgentError::Failed("agent_model_adapter_failed".into())
+                sensitive_start_error(&error)
             } else {
                 error.into()
             }

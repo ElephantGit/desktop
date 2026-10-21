@@ -8,7 +8,9 @@
 //! is rejected while it is still staged.
 
 use super::InstallError;
-use ora_plugin_config::{MAX_DECLARATION_BYTES, compile_agent_configuration};
+use ora_plugin_config::{
+    CompiledAgentConfiguration, MAX_DECLARATION_BYTES, compile_agent_configuration,
+};
 use ora_plugin_manifest::Sha256Digest;
 use std::io::Read;
 use std::path::Path;
@@ -76,6 +78,23 @@ pub fn verify_agent_declaration(
         ));
     }
     Ok(())
+}
+
+/// Compiles the declaration an installed package actually carries.
+///
+/// A host that starts a configured session re-reads it under its package lease instead of
+/// trusting the identity Cloud froze, so a replaced package or a configuration frozen for another
+/// declaration is refused before any model authority is handed out.
+pub fn read_agent_declaration(
+    package_root: &Path,
+) -> Result<CompiledAgentConfiguration, InstallError> {
+    let bytes = read_declaration_bytes(package_root)?;
+    compile_agent_configuration(&bytes).map_err(|error| {
+        InstallError::invalid_field(
+            CONFIGURATION_FILE,
+            format!("agent configuration does not compile: {error}"),
+        )
+    })
 }
 
 /// Reads the bounded declaration bytes, refusing anything but a regular file.

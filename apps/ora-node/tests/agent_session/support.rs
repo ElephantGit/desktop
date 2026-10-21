@@ -1,14 +1,16 @@
 //! In-memory ledger, checkout and plugin catalog, plus a Node home with the echo agent installed.
 
 use ora_node::{
-    AgentSessions, CheckoutResolver, CommandSettlement, PluginCatalog, PriorRevisionRestore,
-    QueuedCommand, RestoreCancel, RestoreFailure, RestoreRequest, Restored, SessionCommand,
-    SessionConfig, SessionHost, SessionLedger, SessionWorkload,
+    AgentSessions, CheckoutResolver, CommandSettlement, InstalledConfigurationError,
+    ModelProxyConfig, PluginCatalog, PriorRevisionRestore, QueuedCommand, RestoreCancel,
+    RestoreFailure, RestoreRequest, Restored, SessionCommand, SessionConfig, SessionHost,
+    SessionLedger, SessionWorkload,
 };
 use ora_node_protocol::{
-    AgentSessionEnded, AgentSessionSpec, CommandId, ContentBlock, ExecutionId, GitIdentity, NodeId,
+    AgentSessionEnded, AgentSessionSpec, BoundModel, CommandId, ContentBlock, ExecutionId,
+    FrozenAgentConfiguration, GitIdentity, ModelBindingId, ModelProtocol, NodeId,
     NodeIncarnationId, NodeRuntimeIdentity, OperationId, PluginId, PluginVersion, PriorRevision,
-    Sequence, ThreadEvent, TurnId, UserTurn,
+    Sequence, Sha256Digest, ThreadEvent, TurnId, UserTurn,
 };
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -17,6 +19,12 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::time::{Duration, Instant};
+
+/// The model-gateway fixture the crate's unit tests use, serving the real grant contract.
+// Failure toggles exist for the unit tests; these tests use only the default behavior.
+#[allow(dead_code)]
+#[path = "../../src/model_proxy/test_gateway.rs"]
+pub mod gateway;
 
 pub const PLUGIN_ID: &str = "official/ora-space.echo";
 pub const PLUGIN_VERSION: &str = "1.0.0";
@@ -247,6 +255,8 @@ impl Drop for CountedLease {
 pub struct Catalog {
     pub installed: HashMap<(PluginId, PluginVersion), PathBuf>,
     pub leases: Arc<AtomicUsize>,
+    /// How the installed package answers a frozen configuration; accepted unless set.
+    pub configuration: Arc<Mutex<Result<(), InstalledConfigurationError>>>,
 }
 
 impl PluginCatalog for Catalog {
@@ -261,6 +271,16 @@ impl PluginCatalog for Catalog {
         self.installed
             .get(&(plugin_id.clone(), version.clone()))
             .cloned()
+    }
+
+    fn check_configuration(
+        &self,
+        _configuration: &FrozenAgentConfiguration,
+    ) -> Result<(), InstalledConfigurationError> {
+        *self
+            .configuration
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -303,6 +323,8 @@ pub struct Fixture {
     pub ledger: MemoryLedger,
     pub leases: Arc<AtomicUsize>,
     pub restorer: Restorer,
+    /// What the catalog answers when a configured session checks its installed package.
+    pub configuration: Arc<Mutex<Result<(), InstalledConfigurationError>>>,
 }
 
 impl Fixture {
@@ -319,6 +341,7 @@ impl Fixture {
                 hold: Arc::default(),
                 cancelled: Arc::default(),
             },
+            configuration: Arc::new(Mutex::new(Ok(()))),
         };
         let package = fixture.package_root();
         std::fs::create_dir_all(&package).expect("create package root");
@@ -404,13 +427,28 @@ impl Fixture {
 
     /// Composes session execution as [`Self::sessions`] does, running agents per `workload`.
     pub fn sessions_with(&self, installed_version: &str, workload: SessionWorkload) -> Sessions {
+        self.compose(installed_version, workload, /*model_proxy*/ None)
+    }
+
+    /// Composes session execution whose model access goes through the gateway at `proxy`.
+    pub fn model_sessions(&self, proxy: ModelProxyConfig) -> Sessions {
+        self.compose(PLUGIN_VERSION, SessionWorkload::Shared, Some(proxy))
+    }
+
+    /// Composes session execution over the fixture's ledger, checkout and catalog.
+    fn compose(
+        &self,
+        installed_version: &str,
+        workload: SessionWorkload,
+        model_proxy: Option<ModelProxyConfig>,
+    ) -> Sessions {
         AgentSessions::new(
             SessionConfig {
                 home_directory: self.home(),
                 deno_path: env!("CARGO_BIN_EXE_ora-node-echo-agent").into(),
                 timezone: chrono_tz::UTC,
                 agent_ready_timeout: Duration::from_secs(30),
-                model_proxy: None,
+                model_proxy,
                 workload,
             },
             self.node(),
@@ -428,6 +466,7 @@ impl Fixture {
                     self.package_root_of(installed_version),
                 )]),
                 leases: Arc::clone(&self.leases),
+                configuration: Arc::clone(&self.configuration),
             },
             self.restorer.clone(),
         )
@@ -450,6 +489,7 @@ impl Fixture {
             OperationId::new(OPERATION),
             ExecutionId::new(EXECUTION),
             AgentSessionSpec {
+                agent_configuration: None,
                 node_id: NodeId::new("node-1"),
                 agent_plugin_id: PluginId::new(PLUGIN_ID),
                 agent_plugin_version: PluginVersion::new(version),
@@ -458,6 +498,43 @@ impl Fixture {
                 git_identity: identity(),
                 initial_turn: turn("turn-1", initial),
                 prior_revision: prior,
+                workspace_directory: vec![],
+            },
+        );
+    }
+
+    /// Starts a session whose adapter receives `settings_json` with the gateway fixture's model.
+    pub fn start_configured(&self, sessions: &Sessions, initial: &str, settings_json: &str) {
+        sessions.start(
+            OperationId::new(OPERATION),
+            ExecutionId::new(EXECUTION),
+            AgentSessionSpec {
+                agent_configuration: Some(FrozenAgentConfiguration {
+                    plugin_id: PluginId::new(PLUGIN_ID),
+                    plugin_version: PluginVersion::new(PLUGIN_VERSION),
+                    target: "x86_64-unknown-linux-gnu".into(),
+                    package_sha256: Sha256Digest::new("a".repeat(64)),
+                    schema_version: 2,
+                    declaration_fingerprint: Sha256Digest::new("b".repeat(64)),
+                    adapter_version: 1,
+                    configuration_revision: 4,
+                    settings_json: settings_json.into(),
+                    protocol: ModelProtocol::OpenaiCompletions,
+                    model: BoundModel {
+                        id: "team/model".into(),
+                        name: "Fixture".into(),
+                        context_window: 32768,
+                        max_tokens: 1024,
+                    },
+                }),
+                node_id: NodeId::new("node-1"),
+                agent_plugin_id: PluginId::new(PLUGIN_ID),
+                agent_plugin_version: PluginVersion::new(PLUGIN_VERSION),
+                checkout_execution_id: ExecutionId::new(CHECKOUT_EXECUTION),
+                model_binding_id: Some(ModelBindingId::new("binding-1")),
+                git_identity: identity(),
+                initial_turn: turn("turn-1", initial),
+                prior_revision: None,
                 workspace_directory: vec![],
             },
         );

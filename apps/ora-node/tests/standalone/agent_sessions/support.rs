@@ -17,6 +17,7 @@ pub(super) fn start(text: &str) -> StartAgentSessionMessage {
         execution_id: ExecutionId::new(EXECUTION),
         payload: StartAgentSession {
             spec: AgentSessionSpec {
+                agent_configuration: None,
                 node_id: NodeId::new("test-node"),
                 agent_plugin_id: PluginId::new("official/ora-space.echo"),
                 agent_plugin_version: PluginVersion::new("1.0.0"),

@@ -3940,6 +3940,7 @@ dependencies = [
  "ora-node-db",
  "ora-node-protocol",
  "ora-node-transport",
+ "ora-plugin-config",
  "ora-plugin-lifecycle",
  "ora-plugin-manager",
  "ora-plugin-protocol",

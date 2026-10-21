@@ -1,14 +1,22 @@
 //! Short-lived platform model grants owned by one live agent session, never by its ledger.
 
+mod adapter;
 mod opencode;
+#[cfg(test)]
+mod test_gateway;
 #[cfg(test)]
 pub(crate) mod tests;
 
 use chrono::{DateTime, FixedOffset};
-use ora_node_protocol::{ExecutionId, ModelBindingId};
+use ora_node_protocol::{ExecutionId, FrozenAgentConfiguration, ModelBindingId, ModelProtocol};
+use ora_plugin_protocol::AgentModelContext;
 use reqwest::{Certificate, Client, Identity, Url};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, path::PathBuf, time::Duration};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 use tokio::{sync::watch, task::JoinHandle};
 
 /// Dedicated model-access client TLS supplied by deployment, separate from Node server TLS.
@@ -42,13 +50,6 @@ struct ModelClient {
     public_ca: Vec<u8>,
 }
 
-#[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-enum Protocol {
-    OpenaiCompletions,
-    AnthropicMessages,
-}
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Model {
@@ -64,7 +65,7 @@ struct Grant {
     grant_id: String,
     token: String,
     expires_at: DateTime<FixedOffset>,
-    protocol: Protocol,
+    protocol: ModelProtocol,
     proxy_base_url: String,
     model: Model,
 }
@@ -181,8 +182,8 @@ impl ModelClient {
             || data.fragment().is_some()
             || data.path()
                 != match grant.protocol {
-                    Protocol::OpenaiCompletions => "/runtime/openai/v1",
-                    Protocol::AnthropicMessages => "/runtime/anthropic/v1",
+                    ModelProtocol::OpenaiCompletions => "/runtime/openai/v1",
+                    ModelProtocol::AnthropicMessages => "/runtime/anthropic/v1",
                 }
             || grant.token.is_empty()
             || grant.model.id.is_empty()
@@ -238,9 +239,20 @@ fn valid_grant_id(id: &str) -> bool {
     (1..=128).contains(&id.len()) && id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
 }
 
-/// A renewable grant and isolated OpenCode state whose owner is exactly one live conversation.
+/// Who turns the grant into CLI configuration for one session.
+#[derive(Clone, Copy)]
+pub(super) enum ModelRoute<'a> {
+    /// An undeclared OpenCode package: the Node still writes its configuration.
+    LegacyOpenCode,
+    /// A declared package whose adapter applies the frozen configuration itself.
+    Adapter(&'a FrozenAgentConfiguration),
+}
+
+/// A renewable grant and isolated CLI state whose owner is exactly one live conversation.
 pub(super) struct ModelAccess {
     pub(super) environment: BTreeMap<String, String>,
+    /// The adapter's startup input; the only place the token exists on the adapter route.
+    pub(super) context: Option<AgentModelContext>,
     _home: tempfile::TempDir,
     client: ModelClient,
     grant: String,
@@ -283,11 +295,20 @@ impl ModelAccess {
         binding: &ModelBindingId,
         execution: &ExecutionId,
         node_home: &std::path::Path,
+        route: ModelRoute<'_>,
     ) -> Result<Self, ModelAccessError> {
         let client = ModelClient::open(config)?;
         let grant = client.grant(binding, execution).await?;
-        let setup = opencode::environment(&grant, &client.config.ca_cert, node_home);
-        let (environment, home) = match setup {
+        let ca = &client.config.ca_cert;
+        let setup = match route {
+            ModelRoute::LegacyOpenCode => opencode::environment(&grant, ca, node_home)
+                .map(|(environment, home)| (environment, home, None)),
+            ModelRoute::Adapter(configuration) => {
+                adapter::start(&grant, configuration, ca, node_home)
+                    .map(|(environment, home, context)| (environment, home, Some(context)))
+            }
+        };
+        let (environment, home, context) = match setup {
             Ok(setup) => setup,
             Err(error) => {
                 client.revoke(&grant.grant_id, execution).await;
@@ -320,6 +341,7 @@ impl ModelAccess {
         });
         Ok(Self {
             environment,
+            context,
             _home: home,
             client,
             grant: grant.grant_id,
@@ -339,6 +361,31 @@ impl ModelAccess {
         self.client.revoke(&self.grant, &self.execution).await;
         self.closed = true;
     }
+}
+
+/// Creates one session's private CLI home under the Node's runtime directory, never in a checkout.
+fn isolated_home(node_home: &Path, prefix: &str) -> Result<tempfile::TempDir, ModelAccessError> {
+    let runtime_root = node_home.join("model-runtime");
+    ora_utils::path::create_directories_without_symlinks(&runtime_root)
+        .map_err(|_| ModelAccessError("model_runtime_state_unavailable"))?;
+    tempfile::Builder::new()
+        .prefix(prefix)
+        .tempdir_in(runtime_root)
+        .map_err(|_| ModelAccessError("model_runtime_state_unavailable"))
+}
+
+/// Points every per-user base directory at `home`, so no CLI reads the management host's own
+/// configuration, credentials or caches, and trusts the platform proxy's public CA.
+fn home_variables(home: &Path, ca: &Path) -> BTreeMap<String, String> {
+    let path = |path: PathBuf| path.to_string_lossy().into_owned();
+    BTreeMap::from([
+        ("NODE_EXTRA_CA_CERTS".to_string(), path(ca.to_path_buf())),
+        ("HOME".to_string(), path(home.to_path_buf())),
+        ("XDG_CONFIG_HOME".to_string(), path(home.join("config"))),
+        ("XDG_CACHE_HOME".to_string(), path(home.join("cache"))),
+        ("XDG_DATA_HOME".to_string(), path(home.join("data"))),
+        ("XDG_STATE_HOME".to_string(), path(home.join("state"))),
+    ])
 }
 
 /// Reads only a bounded safe fault code; all other upstream error content is discarded.

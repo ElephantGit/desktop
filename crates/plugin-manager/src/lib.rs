@@ -23,7 +23,8 @@ pub use discovery::{MANIFEST_FILE_NAME, installed_root};
 pub use hook::{InstalledHookDescriptor, validate_executable_containment};
 pub use install::{
     ExpectedAgentDeclaration, HostTarget, InstallError, InstalledPackage, Installer,
-    ResolvedReleaseSource, UpdateError, select_release, verify_agent_declaration,
+    ResolvedReleaseSource, UpdateError, read_agent_declaration, select_release,
+    verify_agent_declaration,
 };
 pub use issue::{PluginDiscoveryIssue, PluginDiscoveryIssueKind};
 pub use mcp::{InstalledMcpDescriptor, MCP_CONFIGURATION_FILE};

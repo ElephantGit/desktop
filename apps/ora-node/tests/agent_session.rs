@@ -120,6 +120,7 @@ async fn unconfigured_model_proxy_ends_before_launching_the_plugin() {
         OperationId::new(OPERATION),
         ExecutionId::new(EXECUTION),
         AgentSessionSpec {
+            agent_configuration: None,
             node_id: fixture.node().node_id,
             agent_plugin_id: PluginId::new(PLUGIN_ID),
             agent_plugin_version: PluginVersion::new(PLUGIN_VERSION),
@@ -666,5 +667,182 @@ async fn a_separate_workload_runs_the_agent_from_its_session_directory() {
             AgentSessionEndReason::UserEnded,
             0,
         ),
+    );
+}
+
+/// Grant routes the gateway fixture saw, without the renewals a slow run may add.
+fn grant_routes(gateway: &gateway::Gateway) -> Vec<String> {
+    gateway
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(route, _)| route.clone())
+        .filter(|route| !route.contains("/renew "))
+        .collect()
+}
+
+/// A configured session hands its grant to the adapter in the startup context alone: the adapter
+/// answers with the frozen model and the platform proxy, the token never reaches its environment,
+/// history or Thread, none of the Node's own environment is inherited, and ending the session
+/// revokes the grant.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_configured_adapter_receives_its_grant_only_in_the_startup_context() {
+    // The probe is the test runner's own environment, which the Node process inherits.
+    assert!(std::env::vars().any(|(name, _)| name.starts_with("CARGO")));
+    let fixture = Fixture::new();
+    let gateway = gateway::Gateway::new(&fixture.home());
+    let sessions = fixture.model_sessions(gateway.config.clone());
+    fixture.start_configured(&sessions, "[model]", r#"{"effort":"high"}"#);
+    let answer = until(|| {
+        fixture.ledger.events().iter().find_map(|event| {
+            (field(&event.record, &["update", "sessionUpdate"]) == "agent_message_chunk")
+                .then(|| field(&event.record, &["update", "content", "text"]))
+        })
+    })
+    .await;
+    fixture.command(
+        &sessions,
+        "command-2",
+        SessionCommand::EndSession(EndSessionReason::UserEnded),
+    );
+    let ended = fixture.ended().await;
+    sessions.shutdown().await;
+    let port = url::Url::parse(&gateway.config.gateway_url)
+        .unwrap()
+        .port()
+        .unwrap();
+    assert_eq!(
+        (answer, ended.reason),
+        (
+            format!(
+                "model=team/model proxy=https://localhost:{port}/runtime/openai/v1 token_in_environment=false host_environment=false"
+            ),
+            AgentSessionEndReason::UserEnded,
+        )
+    );
+    let history = serde_json::to_string(&fixture.history_lines()).unwrap();
+    let thread = format!("{:?}", fixture.ledger.events());
+    assert!(!history.contains("synthetic-temporary-token"));
+    assert!(!thread.contains("synthetic-temporary-token"));
+    assert_eq!(
+        grant_routes(&gateway),
+        vec![
+            "POST /internal/v1/model-grants HTTP/1.1",
+            "DELETE /internal/v1/model-grants/grant-1 HTTP/1.1"
+        ]
+    );
+    assert!(
+        fixture
+            .plugin_pids()
+            .into_iter()
+            .all(|pid| !process_exists(pid))
+    );
+}
+
+/// An adapter that does not confirm the exact configuration it was given never receives a prompt:
+/// the session fails before ACP starts, revokes the grant and stops the plugin.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unconfirmed_adapter_never_receives_a_prompt() {
+    let fixture = Fixture::new();
+    let gateway = gateway::Gateway::new(&fixture.home());
+    let sessions = fixture.model_sessions(gateway.config.clone());
+    fixture.start_configured(&sessions, "must not be sent", r#"{"refuse":true}"#);
+    let ended = fixture.ended().await;
+    sessions.shutdown().await;
+    assert_eq!(
+        (ended.reason, ended.detail.as_deref()),
+        (
+            AgentSessionEndReason::AgentFailed,
+            Some("agent_unavailable")
+        )
+    );
+    assert_eq!(fixture.ledger.events(), Vec::new());
+    assert_eq!(
+        grant_routes(&gateway),
+        vec![
+            "POST /internal/v1/model-grants HTTP/1.1",
+            "DELETE /internal/v1/model-grants/grant-1 HTTP/1.1"
+        ]
+    );
+    assert!(!fixture.plugin_pids().is_empty());
+    assert!(
+        fixture
+            .plugin_pids()
+            .into_iter()
+            .all(|pid| !process_exists(pid))
+    );
+}
+
+/// A configured session whose installed package no longer proves the frozen artifact,
+/// declaration or Settings ends before any grant is requested or any plugin process starts.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_configuration_the_installed_package_cannot_prove_never_gets_a_grant() {
+    let fixture = Fixture::new();
+    *fixture.configuration.lock().unwrap() = Err(ora_node::InstalledConfigurationError::Invalid);
+    let gateway = gateway::Gateway::new(&fixture.home());
+    let sessions = fixture.model_sessions(gateway.config.clone());
+    fixture.start_configured(&sessions, "must not be sent", r#"{"effort":"high"}"#);
+    let ended = fixture.ended().await;
+    sessions.shutdown().await;
+    assert_eq!(
+        (ended.reason, ended.detail.as_deref()),
+        (
+            AgentSessionEndReason::AgentFailed,
+            Some("agent_model_configuration_invalid")
+        )
+    );
+    assert_eq!(
+        (
+            fixture.ledger.events(),
+            grant_routes(&gateway),
+            fixture.plugin_pids()
+        ),
+        (Vec::new(), Vec::<String>::new(), Vec::new())
+    );
+}
+
+/// Only the legacy OpenCode package may take a model binding without a frozen configuration; any
+/// other plugin is refused before a grant exists, so it never sees a live token.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_undeclared_plugin_never_takes_the_legacy_model_route() {
+    use ora_node_protocol::{
+        AgentSessionSpec, ExecutionId, ModelBindingId, OperationId, PluginId, PluginVersion,
+    };
+    let fixture = Fixture::new();
+    let gateway = gateway::Gateway::new(&fixture.home());
+    let sessions = fixture.model_sessions(gateway.config.clone());
+    sessions.start(
+        OperationId::new(OPERATION),
+        ExecutionId::new(EXECUTION),
+        AgentSessionSpec {
+            agent_configuration: None,
+            node_id: fixture.node().node_id,
+            agent_plugin_id: PluginId::new(PLUGIN_ID),
+            agent_plugin_version: PluginVersion::new(PLUGIN_VERSION),
+            checkout_execution_id: ExecutionId::new(CHECKOUT_EXECUTION),
+            model_binding_id: Some(ModelBindingId::new("binding-1")),
+            prior_revision: None,
+            workspace_directory: vec![],
+            git_identity: identity(),
+            initial_turn: turn("turn-1", "must not be sent"),
+        },
+    );
+    let ended = fixture.ended().await;
+    sessions.shutdown().await;
+    assert_eq!(
+        (ended.reason, ended.detail.as_deref()),
+        (
+            AgentSessionEndReason::AgentFailed,
+            Some("agent_model_configuration_required")
+        )
+    );
+    assert_eq!(
+        (
+            fixture.ledger.events(),
+            grant_routes(&gateway),
+            fixture.plugin_pids()
+        ),
+        (Vec::new(), Vec::<String>::new(), Vec::new())
     );
 }

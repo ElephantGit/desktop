@@ -10,7 +10,8 @@
 //!   `ora/childprocess/spawn`, and completes when that process exits;
 //! - `[commit-direct]` runs the same commit as its own child process, inheriting its environment;
 //! - `[env]` answers with its working directory and `HOME`, showing where and as what it runs;
-//! - `[large]` answers with a message larger than one Thread record may be.
+//! - `[large]` answers with a message larger than one Thread record may be;
+//! - `[model]` answers with the model context it was started with, if any.
 //!
 //! On start it appends its process id to `echo-agent.pids` in its working directory, the package
 //! root, so a test can check that every plugin process it started has exited.

@@ -302,6 +302,7 @@ async fn connected<R: FrameReceiver, W: FrameSender>(
             selected_version: CURRENT_PROTOCOL_VERSION,
             node: info.identity.clone(),
             capabilities: info.capabilities.clone(),
+            model_adapter: info.model_adapter.clone(),
         },
     });
     timeout(deadline, transmit(writer, &response))

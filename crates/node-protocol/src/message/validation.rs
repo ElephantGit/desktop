@@ -56,6 +56,14 @@ pub enum MessageValidationError {
         "git identity must be a single-line name and an address without spaces or angle brackets"
     )]
     InvalidGitIdentity,
+    #[error(
+        "agent configuration must describe the session's plugin release on a supported adapter"
+    )]
+    InvalidAgentConfiguration,
+    #[error(
+        "model adapter capability must name a supported contract, a target and distinct protocols"
+    )]
+    InvalidModelAdapterCapability,
     #[error("user turn must carry non-empty text within the size limit")]
     InvalidUserTurn,
     #[error("assistant text projection is oversized or missing after truncation")]
