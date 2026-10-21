@@ -584,4 +584,110 @@ mod scheduled_ownership_tests {
         assert_eq!(run_binding(&pool, run_id.as_ref()).0, None);
         assert_eq!(lease_count(&pool, "lease-1"), 1);
     }
+
+    #[test]
+    fn lease_delete_failure_rolls_back_the_whole_commit_and_keeps_the_lease() {
+        let (temp_dir, pool) = bootstrapped_pool();
+        seed_project(&pool, temp_dir.path(), "project-1");
+        let run_id = seed_admitted_run(&pool, "run-1");
+        seed_lease(&pool, "project-1", "workspace-task-1", "lease-1");
+
+        // Inject a real SQLite failure at the lease-removal step: the whole
+        // immediate transaction must roll back, so no task rows surface and the
+        // lease keeps ownership for its durable cleanup path.
+        pool.with_connection(|connection| {
+            connection
+                .execute(
+                    "CREATE TRIGGER fail_lease_delete BEFORE DELETE ON worktree_provisioning_leases
+                     BEGIN SELECT RAISE(ABORT, 'injected lease delete failure'); END;",
+                    [],
+                )
+                .expect("install delete trigger");
+            Ok(())
+        });
+
+        let outcome = SqliteTaskWorkspaceRepository::with_clock(pool.clone(), TestClock::new(10))
+            .commit_worktree_task_for_scheduled_run(
+                &committed_task("workspace-task-1"),
+                &committed_worktree("workspace-task-1"),
+                &WorktreeProvisioningLeaseId::new("lease-1"),
+                &ora_application::ScheduledRunWorktreeLink {
+                    run_id: run_id.clone(),
+                    worktree_path: "worktrees/workspace-task-1".to_string(),
+                },
+            );
+
+        assert!(outcome.is_err(), "the injected DELETE failure surfaces");
+        assert_eq!(task_count(&pool), 0, "the commit rolls back, no task rows");
+        assert_eq!(
+            run_binding(&pool, run_id.as_ref()).0,
+            None,
+            "the run ownership write rolls back too"
+        );
+        assert_eq!(
+            lease_count(&pool, "lease-1"),
+            1,
+            "the lease survives for compensation"
+        );
+
+        // Reopen the database: the durable state must match the rolled-back view.
+        let database_path = temp_dir.path().join("task-workspace.sqlite3");
+        drop(pool);
+        let reopened = DatabaseBootstrapper::new(TestClock::new(1))
+            .bootstrap_repository_pool(
+                &DatabaseLocation::path(&database_path),
+                &default_migration_catalog().expect("build migration catalog"),
+            )
+            .expect("reopen database");
+        assert_eq!(task_count(&reopened), 0, "no task rows after reopen");
+        assert_eq!(
+            run_binding(&reopened, run_id.as_ref()).0,
+            None,
+            "no run binding after reopen"
+        );
+        assert_eq!(
+            lease_count(&reopened, "lease-1"),
+            1,
+            "the lease survives reopen"
+        );
+    }
+
+    #[test]
+    fn project_deletion_during_commit_reports_not_visible_and_keeps_the_lease() {
+        let (temp_dir, pool) = bootstrapped_pool();
+        seed_project(&pool, temp_dir.path(), "project-1");
+        let run_id = seed_admitted_run(&pool, "run-1");
+        seed_lease(&pool, "project-1", "workspace-task-1", "lease-1");
+        // The project disappears while Git work and the commit race it.
+        ora_application::ProjectRepository::soft_delete_project(
+            &SqliteProjectRepository::with_clock(pool.clone(), TestClock::new(1)),
+            &ProjectId::new("project-1"),
+            20,
+        )
+        .expect("soft-delete the project");
+
+        let outcome = SqliteTaskWorkspaceRepository::with_clock(pool.clone(), TestClock::new(10))
+            .commit_worktree_task_for_scheduled_run(
+                &committed_task("workspace-task-1"),
+                &committed_worktree("workspace-task-1"),
+                &WorktreeProvisioningLeaseId::new("lease-1"),
+                &ora_application::ScheduledRunWorktreeLink {
+                    run_id: run_id.clone(),
+                    worktree_path: "worktrees/workspace-task-1".to_string(),
+                },
+            )
+            .expect("concurrent project deletion");
+
+        assert_eq!(outcome, WorkspaceCommitOutcome::ProjectNotVisible);
+        assert_eq!(
+            task_count(&pool),
+            0,
+            "no task rows when the project is gone"
+        );
+        assert_eq!(
+            lease_count(&pool, "lease-1"),
+            1,
+            "the lease still owns the Git resources"
+        );
+    }
 }
