@@ -7,10 +7,12 @@ use ora_application::{
 use ora_db::{
     RepositoryPool, SqliteAgentDefinitionRepository, SqliteSkillRepository, TimestampSource,
 };
-use ora_domain::{AgentDefinitionId, AgentRef, Namespace};
+use ora_domain::{AgentDefinitionId, AgentRef, Namespace, PluginId};
+use ora_effect::ConsumerDeclaration;
 use ora_utils::path::StrictRelativePath;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Current host capability used until Agent plugins publish their own discovery roots.
 ///
@@ -44,6 +46,84 @@ impl AgentSkillDeliveryProvider for SharedAgentSkillDeliveryProvider {
             discovery_roots: self.discovery_roots.clone(),
         })
     }
+}
+
+/// Resolves discovery roots from agent plugin declarations, falling back to the
+/// shared default when a plugin has not declared an Effect Resource.
+#[derive(Clone)]
+pub struct PluginAwareAgentSkillDeliveryProvider {
+    plugin_api: Arc<crate::plugin::PluginApi>,
+    fallback: SkillDiscoveryRoots,
+}
+
+impl PluginAwareAgentSkillDeliveryProvider {
+    /// Builds a provider that reads discovery roots from live plugin declarations.
+    pub fn new(
+        plugin_api: Arc<crate::plugin::PluginApi>,
+    ) -> Result<Self, ora_application::AgentSkillDeliveryError> {
+        let fallback_root = StrictRelativePath::parse(".agents/skills").map_err(|error| {
+            ora_application::AgentSkillDeliveryError::Invalid {
+                message: format!("invalid built-in shared skill root: {error:?}"),
+            }
+        })?;
+        Ok(Self {
+            plugin_api,
+            fallback: SkillDiscoveryRoots::new(fallback_root, Vec::new()),
+        })
+    }
+}
+
+impl AgentSkillDeliveryProvider for PluginAwareAgentSkillDeliveryProvider {
+    fn skill_delivery(
+        &self,
+        agent_ref: &AgentRef,
+    ) -> Result<AgentSkillDelivery, ora_application::AgentSkillDeliveryError> {
+        // AgentRef.as_str() is the canonical plugin id (e.g. "official/my-agent")
+        let declaration = PluginId::parse(agent_ref.as_str())
+            .ok()
+            .and_then(|plugin_id| self.plugin_api.agent_effect_declaration_for(&plugin_id));
+        let discovery_roots = skill_roots_from_declaration(declaration.as_ref())?
+            .unwrap_or_else(|| self.fallback.clone());
+        Ok(AgentSkillDelivery::Filesystem { discovery_roots })
+    }
+}
+
+/// Resolves the discovery roots one Consumer declaration contributes, or `None` when it declares no
+/// Skill directory.
+///
+/// A declared Skill directory that cannot be spelled as a worktree-relative path is an error rather
+/// than an absent declaration: falling back would aim the prompt at a directory the Effect
+/// subsystem never materializes, which is the mismatch this provider exists to remove.
+fn skill_roots_from_declaration(
+    declaration: Option<&ConsumerDeclaration>,
+) -> Result<Option<SkillDiscoveryRoots>, ora_application::AgentSkillDeliveryError> {
+    let Some(declaration) = declaration else {
+        return Ok(None);
+    };
+    let mut roots: Vec<StrictRelativePath> = Vec::new();
+    for resource in &declaration.resources {
+        if resource.materialization_format
+            != ora_effect::MaterializationFormat::skill_directory_v1()
+        {
+            continue;
+        }
+        let declared = resource.relative_path.as_str();
+        let root = StrictRelativePath::parse(declared).map_err(|error| {
+            ora_application::AgentSkillDeliveryError::Invalid {
+                message: format!(
+                    "declared Skill discovery root {declared} is not a worktree-relative path: {error:?}"
+                ),
+            }
+        })?;
+        if !roots.contains(&root) {
+            roots.push(root);
+        }
+    }
+    let mut roots = roots.into_iter();
+    let Some(first) = roots.next() else {
+        return Ok(None);
+    };
+    Ok(Some(SkillDiscoveryRoots::new(first, roots.collect())))
 }
 
 /// Validates a run workspace's roles and skill bindings at deploy time.
@@ -371,6 +451,84 @@ mod tests {
                 10,
             )
             .unwrap();
+    }
+
+    /// Builds one declared Skill directory at `path` for declaration-resolution tests.
+    fn declared_skill(path: &str) -> ora_effect::FilesystemResourceTemplate {
+        ora_effect::FilesystemResourceTemplate {
+            relative_path: ora_effect::ResourcePath::parse(path).expect("valid resource path"),
+            materialization_format: ora_effect::MaterializationFormat::skill_directory_v1(),
+            materialization_contract: ora_effect::MaterializationContract::skill_directory_v1(),
+            accepts: ora_effect::CapabilityRequirement::default(),
+            coordination: ora_effect::CoordinationRequirement::Uninterrupted,
+            ownership_relative_path: None,
+        }
+    }
+
+    /// Builds one Consumer declaration contributing exactly the given resources.
+    fn declaration_of(
+        resources: Vec<ora_effect::FilesystemResourceTemplate>,
+    ) -> ora_effect::ConsumerDeclaration {
+        ora_effect::ConsumerDeclaration {
+            consumer: ora_effect::ConsumerIdentity::new(
+                ora_effect::ConsumerKind::agent_plugin(),
+                "official/review-pack",
+            )
+            .expect("valid consumer identity"),
+            adapter: ora_effect::ConsumerAdapterIdentity::parse("ora/agent-plugin")
+                .expect("valid adapter identity"),
+            capabilities: ora_effect::CapabilitySet::default(),
+            resources,
+        }
+    }
+
+    /// An Agent whose plugin registered no Effect declaration keeps the shared discovery root.
+    #[test]
+    fn an_undeclared_plugin_keeps_the_shared_skill_root() {
+        assert_eq!(skill_roots_from_declaration(None).unwrap(), None);
+    }
+
+    /// A declaration that contributes no Skill directory also keeps the shared discovery root.
+    #[test]
+    fn a_declaration_without_skill_resources_keeps_the_shared_skill_root() {
+        let mut owned_file = declared_skill(".agents/skills");
+        owned_file.materialization_format =
+            ora_effect::MaterializationFormat::parse("ora/owned-file.v1").unwrap();
+        owned_file.ownership_relative_path =
+            Some(ora_effect::ResourcePath::parse(".agents/owned").unwrap());
+        assert_eq!(
+            skill_roots_from_declaration(Some(&declaration_of(vec![owned_file]))).unwrap(),
+            None
+        );
+    }
+
+    /// Every declared Skill directory becomes a root, preserving declaration order.
+    #[test]
+    fn declared_skill_directories_become_roots_in_declaration_order() {
+        let declaration = declaration_of(vec![
+            declared_skill(".cac/skills"),
+            declared_skill(".opencode/skills"),
+        ]);
+        assert_eq!(
+            skill_roots_from_declaration(Some(&declaration)).unwrap(),
+            Some(SkillDiscoveryRoots::new(
+                StrictRelativePath::parse(".cac/skills").unwrap(),
+                vec![StrictRelativePath::parse(".opencode/skills").unwrap()],
+            ))
+        );
+    }
+
+    /// A declared root the worktree path type cannot represent fails instead of falling back: the
+    /// Effect subsystem will materialize it, so a silent fallback would recreate the mismatch.
+    #[test]
+    fn an_unrepresentable_declared_skill_root_is_rejected() {
+        // `ResourcePath` accepts this depth; the stricter worktree path stops at 32 levels.
+        let deep = vec!["level"; 34].join("/");
+        assert!(matches!(
+            skill_roots_from_declaration(Some(&declaration_of(vec![declared_skill(&deep)]))),
+            Err(ora_application::AgentSkillDeliveryError::Invalid { ref message })
+                if message.contains("TooDeep")
+        ));
     }
 
     #[test]

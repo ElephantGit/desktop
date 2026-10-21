@@ -29,6 +29,7 @@ pub(crate) struct WorkflowRunSetup {
     pub engine: Arc<ConcreteWorkflowRunControl>,
     pub run_locks: Arc<KeyedResourceLocks>,
     pub transitions: Arc<WorkflowRunTransitions>,
+    pub plugin_api: Arc<crate::plugin::PluginApi>,
     pub clock: SystemClock,
 }
 
@@ -56,6 +57,7 @@ impl WorkflowRuns {
             records: WorkflowRunApi::new(
                 setup.pool.clone(),
                 setup.skills_root.clone(),
+                setup.plugin_api.clone(),
                 setup.clock,
             ),
             pool: setup.pool,

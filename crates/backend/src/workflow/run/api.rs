@@ -1,4 +1,4 @@
-use super::prerequisites::SkillRoleWorkspaceInitializer;
+use super::prerequisites::{PluginAwareAgentSkillDeliveryProvider, SkillRoleWorkspaceInitializer};
 use crate::clock::SystemClock;
 use ora_application::{
     ApplicationError, CreateWorkflowRunHandler, DeleteWorkflowRunHandler, GetWorkflowRunHandler,
@@ -24,6 +24,8 @@ pub(crate) struct WorkflowRunApi {
     pool: RepositoryPool,
     /// Skill catalog root used to validate and resolve workflow skill bindings.
     skills_root: PathBuf,
+    /// Plugin API used to resolve per-agent skill discovery roots from Effect declarations.
+    plugin_api: Arc<crate::plugin::PluginApi>,
     get: GetWorkflowRunHandler<SqliteWorkflowRunRepository>,
     list: ListWorkflowRunsHandler<SqliteWorkflowRunRepository>,
     list_by_workflow: ListWorkflowRunsByWorkflowHandler<SqliteWorkflowRunRepository>,
@@ -33,12 +35,18 @@ pub(crate) struct WorkflowRunApi {
 
 impl WorkflowRunApi {
     /// Builds run handlers from shared persistence and the skill catalog root used for validation.
-    pub(crate) fn new(pool: RepositoryPool, skills_root: PathBuf, clock: SystemClock) -> Self {
+    pub(crate) fn new(
+        pool: RepositoryPool,
+        skills_root: PathBuf,
+        plugin_api: Arc<crate::plugin::PluginApi>,
+        clock: SystemClock,
+    ) -> Self {
         let repository = Arc::new(SqliteWorkflowRunRepository::new(pool.clone()));
 
         Self {
             pool,
             skills_root,
+            plugin_api,
             get: GetWorkflowRunHandler::new(repository.clone()),
             list: ListWorkflowRunsHandler::new(repository.clone()),
             list_by_workflow: ListWorkflowRunsByWorkflowHandler::new(repository.clone()),
@@ -52,11 +60,15 @@ impl WorkflowRunApi {
         &self,
         request: CreateWorkflowRunRequest,
     ) -> Result<CreateWorkflowRunResponse, ApplicationError> {
-        let initializer =
-            SkillRoleWorkspaceInitializer::new(self.skills_root.clone(), self.pool.clone())
-                .map_err(|error| ApplicationError::WorkflowRunStartFailed {
-                    message: error.to_string(),
-                })?;
+        let delivery_provider = PluginAwareAgentSkillDeliveryProvider::new(self.plugin_api.clone())
+            .map_err(|error| ApplicationError::WorkflowRunStartFailed {
+                message: error.to_string(),
+            })?;
+        let initializer = SkillRoleWorkspaceInitializer::with_delivery_provider(
+            self.skills_root.clone(),
+            self.pool.clone(),
+            delivery_provider,
+        );
         let handler = CreateWorkflowRunHandler::new(
             Arc::new(SqliteWorkflowRepository::new(self.pool.clone())),
             Arc::new(SqliteWorkspaceRepository::new(self.pool.clone())),
