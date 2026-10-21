@@ -9,7 +9,7 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 use tokio::sync::mpsc;
 
-use super::control::{PluginAgentError, verify_agent_contract};
+use super::control::{PluginAgentError, sensitive_start_error, verify_agent_contract};
 use super::effect::{AgentEffectError, registered_consumer_declaration};
 use super::inbound::{discard_frames_before_start, spawn_frame_forwarding};
 
@@ -123,6 +123,27 @@ fn classifies_the_two_reserved_agent_startup_codes_apart_from_every_other_failur
             PluginAgentError::Failed(
                 "plugin method failed with code -32000: opencode is unusable".to_string()
             ),
+        ]
+    );
+}
+
+/// A configured start keeps the two reserved codes apart, so a missing CLI stays a quiet
+/// retry, but never carries the plugin's own message, which may echo the model context.
+#[test]
+fn classifies_configured_startup_codes_without_the_plugin_message() {
+    let classify = |code: i64| {
+        sensitive_start_error(&PluginRuntimeError::Remote {
+            code,
+            message: "token=synthetic-temporary-token".to_string(),
+        })
+    };
+
+    assert_eq!(
+        [classify(-32001), classify(-32002), classify(-32000)],
+        [
+            PluginAgentError::AgentNotInstalled,
+            PluginAgentError::AgentUnusable("agent_model_adapter_failed".to_string()),
+            PluginAgentError::Failed("agent_model_adapter_failed".to_string()),
         ]
     );
 }
