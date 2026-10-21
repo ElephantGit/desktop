@@ -121,7 +121,10 @@ impl Setup {
             self.root.clone(),
             /*owner*/ None,
             crate::Shutdown::default(),
-            crate::revision::RestorePolicy::DEFAULT,
+            crate::revision::RestorePolicy {
+                deadline: std::time::Duration::from_secs(/*secs*/ 300),
+                stop_confirmation: std::time::Duration::from_secs(/*secs*/ 600),
+            },
         )
     }
 

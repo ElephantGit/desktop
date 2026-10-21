@@ -41,14 +41,6 @@ pub(crate) struct RestorePolicy {
     pub(crate) stop_confirmation: Duration,
 }
 
-impl RestorePolicy {
-    /// The approved defaults: five minutes to restore, ten to obtain original stop proof.
-    pub(crate) const DEFAULT: Self = Self {
-        deadline: Duration::from_millis(config::DEFAULT_DEADLINE_MS),
-        stop_confirmation: Duration::from_secs(/*secs*/ 600),
-    };
-}
-
 /// The workload user's Git and the Node identity's Git a restore runs.
 type RestoreGit<R, N> = (DeliveryGit<R>, N);
 
