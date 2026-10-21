@@ -1,26 +1,43 @@
-use ora_application::ScheduledRunArtifactRepository;
+use std::fs;
+use std::sync::Arc;
+
+use ora_application::{
+    ProjectRepository, ScheduledArtifactStore, ScheduledOccurrenceCandidate,
+    ScheduledOccurrenceRepository, ScheduledRunArtifactRepository, ScheduledRunLifecycleRepository,
+    ScheduledTaskRepository, SweepScheduledRunArtifactsHandler,
+};
 use ora_domain::{
-    ScheduledArtifactKind, ScheduledArtifactRejection, ScheduledArtifactRejectionReason,
-    ScheduledRunArtifact, ScheduledRunId,
+    AgentRef, AuditFields, Project, ProjectId, ScheduledArtifactKind, ScheduledArtifactRejection,
+    ScheduledArtifactRejectionReason, ScheduledOccurrence, ScheduledRun, ScheduledRunArtifact,
+    ScheduledRunId, ScheduledRunTransition, ScheduledTask, ScheduledTaskApproval,
+    ScheduledTaskExecutionLocation, ScheduledTaskId, ScheduledTaskSchedule, SessionId, TaskId,
+    WorkspaceLocation,
 };
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
 use crate::{
     DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog,
-    repository::SqliteScheduledRunRepository, test_clock::TestClock,
+    repository::{
+        SqliteProjectRepository, SqliteScheduledRunRepository, SqliteScheduledTaskRepository,
+    },
+    test_clock::TestClock,
 };
 
 fn bootstrapped_pool() -> (TempDir, RepositoryPool) {
     let temporary = TempDir::new().expect("create temp directory");
+    let pool = bootstrapped_pool_at(&temporary);
+    (temporary, pool)
+}
+
+fn bootstrapped_pool_at(temporary: &TempDir) -> RepositoryPool {
     let database_path = temporary.path().join("scheduled-artifact.sqlite3");
-    let pool = DatabaseBootstrapper::new(TestClock::new(1))
+    DatabaseBootstrapper::new(TestClock::new(1))
         .bootstrap_repository_pool(
             &DatabaseLocation::path(database_path),
             &default_migration_catalog().expect("build migration catalog"),
         )
-        .expect("bootstrap database");
-    (temporary, pool)
+        .expect("bootstrap database")
 }
 
 fn artifact(name: &str, size: u64, registered_at: i64) -> ScheduledRunArtifact {
@@ -136,4 +153,197 @@ fn pruned_runs_surface_as_missing_so_the_sweep_can_remove_their_artifacts() {
             retains_worktree: false,
         }]
     );
+}
+
+/// Seeds a visible project/task and one succeeded run so visibility joins resolve.
+fn seed_task_and_run(
+    pool: &RepositoryPool,
+    temporary: &TempDir,
+    run_id: &ScheduledRunId,
+) -> ScheduledTaskId {
+    let workspace_root = temporary.path().join("project");
+    fs::create_dir_all(&workspace_root).expect("create project root");
+    SqliteProjectRepository::with_clock(pool.clone(), TestClock::new(1))
+        .create_project(
+            Project::new(
+                ProjectId::new("project-1"),
+                "Project",
+                AuditFields::new(1, 1, false),
+            ),
+            WorkspaceLocation::local_filesystem(workspace_root.to_string_lossy()),
+        )
+        .expect("create project");
+    let mut task = ScheduledTask::new(
+        ScheduledTaskId::new("scheduled-task-1"),
+        "Quality report",
+        true,
+        ScheduledTaskSchedule::every_hours(4).expect("hourly schedule"),
+        ScheduledTaskExecutionLocation::Local,
+        ProjectId::new("project-1"),
+        AgentRef::parse("ora/agent").expect("agent ref"),
+        Some("default".to_string()),
+        "Run the quality gate",
+        Some(ScheduledTaskApproval::full_auto_in_worktree(10)),
+        AuditFields::new(10, 10, false),
+    )
+    .expect("create task");
+    task.freeze_worktree_base_branch("main");
+    SqliteScheduledTaskRepository::new(pool.clone())
+        .create_scheduled_task(task.clone())
+        .expect("persist task");
+
+    let runs = SqliteScheduledRunRepository::new(pool.clone());
+    let run = ScheduledRun::accepted(
+        run_id.clone(),
+        ScheduledOccurrence {
+            task_id: task.id.clone(),
+            scheduled_at: 100,
+        },
+        &task,
+        101,
+    );
+    runs.resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::run(run))
+        .expect("admit run");
+    runs.transition_scheduled_run(
+        run_id,
+        ScheduledRunTransition::Start {
+            session_id: SessionId::new("session-1"),
+            worktree_path: "worktrees/run-1".to_string(),
+            worktree_task_id: TaskId::new("worktree-task-1"),
+        },
+        102,
+    )
+    .expect("start run");
+    runs.transition_scheduled_run(run_id, ScheduledRunTransition::Succeed, 103)
+        .expect("succeed run");
+    task.id
+}
+
+/// Stores one artifact file and its manifest row.
+fn seed_artifact(
+    store: &ScheduledArtifactStore,
+    repository: &SqliteScheduledRunRepository,
+    run_id: &ScheduledRunId,
+) {
+    let run_directory = store.root().join(run_id.as_ref());
+    fs::create_dir_all(&run_directory).expect("create run directory");
+    fs::write(run_directory.join("report.md"), "report").expect("write artifact");
+    repository
+        .record_scheduled_run_artifacts(run_id, &[artifact("report.md", 6, 1)], &[], 1)
+        .expect("record artifact");
+}
+
+fn sweep(pool: &RepositoryPool, store: &ScheduledArtifactStore) {
+    let repository = Arc::new(SqliteScheduledRunRepository::new(pool.clone()));
+    SweepScheduledRunArtifactsHandler::new(repository, store.clone())
+        .handle()
+        .expect("sweep artifacts");
+}
+
+#[test]
+fn artifacts_survive_a_repository_restart() {
+    let (temporary, pool) = bootstrapped_pool();
+    let run_id = ScheduledRunId::new("run-1");
+    seed_task_and_run(&pool, &temporary, &run_id);
+    let repository = SqliteScheduledRunRepository::new(pool.clone());
+    seed_artifact(
+        &ScheduledArtifactStore::new(temporary.path().join("artifacts")),
+        &repository,
+        &run_id,
+    );
+    drop(repository);
+    drop(pool);
+
+    let reopened = SqliteScheduledRunRepository::new(bootstrapped_pool_at(&temporary));
+    assert_eq!(
+        reopened
+            .list_scheduled_run_artifacts(&run_id)
+            .expect("read artifacts after restart"),
+        vec![artifact("report.md", 6, 1)]
+    );
+}
+
+#[test]
+fn sweep_removes_artifacts_after_the_task_is_soft_deleted() {
+    let (temporary, pool) = bootstrapped_pool();
+    let run_id = ScheduledRunId::new("run-1");
+    let task_id = seed_task_and_run(&pool, &temporary, &run_id);
+    let store = ScheduledArtifactStore::new(temporary.path().join("artifacts"));
+    let repository = SqliteScheduledRunRepository::new(pool.clone());
+    seed_artifact(&store, &repository, &run_id);
+    SqliteScheduledTaskRepository::new(pool.clone())
+        .soft_delete_scheduled_task(&task_id, 200)
+        .expect("soft-delete task");
+
+    sweep(&pool, &store);
+
+    assert!(
+        repository
+            .list_scheduled_run_artifacts(&run_id)
+            .expect("list artifacts")
+            .is_empty()
+    );
+    assert!(!store.root().join(run_id.as_ref()).exists());
+}
+
+#[test]
+fn sweep_keeps_artifacts_for_a_disabled_task() {
+    let (temporary, pool) = bootstrapped_pool();
+    let run_id = ScheduledRunId::new("run-1");
+    let task_id = seed_task_and_run(&pool, &temporary, &run_id);
+    let store = ScheduledArtifactStore::new(temporary.path().join("artifacts"));
+    let repository = SqliteScheduledRunRepository::new(pool.clone());
+    seed_artifact(&store, &repository, &run_id);
+    pool.with_connection_mut(|connection| {
+        connection.execute(
+            "UPDATE scheduled_tasks SET enabled = 0 WHERE id = ?1",
+            [task_id.as_ref()],
+        )?;
+        Ok(())
+    })
+    .expect("disable task");
+
+    sweep(&pool, &store);
+
+    assert_eq!(
+        repository
+            .list_scheduled_run_artifacts(&run_id)
+            .expect("list artifacts"),
+        vec![artifact("report.md", 6, 1)]
+    );
+    assert!(
+        store
+            .root()
+            .join(run_id.as_ref())
+            .join("report.md")
+            .is_file()
+    );
+}
+
+#[test]
+fn sweep_removes_artifacts_after_the_run_row_is_pruned() {
+    let (temporary, pool) = bootstrapped_pool();
+    let run_id = ScheduledRunId::new("run-1");
+    seed_task_and_run(&pool, &temporary, &run_id);
+    let store = ScheduledArtifactStore::new(temporary.path().join("artifacts"));
+    let repository = SqliteScheduledRunRepository::new(pool.clone());
+    seed_artifact(&store, &repository, &run_id);
+    pool.with_connection_mut(|connection| {
+        connection.execute(
+            "DELETE FROM scheduled_runs WHERE id = ?1",
+            [run_id.as_ref()],
+        )?;
+        Ok(())
+    })
+    .expect("prune run row");
+
+    sweep(&pool, &store);
+
+    assert!(
+        repository
+            .list_scheduled_run_artifacts(&run_id)
+            .expect("list artifacts")
+            .is_empty()
+    );
+    assert!(!store.root().join(run_id.as_ref()).exists());
 }
