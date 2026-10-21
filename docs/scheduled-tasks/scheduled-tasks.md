@@ -80,4 +80,3 @@ never deleted automatically. To clean one up manually:
 The title is only a recognition hint, not a proof of ownership, so never delete a task on that pattern
 alone if you are unsure where it came from. New runs no longer produce these leftovers; if such a task
 cannot be seen or deleted in the UI, report it as a separate issue.
-

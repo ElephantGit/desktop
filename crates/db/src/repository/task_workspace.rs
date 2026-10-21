@@ -471,6 +471,52 @@ mod scheduled_ownership_tests {
     }
 
     #[test]
+    fn committed_ownership_survives_reopen() {
+        let (temp_dir, pool) = bootstrapped_pool();
+        seed_project(&pool, temp_dir.path(), "project-1");
+        let run_id = seed_admitted_run(&pool, "run-1");
+        seed_lease(&pool, "project-1", "workspace-task-1", "lease-1");
+
+        let outcome = SqliteTaskWorkspaceRepository::with_clock(pool.clone(), TestClock::new(10))
+            .commit_worktree_task_for_scheduled_run(
+                &committed_task("workspace-task-1"),
+                &committed_worktree("workspace-task-1"),
+                &WorktreeProvisioningLeaseId::new("lease-1"),
+                &ora_application::ScheduledRunWorktreeLink {
+                    run_id: run_id.clone(),
+                    worktree_path: "worktrees/workspace-task-1".to_string(),
+                },
+            )
+            .expect("ownership commit");
+        assert_eq!(outcome, WorkspaceCommitOutcome::Committed);
+
+        // Reopen the database: the acknowledged commit must still show the run
+        // binding, the persisted task rows, and no provisioning lease.
+        let database_path = temp_dir.path().join("task-workspace.sqlite3");
+        drop(pool);
+        let reopened = DatabaseBootstrapper::new(TestClock::new(1))
+            .bootstrap_repository_pool(
+                &DatabaseLocation::path(&database_path),
+                &default_migration_catalog().expect("build migration catalog"),
+            )
+            .expect("reopen database");
+        assert_eq!(
+            run_binding(&reopened, run_id.as_ref()),
+            (
+                Some("task-workspace-task-1".to_string()),
+                Some("worktrees/workspace-task-1".to_string())
+            ),
+            "the ownership binding survives reopen"
+        );
+        assert_eq!(
+            lease_count(&reopened, "lease-1"),
+            0,
+            "no lease remains after reopen"
+        );
+        assert_eq!(task_count(&reopened), 1, "the task row survives reopen");
+    }
+
+    #[test]
     fn rejects_a_settled_run_and_keeps_the_lease() {
         let (temp_dir, pool) = bootstrapped_pool();
         seed_project(&pool, temp_dir.path(), "project-1");
