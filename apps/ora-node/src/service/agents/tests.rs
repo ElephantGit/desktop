@@ -78,7 +78,7 @@ fn restore_cleanup_requires_original_terminal_stop_evidence()
                 "node_id":"node", "agent_plugin_id":"official/agent", "agent_plugin_version":"1.0.0", "checkout_execution_id":"clone",
                 "git_identity":{"name":"Fixture","email":"fixture@example.test"},
                 "initial_turn":{"turn_id":"initial","content":[{"type":"text","text":"fixture"}]},
-                "prior_revision":{"revision_id":"prior","final_commit":"0123456789012345678901234567890123456789","bundle":{"key":"prior.bundle","size":1,"sha256":"0000000000000000000000000000000000000000000000000000000000000000"}}
+                "prior_revision":{"revision_id":"prior","final_commit":"0123456789012345678901234567890123456789","git_repository_url":"https://git.ora.test/tenant/project.git","delivery_ref":"refs/ora/deliveries/prior","base_commit":"0123456789012345678901234567890123456780"}
             }}
         }))?;
         node.database.accept_session(&input)?;
@@ -97,16 +97,29 @@ fn restore_cleanup_requires_original_terminal_stop_evidence()
             },
         };
         journal.record_restore_attempt(&attempt, StopContainment::BestEffort)?;
-        let directory = node
-            .home_directory()
-            .join(crate::revision::RESTORE_ROOT)
-            .join(ora_utils::hash::sha256_hex(
-                input.execution_id.as_str().as_bytes(),
-            ));
+        let directory =
+            node.home_directory()
+                .join("revision-restores")
+                .join(ora_utils::hash::sha256_hex(
+                    input.execution_id.as_str().as_bytes(),
+                ));
         fs::create_dir_all(&directory)?;
         fs::write(directory.join("prior.bundle"), "original process input")?;
+        let transport = node.clone_config().map(|config| {
+            crate::git_server::TransportRepository::location(
+                &config.repository_root,
+                crate::revision::RESTORE_TRANSPORT_KIND,
+                &input.execution_id,
+            )
+        });
+        if let Some(transport) = &transport {
+            fs::create_dir_all(transport)?;
+        }
         super::sweep_restores(&node, &journal)?;
         assert!(directory.join("prior.bundle").is_file());
+        if let Some(transport) = &transport {
+            assert!(transport.is_dir());
+        }
         let ended = AgentSessionEnded {
             node: node.identity().clone(),
             reason: AgentSessionEndReason::Interrupted,
@@ -122,6 +135,9 @@ fn restore_cleanup_requires_original_terminal_stop_evidence()
         journal.end_session(&input.execution_id, ended)?;
         super::sweep_restores(&node, &journal)?;
         assert!(!directory.exists());
+        if let Some(transport) = &transport {
+            assert!(!transport.exists());
+        }
         fs::write(&directory, "unexpected local residue")?;
         super::sweep_restores(&node, &journal)?;
         assert!(directory.is_file());

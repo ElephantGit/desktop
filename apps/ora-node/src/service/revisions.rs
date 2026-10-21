@@ -361,18 +361,9 @@ fn inputs(
         return Ok(Inputs::Failed(RevisionFailureCode::SessionNotSettled));
     }
     let phase = journal.restore_phase(&spec.session_execution_id)?;
-    let mode = match (session.command.payload.spec.prior_revision.is_some(), phase) {
-        (
-            true,
-            Some(ora_node_db::RestorePhase::Pending | ora_node_db::RestorePhase::GitAdmitted),
-        ) => SnapshotMode::UnstartedRestore,
-        (
-            true,
-            Some(ora_node_db::RestorePhase::Restored | ora_node_db::RestorePhase::AgentAdmitted),
-        )
-        | (true, None)
-        | (false, None) => SnapshotMode::Worktree,
-        _ => return Ok(Inputs::Failed(RevisionFailureCode::SessionNotSettled)),
+    let Some(mode) = restore_mode(session.command.payload.spec.prior_revision.is_some(), phase)
+    else {
+        return Ok(Inputs::Failed(RevisionFailureCode::SessionNotSettled));
     };
     let session_spec = session.command.payload.spec;
     // The checkout must be the session's own, at the base the delivery compares against, and
@@ -409,6 +400,29 @@ fn inputs(
         node: node.identity().clone(),
         owner: node.git.runner().process_config().workload_uid,
     })))
+}
+
+/// Selects the only permitted delivery mode for one prior input and restore phase.
+///
+/// A prior input whose restore never completed and whose Agent was never admitted may read only
+/// HEAD (`UnstartedRestore`). A session that restored and admitted its Agent, and a pre-journal
+/// session with no restore row (its restore ran synchronously to completion before the Agent), use
+/// the ordinary worktree snapshot. Any other combination has no admissible mode, including
+/// `legacy_unknown`, whose stop evidence is unknown.
+fn restore_mode(prior: bool, phase: Option<ora_node_db::RestorePhase>) -> Option<SnapshotMode> {
+    match (prior, phase) {
+        (
+            true,
+            Some(ora_node_db::RestorePhase::Pending | ora_node_db::RestorePhase::GitAdmitted),
+        ) => Some(SnapshotMode::UnstartedRestore),
+        (
+            true,
+            Some(ora_node_db::RestorePhase::Restored | ora_node_db::RestorePhase::AgentAdmitted),
+        )
+        | (true, None)
+        | (false, None) => Some(SnapshotMode::Worktree),
+        _ => None,
+    }
 }
 
 /// The delivery's checkout, when it is a successful clone at the delivery's base commit and for
@@ -491,5 +505,39 @@ fn sweep(root: &Path, running: &[RevisionDelivery]) {
         if !keep.contains(&name) {
             let _ = std::fs::remove_dir_all(entry.path());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ora_node_db::RestorePhase;
+    use pretty_assertions::assert_eq;
+
+    /// A completed pre-journal restore keeps ordinary worktree delivery; every incomplete state
+    /// either stays on HEAD only or refuses delivery entirely.
+    #[test]
+    fn restore_mode_isolates_partial_restores() {
+        assert_eq!(restore_mode(true, None), Some(SnapshotMode::Worktree));
+        assert_eq!(restore_mode(false, None), Some(SnapshotMode::Worktree));
+        assert_eq!(
+            restore_mode(true, Some(RestorePhase::Restored)),
+            Some(SnapshotMode::Worktree)
+        );
+        assert_eq!(
+            restore_mode(true, Some(RestorePhase::AgentAdmitted)),
+            Some(SnapshotMode::Worktree)
+        );
+        assert_eq!(
+            restore_mode(true, Some(RestorePhase::Pending)),
+            Some(SnapshotMode::UnstartedRestore)
+        );
+        assert_eq!(
+            restore_mode(true, Some(RestorePhase::GitAdmitted)),
+            Some(SnapshotMode::UnstartedRestore)
+        );
+        assert_eq!(restore_mode(true, Some(RestorePhase::LegacyUnknown)), None);
+        assert_eq!(restore_mode(false, Some(RestorePhase::Restored)), None);
+        assert_eq!(restore_mode(false, Some(RestorePhase::Pending)), None);
     }
 }

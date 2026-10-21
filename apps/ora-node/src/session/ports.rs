@@ -218,15 +218,6 @@ pub trait PriorRevisionRestore: Send + Sync + 'static {
         async { true }
     }
 
-    /// Cancellation prevents new commands; an admitted command retains its clipped budget.
-    fn restore_with_cancel(
-        &self,
-        request: RestoreRequest,
-        _cancellation: tokio::sync::watch::Receiver<bool>,
-    ) -> impl Future<Output = Result<Restored, RestoreFailure>> + Send {
-        self.restore(request)
-    }
-
     /// Leaves the checkout's branch at the prior final commit, or says why it could not.
     fn restore(
         &self,
@@ -249,17 +240,6 @@ impl<R: PriorRevisionRestore> PriorRevisionRestore for Option<R> {
             None => true,
         }
     }
-    async fn restore_with_cancel(
-        &self,
-        request: RestoreRequest,
-        cancellation: tokio::sync::watch::Receiver<bool>,
-    ) -> Result<Restored, RestoreFailure> {
-        match self {
-            Some(restorer) => restorer.restore_with_cancel(request, cancellation).await,
-            None => Err(RestoreFailure::Unavailable),
-        }
-    }
-
     /// Delegates to the configured restorer, if any.
     async fn restore(
         &self,

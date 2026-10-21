@@ -45,11 +45,13 @@ fn session() -> StartAgentSessionMessage {
                 prior_revision: Some(PriorRevision {
                     revision_id: RevisionId::new("prior"),
                     final_commit: CommitId::new("0".repeat(40)),
-                    bundle: StoredObject {
-                        key: ObjectKey::new("prior.bundle"),
-                        size: 1,
-                        sha256: Sha256Digest::new("0".repeat(64)),
-                    },
+                    git_repository_url: GitRepositoryUrl::parse(
+                        "https://git.ora.test/tenant/project.git",
+                    )
+                    .expect("valid repository URL"),
+                    delivery_ref: DeliveryRef::parse("refs/ora/deliveries/prior")
+                        .expect("valid delivery ref"),
+                    base_commit: CommitId::new("0".repeat(40)),
                 }),
             },
         },

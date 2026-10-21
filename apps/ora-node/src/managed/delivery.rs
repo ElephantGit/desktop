@@ -35,13 +35,9 @@ impl<H: std::borrow::Borrow<CloneHost>> GitRunner for AsNode<H> {
         stdout: usize,
         stderr: usize,
     ) -> Result<GitOutput, GitExecError> {
-        self.0.borrow().run_scoped(
-            command,
-            stdout,
-            stderr,
-            RunAs::Node,
-            Budget::Command,
-        )
+        self.0
+            .borrow()
+            .run_scoped(command, stdout, stderr, RunAs::Node, Budget::Command)
     }
 }
 

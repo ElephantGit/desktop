@@ -23,7 +23,7 @@ pub(crate) use prepare::{Preparation, SnapshotMode, prepare};
 pub(crate) use push::{PushJob, Pushed, push};
 pub use restore::RestoreConfig;
 pub(crate) use restore::{
-    TRANSPORT_KIND as RESTORE_TRANSPORT_KIND, RestoreGitRunner, RestorePolicy, RevisionRestorer,
+    RestoreGitRunner, RestorePolicy, RevisionRestorer, TRANSPORT_KIND as RESTORE_TRANSPORT_KIND,
 };
 pub(crate) use snapshot::{DeliveryGit, GitPolicy};
 pub(crate) use upload::{HttpUploader, ObjectUploader, RetryPolicy, UploadEnd, UploadJob, upload};

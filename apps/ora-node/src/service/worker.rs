@@ -97,7 +97,9 @@ pub(super) fn run(
             &stops,
         )
         .map_err(|e| e.to_string())?;
-        Ok::<_, String>((node, controller, clones, plugins, agents, grants, revisions, stops))
+        Ok::<_, String>((
+            node, controller, clones, plugins, agents, grants, revisions, stops,
+        ))
     })();
     let (mut node, controller, mut clones, mut plugins, agents, grants, mut revisions, stops) =
         match initialized {
@@ -200,6 +202,7 @@ pub(super) fn run(
                         agents.as_ref(),
                         &stops,
                         crate::managed::StopCheck::WithinBound,
+                        None,
                     ))
                     .map_err(|error| error.to_string())?;
                 clones.recovery_pass(&mut node)?;
@@ -423,6 +426,7 @@ fn handle(
                 agents,
                 stops,
                 crate::managed::StopCheck::Handover,
+                Some(&query.execution_id),
             ))?;
             Ok(vec![NodeToControllerMessage::ExecutionStatus(
                 node.status(&query)?,

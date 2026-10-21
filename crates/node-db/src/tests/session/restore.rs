@@ -9,11 +9,10 @@ fn resumed() -> StartAgentSessionMessage {
     input.payload.spec.prior_revision = Some(PriorRevision {
         revision_id: RevisionId::new("prior"),
         final_commit: CommitId::new("0123456789012345678901234567890123456789"),
-        bundle: StoredObject {
-            key: ObjectKey::new("prior.bundle"),
-            size: 1,
-            sha256: Sha256Digest::new("0".repeat(64)),
-        },
+        git_repository_url: GitRepositoryUrl::parse("https://git.ora.test/tenant/project.git")
+            .expect("valid repository URL"),
+        delivery_ref: DeliveryRef::parse("refs/ora/deliveries/prior").expect("valid delivery ref"),
+        base_commit: CommitId::new("0123456789012345678901234567890123456780"),
     });
     input
 }
@@ -33,11 +32,11 @@ fn attempt(input: &StartAgentSessionMessage, directory: &std::path::Path) -> Pro
     }
 }
 
-/// Rewinds the fixture to the v9 schema so the v10 backfill runs against real history.
-fn reopen_after_v9_downgrade(
+/// Rewinds the fixture to the v10 schema so the v11 backfill runs against real history.
+fn reopen_after_v10_downgrade(
     path: &std::path::Path,
 ) -> Result<NodeDatabase, Box<dyn std::error::Error>> {
-    Connection::open(path)?.execute_batch("PRAGMA foreign_keys=OFF; DROP TABLE restore_process_attempts; DROP TABLE session_restores; PRAGMA user_version=9;")?;
+    Connection::open(path)?.execute_batch("PRAGMA foreign_keys=OFF; DROP TABLE restore_process_attempts; DROP TABLE session_restores; PRAGMA user_version=10;")?;
     Ok(NodeDatabase::open(path, NodeIdentity::Discover)?)
 }
 
@@ -114,7 +113,7 @@ fn unknown_stop_retains_clock_terminal_and_checkout_responsibility()
     Ok(())
 }
 
-/// A v9 process with no journal cannot be called interrupted or used as delivery evidence.
+/// A v10 process with no journal cannot be called interrupted or used as delivery evidence.
 #[test]
 fn upgrade_keeps_unjournaled_restore_unknown() -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
@@ -123,7 +122,7 @@ fn upgrade_keeps_unjournaled_restore_unknown() -> Result<(), Box<dyn std::error:
     let input = resumed();
     db.accept_session(&input)?;
     drop(db);
-    let db = reopen_after_v9_downgrade(&path)?;
+    let db = reopen_after_v10_downgrade(&path)?;
     let journal = db.session_journal()?;
     assert_eq!(
         journal.restore_phase(&input.execution_id)?,
@@ -180,7 +179,7 @@ fn upgrade_keeps_completed_legacy_restore_out_of_admission_fences()
         .end_session(&input.execution_id, ended())?;
     let original = db.pending_events()?;
     drop(db);
-    let mut db = reopen_after_v9_downgrade(&path)?;
+    let mut db = reopen_after_v10_downgrade(&path)?;
     let journal = db.session_journal()?;
     assert_eq!(journal.restore_phase(&input.execution_id)?, None);
     assert_eq!(db.pending_events()?, original);
@@ -209,7 +208,7 @@ fn upgrade_keeps_inflight_legacy_restore_fenced() -> Result<(), Box<dyn std::err
     let input = resumed();
     db.accept_session(&input)?;
     drop(db);
-    let mut db = reopen_after_v9_downgrade(&path)?;
+    let mut db = reopen_after_v10_downgrade(&path)?;
     let journal = db.session_journal()?;
     assert_eq!(
         journal.restore_phase(&input.execution_id)?,
@@ -230,5 +229,39 @@ fn upgrade_keeps_inflight_legacy_restore_fenced() -> Result<(), Box<dyn std::err
         db.bind_runtime(&scope),
         Err(Error::ResourceConflict)
     ));
+    Ok(())
+}
+
+/// An in-flight v10 restore whose Agent produced thread events had finished restoring; the
+/// upgrade releases both admission fences instead of blocking the Node forever.
+#[test]
+fn upgrade_releases_inflight_restore_proven_by_agent_thread_event()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("db");
+    let mut db = NodeDatabase::open(&path, NodeIdentity::Require(NodeId::new("node")))?;
+    let input = resumed();
+    db.accept_session(&input)?;
+    let journal = db.session_journal()?;
+    assert!(db.start_session(&input, &NodeIncarnationId::new("original"))?);
+    journal.append_thread_event(&input.execution_id, event())?;
+    drop(journal);
+    drop(db);
+    let mut db = reopen_after_v10_downgrade(&path)?;
+    let journal = db.session_journal()?;
+    // The Agent started after v10's synchronous restore, so no restore responsibility remains.
+    assert_eq!(journal.restore_phase(&input.execution_id)?, None);
+    // Startup recovery can end the session as interrupted, which releases both fences.
+    journal.end_session(&input.execution_id, ended())?;
+    assert!(db.unfinished_runtime_executions()?.is_empty());
+    let scope = super::super::repository::runtime_scope(db.node_id());
+    assert_eq!(db.bind_runtime(&scope)?, Vec::<String>::new());
+    let mut replacement = input;
+    replacement.operation_id = OperationId::new("replacement-op");
+    replacement.execution_id = ExecutionId::new("replacement-execution");
+    let mut permit = scope;
+    permit.execution_id = replacement.execution_id.as_str().into();
+    permit.node_operation_id = replacement.operation_id.as_str().into();
+    db.accept_controlled_session(&replacement, &permit)?;
     Ok(())
 }

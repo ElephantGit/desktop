@@ -121,6 +121,7 @@ impl Setup {
             self.root.clone(),
             /*owner*/ None,
             crate::Shutdown::default(),
+            crate::revision::RestorePolicy::DEFAULT,
         )
     }
 

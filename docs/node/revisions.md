@@ -114,7 +114,8 @@ Any other fetch, verification or checkout failure, or the deadline, also ends it
 started in either case. A Node stop or an `EndSession` during the restore stops it before its next Git
 command and waits for the running one, so the session ends only once the restore no longer writes the
 checkout. A restart during a restore ends the session `interrupted`. Transport repositories are removed
-after use and swept at startup.
+after use; startup cleanup first obtains the original execution stop confirmation and retains
+unknown ones as named residue.
 
 Each supervised Git command receives the earlier of its own command deadline and the restore cutoff.
 No new command starts after expiry; a pending host exchange is bounded by that same cutoff, so it
@@ -136,7 +137,9 @@ execution-status response exposes `stop_unconfirmed`, including original Scope/R
 bound timestamps and the selected containment. Expiry emits no terminal and grants no cleanup or reuse.
 Startup handover and later execution queries can retry closing and querying those same identities;
 late proof settles the original execution once. A pre-upgrade restore that was still in flight remains
-unknown; completed old terminals stay as history and do not fence later admissions.
+unknown. Completed old terminals, and old records that already hold Agent thread events (the restore
+had completed synchronously before the Agent started), stay as history and do not fence later
+admissions.
 
 **Partial restore isolation.** The ledger records restore completion before plugin admission. A prior-
 input session whose restore never completed and whose Agent was never admitted can be delivered only

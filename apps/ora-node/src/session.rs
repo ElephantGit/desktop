@@ -157,6 +157,8 @@ impl<L, C, P, R> AgentSessions<L, C, P, R> {
             shared.ora_git = Some(broker);
         }
         self
+    }
+
     /// Recovery must never compete with the actor currently executing restore.
     pub(crate) fn is_live(&self, execution: &ExecutionId) -> bool {
         self.shared.is_live(execution)

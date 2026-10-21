@@ -69,11 +69,16 @@ pub(super) async fn reconcile(
     host: Option<&SessionHost>,
     stops: &crate::managed::RestoreStops,
     check: crate::managed::StopCheck,
+    only: Option<&ora_node_protocol::ExecutionId>,
 ) -> Result<(), crate::Error> {
     let journal = &stops.journal;
     for record in node.database.recoverable_sessions()? {
         let execution = &record.command.execution_id;
-        if host.is_some_and(|host| host.is_live(execution)) {
+        // An execution-status query proves only the execution it names, so it never pays for
+        // every other pending stop bound on the worker thread.
+        if only.is_some_and(|only| only != execution)
+            || host.is_some_and(|host| host.is_live(execution))
+        {
             continue;
         }
         let phase = journal.restore_phase(execution)?;
@@ -161,7 +166,6 @@ fn cleanup_restore(
         ora_logging::ora_warn!(execution_id = %execution, error = %error, "confirmed restore input cleanup failed");
     }
     Ok(())
-}
 }
 
 /// Checks the Agent configuration before anything starts.
@@ -361,14 +365,13 @@ pub(super) fn open(
         host.as_ref(),
         stops,
         crate::managed::StopCheck::Handover,
+        None,
     ))?;
     sweep_restores(node, &journal)?;
     // Unknown restore responsibility also retains its session placement across restart.
     if node.database.recoverable_sessions()?.is_empty()
         && let SessionWorkload::Separate { directory, .. } = &workload
     {
-        crate::session::purge_workload_directory(directory).map_err(ora_node_db::Error::from)?;
-    }
         crate::session::purge_workload_directory(directory).map_err(ora_node_db::Error::from)?;
     }
     Ok(host)
