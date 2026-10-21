@@ -113,18 +113,20 @@ Any other fetch, verification or checkout failure, or the deadline, also ends it
 `agent_failed{prior_revision_unavailable}`. No plugin process is
 started in either case. A Node stop or an `EndSession` during the restore stops it before its next Git
 command and waits for the running one, so the session ends only once the restore no longer writes the
-checkout. A restart during a restore ends the session `interrupted`. Transport repositories are removed
-after use; startup cleanup first obtains the original execution stop confirmation and retains
-unknown ones as named residue.
+checkout. A restart during a restore ends the session `interrupted`. A transport repository is removed
+only once every original command of its restore proved that it stopped; startup cleanup therefore keeps
+the repository of every session whose restore is not settled, instead of clearing it before recovery
+runs.
 
-Each supervised Git command receives the earlier of its own command deadline and the restore cutoff.
-No new command starts after expiry; a pending host exchange is bounded by that same cutoff, so it
-cannot defer the close request until a longer transport timeout. Cleanup and original Scope closure
-use their independent cleanup budget after execution expires. A late ancestor check cannot turn an
-expired restore into success.
+Each supervised restore Git command, at either identity, receives the earlier of its own command
+deadline and the restore cutoff. No new command starts after expiry; a pending host exchange is
+bounded by that same cutoff, so it cannot defer the close request until a longer transport timeout.
+Cleanup and original Scope closure use their independent cleanup budget after execution expires. A
+late ancestor check cannot turn an expired restore into success.
 
-**Stop confirmation.** Every restore Git intent is durably associated with its session before host
-admission. The first stop request is persisted before Close; cancellation observes command boundaries
+**Stop confirmation.** Every restore Git intent — the Node's transport repository creation, Git Server
+fetch and `commit_of`, and the workload user's import — is durably associated with its session before
+host admission. The first stop request is persisted before Close; cancellation observes command boundaries
 and does not abandon the blocking worker. Only original Scope `Closed` plus original Run direct-process
 exit permits a terminal result, transport cleanup, delivery or checkout reuse. Linux guardian containment is
 BestEffort; its cleanup evidence does not claim Strong quiescence.
@@ -137,9 +139,14 @@ execution-status response exposes `stop_unconfirmed`, including original Scope/R
 bound timestamps and the selected containment. Expiry emits no terminal and grants no cleanup or reuse.
 Startup handover and later execution queries can retry closing and querying those same identities;
 late proof settles the original execution once. A pre-upgrade restore that was still in flight remains
-unknown. Completed old terminals, and old records that already hold Agent thread events (the restore
-had completed synchronously before the Agent started), stay as history and do not fence later
-admissions.
+unknown. Completed old terminals stay as history and do not fence later admissions, and neither does a
+running old session whose sequence counter is non-zero: v9 and v10 ran the restore synchronously before
+the Agent started, only Agent Thread events advance that counter, and the Controller's acknowledgements
+delete the outbox rows without resetting it. Sessions that were accepted but never started keep a
+pending phase, because no actor existed that could have run a restore. The rows that remain
+`legacy_unknown` are exactly the restores that may have been running when the Node was upgraded. They
+have no Node-side exit: the residual-reclamation contract (specs#126) releases them once real evidence
+or an operator's explicit confirmation covers the original stop.
 
 **Partial restore isolation.** The ledger records restore completion before plugin admission. A prior-
 input session whose restore never completed and whose Agent was never admitted can be delivered only
