@@ -27,8 +27,11 @@ pub(super) enum Observation {
 }
 
 /// Why an effect produced no observation.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, PartialEq, thiserror::Error)]
 pub(super) enum SubstrateError {
+    /// This round no longer holds the local lease that issued its dispatch permission.
+    #[error("runtime effect permit epoch no longer matches the current lease")]
+    EpochMismatch,
     /// The lease is still current, but a fresh permit is needed before dispatching this effect.
     #[error("runtime effect permit expired before dispatch")]
     PermitExpired,
@@ -237,18 +240,19 @@ fn now_ms() -> i64 {
     (ora_logging::clock::now_local().unix_timestamp_nanos() / 1_000_000) as i64
 }
 
-/// A permit cannot authorize a new mutation once its issuing lease or its lifetime has ended.
+/// Matches the Sandbox Server's minimum remaining permit lifetime before a mutation.
+const MIN_PERMIT_REMAINING_MS: i64 = 2000;
+
+/// A permit cannot authorize a new mutation once its issuing lease or safe lifetime has ended.
 fn validate_permit(
     permit: &proto::RuntimeEffectPermit,
     current_epoch: Option<i64>,
     now_ms: i64,
 ) -> Result<(), SubstrateError> {
     if current_epoch != Some(permit.controller_epoch) {
-        return Err(SubstrateError::Rejected(
-            "stale_runtime_effect_permission".into(),
-        ));
+        return Err(SubstrateError::EpochMismatch);
     }
-    if now_ms >= permit.expires_at_ms {
+    if now_ms + MIN_PERMIT_REMAINING_MS >= permit.expires_at_ms {
         return Err(SubstrateError::PermitExpired);
     }
     Ok(())

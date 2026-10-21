@@ -11,6 +11,9 @@ mod live;
 mod plugin;
 mod steps;
 
+#[cfg(test)]
+mod eligibility;
+
 use super::{CloudStore, fault, fleet::Fleet, substrate::Observation};
 use crate::*;
 use ora_controller_proto::v1::{
@@ -439,6 +442,7 @@ impl<'a> Round<'a> {
         use super::substrate::SubstrateError;
         ora_logging::ora_warn!(effect_id = %effect.id, error = %error, "Substrate effect call failed");
         match error {
+            SubstrateError::EpochMismatch => Err(Error::StaleEligibility),
             SubstrateError::PermitExpired => {
                 self.defer(
                     proto::DeferState::RetryWait,

@@ -1,4 +1,4 @@
-//! Ordinary operations renew expired authority without replacing their planned effect.
+//! Ordinary operations renew short-lived authority without replacing their planned effect.
 use super::*;
 use pretty_assertions::assert_eq;
 
@@ -18,9 +18,9 @@ fn deferrals(world: &World) -> Vec<Event> {
 }
 
 /// Retains the complete authorization body expected at the ordinary operation's PUT boundary.
-fn authorized_ensure(permit: &proto::RuntimeEffectPermit) -> Value {
-    json!({
-        "kind": "sandbox_ensure",
+fn authorized_request(permit: &proto::RuntimeEffectPermit, kind: proto::EffectKind) -> Value {
+    let mut body = json!({
+        "kind": workspace_cloud::kind_name(kind),
         "projectId": workspace_cloud::PROJECT,
         "workspaceId": WORKSPACE,
         "authorization": {
@@ -33,27 +33,49 @@ fn authorized_ensure(permit: &proto::RuntimeEffectPermit) -> Value {
             "issuedAtMs": permit.issued_at_ms,
             "expiresAtMs": permit.expires_at_ms,
         },
-    })
+    });
+    if kind == proto::EffectKind::SandboxTerminate {
+        body["sandboxInstanceId"] = json!(permit.sandbox_id);
+    }
+    body
 }
 
-/// A valid permit expires while the journal GET is in flight; a restarted Controller reuses the
-/// same effect with fresh authority and performs its only PUT after the retry is offered again.
+/// Start renews a permit with insufficient PUT lifetime in the same running Controller.
 #[test]
-fn ordinary_start_renews_expired_permit_after_restart() {
+fn ordinary_start_renews_short_lived_permit_without_restart() {
+    renew_short_lived_permit(proto::OperationKind::Start);
+}
+
+/// DeleteWorkspace renews termination authority without replacing its planned sandbox effect.
+#[test]
+fn ordinary_delete_renews_short_lived_permit_without_restart() {
+    renew_short_lived_permit(proto::OperationKind::DeleteWorkspace);
+}
+
+/// Journal I/O consumes the PUT margin; reoffering the retry renews the same effect's authority.
+fn renew_short_lived_permit(operation_kind: proto::OperationKind) {
     scenario("main", |world| async move {
+        if operation_kind == proto::OperationKind::DeleteWorkspace {
+            let create = world.cloud.queue(proto::OperationKind::CreateWorkspace);
+            settled(&world, &create, proto::OperationState::Succeeded).await;
+        }
+        let (initial_effects, initial_generation) = world.cloud.effect_identity();
+        let permit_offset = world.cloud.effect_permit_replies().len();
+        let initial_puts = world.substrate.replies.lock().unwrap().puts.clone();
+        let event_offset = world.timeline.events().len();
         let (arrived, read) = oneshot::channel();
         let (release, released) = oneshot::channel();
         world.substrate.replies.lock().unwrap().get_barrier = Some((arrived, released));
-        // The journal request timeout is two seconds; the barrier consumes this exact lifetime.
+        // The GET begins above the two-second margin, then crosses it within its request timeout.
         world
             .cloud
-            .next_effect_permit_lifetime(Duration::from_secs(/*secs*/ 1));
-        let start = world.cloud.queue(proto::OperationKind::Start);
+            .next_effect_permit_lifetime(Duration::from_secs(/*secs*/ 3));
+        let operation = world.cloud.queue(operation_kind);
         let effect_id = tokio::time::timeout(Duration::from_secs(/*secs*/ 2), read)
             .await
             .unwrap()
             .unwrap();
-        let first = world.cloud.effect_permit_replies();
+        let first = world.cloud.effect_permit_replies()[permit_offset..].to_vec();
         assert_eq!(first.len(), 1);
         let (request, permit) = first[0].clone();
         assert_eq!(
@@ -66,22 +88,41 @@ fn ordinary_start_renews_expired_permit_after_restart() {
         );
         let remaining = permit.expires_at_ms - now_ms();
         assert!(
-            remaining > 0,
-            "the permit must still be valid when GET arrives"
+            remaining > 2_000,
+            "the permit must have enough PUT lifetime when GET arrives"
         );
-        tokio::time::sleep(Duration::from_millis(remaining as u64)).await;
-        assert!(now_ms() >= permit.expires_at_ms);
+        if operation_kind == proto::OperationKind::DeleteWorkspace {
+            world.substrate.replies.lock().unwrap().by_id.insert(
+                effect_id.clone(),
+                (
+                    StatusCode::OK,
+                    json!({
+                        "state": "succeeded",
+                        "result": {"terminated": true, "lateEnsureFenced": true},
+                    }),
+                ),
+            );
+        }
+        tokio::time::sleep(Duration::from_millis((remaining - 2_000) as u64)).await;
+        let remaining = permit.expires_at_ms - now_ms();
+        assert!(
+            remaining > 0 && remaining <= 2_000,
+            "GET must finish with a valid permit inside the PUT margin: {remaining}ms"
+        );
         release.send(()).unwrap();
         world
             .timeline
             .until(|events| {
-                events
-                    .iter()
-                    .any(|event| matches!(event, Event::Deferred { .. }))
+                events[event_offset..].iter().any(|event| {
+                    matches!(
+                        event,
+                        Event::Deferred { .. } | Event::Substrate { method: "PUT", .. }
+                    )
+                })
             })
             .await;
         assert_eq!(
-            (world.cloud.operation(&start).state(), deferrals(&world)),
+            (world.cloud.operation(&operation).state(), deferrals(&world)),
             (
                 proto::OperationState::RetryWait,
                 vec![Event::Deferred {
@@ -89,10 +130,7 @@ fn ordinary_start_renews_expired_permit_after_restart() {
                 }],
             )
         );
-        assert_eq!(
-            world.substrate.replies.lock().unwrap().puts,
-            Vec::<(String, Value)>::new()
-        );
+        assert_eq!(world.substrate.replies.lock().unwrap().puts, initial_puts);
         let (effects, generation) = world.cloud.effect_identity();
         assert_eq!(
             (
@@ -102,41 +140,79 @@ fn ordinary_start_renews_expired_permit_after_restart() {
                     .collect::<Vec<_>>(),
                 generation,
             ),
-            (vec![effect_id.clone()], 1)
+            (
+                initial_effects
+                    .iter()
+                    .map(|effect| effect.id.clone())
+                    .chain(std::iter::once(effect_id.clone()))
+                    .collect::<Vec<_>>(),
+                initial_generation + i64::from(operation_kind == proto::OperationKind::Start),
+            )
         );
 
-        world.controller.stop().await;
         world.cloud.reoffer_retries();
-        world.controller.start().await;
-        settled(&world, &start, proto::OperationState::Succeeded).await;
-        let replies = world.cloud.effect_permit_replies();
+        settled(&world, &operation, proto::OperationState::Succeeded).await;
+        let replies = world
+            .cloud
+            .effect_permit_replies()
+            .into_iter()
+            .filter(|(request, _)| request.effect_id == effect_id)
+            .collect::<Vec<_>>();
         assert_eq!(replies.len(), 2);
         assert_eq!(replies[0], first[0]);
         assert_eq!(replies[1].0, request);
         let fresh = &replies[1].1;
-        assert!(fresh.issued_at_ms >= permit.expires_at_ms);
-        assert!(fresh.expires_at_ms > fresh.issued_at_ms);
+        assert!(fresh.issued_at_ms >= permit.expires_at_ms - 2_000);
+        assert_eq!(fresh.expires_at_ms - fresh.issued_at_ms, 10_000);
         let mut expected_permit = permit.clone();
         expected_permit.issued_at_ms = fresh.issued_at_ms;
         expected_permit.expires_at_ms = fresh.expires_at_ms;
         assert_eq!(*fresh, expected_permit);
+        let target = effects.last().unwrap();
         assert_eq!(
-            world.substrate.replies.lock().unwrap().puts,
-            vec![(effect_id.clone(), authorized_ensure(fresh))]
+            world
+                .substrate
+                .replies
+                .lock()
+                .unwrap()
+                .puts
+                .iter()
+                .filter(|(id, _)| id == &effect_id)
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![(effect_id.clone(), authorized_request(fresh, target.kind()))]
         );
         let (completed, final_generation) = world.cloud.effect_identity();
         let mut expected = effects;
-        expected[0].state = proto::EffectState::Succeeded as i32;
-        expected[0].external_id = Some(effect_id.clone());
-        expected[0].evidence = Some(proto::EffectEvidence {
-            evidence: Some(proto::effect_evidence::Evidence::SandboxEnsured(
-                proto::SandboxEnsured {
-                    sandbox_instance_id: effect_id,
-                    node_id: node_id().as_str().to_owned(),
-                },
-            )),
+        let target = expected.last_mut().unwrap();
+        target.state = proto::EffectState::Succeeded as i32;
+        target.external_id = Some(effect_id.clone());
+        target.evidence = Some(proto::EffectEvidence {
+            evidence: Some(match operation_kind {
+                proto::OperationKind::Start => {
+                    proto::effect_evidence::Evidence::SandboxEnsured(proto::SandboxEnsured {
+                        sandbox_instance_id: effect_id,
+                        node_id: node_id().as_str().to_owned(),
+                    })
+                }
+                proto::OperationKind::DeleteWorkspace => {
+                    proto::effect_evidence::Evidence::SandboxTerminated(proto::SandboxTerminated {
+                        late_ensure_fenced: true,
+                    })
+                }
+                _ => panic!("unsupported recovery operation"),
+            }),
         });
-        assert_eq!((completed, final_generation), (expected, generation));
+        assert_eq!(
+            (
+                completed
+                    .into_iter()
+                    .filter(|effect| effect.kind() != proto::EffectKind::WorkspaceDataDelete)
+                    .collect::<Vec<_>>(),
+                final_generation,
+            ),
+            (expected, generation)
+        );
     });
 }
 
@@ -170,7 +246,7 @@ fn ordinary_start_keeps_permanent_substrate_rejection_blocked() {
             world.substrate.replies.lock().unwrap().puts,
             vec![(
                 replies[0].0.effect_id.clone(),
-                authorized_ensure(&replies[0].1)
+                authorized_request(&replies[0].1, proto::EffectKind::SandboxEnsure)
             )]
         );
         let blocked = world.cloud.operation(&start);

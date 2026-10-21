@@ -74,8 +74,17 @@ fn destructive(kind: proto::EffectKind) -> proto::Effect {
     }
 }
 
+/// One authority transition and its expected admission outcome, independent of its display name.
+struct AdmissionCase {
+    name: &'static str,
+    controller_epoch: i64,
+    remaining_ms: i64,
+    lease_after_get: Option<i64>,
+    expected_error: Option<SubstrateError>,
+}
+
 /// Exercises one authority transition without burying its request and assertions in loop nesting.
-async fn assert_dispatch_admission(kind: proto::EffectKind, case: &str) {
+async fn assert_dispatch_admission(kind: proto::EffectKind, case: &AdmissionCase) {
     let fixture = Fixture::default();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -96,24 +105,20 @@ async fn assert_dispatch_admission(kind: proto::EffectKind, case: &str) {
         workspace_id: "workspace".into(),
         sandbox_id: "sandbox".into(),
         runtime_generation: 3,
-        controller_epoch: if case == "wrong_epoch" { 2 } else { 1 },
+        controller_epoch: case.controller_epoch,
         control_epoch: 4,
         issued_at_ms: now,
-        expires_at_ms: if case == "expired" {
-            now - 1
-        } else {
-            now + 60000
-        },
+        expires_at_ms: now + case.remaining_ms,
     };
-    // Equality with the expiry instant is invalid, with no wall-clock sleep.
-    assert!(validate_permit(&permit, Some(permit.controller_epoch), permit.expires_at_ms).is_err());
+    // Equality with the server's minimum remaining lifetime is invalid, without wall-clock sleeps.
+    let boundary = permit.expires_at_ms - MIN_PERMIT_REMAINING_MS;
     assert_eq!(
-        validate_permit(
-            &permit,
-            Some(permit.controller_epoch),
-            permit.expires_at_ms - 1
-        )
-        .map_err(|error| error.to_string()),
+        validate_permit(&permit, Some(permit.controller_epoch), boundary),
+        Err(SubstrateError::PermitExpired)
+    );
+    assert_eq!(
+        validate_permit(&permit, Some(permit.controller_epoch), boundary - 1)
+            .map_err(|error| error.to_string()),
         Ok(())
     );
     let epoch = Arc::new(AtomicI64::new(/*v*/ 1));
@@ -134,12 +139,19 @@ async fn assert_dispatch_admission(kind: proto::EffectKind, case: &str) {
             .await
     });
     fixture.arrived.notified().await;
-    if case == "lease_lost_during_get" {
-        epoch.store(/*val*/ 0, Ordering::SeqCst);
-    }
+    epoch.store(
+        case.lease_after_get.unwrap_or(/*default*/ 0),
+        Ordering::SeqCst,
+    );
     fixture.release.notify_one();
     let result = worker.await.unwrap();
-    if case == "valid" {
+    assert_eq!(
+        result.as_ref().err(),
+        case.expected_error.as_ref(),
+        "{}",
+        case.name
+    );
+    if case.expected_error.is_none() {
         assert!(matches!(result, Ok(Observation::Succeeded { .. })));
         let mut expected = request(&destructive(kind)).unwrap();
         expected["authorization"] = json!({
@@ -154,11 +166,6 @@ async fn assert_dispatch_admission(kind: proto::EffectKind, case: &str) {
         });
         assert_eq!(*fixture.puts.lock().unwrap(), vec![expected]);
     } else {
-        let expected_error = match case {
-            "expired" => matches!(&result, Err(SubstrateError::PermitExpired)),
-            _ => matches!(&result, Err(SubstrateError::Rejected(_))),
-        };
-        assert!(expected_error, "{case}: {result:?}");
         assert_eq!(*fixture.puts.lock().unwrap(), Vec::<Value>::new());
     }
     server.abort();
@@ -174,11 +181,55 @@ fn destructive_put_requires_current_unexpired_permit() {
             .build()
             .unwrap()
             .block_on(async {
+                let cases = [
+                    AdmissionCase {
+                        name: "expired",
+                        controller_epoch: 1,
+                        remaining_ms: 0,
+                        lease_after_get: Some(1),
+                        expected_error: Some(SubstrateError::PermitExpired),
+                    },
+                    AdmissionCase {
+                        name: "within_server_margin",
+                        controller_epoch: 1,
+                        remaining_ms: 1000,
+                        lease_after_get: Some(1),
+                        expected_error: Some(SubstrateError::PermitExpired),
+                    },
+                    AdmissionCase {
+                        name: "at_server_margin",
+                        controller_epoch: 1,
+                        remaining_ms: 2000,
+                        lease_after_get: Some(1),
+                        expected_error: Some(SubstrateError::PermitExpired),
+                    },
+                    AdmissionCase {
+                        name: "wrong_epoch",
+                        controller_epoch: 2,
+                        remaining_ms: 60000,
+                        lease_after_get: Some(1),
+                        expected_error: Some(SubstrateError::EpochMismatch),
+                    },
+                    AdmissionCase {
+                        name: "lease_lost_during_get",
+                        controller_epoch: 1,
+                        remaining_ms: 60000,
+                        lease_after_get: None,
+                        expected_error: Some(SubstrateError::EpochMismatch),
+                    },
+                    AdmissionCase {
+                        name: "valid",
+                        controller_epoch: 1,
+                        remaining_ms: 60000,
+                        lease_after_get: Some(1),
+                        expected_error: None,
+                    },
+                ];
                 for kind in [
                     proto::EffectKind::SandboxTerminate,
                     proto::EffectKind::WorkspaceDataDelete,
                 ] {
-                    for case in ["expired", "wrong_epoch", "lease_lost_during_get", "valid"] {
+                    for case in &cases {
                         assert_dispatch_admission(kind, case).await;
                     }
                 }
