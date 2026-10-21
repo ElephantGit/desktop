@@ -100,3 +100,31 @@ export function withToolMetadata(
 ): ChatToolCall {
   return withItemMetadata(tool, metadata);
 }
+
+/**
+ * Reads only the provider's delegation link from a tool result.
+ *
+ * OpenCode names the delegated child in `rawOutput.metadata.sessionID`; titles, tool names,
+ * result text and timing describe nothing about the relationship and stay out of this parse.
+ */
+export function delegationSessionId(tool: ChatToolCall): string | undefined {
+  if (!object(tool.rawOutput)) return undefined;
+  const metadata = tool.rawOutput.metadata;
+  if (!object(metadata)) return undefined;
+  const id = metadata.sessionID;
+  return typeof id === "string" && id.trim().length > 0 ? id : undefined;
+}
+
+/**
+ * Reports whether the provider's own result says this delegation returned a finished run.
+ *
+ * A parent tool the turn ended on is settled as `completed` by the chat store, so the tool
+ * status alone cannot prove the provider reported it. The provider writes its `status`
+ * beside the session id and only pairs `"completed"` with an ACP `completed` call when the
+ * foreground delegation actually returned.
+ */
+export function delegationResultCompleted(tool: ChatToolCall): boolean {
+  if (tool.status !== "completed" || !object(tool.rawOutput)) return false;
+  const metadata = tool.rawOutput.metadata;
+  return object(metadata) && metadata.status === "completed";
+}

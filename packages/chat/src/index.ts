@@ -33,5 +33,9 @@ export {
   type SessionUsage,
 } from "./store.ts";
 export type { RunDiagnostics } from "./diagnostics.ts";
-export { childSessionSource } from "./item-metadata.ts";
+export {
+  childSessionSource,
+  delegationResultCompleted,
+  delegationSessionId,
+} from "./item-metadata.ts";
 export type { ChildSessionSource } from "./item-metadata.ts";
