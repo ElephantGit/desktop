@@ -33,6 +33,14 @@ fn attempt(input: &StartAgentSessionMessage, directory: &std::path::Path) -> Pro
     }
 }
 
+/// Rewinds the fixture to the v9 schema so the v10 backfill runs against real history.
+fn reopen_after_v9_downgrade(
+    path: &std::path::Path,
+) -> Result<NodeDatabase, Box<dyn std::error::Error>> {
+    Connection::open(path)?.execute_batch("PRAGMA foreign_keys=OFF; DROP TABLE restore_process_attempts; DROP TABLE session_restores; PRAGMA user_version=9;")?;
+    Ok(NodeDatabase::open(path, NodeIdentity::Discover)?)
+}
+
 /// Expiry, restart and changed configuration preserve the original clock, identity and fence.
 #[test]
 fn unknown_stop_retains_clock_terminal_and_checkout_responsibility()
@@ -115,8 +123,7 @@ fn upgrade_keeps_unjournaled_restore_unknown() -> Result<(), Box<dyn std::error:
     let input = resumed();
     db.accept_session(&input)?;
     drop(db);
-    Connection::open(&path)?.execute_batch("PRAGMA foreign_keys=OFF; DROP TABLE restore_process_attempts; DROP TABLE session_restores; PRAGMA user_version=9;")?;
-    let db = NodeDatabase::open(&path, NodeIdentity::Discover)?;
+    let db = reopen_after_v9_downgrade(&path)?;
     let journal = db.session_journal()?;
     assert_eq!(
         journal.restore_phase(&input.execution_id)?,
@@ -160,9 +167,9 @@ fn missing_stop_origin_is_anchored_only_once() -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
-/// An old terminal is retained as history, never reinterpreted as missing process stop proof.
+/// A completed pre-journal restore stays history and must not fence later admission.
 #[test]
-fn legacy_terminal_does_not_release_an_unjournaled_checkout()
+fn upgrade_keeps_completed_legacy_restore_out_of_admission_fences()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("db");
@@ -173,18 +180,54 @@ fn legacy_terminal_does_not_release_an_unjournaled_checkout()
         .end_session(&input.execution_id, ended())?;
     let original = db.pending_events()?;
     drop(db);
-    Connection::open(&path)?.execute_batch("PRAGMA foreign_keys=OFF; DROP TABLE restore_process_attempts; DROP TABLE session_restores; PRAGMA user_version=9;")?;
-    let mut db = NodeDatabase::open(&path, NodeIdentity::Discover)?;
+    let mut db = reopen_after_v9_downgrade(&path)?;
+    let journal = db.session_journal()?;
+    assert_eq!(journal.restore_phase(&input.execution_id)?, None);
     assert_eq!(db.pending_events()?, original);
-    assert_eq!(
-        db.unfinished_runtime_executions()?,
-        vec![input.execution_id.as_str()]
-    );
+    assert!(db.unfinished_runtime_executions()?.is_empty());
+    drop(journal);
+    // Runtime admission is the first gate Cloud passes and must stay open.
+    let scope = super::super::repository::runtime_scope(db.node_id());
+    assert_eq!(db.bind_runtime(&scope)?, Vec::<String>::new());
+    // The same checkout stays reusable by the next controlled session.
     let mut replacement = input;
     replacement.operation_id = OperationId::new("replacement-op");
     replacement.execution_id = ExecutionId::new("replacement-execution");
+    let mut permit = scope;
+    permit.execution_id = replacement.execution_id.as_str().into();
+    permit.node_operation_id = replacement.operation_id.as_str().into();
+    db.accept_controlled_session(&replacement, &permit)?;
+    Ok(())
+}
+
+/// An in-flight pre-journal restore has no stop proof, so both admission fences stay.
+#[test]
+fn upgrade_keeps_inflight_legacy_restore_fenced() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("db");
+    let mut db = NodeDatabase::open(&path, NodeIdentity::Require(NodeId::new("node")))?;
+    let input = resumed();
+    db.accept_session(&input)?;
+    drop(db);
+    let mut db = reopen_after_v9_downgrade(&path)?;
+    let journal = db.session_journal()?;
+    assert_eq!(
+        journal.restore_phase(&input.execution_id)?,
+        Some(RestorePhase::LegacyUnknown)
+    );
+    drop(journal);
+    let mut replacement = input;
+    replacement.operation_id = OperationId::new("replacement-op");
+    replacement.execution_id = ExecutionId::new("replacement-execution");
+    // The checkout cannot be reused while the original stop is unknown.
     assert!(matches!(
         db.accept_session(&replacement),
+        Err(Error::ResourceConflict)
+    ));
+    // Runtime admission reads the same ledger and refuses an open Cloud binding.
+    let scope = super::super::repository::runtime_scope(db.node_id());
+    assert!(matches!(
+        db.bind_runtime(&scope),
         Err(Error::ResourceConflict)
     ));
     Ok(())

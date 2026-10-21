@@ -93,4 +93,4 @@ rootless 下的尽力而为，不是强隔离：逃逸的后代进程或死掉�
 
 `WriteGuard` 为真实 SQLite 故障测试暴露事务失败点；`cargo test -p ora-node-db -p ora-node` 会运行它们。
 
-恢复的 Git 准入阶段与原命令意图在同一事务记录。停止确认前不能提交会话终态；上限耗尽只保留命名残留，不删除原身份。升级前缺少关联的恢复保持 `legacy_unknown`：旧终态继续保留，但不会因此解除 checkout 和运行时准入保护。见 [Revision 恢复](revisions.zh.md)。
+恢复的 Git 准入阶段与原命令意图在同一事务记录。停止确认前不能提交会话终态；上限耗尽只保留命名残留，不删除原身份。升级前缺少关联、且尚未完成的恢复保持 `legacy_unknown`，继续拦截 checkout 与运行时准入；已完成的历史终态只作为历史保留，不再拦截后续准入。见 [Revision 恢复](revisions.zh.md)。

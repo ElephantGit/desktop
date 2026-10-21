@@ -111,4 +111,4 @@ values in a stored `RunSpec` are private data, never logs.
 `WriteGuard` exposes transaction failure points for real SQLite fault tests; `cargo test -p
 ora-node-db -p ora-node` runs them.
 
-Restore Git admission and its original command intent commit together. A session terminal requires original stop evidence; bound expiry retains named residue and never deletes identity. Pre-journal restores remain `legacy_unknown`: old terminals are retained as history but do not release checkout/runtime admission fences. See [Revision recovery](revisions.md).
+Restore Git admission and its original command intent commit together. A session terminal requires original stop evidence; bound expiry retains named residue and never deletes identity. Pre-journal restores that were still in flight remain `legacy_unknown` and keep checkout and runtime admission fenced; completed old terminals are retained as history without fencing later admissions. See [Revision recovery](revisions.md).

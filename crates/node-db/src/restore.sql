@@ -8,9 +8,13 @@ CREATE TABLE session_restores (
 );
 -- Older in-flight restores had no durable process association or agent-start fact.
 -- Preserve that uncertainty instead of manufacturing interruption or safe delivery.
+-- Completed restores keep their old terminal as history: no live process or checkout
+-- responsibility remains, and `legacy_unknown` has no exit, so fencing them here would
+-- permanently refuse later runtime bindings and checkout reuse on the same Node.
 INSERT INTO session_restores(execution,phase)
 SELECT execution,'legacy_unknown' FROM node_executions
-WHERE json_extract(input,'$.payload.spec.prior_revision') IS NOT NULL;
+WHERE json_extract(input,'$.payload.spec.prior_revision') IS NOT NULL
+  AND state<>'completed';
 CREATE TABLE restore_process_attempts (
     run TEXT PRIMARY KEY,
     execution TEXT NOT NULL REFERENCES session_restores(execution),

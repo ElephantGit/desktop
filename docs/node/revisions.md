@@ -135,7 +135,8 @@ configuration cannot renew it. At expiry the session stops querying host evidenc
 execution-status response exposes `stop_unconfirmed`, including original Scope/Run, first-request and
 bound timestamps and the selected containment. Expiry emits no terminal and grants no cleanup or reuse.
 Startup handover and later execution queries can retry closing and querying those same identities;
-late proof settles the original execution once. Missing pre-upgrade process/agent facts remain unknown.
+late proof settles the original execution once. A pre-upgrade restore that was still in flight remains
+unknown; completed old terminals stay as history and do not fence later admissions.
 
 **Partial restore isolation.** The ledger records restore completion before plugin admission. A prior-
 input session whose restore never completed and whose Agent was never admitted can be delivered only
