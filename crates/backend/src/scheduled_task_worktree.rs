@@ -1066,9 +1066,8 @@ mod tests {
             use ora_db::{
                 DatabaseBootstrapper, DatabaseLocation, SqliteProjectRepository,
                 SqliteScheduledRunRepository, SqliteScheduledTaskRepository,
-                SqliteSessionRepository, SqliteTaskRepository,
-                SqliteWorktreeProvisioningLeaseRepository, SqliteTaskWorkspaceRepository,
-                default_migration_catalog,
+                SqliteSessionRepository, SqliteTaskRepository, SqliteTaskWorkspaceRepository,
+                SqliteWorktreeProvisioningLeaseRepository, default_migration_catalog,
             };
             use ora_domain::{
                 AuditFields, Project, ScheduledOccurrence, ScheduledRun, ScheduledRunId,
@@ -1102,18 +1101,19 @@ mod tests {
                 .expect("bootstrap database");
             let project_root = temporary.path().join("fixture-repository");
             std::fs::create_dir_all(&project_root).expect("create project workspace");
-            let project = SqliteProjectRepository::with_clock(pool.clone(), crate::clock::SystemClock)
-                .create_project(
-                    Project::new(
-                        ora_domain::ProjectId::new("project-1"),
-                        "Bootstrap fixture",
-                        AuditFields::new(10, 10, /*is_deleted*/ false),
-                    ),
-                    ora_domain::WorkspaceLocation::local_filesystem(
-                        git.repo_path().to_string_lossy().into_owned(),
-                    ),
-                )
-                .expect("create project");
+            let project =
+                SqliteProjectRepository::with_clock(pool.clone(), crate::clock::SystemClock)
+                    .create_project(
+                        Project::new(
+                            ora_domain::ProjectId::new("project-1"),
+                            "Bootstrap fixture",
+                            AuditFields::new(10, 10, /*is_deleted*/ false),
+                        ),
+                        ora_domain::WorkspaceLocation::local_filesystem(
+                            git.repo_path().to_string_lossy().into_owned(),
+                        ),
+                    )
+                    .expect("create project");
             let definition = ScheduledTask::new(
                 ScheduledTaskId::new("scheduled-task-it"),
                 "Integration task",
@@ -1179,20 +1179,18 @@ mod tests {
                 WorktreeActivity::Active,
                 AuditFields::new(10, 10, /*is_deleted*/ false),
             );
-            let outcome = SqliteTaskWorkspaceRepository::with_clock(
-                pool.clone(),
-                crate::clock::SystemClock,
-            )
-            .commit_worktree_task_for_scheduled_run(
-                &owned_task,
-                &owned_worktree,
-                &WorktreeProvisioningLeaseId::new("lease-bootstrap"),
-                &ora_application::ScheduledRunWorktreeLink {
-                    run_id: run_id.clone(),
-                    worktree_path: worktree_path.to_string_lossy().into_owned(),
-                },
-            )
-            .expect("ownership commit");
+            let outcome =
+                SqliteTaskWorkspaceRepository::with_clock(pool.clone(), crate::clock::SystemClock)
+                    .commit_worktree_task_for_scheduled_run(
+                        &owned_task,
+                        &owned_worktree,
+                        &WorktreeProvisioningLeaseId::new("lease-bootstrap"),
+                        &ora_application::ScheduledRunWorktreeLink {
+                            run_id: run_id.clone(),
+                            worktree_path: worktree_path.to_string_lossy().into_owned(),
+                        },
+                    )
+                    .expect("ownership commit");
             assert!(
                 matches!(outcome, ora_application::WorkspaceCommitOutcome::Committed),
                 "the ownership commit binds the run and persists the task"
