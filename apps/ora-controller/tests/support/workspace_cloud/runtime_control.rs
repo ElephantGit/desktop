@@ -1,7 +1,87 @@
 //! Simulated Cloud permits test coordination only; real PostgreSQL and Node tests enforce fences.
 use super::*;
 use ora_controller_proto::v1::runtime_control_service_server::RuntimeControlService;
+use std::collections::HashMap;
+
+/// Test-owned Cloud intentions and replies; no caller role is assumed by the delivery contract.
+#[derive(Default)]
+pub(super) struct ForceState {
+    plans: Vec<proto::RuntimeForceStopPlan>,
+    permits: HashMap<String, Result<proto::RuntimeEffectPermit, Status>>,
+    requests: Vec<proto::GetEffectPermitRequest>,
+    confirmations: Vec<proto::ConfirmForceStopRequest>,
+    next_permit_lifetime: Option<Duration>,
+    replies: Vec<(proto::GetEffectPermitRequest, proto::RuntimeEffectPermit)>,
+}
+
 impl WorkspaceCloud {
+    /// Changes only the next permit, so a resumed operation receives normal fresh authority.
+    pub fn next_effect_permit_lifetime(&self, lifetime: Duration) {
+        self.lock().force.next_permit_lifetime = Some(lifetime);
+    }
+
+    /// Records every permit issued, in order, so tests can prove a retry obtained fresh authority.
+    pub fn effect_permit_replies(
+        &self,
+    ) -> Vec<(proto::GetEffectPermitRequest, proto::RuntimeEffectPermit)> {
+        self.lock().force.replies.clone()
+    }
+
+    /// Installs exact plans and optional permit outcomes before the next Controller wake.
+    pub fn force_plans(
+        &self,
+        plans: Vec<proto::RuntimeForceStopPlan>,
+        permits: HashMap<String, Result<proto::RuntimeEffectPermit, Status>>,
+    ) {
+        let mut state = self.lock();
+        state.force.plans = plans;
+        state.force.permits = permits;
+        // A committed intention wakes an already live watch, rather than waiting for lease renewal.
+        if let Some(subscriber) = &state.subscriber {
+            let _ = subscriber.try_send(Ok(proto::WatchResponse {
+                signal: Some(Signal::WorkAvailable(proto::WorkAvailable {
+                    operation_id: None,
+                })),
+            }));
+        }
+    }
+
+    /// Returns immutable evidence of the worker's requests and accepted confirmations.
+    pub fn force_calls(
+        &self,
+    ) -> (
+        Vec<proto::GetEffectPermitRequest>,
+        Vec<proto::ConfirmForceStopRequest>,
+    ) {
+        let state = self.lock();
+        (
+            state.force.requests.clone(),
+            state.force.confirmations.clone(),
+        )
+    }
+
+    /// Returns planned effects and generation together, so tombstone tests detect replacement work.
+    pub fn effect_identity(&self) -> (Vec<proto::Effect>, i64) {
+        let state = self.lock();
+        (
+            state
+                .effects
+                .iter()
+                .map(|(_, effect)| effect.clone())
+                .collect(),
+            state.workspace.runtime_generation,
+        )
+    }
+
+    /// Reoffers retry-wait work as a normal future claim would; blocked work stays blocked.
+    pub fn reoffer_retries(&self) {
+        for op in &mut self.lock().ops {
+            if op.operation.state() == proto::OperationState::RetryWait {
+                op.operation.state = proto::OperationState::Queued as i32;
+            }
+        }
+    }
+
     fn runtime_bindings(&self) -> Vec<proto::RuntimeBinding> {
         let state = self.lock();
         let now = std::time::SystemTime::now()
@@ -111,11 +191,31 @@ impl RuntimeControlService for WorkspaceCloud {
         request: Request<proto::GetEffectPermitRequest>,
     ) -> Result<Response<proto::GetEffectPermitResponse>, Status> {
         let message = request.into_inner();
-        let state = self.lock();
-        let (_, effect) = state
+        let mut state = self.lock();
+        state.force.requests.push(message.clone());
+        if !message.force_stop_id.is_empty() {
+            self.timeline.push(Event::ForceProgress);
+        }
+        if let Some(outcome) = state.force.permits.get(&message.effect_id) {
+            return outcome.clone().map(|permit| {
+                Response::new(proto::GetEffectPermitResponse {
+                    permit: Some(permit),
+                })
+            });
+        }
+        let effect = state
             .effects
             .iter()
             .find(|(_, e)| e.id == message.effect_id)
+            .map(|(_, effect)| effect)
+            .or_else(|| {
+                state
+                    .force
+                    .plans
+                    .iter()
+                    .flat_map(|plan| &plan.effects)
+                    .find(|effect| effect.id == message.effect_id)
+            })
             .ok_or_else(|| conflict("stale_effect"))?;
         let sandbox_id = match effect.request.as_ref().and_then(|r| r.request.as_ref()) {
             Some(EffectRequest::SandboxEnsure(_)) => effect.id.clone(),
@@ -126,31 +226,69 @@ impl RuntimeControlService for WorkspaceCloud {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64;
+        let lifetime = state
+            .force
+            .next_permit_lifetime
+            .take()
+            .unwrap_or(Duration::from_secs(/*secs*/ 10));
+        let permit = proto::RuntimeEffectPermit {
+            tenant_id: "tenant".into(),
+            workspace_id: WORKSPACE.into(),
+            sandbox_id,
+            runtime_generation: state.workspace.runtime_generation,
+            controller_epoch: EPOCH,
+            control_epoch: 1,
+            issued_at_ms: now,
+            expires_at_ms: now + lifetime.as_millis() as i64,
+        };
+        state.force.replies.push((message, permit.clone()));
         Ok(Response::new(proto::GetEffectPermitResponse {
-            permit: Some(proto::RuntimeEffectPermit {
-                tenant_id: "tenant".into(),
-                workspace_id: WORKSPACE.into(),
-                sandbox_id,
-                runtime_generation: state.workspace.runtime_generation,
-                controller_epoch: EPOCH,
-                control_epoch: 1,
-                issued_at_ms: now,
-                expires_at_ms: now + 10000,
-            }),
+            permit: Some(permit),
         }))
     }
     async fn list_force_stops(
         &self,
         _: Request<proto::ListForceStopsRequest>,
     ) -> Result<Response<proto::ListForceStopsResponse>, Status> {
+        self.timeline.push(Event::ForceListed);
         Ok(Response::new(proto::ListForceStopsResponse {
-            plans: vec![],
+            plans: self.lock().force.plans.clone(),
         }))
     }
     async fn confirm_force_stop(
         &self,
-        _: Request<proto::ConfirmForceStopRequest>,
+        request: Request<proto::ConfirmForceStopRequest>,
     ) -> Result<Response<proto::ConfirmForceStopResponse>, Status> {
-        Err(Status::failed_precondition("no_force_intent"))
+        let message = request.into_inner();
+        let mut state = self.lock();
+        let plan = state
+            .force
+            .plans
+            .iter_mut()
+            .find(|plan| plan.id == message.force_stop_id)
+            .ok_or_else(|| Status::aborted("no_force_intent"))?;
+        if plan.version != message.version || !message.terminated || !message.late_ensure_fenced {
+            return Err(Status::aborted("unconfirmed_target"));
+        }
+        let effect = plan
+            .effects
+            .iter_mut()
+            .find(|effect| effect.id == message.effect_id)
+            .ok_or_else(|| Status::not_found("effect_not_found"))?;
+        effect.state = proto::EffectState::Succeeded as i32;
+        plan.version += 1;
+        let version = plan.version;
+        state.force.confirmations.push(message);
+        // An empty plan is no longer a pending intention, as in the production listing.
+        state.force.plans.retain(|plan| {
+            plan.effects
+                .iter()
+                .any(|effect| effect.state() != proto::EffectState::Succeeded)
+        });
+        self.timeline.push(Event::ForceProgress);
+        Ok(Response::new(proto::ConfirmForceStopResponse {
+            version,
+            completed: state.force.plans.is_empty(),
+        }))
     }
 }
