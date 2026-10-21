@@ -20,9 +20,9 @@ mod workload;
 
 pub(crate) use model::seal_unstarted_history;
 pub use ports::{
-    CheckoutResolver, CommandSettlement, HistoryUnavailable, PluginCatalog, PriorRevisionRestore,
-    QueuedCommand, RestoreCancel, RestoreFailure, RestoreRequest, Restored, SessionCommand,
-    SessionHost, SessionLedger,
+    CheckoutResolver, CommandSettlement, HistoryUnavailable, InstalledConfigurationError,
+    PluginCatalog, PriorRevisionRestore, QueuedCommand, RestoreCancel, RestoreFailure,
+    RestoreRequest, Restored, SessionCommand, SessionHost, SessionLedger,
 };
 pub use workload::SessionWorkload;
 pub(crate) use workload::purge_workload_directory;

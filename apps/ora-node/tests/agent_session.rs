@@ -770,3 +770,31 @@ async fn an_unconfirmed_adapter_never_receives_a_prompt() {
             .all(|pid| !process_exists(pid))
     );
 }
+
+/// A configured session whose installed package no longer proves the frozen artifact,
+/// declaration or Settings ends before any grant is requested or any plugin process starts.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_configuration_the_installed_package_cannot_prove_never_gets_a_grant() {
+    let fixture = Fixture::new();
+    *fixture.configuration.lock().unwrap() = Err(ora_node::InstalledConfigurationError::Invalid);
+    let gateway = gateway::Gateway::new(&fixture.home());
+    let sessions = fixture.model_sessions(gateway.config.clone());
+    fixture.start_configured(&sessions, "must not be sent", r#"{"effort":"high"}"#);
+    let ended = fixture.ended().await;
+    sessions.shutdown().await;
+    assert_eq!(
+        (ended.reason, ended.detail.as_deref()),
+        (
+            AgentSessionEndReason::AgentFailed,
+            Some("agent_model_configuration_invalid")
+        )
+    );
+    assert_eq!(
+        (
+            fixture.ledger.events(),
+            grant_routes(&gateway),
+            fixture.plugin_pids()
+        ),
+        (Vec::new(), Vec::<String>::new(), Vec::new())
+    );
+}

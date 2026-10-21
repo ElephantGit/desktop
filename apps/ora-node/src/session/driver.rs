@@ -129,6 +129,13 @@ where
     let stopping = shared.stopping.subscribe();
     let restored = resume::restore_prior(
         &shared.restorer,
+    // Admission checked a declaration Cloud holds; under the lease the Node proves the installed
+    // bytes, declaration and Settings are that same one before any model authority exists.
+    if let Some(configuration) = &spec.agent_configuration
+        && let Err(error) = shared.catalog.check_configuration(configuration)
+    {
+        return SessionEnd::agent_failed(error.code());
+    }
         &shared.ledger,
         operation,
         execution,

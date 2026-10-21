@@ -2,6 +2,7 @@
 //! checks the lock again so a session started during the transfer cannot lose its executable.
 mod catalog;
 mod config;
+mod model_configuration;
 pub use catalog::{DirectoryPluginCatalog, PluginUseLease};
 pub use config::PluginConfig;
 use ora_node_protocol::*;
@@ -130,12 +131,6 @@ impl<D: HttpDownload> PluginInstaller<D> {
             .as_ref()
             .map(declaration_expectation)
             .transpose()?;
-        if self
-            .catalog
-            .already_installed(&id, &version, declaration.as_ref())?
-        {
-            return Ok(());
-        }
         let (download, target) = match &plugin.release {
             PluginRelease::Universal { download } => (download, None),
             PluginRelease::Targets { targets } => {
@@ -150,6 +145,22 @@ impl<D: HttpDownload> PluginInstaller<D> {
                 (&selected.download, Some(host.clone()))
             }
         };
+        // The receipt names the artifact bytes this Node verified, so a configured session can
+        // later prove it runs exactly the package Cloud froze.
+        let receipt_target = self
+            .host_target
+            .as_ref()
+            .map_or("", |target| target.as_str());
+        let artifact = model_configuration::PackageArtifact {
+            sha256: download.sha256.as_str(),
+            target: receipt_target,
+        };
+        if self
+            .catalog
+            .already_installed(&id, &version, declaration.as_ref(), &artifact)?
+        {
+            return Ok(());
+        }
         let url = url::Url::parse(&download.url).map_err(|_| PluginFailureCode::InvalidPackage)?;
         // Plans contain download locations, not credentials. In particular reqwest must not
         // turn URL user-info into an Authorization header.
@@ -186,7 +197,7 @@ impl<D: HttpDownload> PluginInstaller<D> {
             )
             .await
             .map_err(failure)?;
-        self.catalog.publish(&id, &version, prepared)
+        self.catalog.publish(&id, &version, prepared, &artifact)
     }
 }
 

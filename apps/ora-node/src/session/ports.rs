@@ -120,6 +120,33 @@ pub trait PluginCatalog: Send + Sync + 'static {
 
     /// Returns the package directory of exactly this installed version, if present.
     fn installed(&self, plugin_id: &PluginId, version: &PluginVersion) -> Option<PathBuf>;
+
+    /// Proves the installed package is the artifact Cloud froze for a configured session, that it
+    /// still carries the frozen declaration, that the Settings are valid for it, and that it
+    /// offers the frozen protocol. Called under the session's lease, before model authority.
+    fn check_configuration(
+        &self,
+        configuration: &ora_node_protocol::FrozenAgentConfiguration,
+    ) -> Result<(), InstalledConfigurationError>;
+}
+
+/// Why the installed package cannot run a frozen configuration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InstalledConfigurationError {
+    /// The package, its declaration or the Settings are not the ones Cloud froze.
+    Invalid,
+    /// The installed declaration does not offer the protocol Cloud froze.
+    ProtocolMismatch,
+}
+
+impl InstalledConfigurationError {
+    /// The bounded session failure code for this refusal.
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Invalid => "agent_model_configuration_invalid",
+            Self::ProtocolMismatch => "agent_model_protocol_mismatch",
+        }
+    }
 }
 
 /// The session history of an execution cannot be delivered yet, or at all.

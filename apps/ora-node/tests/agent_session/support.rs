@@ -1,9 +1,10 @@
 //! In-memory ledger, checkout and plugin catalog, plus a Node home with the echo agent installed.
 
 use ora_node::{
-    AgentSessions, CheckoutResolver, CommandSettlement, ModelProxyConfig, PluginCatalog,
-    PriorRevisionRestore, QueuedCommand, RestoreCancel, RestoreFailure, RestoreRequest, Restored,
-    SessionCommand, SessionConfig, SessionHost, SessionLedger, SessionWorkload,
+    AgentSessions, CheckoutResolver, CommandSettlement, InstalledConfigurationError,
+    ModelProxyConfig, PluginCatalog, PriorRevisionRestore, QueuedCommand, RestoreCancel,
+    RestoreFailure, RestoreRequest, Restored, SessionCommand, SessionConfig, SessionHost,
+    SessionLedger, SessionWorkload,
 };
 use ora_node_protocol::{
     AgentSessionEnded, AgentSessionSpec, BoundModel, CommandId, ContentBlock, ExecutionId,
@@ -254,6 +255,8 @@ impl Drop for CountedLease {
 pub struct Catalog {
     pub installed: HashMap<(PluginId, PluginVersion), PathBuf>,
     pub leases: Arc<AtomicUsize>,
+    /// How the installed package answers a frozen configuration; accepted unless set.
+    pub configuration: Arc<Mutex<Result<(), InstalledConfigurationError>>>,
 }
 
 impl PluginCatalog for Catalog {
@@ -268,6 +271,16 @@ impl PluginCatalog for Catalog {
         self.installed
             .get(&(plugin_id.clone(), version.clone()))
             .cloned()
+    }
+
+    fn check_configuration(
+        &self,
+        _configuration: &FrozenAgentConfiguration,
+    ) -> Result<(), InstalledConfigurationError> {
+        *self
+            .configuration
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -310,6 +323,8 @@ pub struct Fixture {
     pub ledger: MemoryLedger,
     pub leases: Arc<AtomicUsize>,
     pub restorer: Restorer,
+    /// What the catalog answers when a configured session checks its installed package.
+    pub configuration: Arc<Mutex<Result<(), InstalledConfigurationError>>>,
 }
 
 impl Fixture {
@@ -326,6 +341,7 @@ impl Fixture {
                 hold: Arc::default(),
                 cancelled: Arc::default(),
             },
+            configuration: Arc::new(Mutex::new(Ok(()))),
         };
         let package = fixture.package_root();
         std::fs::create_dir_all(&package).expect("create package root");
@@ -450,6 +466,7 @@ impl Fixture {
                     self.package_root_of(installed_version),
                 )]),
                 leases: Arc::clone(&self.leases),
+                configuration: Arc::clone(&self.configuration),
             },
             self.restorer.clone(),
         )

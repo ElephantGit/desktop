@@ -56,6 +56,12 @@ impl crate::PluginCatalog for CheckoutPath {
     ) -> Option<std::path::PathBuf> {
         Some(self.0.clone())
     }
+    fn check_configuration(
+        &self,
+        _configuration: &ora_node_protocol::FrozenAgentConfiguration,
+    ) -> Result<(), crate::InstalledConfigurationError> {
+        Ok(())
+    }
 }
 
 #[derive(Default)]
