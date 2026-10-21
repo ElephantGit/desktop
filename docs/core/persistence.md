@@ -46,6 +46,8 @@ is the only source of truth for the schema; there is no checked-in `schema.sql`.
 | `0017` | Scheduled run worktree base branch selected at admission |
 | `0018` | Scheduled run worktree task link |
 | `0019` | The `finalized_without_effect` Effect operation phase, added by rebuilding the operation journal through staging copies |
+| `0020` | Scheduled run business verdict, detail and annotation time |
+| `0021` | Scheduled run artifact manifest and rejected-candidate log |
 
 Details of individual migrations live in [`crates/db/src/migration/README.md`](../../crates/db/src/migration/README.md).
 The catalog describes only the current schema; databases whose `migrations` table predates SQL

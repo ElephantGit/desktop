@@ -7,7 +7,8 @@ schedule: a daily report, a recurring code-quality check, a to-do sweep. The gov
 the [local and cloud execution ownership](https://github.com/ora-space/specs/blob/main/decisions/desktop/core/scheduled-task/0-local-and-cloud-execution-ownership.md)
 ADR (`approved`). Code lives in `crates/domain/src/scheduled_task.rs` and `scheduled_run.rs`,
 `crates/application/src/scheduled_task`, `crates/backend/src/scheduled_task.rs` and the
-`scheduled_tasks`, `scheduled_runs` and `scheduled_occurrences` tables (migration `0015`).
+`scheduled_tasks`, `scheduled_runs` and `scheduled_occurrences` tables (migration `0015`), the
+verdict columns (migration `0020`) and the artifact manifest tables (migration `0021`).
 
 ## What is delivered
 
@@ -25,6 +26,8 @@ rejected as an invalid request.
 | `deleteScheduledTask` | Soft-delete the definition; run and missed history is kept |
 | `revokeScheduledTaskApproval` | Withdraw unattended consent and disable the task |
 | `listScheduledTaskHistory` | Newest-first runs and missed occurrences |
+| `listScheduledRunArtifacts` | One run's collected artifacts and rejected candidates |
+| `readScheduledRunArtifact` | Bounded text preview of one stored artifact |
 
 ## Definition
 
@@ -65,6 +68,23 @@ The domain fixes the semantics the scheduler will follow:
   `target_unavailable`, `model_unavailable`, `worktree_failed`, `approval_policy_invalid`, `timeout`
   and `execution_error`.
 - History keeps at most 100 run and missed entries per task, and deleting a task does not delete them.
+
+## Verdicts and run artifacts
+
+A run's business verdict is independent of its execution status: a `succeeded` run can report `fail`.
+The runtime parses `QA_VERDICT: <pass|warn|fail|blocked|idle|range_unresolved>` (optionally followed
+by `QA_DETAIL: ...`) from the agent's final Assistant turn and writes it once, before `RunFinished`.
+Runs that never use the convention, failed/cancelled/timeout runs and old history read as
+"not reported".
+
+Artifacts use the fixed `.ora-scheduled-artifacts/` directory in the run's worktree. On a
+`succeeded` completion, before the janitor may discard the worktree, the runtime copies whitelisted
+files (`markdown`, `json`, `txt`, `log`, `xml`, `html`) into
+`<data root>/scheduled-artifacts/<run id>/`. The directory is excluded from the worktree change
+check, so a run that only wrote artifacts is still reclaimed. Per-run bounds are 64 artifacts,
+10 MiB each and 64 MiB total; rejected candidates stay visible in history with their reason. Each
+task keeps artifacts for at most ten runs (newest first), runs that still retain their worktree are
+exempt, and pruning history removes the matching artifact rows and files.
 
 ## Leftover worktree tasks from older versions
 
