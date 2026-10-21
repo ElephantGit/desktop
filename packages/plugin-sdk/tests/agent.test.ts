@@ -47,6 +47,93 @@ function createTransportHarness(): {
   };
 }
 
+Deno.test("a generic Agent must apply the exact model context before start succeeds", async () => {
+  for (const acknowledges of [false, true]) {
+    let received: unknown;
+    const plugin = defineAgent({
+      start: (context) => {
+        received = context.modelContext;
+        if (acknowledges && context.modelContext) {
+          const frozen = context.modelContext.configuration;
+          return {
+            adapterVersion: frozen.adapterVersion,
+            declarationFingerprint: frozen.declarationFingerprint,
+            configurationRevision: frozen.configurationRevision,
+          };
+        }
+      },
+      stop: () => {},
+      listModels: () => [],
+      onAcp: () => {},
+    });
+    const harness = createTransportHarness();
+    const run = plugin.run(harness.transport);
+    await harness.responses.next();
+    const modelContext = {
+      configuration: {
+        pluginId: "official/minimal",
+        pluginVersion: "1.0.0",
+        target: "x86_64-unknown-linux-gnu",
+        packageSha256: "a".repeat(64),
+        schemaVersion: 2,
+        declarationFingerprint: "b".repeat(64),
+        adapterVersion: 1,
+        configurationRevision: 7,
+        settingsJson:
+          '{"style":"literal $(text)","budget":2.5,"verbose":false,"counter":9007199254740993,"ratio":0.123456789012345678901}',
+        protocol: "anthropic-messages",
+        model: {
+          id: "vendor/model",
+          name: "Model",
+          contextWindow: 128000,
+          maxTokens: 8192,
+        },
+      },
+      proxyBaseUrl: "https://gateway.invalid/runtime/anthropic/v1",
+      token: "synthetic-runtime-token",
+    };
+    await harness.send({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "agent/start",
+      params: {
+        cwd: "/private/execution",
+        hostVersion: "0.0.0",
+        modelContext,
+      },
+    });
+    const response = (await harness.responses.next()).value;
+    assertEquals(received, modelContext);
+    assertEquals(
+      response,
+      acknowledges
+        ? {
+          jsonrpc: "2.0",
+          id: 1,
+          result: {
+            protocol: "acp",
+            acpVersion: 1,
+            modelApplied: {
+              adapterVersion: 1,
+              declarationFingerprint: "b".repeat(64),
+              configurationRevision: 7,
+            },
+          },
+        }
+        : {
+          jsonrpc: "2.0",
+          id: 1,
+          error: {
+            code: -32602,
+            message: "invalid or unapplied Agent model context",
+          },
+        },
+    );
+    await harness.send({ jsonrpc: "2.0", method: "ora/shutdown", params: {} });
+    await run;
+  }
+});
+
 Deno.test("serves the whole agent contract over one run loop", async () => {
   const received: JsonValue[] = [];
   const effectCalls: unknown[] = [];

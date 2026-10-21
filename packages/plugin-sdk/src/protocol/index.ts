@@ -1,4 +1,5 @@
 export * from "./agent.ts";
+export * from "./model_context.ts";
 export * from "./child_process.ts";
 export * from "./constants.ts";
 export * from "./effect.ts";
