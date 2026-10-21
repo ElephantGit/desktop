@@ -35,6 +35,11 @@ Messages use bounded MessagePack (16 KiB, depth 16), guardian wire version 3, wi
 deadline per exchange and independently bounded channel workers. The guardian reconciles lifecycle state
 every 50 ms independently of host connections.
 
+Once Closed and every accepted Run's terminal cleanup facts have committed, periodic reconciliation
+becomes quiescent instead of repeatedly reading and writing lifecycle journals. The guardian retains
+its original lock, endpoints and bounded output, and continues checking takeover, query and output
+requests. Unknown state and closure that has not committed continue to reconcile.
+
 ## Runs
 
 After `Ready` and bind, the host uses `GuardianRuns::execute`:
