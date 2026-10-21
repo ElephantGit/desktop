@@ -4,14 +4,14 @@ use std::sync::Arc;
 use ora_application::{
     ProjectRepository, ScheduledArtifactStore, ScheduledOccurrenceCandidate,
     ScheduledOccurrenceRepository, ScheduledRunArtifactRepository, ScheduledRunLifecycleRepository,
-    ScheduledTaskRepository, SweepScheduledRunArtifactsHandler,
+    ScheduledTaskHistoryRepository, ScheduledTaskRepository, SweepScheduledRunArtifactsHandler,
 };
 use ora_domain::{
     AgentRef, AuditFields, Project, ProjectId, ScheduledArtifactKind, ScheduledArtifactRejection,
     ScheduledArtifactRejectionReason, ScheduledOccurrence, ScheduledRun, ScheduledRunArtifact,
-    ScheduledRunId, ScheduledRunTransition, ScheduledTask, ScheduledTaskApproval,
-    ScheduledTaskExecutionLocation, ScheduledTaskId, ScheduledTaskSchedule, SessionId, TaskId,
-    WorkspaceLocation,
+    ScheduledRunFailureReason, ScheduledRunId, ScheduledRunTransition, ScheduledTask,
+    ScheduledTaskApproval, ScheduledTaskExecutionLocation, ScheduledTaskId, ScheduledTaskSchedule,
+    SessionId, TaskId, WorkspaceLocation,
 };
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
@@ -155,12 +155,8 @@ fn pruned_runs_surface_as_missing_so_the_sweep_can_remove_their_artifacts() {
     );
 }
 
-/// Seeds a visible project/task and one succeeded run so visibility joins resolve.
-fn seed_task_and_run(
-    pool: &RepositoryPool,
-    temporary: &TempDir,
-    run_id: &ScheduledRunId,
-) -> ScheduledTaskId {
+/// Seeds a visible project and task so run and artifact joins resolve.
+fn seed_task(pool: &RepositoryPool, temporary: &TempDir) -> ScheduledTask {
     let workspace_root = temporary.path().join("project");
     fs::create_dir_all(&workspace_root).expect("create project root");
     SqliteProjectRepository::with_clock(pool.clone(), TestClock::new(1))
@@ -191,7 +187,16 @@ fn seed_task_and_run(
     SqliteScheduledTaskRepository::new(pool.clone())
         .create_scheduled_task(task.clone())
         .expect("persist task");
+    task
+}
 
+/// Seeds a visible task and one succeeded run linked to a retained worktree.
+fn seed_task_and_run(
+    pool: &RepositoryPool,
+    temporary: &TempDir,
+    run_id: &ScheduledRunId,
+) -> ScheduledTaskId {
+    let task = seed_task(pool, temporary);
     let runs = SqliteScheduledRunRepository::new(pool.clone());
     let run = ScheduledRun::accepted(
         run_id.clone(),
@@ -346,4 +351,74 @@ fn sweep_removes_artifacts_after_the_run_row_is_pruned() {
             .is_empty()
     );
     assert!(!store.root().join(run_id.as_ref()).exists());
+}
+
+/// Admits one occurrence and immediately fails it without a retained worktree.
+fn admit_failed_run(
+    repository: &SqliteScheduledRunRepository,
+    task: &ScheduledTask,
+    run_id: &ScheduledRunId,
+    scheduled_at: i64,
+) {
+    let run = ScheduledRun::accepted(
+        run_id.clone(),
+        ScheduledOccurrence {
+            task_id: task.id.clone(),
+            scheduled_at,
+        },
+        task,
+        scheduled_at + 1_000,
+    );
+    repository
+        .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::run(run))
+        .expect("admit run");
+    repository
+        .transition_scheduled_run(
+            run_id,
+            ScheduledRunTransition::Fail {
+                reason: ScheduledRunFailureReason::ExecutionError,
+            },
+            scheduled_at + 2_000,
+        )
+        .expect("fail run");
+}
+
+#[test]
+fn sweeping_removes_artifacts_pruned_by_the_history_bound() {
+    let (temporary, pool) = bootstrapped_pool();
+    let task = seed_task(&pool, &temporary);
+    let store = ScheduledArtifactStore::new(temporary.path().join("artifacts"));
+    let repository = SqliteScheduledRunRepository::new(pool.clone());
+    let pruned_run = ScheduledRunId::new("run-0");
+    admit_failed_run(&repository, &task, &pruned_run, 1);
+    seed_artifact(&store, &repository, &pruned_run);
+    for index in 1_i64..=100 {
+        admit_failed_run(
+            &repository,
+            &task,
+            &ScheduledRunId::new(format!("run-{index}")),
+            index + 1,
+        );
+    }
+
+    let history = repository
+        .list_scheduled_task_history(&task.id)
+        .expect("read history");
+    assert!(
+        !history.iter().any(|entry| matches!(
+            entry,
+            ora_domain::ScheduledTaskHistoryEntry::Run(run) if run.id == pruned_run
+        )),
+        "the 101st occurrence prunes the oldest run row"
+    );
+
+    sweep(&pool, &store);
+
+    assert!(
+        repository
+            .list_scheduled_run_artifacts(&pruned_run)
+            .expect("list pruned artifacts")
+            .is_empty()
+    );
+    assert!(!store.root().join(pruned_run.as_ref()).exists());
 }
