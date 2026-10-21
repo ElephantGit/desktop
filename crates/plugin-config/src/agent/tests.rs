@@ -1,4 +1,4 @@
-use super::{CompileAgentConfigurationError, compile_agent_configuration};
+use super::{CompileAgentConfigurationError, compile_agent_configuration, validate_agent_settings};
 use crate::mcp::{
     CompileConfigurationFileError, CompiledConfigurationFile, compile_configuration_file,
 };
@@ -192,5 +192,35 @@ fn diagnostics_do_not_echo_rejected_values() -> TestResult {
         };
         assert!(!error.to_string().contains(private_input));
     }
+    Ok(())
+}
+
+/// Frozen Settings must be declared, type-correct and complete for the installed declaration.
+#[test]
+fn validates_frozen_settings_against_the_declaration() -> TestResult {
+    let mut declaration: Value = serde_json::from_slice(MINIMAL)?;
+    declaration["settings"] = json!({
+        "endpoint": {"type": "string", "title": "Endpoint", "description": "Service URL", "required": true},
+        "verbose": {"type": "boolean", "title": "Verbose", "description": "Log more", "default": false}
+    });
+    let compiled = compile_agent_configuration(&serde_json::to_vec(&declaration)?)?;
+    let settings = |value: Value| value.as_object().cloned().unwrap_or_default();
+    assert!(validate_agent_settings(
+        &compiled,
+        &settings(json!({"endpoint": "https://x"}))
+    ));
+    assert!(!validate_agent_settings(&compiled, &settings(json!({}))));
+    assert!(!validate_agent_settings(
+        &compiled,
+        &settings(json!({"endpoint": 1}))
+    ));
+    assert!(!validate_agent_settings(
+        &compiled,
+        &settings(json!({"endpoint": "https://x", "unexpected": true}))
+    ));
+    assert!(validate_agent_settings(
+        &compile_agent_configuration(MINIMAL)?,
+        &serde_json::Map::new()
+    ));
     Ok(())
 }
