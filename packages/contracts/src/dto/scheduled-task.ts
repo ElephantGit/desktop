@@ -101,6 +101,21 @@ export type ScheduledRunStatus =
   | "skipped_capacity";
 
 /**
+ * Independent, machine-readable business conclusion a run's agent reported.
+ *
+ * It is nullable: old histories and runs whose agent never wrote a verdict read as
+ * "not reported". It is independent of `ScheduledRunStatus` and
+ * `ScheduledRunFailureReason`, so a run can be `succeeded` while its verdict is `fail`.
+ */
+export type ScheduledRunVerdict =
+  | "pass"
+  | "warn"
+  | "fail"
+  | "blocked"
+  | "idle"
+  | "range_unresolved";
+
+/**
  * Public scheduled task definition shown in the Desktop list and editor.
  */
 export type ScheduledTask = {
@@ -190,6 +205,9 @@ export type ScheduledTaskHistoryEntry = {
    */
   worktreeTaskId: string | null;
   failureReason: ScheduledRunFailureReason | null;
+  verdict: ScheduledRunVerdict | null;
+  verdictDetail: string | null;
+  verdictAt: bigint | null;
   createdAt: bigint;
   updatedAt: bigint;
 } | {
