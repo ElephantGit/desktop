@@ -24,16 +24,49 @@ describe("run diagnostics", () => {
     expect(screen.queryByText(/healthy|stalled/i)).not.toBeInTheDocument();
   });
 
-  it("says no activity was observed yet instead of calling a fresh attempt a replay", () => {
+  it("says no parent activity was observed yet for a fresh attempt with a live snapshot", () => {
     render(
-      <RunDiagnosticsPanel turns={[]} isResponding pendingPermissions={[]} />,
+      <RunDiagnosticsPanel
+        diagnostics={{}}
+        turns={[]}
+        isResponding
+        pendingPermissions={[]}
+      />,
     );
     expect(
-      screen.getByText("No activity observed in this attempt yet"),
+      screen.getByText("No parent activity observed in this attempt yet"),
     ).toBeInTheDocument();
     expect(
       screen.queryByText("Unknown; replay is not new activity"),
     ).not.toBeInTheDocument();
+  });
+
+  it("keeps the unknown wording while a load replays an open turn", () => {
+    // `loadSession` publishes an unfinished replayed turn as responding without
+    // recording live observations; that state must not read as "nothing happened".
+    render(
+      <RunDiagnosticsPanel turns={[]} isResponding pendingPermissions={[]} />,
+    );
+    expect(
+      screen.getByText("Unknown; replay is not new activity"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/No parent activity observed/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("drops the 'yet' once a streamed attempt ended without observations", () => {
+    render(
+      <RunDiagnosticsPanel
+        diagnostics={{}}
+        turns={[]}
+        isResponding={false}
+        pendingPermissions={[]}
+      />,
+    );
+    expect(
+      screen.getByText("No parent activity was observed in this attempt"),
+    ).toBeInTheDocument();
   });
 
   it("reports elapsed silence without creating activity and releases its timer", () => {

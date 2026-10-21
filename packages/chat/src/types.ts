@@ -156,7 +156,12 @@ export interface SessionUsage {
 
 /** Holds the in-memory chat state isolated to one stable Ora session identifier. */
 export interface SessionConversation {
-  /** Live observations only; loading history clears this rather than inventing recent activity. */
+  /**
+   * Live observations only. A prompt Ora streams starts an empty snapshot, so an
+   * absent value means no live attempt was observed here (replayed history or
+   * none yet) instead of "the attempt happened and showed nothing". Loading
+   * history drops the snapshot rather than inventing recent activity.
+   */
   diagnostics?: RunDiagnostics;
   /**
    * The agent's configuration selectors (model, and anything else it offers) with

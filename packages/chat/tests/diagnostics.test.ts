@@ -230,7 +230,61 @@ test("failure and cancellation clear transient reports while a new prompt clears
       { kind: "message", receivedAt: 50 },
     );
     await store.getState().sendMessage({ oraSessionId: "one", text: "again" });
-    assert.equal(store.getState().conversations.one!.diagnostics, undefined);
+    // A streamed prompt starts an empty live snapshot, so the panel can say that
+    // nothing was observed yet instead of reusing the replay wording.
+    assert.deepEqual(store.getState().conversations.one!.diagnostics, {});
     store.getState().dispose();
   }
+});
+
+test("a load stream that replays an open turn exposes no live observation", async () => {
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let previewPublished = () => {};
+  const preview = new Promise<void>((resolve) => {
+    previewPublished = resolve;
+  });
+  const client: ChatSessionClient = {
+    async *prompt() {
+      yield {
+        type: "completed",
+        stopReason: "end_turn",
+      } satisfies PromptSessionEvent;
+    },
+    async *load() {
+      yield {
+        type: "session_update" as const,
+        update: {
+          sessionUpdate: "tool_call" as const,
+          toolCallId: "tool",
+          title: "working",
+          status: "in_progress" as const,
+        },
+        recordedAt: "2026-10-19T12:00:00+08:00",
+      };
+      previewPublished();
+      await gate;
+      yield { type: "completed" as const };
+    },
+    setConfig: async () => ({ configOptions: [] }),
+    respondToPermission: async () => ({}),
+  };
+  const store = createChatStore(client, { now: () => 123456 });
+  const loading = store.getState().loadSession("one");
+  await preview;
+  const streaming = store.getState().conversations.one;
+  assert.equal(streaming?.isLoading, true);
+  assert.equal(streaming?.isResponding, true);
+  // The replay is visibly still streaming, but this client did not observe it
+  // live: an absent snapshot keeps the panel on the unknown wording.
+  assert.equal(streaming?.diagnostics, undefined);
+  release();
+  await loading;
+  const loaded = store.getState().conversations.one;
+  assert.equal(loaded?.isLoaded, true);
+  assert.equal(loaded?.isResponding, false);
+  assert.equal(loaded?.diagnostics, undefined);
+  store.getState().dispose();
 });

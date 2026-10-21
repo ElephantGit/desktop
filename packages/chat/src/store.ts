@@ -539,7 +539,10 @@ export function createChatStore(
       updateConversation(set, key, (conversation) => ({
         ...conversation,
         turns: [...conversation.turns, turn],
-        ...(conversation.diagnostics ? { diagnostics: undefined } : {}),
+        // A prompt Ora is about to stream is a live attempt: an empty snapshot
+        // lets the panel say "nothing observed yet" instead of borrowing the
+        // unknown wording that belongs to replayed history.
+        diagnostics: {},
         isResponding: true,
         error: null,
       }));
@@ -717,7 +720,9 @@ export function createChatStore(
             const retriedAt = now();
             updateConversation(set, key, (conversation) => ({
               ...conversation,
-              diagnostics: undefined,
+              // The re-sent attempt is still observed live; only the cancelled
+              // attempt's activity stops counting as evidence for this window.
+              diagnostics: {},
             }));
             updateTurn(set, key, turnId, (current) => ({
               ...settleActiveToolCalls(current, "cancelled", retriedAt),

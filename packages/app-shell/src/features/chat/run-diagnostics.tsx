@@ -69,10 +69,14 @@ export function RunDiagnosticsPanel({
         <dt>{t("chat.diagnosticsLastActivity")}</dt>
         <dd>
           {lastActivity === undefined ? (
-            isResponding ? (
+            diagnostics === undefined ? (
+              // No live snapshot: the transcript came from replay, so silence here
+              // is an unknown, not a statement that the attempt produced nothing.
+              t("chat.diagnosticsNoLiveTime")
+            ) : isResponding ? (
               t("chat.diagnosticsNoActivityYet")
             ) : (
-              t("chat.diagnosticsNoLiveTime")
+              t("chat.diagnosticsNoActivity")
             )
           ) : (
             <>

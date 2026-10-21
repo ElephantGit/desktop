@@ -18,7 +18,8 @@ export const chatTranslations = {
     "chat.diagnosticsRequestLimit":
       "仅列出宿主交给界面的请求；自动处理的权限和未支持的问题表单不会出现在这里。",
     "chat.diagnosticsNoLiveTime": "未知；历史重放不代表刚发生的活动",
-    "chat.diagnosticsNoActivityYet": "本次尝试尚未观察到活动",
+    "chat.diagnosticsNoActivityYet": "本次尝试尚未观察到父回合活动",
+    "chat.diagnosticsNoActivity": "本次尝试未观察到父回合活动",
     "chat.diagnosticsSilence": "{{seconds}} 秒未收到父回合新活动",
     "chat.diagnosticsActivity_message": "收到回复",
     "chat.diagnosticsActivity_thought": "收到思考",
@@ -367,7 +368,10 @@ export const chatTranslations = {
     "chat.diagnosticsRequestLimit":
       "Only requests exposed by the host appear here. Automatically handled permissions and unsupported question forms are not listed.",
     "chat.diagnosticsNoLiveTime": "Unknown; replay is not new activity",
-    "chat.diagnosticsNoActivityYet": "No activity observed in this attempt yet",
+    "chat.diagnosticsNoActivityYet":
+      "No parent activity observed in this attempt yet",
+    "chat.diagnosticsNoActivity":
+      "No parent activity was observed in this attempt",
     "chat.diagnosticsSilence": "No new parent activity for {{seconds}} seconds",
     "chat.diagnosticsActivity_message": "Reply received",
     "chat.diagnosticsActivity_thought": "Thought received",
