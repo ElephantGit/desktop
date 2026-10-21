@@ -988,10 +988,12 @@ mod tests {
                 })
                 .expect("scheduled provisioning");
             let worktree_task_id = ora_domain::TaskId::new(&created.task.id);
-            // The projection normalizes separators; compare as paths.
+            // The projection can differ in spelling (8.3 short names on Windows,
+            // /var symlinks on macOS) from the committed path; both name the same
+            // directory, so compare their canonical forms.
             assert_eq!(
-                std::path::PathBuf::from(&created.worktree_path),
-                std::path::PathBuf::from(
+                std::fs::canonicalize(&created.worktree_path).expect("committed path exists"),
+                std::fs::canonicalize(
                     tasks
                         .workspace(ora_contracts::GetTaskWorkspaceRequest {
                             task_id: created.task.id.clone(),
@@ -999,7 +1001,8 @@ mod tests {
                         .expect("worktree workspace")
                         .workspace
                         .root_path
-                ),
+                )
+                .expect("projected path exists"),
                 "the committed path matches the workspace projection"
             );
             // The run row carries the binding while still `accepted`.
