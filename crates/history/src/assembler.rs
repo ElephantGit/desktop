@@ -1,8 +1,9 @@
+use crate::metadata::{child_source_id, retain_tool_metadata};
 use crate::record::{HistoryRecord, ToolCallTiming};
+use agent_client_protocol_schema::v1::ContentBlock;
 use agent_client_protocol_schema::v1::Plan;
 use agent_client_protocol_schema::v1::StopReason;
-use agent_client_protocol_schema::v1::{ContentBlock, TextContent};
-use agent_client_protocol_schema::v1::{ContentChunk, MessageId, SessionUpdate};
+use agent_client_protocol_schema::v1::{ContentChunk, SessionUpdate};
 use agent_client_protocol_schema::v1::{ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate};
 
 /// One assembled record together with the position it occupies in the conversation.
@@ -23,8 +24,7 @@ enum TextKind {
 struct PendingText {
     seq: u32,
     kind: TextKind,
-    message_id: Option<MessageId>,
-    text: String,
+    chunk: ContentChunk,
 }
 
 /// A tool call whose snapshot may still change.
@@ -57,7 +57,7 @@ pub struct HistoryAssembler {
     next_seq: u32,
     texts: Vec<PendingText>,
     tools: Vec<PendingTool>,
-    plan: Option<(u32, Plan)>,
+    plans: Vec<(u32, Plan)>,
 }
 
 impl HistoryAssembler {
@@ -67,7 +67,7 @@ impl HistoryAssembler {
             next_seq,
             texts: Vec::new(),
             tools: Vec::new(),
-            plan: None,
+            plans: Vec::new(),
         }
     }
 
@@ -158,9 +158,8 @@ impl HistoryAssembler {
 
     /// Flushes every item still open and closes the turn with its stop reason.
     ///
-    /// Tool calls the provider never reported finishing are settled here rather
-    /// than written mid-flight, because the turn ending is proof they are no
-    /// longer running.
+    /// Parent tools may settle here; projected child tools retain their reported
+    /// state because the parent ending does not prove child completion.
     pub fn end_turn(&mut self, stop_reason: StopReason) -> Vec<AssembledRecord> {
         let mut records: Vec<AssembledRecord> = std::mem::take(&mut self.texts)
             .into_iter()
@@ -170,13 +169,17 @@ impl HistoryAssembler {
                     .into_iter()
                     .filter_map(|tool| tool.settle_at_turn_end(stop_reason)),
             )
-            .chain(self.plan.take().map(|(seq, plan)| AssembledRecord {
-                seq,
-                record: HistoryRecord::Update {
-                    update: Box::new(SessionUpdate::Plan(plan)),
-                    tool_timing: None,
-                },
-            }))
+            .chain(
+                std::mem::take(&mut self.plans)
+                    .into_iter()
+                    .map(|(seq, plan)| AssembledRecord {
+                        seq,
+                        record: HistoryRecord::Update {
+                            update: Box::new(SessionUpdate::Plan(plan)),
+                            tool_timing: None,
+                        },
+                    }),
+            )
             .collect();
         records.sort_by_key(|record| record.seq);
         let seq = self.take_seq();
@@ -196,15 +199,22 @@ impl HistoryAssembler {
             let seq = self.take_seq();
             records.push(AssembledRecord {
                 seq,
-                record: chunk_record(kind, chunk.message_id.clone(), chunk.content.clone()),
+                record: chunk_record(kind, chunk.clone()),
             });
             return records;
         };
         let existing = self.texts.iter_mut().find(|pending| {
-            pending.kind == kind && pending.message_id.as_ref() == chunk.message_id.as_ref()
+            pending.kind == kind
+                && pending.chunk.message_id == chunk.message_id
+                && pending.chunk.meta == chunk.meta
+                && matches!(&pending.chunk.content, ContentBlock::Text(previous)
+                    if previous.annotations == text.annotations && previous.meta == text.meta)
         });
         if let Some(pending) = existing {
-            pending.text.push_str(&text.text);
+            let ContentBlock::Text(previous) = &mut pending.chunk.content else {
+                unreachable!("pending text always holds text content");
+            };
+            previous.text.push_str(&text.text);
             return Vec::new();
         }
         // ACP defines a changed `messageId` as a new message, so the previous one
@@ -212,17 +222,16 @@ impl HistoryAssembler {
         // something proves the run ended: another entry taking its own position,
         // or the turn closing.
         let records = match chunk.message_id {
-            Some(_) => {
-                self.settle_texts(|pending| pending.kind == kind && pending.message_id.is_some())
-            }
-            None => Vec::new(),
+            Some(_) => self
+                .settle_texts(|pending| pending.kind == kind && pending.chunk.message_id.is_some()),
+            None => self
+                .settle_texts(|pending| pending.kind == kind && pending.chunk.message_id.is_none()),
         };
         let seq = self.take_seq();
         self.texts.push(PendingText {
             seq,
             kind,
-            message_id: chunk.message_id.clone(),
-            text: text.text.clone(),
+            chunk: chunk.clone(),
         });
         records
     }
@@ -255,7 +264,7 @@ impl HistoryAssembler {
     /// a position earlier than the entry it followed, which is how a summary ends
     /// up recorded ahead of the tool calls it describes.
     fn interrupt_unidentified_text(&mut self) -> Vec<AssembledRecord> {
-        self.settle_texts(|pending| pending.message_id.is_none())
+        self.settle_texts(|pending| pending.chunk.message_id.is_none())
     }
 
     /// Installs a tool call's opening snapshot, replacing an earlier one in place.
@@ -286,6 +295,7 @@ impl HistoryAssembler {
         if let Some(index) = self.tool_index(&update.tool_call_id) {
             let pending = &mut self.tools[index];
             pending.call.update(update.fields.clone());
+            retain_tool_metadata(&mut pending.call.meta, update.meta.as_ref());
             if timing.is_some() {
                 pending.timing = timing;
             }
@@ -295,6 +305,7 @@ impl HistoryAssembler {
         // ACP only guarantees the title on the opening notification.
         let mut call = ToolCall::new(update.tool_call_id.clone(), "Tool call");
         call.update(update.fields.clone());
+        retain_tool_metadata(&mut call.meta, update.meta.as_ref());
         self.open_tool(call, timing)
     }
 
@@ -317,9 +328,11 @@ impl HistoryAssembler {
         records
     }
 
-    /// Keeps only the newest plan snapshot, which is the one the turn ends with.
+    /// Keeps the newest plan per valid child id, plus one unattributed parent plan.
     fn replace_plan(&mut self, plan: Plan) -> Vec<AssembledRecord> {
-        match &mut self.plan {
+        match self.plans.iter_mut().find(|(_, pending)| {
+            child_source_id(pending.meta.as_ref()) == child_source_id(plan.meta.as_ref())
+        }) {
             Some((_, pending)) => {
                 *pending = plan;
                 Vec::new()
@@ -327,7 +340,7 @@ impl HistoryAssembler {
             None => {
                 let records = self.interrupt_unidentified_text();
                 let seq = self.take_seq();
-                self.plan = Some((seq, plan));
+                self.plans.push((seq, plan));
                 records
             }
         }
@@ -364,7 +377,7 @@ impl HistoryAssembler {
                     .map(|tool| tool_record(tool.seq, &tool.call, tool.timing.clone())),
             )
             .collect();
-        if let Some((seq, plan)) = &self.plan {
+        for (seq, plan) in &self.plans {
             records.push(AssembledRecord {
                 seq: *seq,
                 record: HistoryRecord::Update {
@@ -416,7 +429,10 @@ impl PendingTool {
             self.call.status,
             ToolCallStatus::Pending | ToolCallStatus::InProgress
         );
-        if unfinished && stop_reason == StopReason::EndTurn {
+        // A projected child may outlive the parent prompt. Only its own terminal update proves
+        // completion. Cleared or invalid sources follow the ordinary parent-stream rules.
+        let projected = child_source_id(self.call.meta.as_ref()).is_some();
+        if unfinished && !projected && stop_reason == StopReason::EndTurn {
             self.call.status = ToolCallStatus::Completed;
             return Some(tool_record(self.seq, &self.call, self.timing.clone()));
         }
@@ -429,11 +445,7 @@ impl PendingText {
     fn into_record(self) -> AssembledRecord {
         AssembledRecord {
             seq: self.seq,
-            record: chunk_record(
-                self.kind,
-                self.message_id,
-                ContentBlock::Text(TextContent::new(self.text)),
-            ),
+            record: chunk_record(self.kind, self.chunk),
         }
     }
 
@@ -442,11 +454,7 @@ impl PendingText {
     fn to_record(&self) -> AssembledRecord {
         AssembledRecord {
             seq: self.seq,
-            record: chunk_record(
-                self.kind,
-                self.message_id.clone(),
-                ContentBlock::Text(TextContent::new(self.text.clone())),
-            ),
+            record: chunk_record(self.kind, self.chunk.clone()),
         }
     }
 }
@@ -463,13 +471,7 @@ fn tool_record(seq: u32, call: &ToolCall, tool_timing: Option<ToolCallTiming>) -
 }
 
 /// Rebuilds one content chunk update on the stream it belongs to.
-fn chunk_record(
-    kind: TextKind,
-    message_id: Option<MessageId>,
-    content: ContentBlock,
-) -> HistoryRecord {
-    let mut chunk = ContentChunk::new(content);
-    chunk.message_id = message_id;
+fn chunk_record(kind: TextKind, chunk: ContentChunk) -> HistoryRecord {
     HistoryRecord::Update {
         update: Box::new(match kind {
             TextKind::Message => SessionUpdate::AgentMessageChunk(chunk),

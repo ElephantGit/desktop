@@ -13,6 +13,16 @@ and the context is not, which is why a switch replays nothing and injects instea
 
 ## Recording
 
+Provider attribution is retained inside the existing ACP updates: complete text/thought chunks keep
+their metadata and annotations, and tool metadata replaces only the top-level namespaces present in
+an increment (including explicit null). Text with different metadata cannot merge even when message
+IDs collide or are absent; plans keep the latest snapshot per valid child session id, with
+unattributed plans sharing the parent stream. A valid child source requires nonempty id and parentID
+strings and a positive integer depth; explicit null or invalid sources follow parent-stream rules. A parent turn
+ending does not imply that an explicitly projected OpenCode child tool completed. The JSONL schema
+and paths are unchanged; older history with missing attribution remains readable but cannot recover
+information that was never recorded.
+
 - The runtime records what it chose to keep, not what it sent. A prompt is recorded from the request
   blocks before the agent is called, and the provider's echoed `user_message_chunk` is ignored, so
   context Ora injected never enters the record.
