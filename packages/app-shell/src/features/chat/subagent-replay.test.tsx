@@ -460,37 +460,85 @@ it("keeps a background delegation's child on the projection-stopped wording", as
         stopReason: "end_turn",
       } satisfies PromptSessionEvent;
     },
+    loadSession: () =>
+      stream<LoadSessionEvent>([
+        {
+          type: "session_update",
+          update: {
+            sessionUpdate: "user_message_chunk",
+            content: { type: "text", text: "go" },
+          },
+        },
+        ...updates,
+        { type: "turn_ended", stopReason: "end_turn" },
+        { type: "completed" },
+      ]),
   });
   const store = createChatStore(client.session, { now: () => 100 });
   await store.getState().sendMessage({ oraSessionId: "one", text: "go" });
   expect(
     await childStatusLabels(store.getState().conversations.one!.turns[0]!),
   ).toEqual(["Further state unknown (projection stopped)"]);
+  await store.getState().loadSession("one");
+  expect(
+    await childStatusLabels(store.getState().conversations.one!.turns[0]!),
+  ).toEqual(["Further state unknown (projection stopped)"]);
+  const cold = createChatStore(client.session, { now: () => 999 });
+  await cold.getState().loadSession("one");
+  expect(
+    await childStatusLabels(cold.getState().conversations.one!.turns[0]!),
+  ).toEqual(["Further state unknown (projection stopped)"]);
   store.getState().dispose();
+  cold.getState().dispose();
 });
 
 it("keeps an earlier turn's returned delegation after the same child is resumed", async () => {
   let calls = 0;
+  const first = [
+    ...delegation("first-delegate", "worker", "completed"),
+    childText("worker-result", "WORKER_RESULT", worker),
+  ].flatMap(
+    (event): Extract<PromptSessionEvent, { type: "session_update" }>[] =>
+      event.type === "session_update" ? [event] : [],
+  );
+  const second = [
+    ...delegation("second-delegate", "worker", "running"),
+    childText("worker-later", "WORKER_LATER", worker),
+  ].flatMap(
+    (event): Extract<PromptSessionEvent, { type: "session_update" }>[] =>
+      event.type === "session_update" ? [event] : [],
+  );
   const client = createTestClient({
     async *promptSession() {
       calls += 1;
-      if (calls === 1) {
-        yield* stream([
-          ...delegation("first-delegate", "worker", "completed"),
-          childText("worker-result", "WORKER_RESULT", worker),
-        ] satisfies PromptSessionEvent[]);
-      } else {
-        // The later turn continues the same child session in the background.
-        yield* stream([
-          ...delegation("second-delegate", "worker", "running"),
-          childText("worker-later", "WORKER_LATER", worker),
-        ] satisfies PromptSessionEvent[]);
-      }
+      yield* stream(calls === 1 ? first : second);
       yield {
         type: "completed",
         stopReason: "end_turn",
       } satisfies PromptSessionEvent;
     },
+    loadSession: () =>
+      stream<LoadSessionEvent>([
+        {
+          type: "session_update",
+          update: {
+            sessionUpdate: "user_message_chunk",
+            content: { type: "text", text: "first" },
+          },
+        },
+        ...first,
+        { type: "turn_ended", stopReason: "end_turn" },
+        {
+          type: "session_update",
+          update: {
+            sessionUpdate: "user_message_chunk",
+            content: { type: "text", text: "second" },
+          },
+        },
+        ...second,
+        { type: "turn_ended", stopReason: "end_turn" },
+        { type: "completed" },
+      ]),
   });
   const store = createChatStore(client.session, { now: () => 100 });
   await store.getState().sendMessage({ oraSessionId: "one", text: "first" });
@@ -500,5 +548,21 @@ it("keeps an earlier turn's returned delegation after the same child is resumed"
   expect(await childStatusLabels(turns[1]!)).toEqual([
     "Further state unknown (projection stopped)",
   ]);
+  await store.getState().loadSession("one");
+  const warm = store.getState().conversations.one!.turns;
+  expect(await childStatusLabels(warm[0]!)).toEqual(["Delegation returned"]);
+  expect(await childStatusLabels(warm[1]!)).toEqual([
+    "Further state unknown (projection stopped)",
+  ]);
+  const cold = createChatStore(client.session, { now: () => 999 });
+  await cold.getState().loadSession("one");
+  const reloaded = cold.getState().conversations.one!.turns;
+  expect(await childStatusLabels(reloaded[0]!)).toEqual([
+    "Delegation returned",
+  ]);
+  expect(await childStatusLabels(reloaded[1]!)).toEqual([
+    "Further state unknown (projection stopped)",
+  ]);
   store.getState().dispose();
+  cold.getState().dispose();
 });

@@ -27,10 +27,25 @@ function delegation(
 }
 
 test("reads only the provider's session id from the delegation result", () => {
-  assert.equal(delegationSessionId(delegation("ses_child", "completed", "completed")), "ses_child");
-  assert.equal(delegationSessionId(delegation("  ", "completed", "completed")), undefined);
-  assert.equal(delegationSessionId(delegation(42, "completed", "completed")), undefined);
-  assert.equal(delegationSessionId({ ...delegation("ses_child", "completed", "completed"), rawOutput: undefined }), undefined);
+  assert.equal(
+    delegationSessionId(delegation("ses_child", "completed", "completed")),
+    "ses_child",
+  );
+  assert.equal(
+    delegationSessionId(delegation("  ", "completed", "completed")),
+    undefined,
+  );
+  assert.equal(
+    delegationSessionId(delegation(42, "completed", "completed")),
+    undefined,
+  );
+  assert.equal(
+    delegationSessionId({
+      ...delegation("ses_child", "completed", "completed"),
+      rawOutput: undefined,
+    }),
+    undefined,
+  );
   assert.equal(
     delegationSessionId({
       ...delegation("ses_child", "completed", "completed"),
@@ -41,13 +56,30 @@ test("reads only the provider's session id from the delegation result", () => {
 });
 
 test("requires both the ACP completion and the provider's completed result", () => {
-  assert.equal(delegationResultCompleted(delegation("ses_child", "completed", "completed")), true);
+  assert.equal(
+    delegationResultCompleted(
+      delegation("ses_child", "completed", "completed"),
+    ),
+    true,
+  );
   // The provider returns a background delegation while the worker still runs.
-  assert.equal(delegationResultCompleted(delegation("ses_child", "running", "completed")), false);
+  assert.equal(
+    delegationResultCompleted(delegation("ses_child", "running", "completed")),
+    false,
+  );
   // The chat store settles a parent tool the turn ended on, so a missing raw result cannot count.
-  assert.equal(delegationResultCompleted(delegation(undefined, undefined, "completed")), false);
-  assert.equal(delegationResultCompleted(delegation("ses_child", "completed", "failed")), false);
-  assert.equal(delegationResultCompleted(delegation("ses_child", "completed", "unknown")), false);
+  assert.equal(
+    delegationResultCompleted(delegation(undefined, undefined, "completed")),
+    false,
+  );
+  assert.equal(
+    delegationResultCompleted(delegation("ses_child", "completed", "failed")),
+    false,
+  );
+  assert.equal(
+    delegationResultCompleted(delegation("ses_child", "completed", "unknown")),
+    false,
+  );
   assert.equal(
     delegationResultCompleted({
       ...delegation("ses_child", "completed", "completed"),
