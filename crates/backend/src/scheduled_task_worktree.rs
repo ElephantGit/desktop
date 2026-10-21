@@ -1622,30 +1622,52 @@ mod tests {
                 "the branch is removed"
             );
 
-            // A second restart must not duplicate the job or any side effect.
+            // A second production recovery pass must not duplicate the job or
+            // any side effect. Drive it through the typed worker boundary: the
+            // first worker's detached loop survives `drop(backend)`, so only a
+            // fresh `run_pass` over a reopened pool counts as a second recovery.
             drop(backend);
-            let probe = reopen();
+            let second_pass = {
+                let probe = reopen();
+                let worker = crate::git_cleanup::GitCleanupWorker::new(
+                    probe.clone(),
+                    std::sync::Arc::new(std::sync::RwLock::new(
+                        temporary.path().join("second-root"),
+                    )),
+                    crate::clock::SystemClock,
+                );
+                worker.run_pass();
+                probe
+            };
             assert!(
-                SqliteWorktreeProvisioningLeaseRepository::new(probe.clone())
+                SqliteWorktreeProvisioningLeaseRepository::new(second_pass.clone())
                     .list_leases()
                     .expect("list leases")
                     .is_empty(),
-                "no lease remains after a second restart"
+                "no lease remains after a second recovery pass"
             );
+            let jobs = ora_db::SqliteGitCleanupJobRepository::new(second_pass.clone())
+                .list_jobs()
+                .expect("list cleanup jobs");
             assert_eq!(
-                ora_db::SqliteGitCleanupJobRepository::new(probe.clone())
-                    .list_jobs()
-                    .expect("list cleanup jobs")
-                    .len(),
+                jobs.len(),
                 1,
-                "no duplicate cleanup job after a second restart"
+                "no duplicate cleanup job after a second recovery pass"
+            );
+            assert!(
+                matches!(jobs[0].state, ora_domain::GitCleanupJobState::Completed),
+                "the single job stays Completed after a second recovery pass"
             );
             assert_eq!(
-                SqliteTaskRepository::new(probe)
+                SqliteTaskRepository::new(second_pass.clone())
                     .list_tasks()
                     .expect("list tasks"),
                 Vec::new(),
                 "no task row was half-committed"
+            );
+            assert!(
+                !checkout.exists(),
+                "the physical checkout stays removed after a second recovery pass"
             );
         });
     }
