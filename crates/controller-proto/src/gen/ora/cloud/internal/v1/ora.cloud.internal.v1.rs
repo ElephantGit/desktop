@@ -108,6 +108,48 @@ pub struct AgentSessionSpec {
     /// Workspaces of this Project, newest first, at most 100, fixed when the work item was released.
     #[prost(message, repeated, tag="8")]
     pub workspace_directory: ::prost::alloc::vec::Vec<WorkspaceListing>,
+    /// Exact non-secret configuration frozen at run admission; authority is acquired over mTLS.
+    #[prost(message, optional, tag="9")]
+    pub agent_configuration: ::core::option::Option<AgentModelConfiguration>,
+}
+/// Versioned adapter identity, never a runtime token or upstream credential.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AgentModelConfiguration {
+    #[prost(string, tag="1")]
+    pub plugin_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub plugin_version: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub target: ::prost::alloc::string::String,
+    #[prost(string, tag="4")]
+    pub package_sha256: ::prost::alloc::string::String,
+    #[prost(uint32, tag="5")]
+    pub schema_version: u32,
+    #[prost(string, tag="6")]
+    pub declaration_fingerprint: ::prost::alloc::string::String,
+    #[prost(uint32, tag="7")]
+    pub adapter_version: u32,
+    #[prost(uint64, tag="8")]
+    pub configuration_revision: u64,
+    /// Canonical scalar JSON preserves number lexemes that protobuf Struct would round.
+    #[prost(string, tag="9")]
+    pub settings_json: ::prost::alloc::string::String,
+    #[prost(string, tag="10")]
+    pub protocol: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="11")]
+    pub model: ::core::option::Option<AgentBoundModel>,
+}
+/// Model catalog metadata frozen in the binding, independent of live personal configuration.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AgentBoundModel {
+    #[prost(string, tag="1")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(uint64, tag="3")]
+    pub context_window: u64,
+    #[prost(uint64, tag="4")]
+    pub max_tokens: u64,
 }
 /// The only terminal result of a session execution. It is taken over only after every Thread event
 /// before it, so the Thread's last entry lands before the session is known to have ended.
@@ -1100,6 +1142,8 @@ pub struct NodeRecord {
     /// Dedicated personal-model proxy access was advertised by this Node's handshake.
     #[prost(bool, tag="9")]
     pub model_proxy: bool,
+    #[prost(message, optional, tag="10")]
+    pub model_adapter: ::core::option::Option<ModelAdapterCapabilities>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RegisterNodeRequest {
@@ -1119,6 +1163,18 @@ pub struct RegisterNodeRequest {
     /// False for older Nodes or Nodes without configured model-access mTLS credentials.
     #[prost(bool, tag="7")]
     pub model_proxy: bool,
+    #[prost(message, optional, tag="8")]
+    pub model_adapter: ::core::option::Option<ModelAdapterCapabilities>,
+}
+/// Exact host capability advertised after startup validation, independent of plugin metadata.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ModelAdapterCapabilities {
+    #[prost(uint32, tag="1")]
+    pub contract_version: u32,
+    #[prost(string, tag="2")]
+    pub target: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag="3")]
+    pub protocols: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RegisterNodeResponse {
