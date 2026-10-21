@@ -40,7 +40,7 @@ Deno 路径必须是绝对路径，超时必须为正数。有这个配置段时
 `prompt_session_as_message` 把宿主的消息身份记为用户消息中每个块的 ACP `messageId`。
 
 运行的 Git 身份以 `GIT_AUTHOR_*`/`GIT_COMMITTER_*` 导出到插件进程以及宿主为它启动的每个进程上；Node 不写任何 Git 配置。
-带冻结 Agent 配置的会话里，这些变量加在一个只保留 `PATH`、`LANG`、`LC_ALL` 和 `TMPDIR` 的空环境上，Node 环境中的
+带冻结 Agent 配置的会话里，这些变量和会话自带的其他变量加在一个只保留 `PATH`、`LANG`、`LC_ALL` 和 `TMPDIR` 的空环境上，Node 环境中的
 模型凭据、代理设置和 CLI 配置都不会到达 Agent（见 [Agent 配置](../plugins/agent-configuration.zh.md)）。其他会话仍叠加在
 继承的环境之上，Node 自己的模型凭据和代理设置会到达 Agent。
 

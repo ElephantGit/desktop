@@ -71,7 +71,9 @@ operation id；`input_closed`；以及签发和过期时间。`ControlledClone`�
   契约版本，声明指纹，配置修订号，以 JSON 文本保存的已校验 Settings（一个最多 256 KiB 的对象），协议，以及绑定模型的
   id、名称、上下文窗口和输出上限。它总是与 `model_binding_id` 一起出现，从不携带凭据。Node 在 `hello_accepted` 里于
   `model_proxy` 旁用 `model_adapter` 宣告它能这样运行什么（契约版本、target、协议）；Controller 只把这类会话派发给
-  `model_adapter` 能接纳该冻结配置的 Node。旧 Node 不宣告，也不会收到这类会话；收到时它会拒绝未知字段，而不是忽略。
+  `model_adapter` 能接纳该冻结配置的 Node。旧 Node 不宣告，也不会收到这类会话。它不会忽略这个未知字段：消息解码失败属于协议违规，Node 会关闭整个控制会话
+  （WebSocket 上是 `1002`，IPC 上直接结束流），并丢弃其中尚未接纳的排队工作，而不只是拒绝这一次会话启动（见
+  [控制会话](control-session.zh.md#关闭)）。
   `thread_event` 携带一条已定稿的 `ora-history` 记录，作为最多 256 KiB 的不透明 JSON 对象（`truncated` 标记被截短的
   记录），并与终止的 `agent_session_ended` 共享该执行无间隙的序号，后者的 `detail` 是一个简短的 snake_case 代码。
   命令带 `command_id`；它们的回复没有序号，不需要确认，丢失的回复靠重发找回。

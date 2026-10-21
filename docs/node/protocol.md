@@ -86,7 +86,10 @@ fact). See [Runtime control](../controller/runtime-control.md).
   never with a credential. A Node advertises what it can run that way as `model_adapter` beside
   `model_proxy` in `hello_accepted` (contract version, target, protocols); the Controller dispatches
   such a session only to a Node whose `model_adapter` admits the frozen configuration. An older Node
-  advertises none and is never sent one; it would reject the unknown field rather than ignore it.
+  advertises none and is never sent one. It would not ignore the unknown field: the message fails to
+  decode, which is a protocol violation, so the Node closes the whole control session (`1002` on
+  WebSocket, end of stream on IPC) and discards its unaccepted queued work, not just that session
+  start (see [Control session](control-session.md#closing)).
   `thread_event`
   carries one settled `ora-history` record as an opaque JSON object of at most 256 KiB (`truncated`
   marks a shortened one) and shares the execution's gap-free sequence with the terminal
