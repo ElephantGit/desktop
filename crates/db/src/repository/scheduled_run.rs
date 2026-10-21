@@ -26,6 +26,11 @@ impl SqliteScheduledRunRepository {
     pub fn new(pool: RepositoryPool) -> Self {
         Self { pool }
     }
+
+    /// Shares the connection pool with the sibling artifact repository implementation.
+    pub(super) fn pool(&self) -> &RepositoryPool {
+        &self.pool
+    }
 }
 
 impl ScheduledOccurrenceRepository for SqliteScheduledRunRepository {

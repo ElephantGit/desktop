@@ -17,6 +17,7 @@ export {
   type OsDroppedTextFile,
   type PlatformAdapter,
   type SaveTextFileOptions,
+  type ScheduledArtifactsCapability,
   type SelectPathOptions,
   type SelectSavePathOptions,
   type SurfaceBounds,

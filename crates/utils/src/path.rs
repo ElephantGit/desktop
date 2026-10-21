@@ -18,11 +18,13 @@ mod trusted;
 
 pub use canonical::{canonicalize, strip_verbatim_prefix};
 mod directories;
+mod links;
 pub use containment::{CanonicalPathRoot, PathContainmentError};
 pub use directories::{check_directory_without_symlinks, create_directories_without_symlinks};
 #[cfg(unix)]
 pub use identity::DirectoryIdentity;
 pub use lexical::{canonicalize_longest_existing_prefix, normalize_absolute, normalize_relative};
+pub use links::has_multiple_hard_links;
 pub use native_encoding::{deserialize_native_path, serialize_native_path};
 pub use portable::{PortableRelativePath, PortableRelativePathError};
 pub use strict::{RelativePathLimits, StrictRelativePath, StrictRelativePathError};

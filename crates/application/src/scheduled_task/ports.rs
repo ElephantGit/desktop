@@ -1,7 +1,7 @@
 use ora_domain::{
-    ScheduledMissedOccurrence, ScheduledOccurrence, ScheduledRun, ScheduledRunId,
-    ScheduledRunTransition, ScheduledRunVerdict, ScheduledTask, ScheduledTaskHistoryEntry,
-    ScheduledTaskId,
+    ScheduledArtifactRejection, ScheduledMissedOccurrence, ScheduledOccurrence, ScheduledRun,
+    ScheduledRunArtifact, ScheduledRunId, ScheduledRunTransition, ScheduledRunVerdict,
+    ScheduledTask, ScheduledTaskHistoryEntry, ScheduledTaskId,
 };
 use std::path::Path;
 
@@ -157,4 +157,79 @@ pub trait ScheduledRunLifecycleRepository {
 pub trait ScheduledRunIdGenerator {
     /// Produces one new Scheduled Run identifier.
     fn generate_scheduled_run_id(&self) -> ScheduledRunId;
+}
+
+/// One run that still owns artifact rows, resolved against its definition for sweep decisions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScheduledArtifactRunRecord {
+    pub run_id: ScheduledRunId,
+    /// `None` when the run row was already pruned by history retention.
+    pub task_id: Option<ScheduledTaskId>,
+    /// The run's last transition time, used as the oldest-first artifact retention order.
+    pub updated_at: Option<i64>,
+    /// Whether the run definition is gone even though its artifact rows remain.
+    pub run_missing: bool,
+    /// Whether the owning task was soft-deleted or removed entirely.
+    pub task_deleted: bool,
+    /// Whether the run still keeps its worktree, which exempts it from the per-task bound.
+    pub retains_worktree: bool,
+}
+
+/// Persists a run's collected artifact manifest and rejected-candidate log.
+pub trait ScheduledRunArtifactRepository {
+    /// Records collected artifacts and rejections for one run in a single transaction.
+    fn record_scheduled_run_artifacts(
+        &self,
+        run_id: &ScheduledRunId,
+        artifacts: &[ScheduledRunArtifact],
+        rejections: &[ScheduledArtifactRejection],
+        recorded_at: i64,
+    ) -> Result<(), RepositoryError>;
+
+    /// Lists one run's collected artifacts in declaration order.
+    fn list_scheduled_run_artifacts(
+        &self,
+        run_id: &ScheduledRunId,
+    ) -> Result<Vec<ScheduledRunArtifact>, RepositoryError>;
+
+    /// Lists one run's rejected candidates in declaration order.
+    fn list_scheduled_run_artifact_rejections(
+        &self,
+        run_id: &ScheduledRunId,
+    ) -> Result<Vec<ScheduledArtifactRejection>, RepositoryError>;
+
+    /// Loads one registered artifact by its run-relative path.
+    fn find_scheduled_run_artifact(
+        &self,
+        run_id: &ScheduledRunId,
+        relative_path: &str,
+    ) -> Result<Option<ScheduledRunArtifact>, RepositoryError>;
+
+    /// Lists every run that still owns artifact rows, with the retention metadata the sweep needs.
+    fn list_scheduled_artifact_runs(
+        &self,
+    ) -> Result<Vec<ScheduledArtifactRunRecord>, RepositoryError>;
+
+    /// Loads one run's artifact subject, whether or not it still owns manifest rows.
+    ///
+    /// Returns `None` only when neither the run nor any artifact row exists. A pruned run
+    /// with orphan rows reports `run_missing`, and a soft-deleted task reports `task_deleted`,
+    /// so callers can reject access without leaking the fact that artifacts survived.
+    fn find_scheduled_artifact_run(
+        &self,
+        run_id: &ScheduledRunId,
+    ) -> Result<Option<ScheduledArtifactRunRecord>, RepositoryError>;
+
+    /// Deletes one registered artifact row, returning whether it existed.
+    fn delete_scheduled_run_artifact(
+        &self,
+        run_id: &ScheduledRunId,
+        relative_path: &str,
+    ) -> Result<bool, RepositoryError>;
+
+    /// Deletes every artifact and rejection row for one run.
+    fn delete_scheduled_run_artifact_rows(
+        &self,
+        run_id: &ScheduledRunId,
+    ) -> Result<usize, RepositoryError>;
 }

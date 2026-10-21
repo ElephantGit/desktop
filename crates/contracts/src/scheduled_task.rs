@@ -244,6 +244,91 @@ pub enum ScheduledTaskHistoryEntry {
     },
 }
 
+/// Mirrors the closed artifact type whitelist a run may declare.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "scheduled-task.ts")]
+pub enum ScheduledArtifactKind {
+    Markdown,
+    Json,
+    Text,
+    Log,
+    Xml,
+    Html,
+}
+
+/// Explains why a declared candidate was refused by artifact collection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "scheduled-task.ts")]
+pub enum ScheduledArtifactRejectionReason {
+    UnsupportedType,
+    PathUnsafe,
+    Symlink,
+    HardLink,
+    TooLarge,
+    TooMany,
+    TotalTooLarge,
+    ReadFailed,
+    CopyFailed,
+}
+
+/// One collected artifact registered in a run's manifest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "scheduled-task.ts")]
+pub struct ScheduledRunArtifactInfo {
+    /// Forward-slash path relative to `.ora-scheduled-artifacts/`.
+    pub relative_path: String,
+    pub kind: ScheduledArtifactKind,
+    pub size_bytes: u64,
+    pub registered_at: i64,
+}
+
+/// One candidate artifact collection refused, kept for history visibility.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "scheduled-task.ts")]
+pub struct ScheduledRunArtifactRejectionInfo {
+    pub name: String,
+    pub reason: ScheduledArtifactRejectionReason,
+}
+
+/// Identifies one run whose artifact manifest should be returned.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "scheduled-task.ts")]
+pub struct ListScheduledRunArtifactsRequest {
+    pub run_id: String,
+}
+
+/// Returns one run's collected artifacts and rejected candidates.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "scheduled-task.ts")]
+pub struct ListScheduledRunArtifactsResponse {
+    pub artifacts: Vec<ScheduledRunArtifactInfo>,
+    pub rejections: Vec<ScheduledRunArtifactRejectionInfo>,
+}
+
+/// Identifies one registered artifact for an in-app preview.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "scheduled-task.ts")]
+pub struct ReadScheduledRunArtifactRequest {
+    pub run_id: String,
+    pub relative_path: String,
+}
+
+/// Returns the text preview of one artifact, truncated when it exceeds the preview bound.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "scheduled-task.ts")]
+pub struct ReadScheduledRunArtifactResponse {
+    pub content: String,
+    pub truncated: bool,
+}
+
 /// Identifies the local task whose persisted history should be returned.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -373,6 +458,14 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     ScheduledRunFailureReason::export(config)?;
     ScheduledRunVerdict::export(config)?;
     ScheduledMissReason::export(config)?;
+    ScheduledArtifactKind::export(config)?;
+    ScheduledArtifactRejectionReason::export(config)?;
+    ScheduledRunArtifactInfo::export(config)?;
+    ScheduledRunArtifactRejectionInfo::export(config)?;
+    ListScheduledRunArtifactsRequest::export(config)?;
+    ListScheduledRunArtifactsResponse::export(config)?;
+    ReadScheduledRunArtifactRequest::export(config)?;
+    ReadScheduledRunArtifactResponse::export(config)?;
     ScheduledTaskHistoryEntry::export(config)?;
     ScheduledTaskEvent::export(config)?;
     ListScheduledTaskHistoryRequest::export(config)?;

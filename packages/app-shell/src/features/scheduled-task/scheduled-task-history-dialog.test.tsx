@@ -62,6 +62,7 @@ function historyEntry(overrides: {
 interface Harness {
   deletedTaskIds: string[];
   failDiscards?: boolean;
+  artifactHandlers?: TestHandlers;
 }
 
 function renderDialog(
@@ -79,6 +80,7 @@ function renderDialog(
     },
   ];
   const handlers: TestHandlers = {
+    ...harness.artifactHandlers,
     listScheduledTaskHistory: async () => ({ entries: [...entries] }),
     listTasks: async () => ({ tasks: [...worktreeTasks] }),
     deleteTask: async ({ taskId }) => {
@@ -131,6 +133,39 @@ describe("ScheduledTaskHistoryDialog retained worktrees", () => {
 
     expect(await screen.findByRole("button", { name: "打开" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "丢弃" })).toBeTruthy();
+  });
+
+  it("opens the artifact manifest for a succeeded run", async () => {
+    const user = userEvent.setup();
+    renderDialog(
+      [
+        historyEntry({
+          id: "run-1",
+          status: "succeeded",
+          worktreeTaskId: null,
+        }),
+      ],
+      {
+        deletedTaskIds: [],
+        artifactHandlers: {
+          listScheduledRunArtifacts: async () => ({
+            artifacts: [
+              {
+                relativePath: "report.md",
+                kind: "markdown",
+                sizeBytes: 6n,
+                registeredAt: 10n,
+              },
+            ],
+            rejections: [],
+          }),
+        },
+      },
+    );
+
+    await user.click(await screen.findByRole("button", { name: "运行产物" }));
+
+    expect(await screen.findByText("report.md")).toBeTruthy();
   });
 
   it("hides the worktree actions while the run is not finished", async () => {

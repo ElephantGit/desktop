@@ -182,8 +182,22 @@ pub enum ApplicationError {
     ScheduledTaskCloudUnavailable,
     #[error("enabled local scheduled tasks require explicit unattended approval")]
     ScheduledTaskApprovalRequired,
+    #[error("scheduled run not found: {run_id}")]
+    ScheduledRunNotFound { run_id: String },
+    #[error("scheduled run artifact not found: {run_id}/{relative_path}")]
+    ScheduledRunArtifactNotFound {
+        run_id: String,
+        relative_path: String,
+    },
+    #[error("scheduled run artifact operation failed: {context}")]
+    ScheduledRunArtifactStorage { context: &'static str },
     #[error("scheduled task repository operation failed")]
     ScheduledTaskRepository {
+        #[source]
+        source: RepositoryError,
+    },
+    #[error("scheduled run artifact repository operation failed")]
+    ScheduledRunArtifactRepository {
         #[source]
         source: RepositoryError,
     },
@@ -409,6 +423,11 @@ impl ApplicationError {
         Self::ScheduledTaskRepository { source: error }
     }
 
+    /// Maps scheduled-run artifact persistence failures into the stable application contract.
+    pub(crate) fn from_scheduled_run_artifact_repository_error(error: RepositoryError) -> Self {
+        Self::ScheduledRunArtifactRepository { source: error }
+    }
+
     /// Converts workflow-construction validation failures into application errors.
     pub(crate) fn from_workflow_domain_error(error: DomainModelError) -> Self {
         match error {
@@ -595,6 +614,24 @@ impl PartialEq for ApplicationError {
             (ScheduledTaskConflict { task_id: left }, ScheduledTaskConflict { task_id: right }) => {
                 left == right
             }
+            (ScheduledRunNotFound { run_id: left }, ScheduledRunNotFound { run_id: right }) => {
+                left == right
+            }
+            (
+                ScheduledRunArtifactNotFound {
+                    run_id: left_run,
+                    relative_path: left_path,
+                },
+                ScheduledRunArtifactNotFound {
+                    run_id: right_run,
+                    relative_path: right_path,
+                },
+            ) => left_run == right_run && left_path == right_path,
+            (
+                ScheduledRunArtifactStorage { context: left },
+                ScheduledRunArtifactStorage { context: right },
+            ) => left == right,
+            (ScheduledRunArtifactRepository { .. }, ScheduledRunArtifactRepository { .. }) => true,
             (ScheduledTaskNameBlank, ScheduledTaskNameBlank)
             | (ScheduledTaskPromptBlank, ScheduledTaskPromptBlank)
             | (ScheduledTaskAgentRefInvalid, ScheduledTaskAgentRefInvalid)

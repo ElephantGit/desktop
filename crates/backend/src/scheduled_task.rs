@@ -1,5 +1,8 @@
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+#[path = "scheduled_task_artifact.rs"]
+mod artifact;
 #[path = "scheduled_task_calendar.rs"]
 mod calendar;
 #[path = "scheduled_task_runtime.rs"]
@@ -8,22 +11,28 @@ mod runtime;
 mod worktree;
 
 use ora_application::{
-    CreateScheduledTaskHandler, DeleteScheduledTaskHandler, GetScheduledTaskHandler,
-    GitScheduledTaskTargetValidator, ListScheduledTaskHistoryHandler, ListScheduledTasksHandler,
-    RevokeScheduledTaskApprovalHandler, UpdateScheduledTaskHandler, UuidScheduledTaskIdGenerator,
+    CopyScheduledRunArtifactHandler, CreateScheduledTaskHandler, DeleteScheduledTaskHandler,
+    GetScheduledTaskHandler, GitScheduledTaskTargetValidator, ListScheduledRunArtifactsHandler,
+    ListScheduledTaskHistoryHandler, ListScheduledTasksHandler, ReadScheduledRunArtifactHandler,
+    RevokeScheduledTaskApprovalHandler, ScheduledArtifactStore, UpdateScheduledTaskHandler,
+    UuidScheduledTaskIdGenerator,
 };
 use ora_contracts::{
     AgentModel, CreateScheduledTaskRequest, CreateScheduledTaskResponse,
     DeleteScheduledTaskRequest, DeleteScheduledTaskResponse, EmptyErrorParams,
     GetScheduledTaskRequest, GetScheduledTaskResponse, ListAgentModelsRequest,
+    ListScheduledRunArtifactsRequest, ListScheduledRunArtifactsResponse,
     ListScheduledTaskHistoryRequest, ListScheduledTaskHistoryResponse, ListScheduledTasksRequest,
-    ListScheduledTasksResponse, PublicError, RevokeScheduledTaskApprovalRequest,
-    RevokeScheduledTaskApprovalResponse, UpdateScheduledTaskRequest, UpdateScheduledTaskResponse,
+    ListScheduledTasksResponse, PublicError, ReadScheduledRunArtifactRequest,
+    ReadScheduledRunArtifactResponse, RevokeScheduledTaskApprovalRequest,
+    RevokeScheduledTaskApprovalResponse, ScheduledRunArtifactInfo,
+    ScheduledRunArtifactRejectionInfo, UpdateScheduledTaskRequest, UpdateScheduledTaskResponse,
 };
 use ora_db::{
     RepositoryPool, SqliteProjectRepository, SqliteScheduledRunRepository,
     SqliteScheduledTaskRepository, SqliteWorkspaceRepository,
 };
+use ora_domain::ScheduledRunId;
 use ora_domain::ScheduledTaskExecutionLocation;
 use ora_scheduler::Scheduler;
 
@@ -32,6 +41,21 @@ use crate::{
 };
 
 use runtime::ScheduledTaskRuntime;
+
+/// Caps the text returned to the history preview so one 10 MiB artifact cannot stall IPC.
+const MAX_SCHEDULED_ARTIFACT_PREVIEW_BYTES: usize = 512 * 1024;
+
+/// Carries the shared services and storage root needed to compose the Scheduled Task API.
+pub(crate) struct ScheduledTaskSetup {
+    pub pool: RepositoryPool,
+    pub agent_runtime: AgentRuntime,
+    pub scheduler: Scheduler,
+    pub tasks_api: Arc<TaskApi>,
+    pub sessions: Arc<Sessions>,
+    pub clock: SystemClock,
+    pub events: crate::app_event::AppEventPublisher,
+    pub artifacts_root: PathBuf,
+}
 
 /// Groups concrete Scheduled Task definition handlers shared by runtime adapters.
 pub struct ScheduledTaskApi {
@@ -57,26 +81,39 @@ pub struct ScheduledTaskApi {
     >,
     delete: DeleteScheduledTaskHandler<SqliteScheduledTaskRepository, SystemClock>,
     revoke_approval: RevokeScheduledTaskApprovalHandler<SqliteScheduledTaskRepository, SystemClock>,
+    list_run_artifacts: ListScheduledRunArtifactsHandler<SqliteScheduledRunRepository>,
+    read_run_artifact: ReadScheduledRunArtifactHandler<SqliteScheduledRunRepository>,
+    copy_run_artifact: CopyScheduledRunArtifactHandler<SqliteScheduledRunRepository>,
     runtime: Arc<ScheduledTaskRuntime>,
 }
 
 impl ScheduledTaskApi {
     /// Builds definition handlers from the shared repository pool.
-    pub(crate) fn new(
-        pool: RepositoryPool,
-        agent_runtime: AgentRuntime,
-        scheduler: Scheduler,
-        tasks_api: Arc<TaskApi>,
-        sessions: Arc<Sessions>,
-        clock: SystemClock,
-        events: crate::app_event::AppEventPublisher,
-    ) -> Self {
+    pub(crate) fn new(setup: ScheduledTaskSetup) -> Self {
+        let ScheduledTaskSetup {
+            pool,
+            agent_runtime,
+            scheduler,
+            tasks_api,
+            sessions,
+            clock,
+            events,
+            artifacts_root,
+        } = setup;
         let repository = Arc::new(SqliteScheduledTaskRepository::new(pool.clone()));
         let projects = Arc::new(SqliteProjectRepository::new(pool.clone()));
         let workspaces = Arc::new(SqliteWorkspaceRepository::new(pool.clone()));
         let run_repository = Arc::new(SqliteScheduledRunRepository::new(pool.clone()));
-        let runtime =
-            ScheduledTaskRuntime::new(pool, scheduler, tasks_api, sessions, clock, events);
+        let artifact_store = ScheduledArtifactStore::new(artifacts_root);
+        let runtime = ScheduledTaskRuntime::new(
+            pool,
+            scheduler,
+            tasks_api,
+            sessions,
+            clock,
+            events,
+            artifact_store.clone(),
+        );
         Self {
             agent_runtime,
             workspaces: workspaces.as_ref().clone(),
@@ -90,7 +127,13 @@ impl ScheduledTaskApi {
             ),
             get: GetScheduledTaskHandler::new(repository.clone()),
             list: ListScheduledTasksHandler::new(repository.clone()),
-            list_history: ListScheduledTaskHistoryHandler::new(run_repository),
+            list_history: ListScheduledTaskHistoryHandler::new(run_repository.clone()),
+            list_run_artifacts: ListScheduledRunArtifactsHandler::new(run_repository.clone()),
+            read_run_artifact: ReadScheduledRunArtifactHandler::new(
+                run_repository.clone(),
+                artifact_store.clone(),
+            ),
+            copy_run_artifact: CopyScheduledRunArtifactHandler::new(run_repository, artifact_store),
             update: UpdateScheduledTaskHandler::new(
                 repository.clone(),
                 projects,
@@ -147,6 +190,55 @@ impl ScheduledTaskApi {
     ) -> Result<ListScheduledTaskHistoryResponse, BackendError> {
         self.list_history
             .handle(request)
+            .map_err(BackendError::from)
+    }
+
+    /// Lists one run's collected artifacts and rejected candidates.
+    pub fn list_run_artifacts(
+        &self,
+        request: ListScheduledRunArtifactsRequest,
+    ) -> Result<ListScheduledRunArtifactsResponse, BackendError> {
+        let run_id = ScheduledRunId::new(request.run_id);
+        let (artifacts, rejections) = self
+            .list_run_artifacts
+            .handle(&run_id)
+            .map_err(BackendError::from)?;
+        Ok(ListScheduledRunArtifactsResponse {
+            artifacts: artifacts.into_iter().map(contract_artifact).collect(),
+            rejections: rejections
+                .into_iter()
+                .map(contract_artifact_rejection)
+                .collect(),
+        })
+    }
+
+    /// Returns a bounded text preview of one registered artifact.
+    pub fn read_run_artifact(
+        &self,
+        request: ReadScheduledRunArtifactRequest,
+    ) -> Result<ReadScheduledRunArtifactResponse, BackendError> {
+        let run_id = ScheduledRunId::new(request.run_id);
+        let bytes = self
+            .read_run_artifact
+            .handle(&run_id, &request.relative_path)
+            .map_err(BackendError::from)?;
+        let truncated = bytes.len() > MAX_SCHEDULED_ARTIFACT_PREVIEW_BYTES;
+        let preview = &bytes[..bytes.len().min(MAX_SCHEDULED_ARTIFACT_PREVIEW_BYTES)];
+        Ok(ReadScheduledRunArtifactResponse {
+            content: String::from_utf8_lossy(preview).into_owned(),
+            truncated,
+        })
+    }
+
+    /// Copies one registered artifact to the native save dialog's destination.
+    pub fn copy_run_artifact(
+        &self,
+        run_id: &str,
+        relative_path: &str,
+        destination: &Path,
+    ) -> Result<(), BackendError> {
+        self.copy_run_artifact
+            .handle(&ScheduledRunId::new(run_id), relative_path, destination)
             .map_err(BackendError::from)
     }
 
@@ -236,6 +328,47 @@ fn require_requested_model(model: Option<&str>, models: &[AgentModel]) -> Result
     Err(invalid_runtime_selection(
         "scheduled task model is unavailable for the selected agent",
     ))
+}
+
+/// Maps one domain artifact into its public contract shape.
+fn contract_artifact(artifact: ora_domain::ScheduledRunArtifact) -> ScheduledRunArtifactInfo {
+    ScheduledRunArtifactInfo {
+        relative_path: artifact.relative_path,
+        kind: match artifact.kind {
+            ora_domain::ScheduledArtifactKind::Markdown => {
+                ora_contracts::ScheduledArtifactKind::Markdown
+            }
+            ora_domain::ScheduledArtifactKind::Json => ora_contracts::ScheduledArtifactKind::Json,
+            ora_domain::ScheduledArtifactKind::Text => ora_contracts::ScheduledArtifactKind::Text,
+            ora_domain::ScheduledArtifactKind::Log => ora_contracts::ScheduledArtifactKind::Log,
+            ora_domain::ScheduledArtifactKind::Xml => ora_contracts::ScheduledArtifactKind::Xml,
+            ora_domain::ScheduledArtifactKind::Html => ora_contracts::ScheduledArtifactKind::Html,
+        },
+        size_bytes: artifact.size_bytes,
+        registered_at: artifact.registered_at,
+    }
+}
+
+/// Maps one domain rejection into its public contract shape.
+fn contract_artifact_rejection(
+    rejection: ora_domain::ScheduledArtifactRejection,
+) -> ScheduledRunArtifactRejectionInfo {
+    use ora_contracts::ScheduledArtifactRejectionReason as Contract;
+    use ora_domain::ScheduledArtifactRejectionReason as Domain;
+    ScheduledRunArtifactRejectionInfo {
+        name: rejection.name,
+        reason: match rejection.reason {
+            Domain::UnsupportedType => Contract::UnsupportedType,
+            Domain::PathUnsafe => Contract::PathUnsafe,
+            Domain::Symlink => Contract::Symlink,
+            Domain::HardLink => Contract::HardLink,
+            Domain::TooLarge => Contract::TooLarge,
+            Domain::TooMany => Contract::TooMany,
+            Domain::TotalTooLarge => Contract::TotalTooLarge,
+            Domain::ReadFailed => Contract::ReadFailed,
+            Domain::CopyFailed => Contract::CopyFailed,
+        },
+    }
 }
 
 fn invalid_runtime_selection(context: &'static str) -> BackendError {

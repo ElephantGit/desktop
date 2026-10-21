@@ -520,6 +520,22 @@ impl From<ApplicationError> for BackendError {
                 PublicError::ScheduledTaskConflict(EmptyErrorParams {}),
                 "scheduled task was modified concurrently",
             ),
+            ApplicationError::ScheduledRunNotFound { .. } => (
+                ErrorClassification::NotFound,
+                PublicError::ScheduledRunNotFound(EmptyErrorParams {}),
+                "scheduled run not found",
+            ),
+            ApplicationError::ScheduledRunArtifactNotFound { .. } => (
+                ErrorClassification::NotFound,
+                PublicError::ScheduledRunArtifactNotFound(EmptyErrorParams {}),
+                "scheduled run artifact not found",
+            ),
+            ApplicationError::ScheduledRunArtifactStorage { .. }
+            | ApplicationError::ScheduledRunArtifactRepository { .. } => (
+                ErrorClassification::Internal,
+                PublicError::InternalError(EmptyErrorParams {}),
+                "scheduled run artifact operation failed",
+            ),
             ApplicationError::ScheduledTaskNameBlank
             | ApplicationError::ScheduledTaskPromptBlank
             | ApplicationError::ScheduledTaskAgentRefInvalid

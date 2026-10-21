@@ -9,6 +9,7 @@ mod plugin_id;
 mod plugin_namespace;
 mod project;
 mod prompt_inactivity_policy;
+mod scheduled_artifact;
 mod scheduled_run;
 mod scheduled_task;
 mod session;
@@ -41,6 +42,12 @@ pub use plugin_id::{PluginId, PluginIdError, PluginIdSegment};
 pub use plugin_namespace::{MAX_PLUGIN_NAMESPACE_BYTES, PluginNamespace};
 pub use project::Project;
 pub use prompt_inactivity_policy::PromptInactivityPolicy;
+pub use scheduled_artifact::{
+    MAX_SCHEDULED_ARTIFACT_BYTES, MAX_SCHEDULED_ARTIFACT_RUNS_PER_TASK,
+    MAX_SCHEDULED_ARTIFACT_TOTAL_BYTES, MAX_SCHEDULED_ARTIFACTS_PER_RUN,
+    SCHEDULED_ARTIFACT_DIRECTORY, ScheduledArtifactKind, ScheduledArtifactRejection,
+    ScheduledArtifactRejectionReason, ScheduledRunArtifact,
+};
 pub use scheduled_run::{
     MAX_CONCURRENT_LOCAL_SCHEDULED_RUNS, MAX_SCHEDULED_OCCURRENCE_LATENESS_MILLIS,
     MAX_SCHEDULED_RUN_VERDICT_DETAIL_CHARS, MAX_SCHEDULED_TASK_HISTORY_ENTRIES,

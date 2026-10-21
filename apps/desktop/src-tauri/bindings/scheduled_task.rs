@@ -24,6 +24,20 @@ pub(super) const BINDINGS: &[Binding] = &[
         permission: Permission::MainWebview,
     },
     Binding::Unary {
+        operation: "listScheduledRunArtifacts",
+        handler: "commands::scheduled_task::list_scheduled_run_artifacts",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
+        operation: "readScheduledRunArtifact",
+        handler: "commands::scheduled_task::read_scheduled_run_artifact",
+        permission: Permission::MainWebview,
+    },
+    Binding::Native {
+        handler: "commands::scheduled_task::download_scheduled_run_artifact",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
         operation: "updateScheduledTask",
         handler: "commands::scheduled_task::update_scheduled_task",
         permission: Permission::MainWebview,

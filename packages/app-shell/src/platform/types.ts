@@ -265,6 +265,16 @@ export interface DesktopNotificationsCapability {
   show(options: DesktopNotificationOptions): Promise<boolean>;
 }
 
+/** Exports one Scheduled Run artifact to a user-selected host path. */
+export interface ScheduledArtifactsCapability {
+  /** Copies the registered artifact to `destination`, the native save dialog's choice. */
+  download(
+    runId: string,
+    relativePath: string,
+    destination: string,
+  ): Promise<void>;
+}
+
 /** Collects the host capabilities consumed by the shared application shell. */
 export interface PlatformAdapter {
   readonly worktreeStorage: WorktreeStorageCapability;
@@ -274,6 +284,7 @@ export interface PlatformAdapter {
   readonly updates?: DesktopUpdateCapability;
   readonly pluginMarketplace?: PluginMarketplaceCapability;
   readonly diagnosticLogs?: DiagnosticLogsCapability;
+  readonly scheduledArtifacts?: ScheduledArtifactsCapability;
   readonly desktopNotifications?: DesktopNotificationsCapability;
   selectPath(options: SelectPathOptions): Promise<string | null>;
   /** Opens the native save dialog and returns the chosen path, or null when dismissed. */
