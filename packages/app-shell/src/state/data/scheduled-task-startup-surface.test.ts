@@ -167,7 +167,7 @@ describe("startup surface of persisted scheduled task facts", () => {
     expect(errorToast).toHaveBeenCalledTimes(1);
   });
 
-  it("surfaces a failed run and skips facts at or before the baseline", async () => {
+  it("surfaces every unseen fact regardless of the legacy baseline", async () => {
     window.localStorage.setItem("ora.scheduledTaskFactsSeenAt", "3000");
     const { platform } = createPlatform();
     const storage = harness([failedRun(3_000n), failedRun(4_000n, "run-2")]);
@@ -178,8 +178,12 @@ describe("startup surface of persisted scheduled task facts", () => {
       platform,
     );
 
-    expect(errorToast).toHaveBeenCalledTimes(1);
-    expect(errorToast.mock.calls[0]?.[1]?.description).toContain(
+    // Exact-key suppression is the only suppressor: facts the bounded seen map
+    // never recorded surface even below the legacy baseline, because a
+    // timestamp never proves they were surfaced before. The baseline still
+    // advances as bookkeeping for the adopted era.
+    expect(errorToast).toHaveBeenCalledTimes(2);
+    expect(errorToast.mock.calls[1]?.[1]?.description).toContain(
       "失败：运行超时",
     );
     expect(window.localStorage.getItem("ora.scheduledTaskFactsSeenAt")).toBe(
@@ -274,7 +278,7 @@ describe("startup surface of persisted scheduled task facts", () => {
     expect(errorToast).not.toHaveBeenCalled();
   });
 
-  it("suppresses facts covered by the legacy baseline even after seen-map eviction", async () => {
+  it("re-surfaces an evicted legacy fact exactly once and re-marks it seen", async () => {
     window.localStorage.setItem("ora.scheduledTaskFactsSeenAt", "5000");
     window.localStorage.setItem("ora.scheduledTaskFactsSeenInitialized", "1");
     const { platform } = createPlatform();
@@ -286,10 +290,20 @@ describe("startup surface of persisted scheduled task facts", () => {
       platform,
     );
 
-    expect(errorToast).not.toHaveBeenCalled();
+    // The bounded seen map is the only suppressor: a fact it never recorded
+    // (evicted or legacy) surfaces once and is re-marked seen — the registered
+    // duplicate-over-loss trade-off.
+    expect(errorToast).toHaveBeenCalledTimes(1);
     expect(window.localStorage.getItem("ora.scheduledTaskFactsSeen")).toContain(
       "run:scheduled-1:run-1",
     );
+
+    await surfaceStartupScheduledFacts(
+      storage.client,
+      storage.queryClient,
+      platform,
+    );
+    expect(errorToast).toHaveBeenCalledTimes(1);
   });
 
   it("sends the OS notification while the window is hidden and keeps the entry for refocus", async () => {
@@ -720,6 +734,59 @@ describe("startup surface of persisted scheduled task facts", () => {
       vi.setSystemTime(20_000);
       await surfaceStartupScheduledFacts(client, queryClient, platform);
       expect(errorToast).toHaveBeenCalledTimes(3);
+    });
+
+    it("surfaces every unseen fact in a descending history batch", async () => {
+      const storage = harness([missedAt(6_000n), missedAt(5_000n)]);
+      const { platform } = createPlatform();
+      await surfaceStartupScheduledFacts(
+        storage.client,
+        storage.queryClient,
+        platform,
+      );
+      expect(errorToast).toHaveBeenCalledTimes(2);
+    });
+
+    it("surfaces a same-task late commit older than its observed maximum", async () => {
+      let reads = 0;
+      const client = createTestClient({
+        listScheduledTasks: async () => ({ tasks: [TASK] }),
+        listScheduledTaskHistory: async () => ({
+          entries:
+            ++reads === 1
+              ? [missedAt(6_000n)]
+              : [missedAt(6_000n), missedAt(5_000n)],
+        }),
+      });
+      const queryClient = createTestQueryClient();
+      const { platform } = createPlatform();
+      await surfaceStartupScheduledFacts(client, queryClient, platform);
+      expect(errorToast).toHaveBeenCalledTimes(1);
+      await surfaceStartupScheduledFacts(client, queryClient, platform);
+      expect(errorToast).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not adopt a task's first successful read under another task's baseline", async () => {
+      let pass = 0;
+      const client = createTestClient({
+        listScheduledTasks: async () => {
+          pass++;
+          return { tasks: [TASK, TASK_B] };
+        },
+        listScheduledTaskHistory: async ({ taskId }) => {
+          if (taskId === TASK.id) {
+            if (pass === 1) throw new Error("A unavailable");
+            return { entries: [missedAt(5_000n)] };
+          }
+          return { entries: [missedAt(6_000n)] };
+        },
+      });
+      const queryClient = createTestQueryClient();
+      const { platform } = createPlatform();
+      await surfaceStartupScheduledFacts(client, queryClient, platform);
+      expect(errorToast).toHaveBeenCalledTimes(1);
+      await surfaceStartupScheduledFacts(client, queryClient, platform);
+      expect(errorToast).toHaveBeenCalledTimes(2);
     });
   });
 });
