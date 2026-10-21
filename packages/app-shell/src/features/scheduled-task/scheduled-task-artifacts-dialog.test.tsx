@@ -59,6 +59,34 @@ function renderDialog(platform: PlatformAdapter = createStubPlatform()) {
 }
 
 describe("ScheduledTaskArtifactsDialog", () => {
+  it("shows the empty state for a run that produced no artifacts", async () => {
+    const client = createTestClient({
+      listScheduledRunArtifacts: async () => ({
+        artifacts: [],
+        rejections: [],
+      }),
+    });
+    const Wrapper = createHookWrapper(
+      client,
+      createTestQueryClient(),
+      createChatStore(client.session),
+    );
+    render(
+      <Wrapper>
+        <AppI18nProvider>
+          <PlatformProvider adapter={createStubPlatform()}>
+            <ScheduledTaskArtifactsDialog
+              runId="run-1"
+              onOpenChange={() => undefined}
+            />
+          </PlatformProvider>
+        </AppI18nProvider>
+      </Wrapper>,
+    );
+
+    expect(await screen.findByText("本次运行没有产物。")).toBeTruthy();
+  });
+
   it("lists collected artifacts and rejected candidates", async () => {
     renderDialog();
 
