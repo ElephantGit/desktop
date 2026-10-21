@@ -9,6 +9,9 @@ import {
 } from "@ora/contracts";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import type {
+  ChatContent,
+  ChatMessage,
+  ChatThought,
   ChatModelChange,
   ChatPlan,
   ChatToolCall,
@@ -18,6 +21,13 @@ import type {
 } from "./types.ts";
 import { currentModel } from "./model-option.ts";
 import { observeDiagnostics, type RunDiagnostics } from "./diagnostics.ts";
+import {
+  childSessionSource,
+  mergeToolMetadata,
+  metadataKey,
+  withItemMetadata,
+  withToolMetadata,
+} from "./item-metadata.ts";
 import {
   applyContextUsageUpdate,
   beginUsageAfterAgentSwitch,
@@ -168,6 +178,8 @@ const EMPTY_CONVERSATION: SessionConversation = {
 const STREAMING_TEXT_BATCH_LIMIT = 4 * 1024;
 
 interface BufferedTextChunk {
+  metadata: unknown;
+  contentContext: { metadata?: unknown; annotations?: unknown };
   itemKind: "message" | "thought";
   messageId: string | undefined;
   text: string;
@@ -448,6 +460,8 @@ export function createChatStore(
             batch.messageId,
             batch.text,
             batch.timestamp,
+            batch.metadata,
+            batch.contentContext,
           ),
         );
         if (pendingDiagnostics) {
@@ -479,7 +493,15 @@ export function createChatStore(
         if (
           pendingTextChunk !== null &&
           (pendingTextChunk.itemKind !== itemKind ||
-            pendingTextChunk.messageId !== (chunk.messageId ?? undefined))
+            pendingTextChunk.messageId !== (chunk.messageId ?? undefined) ||
+            metadataKey(
+              pendingTextChunk.metadata,
+              pendingTextChunk.contentContext,
+            ) !==
+              metadataKey(chunk._meta, {
+                metadata: chunk.content._meta,
+                annotations: chunk.content.annotations,
+              }))
         ) {
           flushPendingTextChunk();
         }
@@ -496,6 +518,11 @@ export function createChatStore(
         );
         if (pendingTextChunk === null) {
           pendingTextChunk = {
+            metadata: chunk._meta,
+            contentContext: {
+              metadata: chunk.content._meta,
+              annotations: chunk.content.annotations,
+            },
             itemKind,
             messageId: chunk.messageId ?? undefined,
             text: chunk.content.text,
@@ -1154,7 +1181,7 @@ function applyAgentUpdate(
     case "agent_thought_chunk":
       return appendContentChunk(turn, "thought", update, createId, timestamp);
     case "plan":
-      return replacePlan(turn, update.entries, timestamp);
+      return replacePlan(turn, update.entries, timestamp, update._meta);
     case "tool_call":
       return upsertToolCall(turn, update, timestamp, toolTiming);
     case "tool_call_update":
@@ -1174,18 +1201,16 @@ function appendContentChunk(
 ): ChatTurn {
   const content = chunk.content;
   if (content.type !== "text") {
+    const item: ChatContent = {
+      kind: "content",
+      id: createId(),
+      source: itemKind,
+      content,
+      createdAt: timestamp,
+    };
     return {
       ...turn,
-      items: [
-        ...turn.items,
-        {
-          kind: "content",
-          id: createId(),
-          source: itemKind,
-          content,
-          createdAt: timestamp,
-        },
-      ],
+      items: [...turn.items, withItemMetadata(item, chunk._meta)],
     };
   }
 
@@ -1195,6 +1220,8 @@ function appendContentChunk(
     chunk.messageId ?? undefined,
     content.text,
     timestamp,
+    chunk._meta,
+    { metadata: content._meta, annotations: content.annotations },
   );
 }
 
@@ -1217,16 +1244,29 @@ function textRunIndex(
   turn: ChatTurn,
   itemKind: "message" | "thought",
   messageId: string | undefined,
+  parent: string | undefined,
 ): number {
   if (messageId !== undefined) {
     return turn.items.findIndex(
-      (item) => item.kind === itemKind && item.protocolMessageId === messageId,
+      (item) =>
+        item.kind === itemKind &&
+        item.protocolMessageId === messageId &&
+        metadataKey(item.metadata, item.contentContext) === parent,
     );
   }
   for (let index = turn.items.length - 1; index >= 0; index -= 1) {
     const item = turn.items[index]!;
     if (item.kind !== "message" && item.kind !== "thought") return -1;
-    if (item.kind === itemKind && item.protocolMessageId === undefined)
+    if (
+      item.kind === itemKind &&
+      metadataKey(item.metadata, item.contentContext) !== parent
+    )
+      return -1;
+    if (
+      item.kind === itemKind &&
+      item.protocolMessageId === undefined &&
+      metadataKey(item.metadata, item.contentContext) === parent
+    )
       return index;
   }
   return -1;
@@ -1238,20 +1278,26 @@ function appendTextContentChunk(
   messageId: string | undefined,
   text: string,
   timestamp: number,
+  metadata?: unknown,
+  contentContext?: { metadata?: unknown; annotations?: unknown },
 ): ChatTurn {
-  const itemIndex = textRunIndex(turn, itemKind, messageId);
+  const parent = metadataKey(metadata, contentContext);
+  const itemIndex = textRunIndex(turn, itemKind, messageId, parent);
   if (itemIndex === -1) {
     // An agent switching to a tool call commonly emits empty or newline-only
     // deltas first. Opening a run on those would place a blank block ahead of
-    // the work that follows it, so a run starts where its content does.
-    if (text.trim() === "") return turn;
+    // the work that follows it, so an ordinary run starts where its content does. Attributed
+    // chunks retain even leading whitespace so a source switch cannot silently discard content.
+    if (text.trim() === "" && parent === undefined) return turn;
     // Implicit runs are numbered by where they begin, which keeps them distinct
     // now that one turn can hold several.
+    const sourceSuffix =
+      parent === undefined ? "" : `:source:${turn.items.length}`;
     const itemId =
       messageId === undefined
         ? `${itemKind}-implicit-${turn.id}-${turn.items.length}`
-        : `${itemKind}-${messageId}`;
-    const item =
+        : `${itemKind}-${messageId}${sourceSuffix}`;
+    const item: ChatMessage | ChatThought =
       itemKind === "message"
         ? {
             kind: "message" as const,
@@ -1272,13 +1318,20 @@ function appendTextContentChunk(
               ? {}
               : { protocolMessageId: messageId }),
           };
-    return { ...turn, items: [...turn.items, item] };
+    return {
+      ...turn,
+      items: [...turn.items, withItemMetadata(item, metadata, contentContext)],
+    };
   }
 
   const items = [...turn.items];
   const item = items[itemIndex]!;
   if (item.kind === "message" || item.kind === "thought") {
-    items[itemIndex] = { ...item, content: item.content + text };
+    items[itemIndex] = withItemMetadata(
+      { ...item, content: item.content + text },
+      metadata,
+      contentContext,
+    );
   }
   return { ...turn, items };
 }
@@ -1328,22 +1381,34 @@ function replacePlan(
   turn: ChatTurn,
   entries: acp.PlanEntry[],
   timestamp: number,
+  metadata?: unknown,
 ): ChatTurn {
-  const planIndex = turn.items.findIndex((item) => item.kind === "plan");
+  const parent = metadataKey(metadata);
+  const planIndex = turn.items.findIndex(
+    (item) =>
+      item.kind === "plan" &&
+      metadataKey(item.metadata, item.contentContext) === parent,
+  );
   if (planIndex === -1) {
     const plan: ChatPlan = {
       kind: "plan",
-      id: `plan-${turn.id}`,
+      id: `plan-${turn.id}${parent === undefined ? "" : `:source:${turn.items.length}`}`,
       entries,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
-    return { ...turn, items: [...turn.items, plan] };
+    return {
+      ...turn,
+      items: [...turn.items, withItemMetadata(plan, metadata)],
+    };
   }
 
   const items = [...turn.items];
   const plan = items[planIndex] as ChatPlan;
-  items[planIndex] = { ...plan, entries, updatedAt: timestamp };
+  items[planIndex] = withItemMetadata(
+    { ...plan, entries, updatedAt: timestamp },
+    metadata,
+  );
   return { ...turn, items };
 }
 
@@ -1357,25 +1422,30 @@ function upsertToolCall(
   const toolIndex = turn.items.findIndex(
     (item) => item.kind === "toolCall" && item.id === toolCall.toolCallId,
   );
-  const next: ChatToolCall = {
-    kind: "toolCall",
-    id: toolCall.toolCallId,
-    title: toolCall.title,
-    ...(toolCall.kind === undefined ? {} : { toolKind: toolCall.kind }),
-    ...(toolCall.status === undefined ? {} : { status: toolCall.status }),
-    content: toolCall.content ?? [],
-    locations: toolCall.locations ?? [],
-    ...(toolCall.rawInput === undefined ? {} : { rawInput: toolCall.rawInput }),
-    ...(toolCall.rawOutput === undefined
-      ? {}
-      : { rawOutput: toolCall.rawOutput }),
-    createdAt:
-      toolIndex === -1
-        ? timestamp
-        : (turn.items[toolIndex] as ChatToolCall).createdAt,
-    updatedAt: timestamp,
-    ...toolTimingFields(timing),
-  };
+  const next = withToolMetadata(
+    {
+      kind: "toolCall",
+      id: toolCall.toolCallId,
+      title: toolCall.title,
+      ...(toolCall.kind === undefined ? {} : { toolKind: toolCall.kind }),
+      ...(toolCall.status === undefined ? {} : { status: toolCall.status }),
+      content: toolCall.content ?? [],
+      locations: toolCall.locations ?? [],
+      ...(toolCall.rawInput === undefined
+        ? {}
+        : { rawInput: toolCall.rawInput }),
+      ...(toolCall.rawOutput === undefined
+        ? {}
+        : { rawOutput: toolCall.rawOutput }),
+      createdAt:
+        toolIndex === -1
+          ? timestamp
+          : (turn.items[toolIndex] as ChatToolCall).createdAt,
+      updatedAt: timestamp,
+      ...toolTimingFields(timing),
+    },
+    toolCall._meta,
+  );
   if (toolIndex === -1) return { ...turn, items: [...turn.items, next] };
 
   const items = [...turn.items];
@@ -1394,51 +1464,61 @@ function updateToolCall(
     (item) => item.kind === "toolCall" && item.id === update.toolCallId,
   );
   if (toolIndex === -1) {
-    const tool: ChatToolCall = {
-      kind: "toolCall",
-      id: update.toolCallId,
-      title: update.title ?? "Tool call",
-      ...(update.kind === undefined || update.kind === null
-        ? {}
-        : { toolKind: update.kind }),
-      ...(update.status === undefined || update.status === null
-        ? {}
-        : { status: update.status }),
-      content: update.content ?? [],
-      locations: update.locations ?? [],
-      ...(update.rawInput === undefined ? {} : { rawInput: update.rawInput }),
-      ...(update.rawOutput === undefined
-        ? {}
-        : { rawOutput: update.rawOutput }),
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      ...toolTimingFields(timing),
-    };
+    const tool = withToolMetadata(
+      {
+        kind: "toolCall",
+        id: update.toolCallId,
+        title: update.title ?? "Tool call",
+        ...(update.kind === undefined || update.kind === null
+          ? {}
+          : { toolKind: update.kind }),
+        ...(update.status === undefined || update.status === null
+          ? {}
+          : { status: update.status }),
+        content: update.content ?? [],
+        locations: update.locations ?? [],
+        ...(update.rawInput === undefined ? {} : { rawInput: update.rawInput }),
+        ...(update.rawOutput === undefined
+          ? {}
+          : { rawOutput: update.rawOutput }),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        ...toolTimingFields(timing),
+      },
+      mergeToolMetadata(undefined, update._meta),
+    );
     return { ...turn, items: [...turn.items, tool] };
   }
 
   const items = [...turn.items];
   const current = items[toolIndex] as ChatToolCall;
-  items[toolIndex] = {
-    ...current,
-    ...(update.title === undefined || update.title === null
-      ? {}
-      : { title: update.title }),
-    ...(update.kind === undefined
-      ? {}
-      : { toolKind: update.kind ?? undefined }),
-    ...(update.status === undefined
-      ? {}
-      : { status: update.status ?? undefined }),
-    ...(update.content === undefined ? {} : { content: update.content ?? [] }),
-    ...(update.locations === undefined
-      ? {}
-      : { locations: update.locations ?? [] }),
-    ...(update.rawInput === undefined ? {} : { rawInput: update.rawInput }),
-    ...(update.rawOutput === undefined ? {} : { rawOutput: update.rawOutput }),
-    updatedAt: timestamp,
-    ...toolTimingFields(timing),
-  };
+  items[toolIndex] = withToolMetadata(
+    {
+      ...current,
+      ...(update.title === undefined || update.title === null
+        ? {}
+        : { title: update.title }),
+      ...(update.kind === undefined
+        ? {}
+        : { toolKind: update.kind ?? undefined }),
+      ...(update.status === undefined
+        ? {}
+        : { status: update.status ?? undefined }),
+      ...(update.content === undefined
+        ? {}
+        : { content: update.content ?? [] }),
+      ...(update.locations === undefined
+        ? {}
+        : { locations: update.locations ?? [] }),
+      ...(update.rawInput === undefined ? {} : { rawInput: update.rawInput }),
+      ...(update.rawOutput === undefined
+        ? {}
+        : { rawOutput: update.rawOutput }),
+      updatedAt: timestamp,
+      ...toolTimingFields(timing),
+    },
+    mergeToolMetadata(current.metadata, update._meta),
+  );
   return { ...turn, items };
 }
 
@@ -1462,7 +1542,10 @@ function settleActiveToolCalls(
       (item.status === "pending" || item.status === "in_progress")
         ? {
             ...item,
-            status,
+            status:
+              childSessionSource(item.metadata) !== undefined
+                ? "unknown"
+                : status,
             updatedAt: timestamp,
             ...(item.startedAt === undefined
               ? {}

@@ -134,11 +134,14 @@ fn cleared_or_invalid_child_sources_settle_as_parent_tools() {
         Value::Null,
         json!({}),
         json!({"id":"","parentID":"root","depth":1}),
+        json!({"id":"  ","parentID":"root","depth":1}),
         json!({"id":"child","parentID":"","depth":1}),
+        json!({"id":"child","parentID":"  ","depth":1}),
         json!({"id":"child","parentID":"root","depth":0}),
         json!({"id":"child","parentID":"root","depth":-1}),
         json!({"id":"child","parentID":"root","depth":1.5}),
         json!({"id":"child","parentID":"root","depth":"1"}),
+        json!({"id":"child","parentID":"root","depth":9007199254740992_u64}),
     ] {
         let mut assembler = HistoryAssembler::new(0);
         assembler.push_update(&update(json!({
@@ -158,6 +161,20 @@ fn cleared_or_invalid_child_sources_settle_as_parent_tools() {
         assert_eq!(payloads(&records), vec![expected.clone()]);
         assert_eq!(reload_payloads(&records), vec![expected]);
     }
+}
+
+#[test]
+fn integral_float_depth_keeps_the_same_child_source_as_live_projection() {
+    let mut assembler = HistoryAssembler::new(0);
+    let child = update(json!({
+        "sessionUpdate":"tool_call","toolCallId":"child:tool","title":"Work",
+        "status":"in_progress",
+        "_meta":{"opencode/child-session":{"id":"child","parentID":"root","depth":1.0}}
+    }));
+    assembler.push_update(&child);
+    let records = assembler.end_turn(StopReason::EndTurn);
+    assert_eq!(payloads(&records), vec![child.clone()]);
+    assert_eq!(reload_payloads(&records), vec![child]);
 }
 
 /// Exercises the production JSONL writer and reader for settled snapshots.

@@ -9,8 +9,14 @@ import type {
 /** Identifies who produced a rendered chat message. */
 export type ChatMessageRole = "user" | "assistant";
 
+/** Preserves explicit provider attribution without inferring a child session lifecycle. */
+export interface ChatItemMetadata {
+  contentContext?: { metadata?: unknown; annotations?: unknown };
+  metadata?: Record<string, unknown>;
+}
+
 /** Represents one fully assembled text message in an Ora session conversation. */
-export interface ChatMessage {
+export interface ChatMessage extends ChatItemMetadata {
   kind: "message";
   id: string;
   role: ChatMessageRole;
@@ -21,7 +27,7 @@ export interface ChatMessage {
 }
 
 /** Represents streamed agent progress that is visually secondary to the final answer. */
-export interface ChatThought {
+export interface ChatThought extends ChatItemMetadata {
   kind: "thought";
   id: string;
   content: string;
@@ -30,7 +36,7 @@ export interface ChatThought {
 }
 
 /** Stores the latest complete plan snapshot for one response turn. */
-export interface ChatPlan {
+export interface ChatPlan extends ChatItemMetadata {
   kind: "plan";
   id: string;
   entries: acp.PlanEntry[];
@@ -46,10 +52,10 @@ export interface ChatPlan {
  * The state is distinct from `failed` on purpose: the tool is not known to have
  * failed, only to have been interrupted before anything said otherwise.
  */
-export type ChatToolCallStatus = acp.ToolCallStatus | "cancelled";
+export type ChatToolCallStatus = acp.ToolCallStatus | "cancelled" | "unknown";
 
 /** Stores one tool call and its latest ACP lifecycle fields. */
-export interface ChatToolCall {
+export interface ChatToolCall extends ChatItemMetadata {
   kind: "toolCall";
   id: string;
   title: string;
@@ -59,6 +65,7 @@ export interface ChatToolCall {
   locations: acp.ToolCallLocation[];
   rawInput?: unknown;
   rawOutput?: unknown;
+
   createdAt: number;
   startedAt?: number;
   durationMs?: number;
@@ -66,7 +73,7 @@ export interface ChatToolCall {
 }
 
 /** Preserves one structured non-text ACP block at its original timeline position. */
-export interface ChatContent {
+export interface ChatContent extends ChatItemMetadata {
   kind: "content";
   id: string;
   source: "message" | "thought";

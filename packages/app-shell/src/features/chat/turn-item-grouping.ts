@@ -5,6 +5,7 @@ import type {
   ChatTurnStatus,
 } from "@ora/chat";
 import type { ActivityItem } from "./activity-group";
+import { groupSubagentItems, type SubagentGroupItem } from "./subagent-items";
 import {
   toolCallGroupKind,
   type ToolCallGroupKind,
@@ -40,7 +41,8 @@ export interface ActivityPhaseItem {
 type TextDisplayItem = Extract<ChatTurnItem, { kind: "message" | "content" }>;
 
 /** The final sequence of blocks rendered for one response turn. */
-export type DisplayTurnItem = ActivityPhaseItem | TextDisplayItem;
+export type DisplayTurnItem =
+  ActivityPhaseItem | TextDisplayItem | SubagentGroupItem;
 
 type ToolGroupedTurnItem = ChatTurnItem | ToolGroup;
 // Every thought is absorbed into an ActivityGroupItem by groupExplorationActivity, so it never
@@ -53,10 +55,25 @@ export function buildTurnDisplayItems(
   items: ChatTurnItem[],
   turnStatus: ChatTurnStatus,
 ): DisplayTurnItem[] {
-  return groupActivityPhases(
-    groupExplorationActivity(groupAdjacentTools(items)),
-    turnStatus,
-  );
+  const result: DisplayTurnItem[] = [];
+  let rootItems: ChatTurnItem[] = [];
+  const flush = () => {
+    result.push(
+      ...groupActivityPhases(
+        groupExplorationActivity(groupAdjacentTools(rootItems)),
+        turnStatus,
+      ),
+    );
+    rootItems = [];
+  };
+  for (const item of groupSubagentItems(items)) {
+    if (item.kind === "subagentGroup") {
+      flush();
+      result.push(item);
+    } else rootItems.push(item);
+  }
+  flush();
+  return result;
 }
 
 /** Groups adjacent tools by intent while preserving boundaries created by messages and plans. */
