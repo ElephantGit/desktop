@@ -439,6 +439,7 @@ fn production_driver_defers_unknown_restore_without_releasing_terminal_history()
                         checkout_execution_id: ExecutionId::new("clone"),
                         model_binding_id: None,
                         git_identity: GitIdentity {
+                        agent_configuration: None,
                             name: "Fixture".into(),
                             email: "fixture@example.test".into(),
                         },
