@@ -114,15 +114,10 @@ async fn restore_cutoff_bounds_a_stalled_host_exchange() -> TestResult {
     };
     let mut config = config;
     config.command_timeout_ms = 100;
-    for (budget, restore_budget) in [
-        (
-            Duration::from_millis(/*millis*/ 100),
-            Duration::from_millis(/*millis*/ 100),
-        ),
-        (
-            Duration::from_secs(/*secs*/ 10),
-            Duration::from_secs(/*secs*/ 10),
-        ),
+    // The configured command budget stays 100 ms; the restore cutoff may be longer or shorter.
+    for restore_budget in [
+        Duration::from_millis(/*millis*/ 100),
+        Duration::from_secs(/*secs*/ 10),
     ] {
         let started = Instant::now();
         let result = tokio::time::timeout(
@@ -130,7 +125,7 @@ async fn restore_cutoff_bounds_a_stalled_host_exchange() -> TestResult {
             transport::execute_before(
                 &client,
                 &intent,
-                budget,
+                config.command_budget(GitIntent::ReadOnly),
                 &config,
                 &Shutdown::default(),
                 started + restore_budget,
