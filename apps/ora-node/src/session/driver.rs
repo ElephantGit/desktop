@@ -32,6 +32,10 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Notify;
 
+/// The one package the Node may still configure for a model binding without a frozen
+/// configuration: the OpenCode build that predates plugin-owned adapters.
+const LEGACY_OPENCODE_PLUGIN: &str = "official/ora-space.opencode";
+
 /// Runs one session execution to its end and writes the terminal result.
 ///
 /// Commands still queued when the session ends are settled as discarded before the live entry
@@ -125,10 +129,6 @@ where
     let Ok(plugin_id) = PluginId::parse(spec.agent_plugin_id.as_str()) else {
         return SessionEnd::agent_failed("agent_plugin_unavailable");
     };
-    // The checkout still has the clone's owner here; the hand-back below covers what Git wrote.
-    let stopping = shared.stopping.subscribe();
-    let restored = resume::restore_prior(
-        &shared.restorer,
     // Admission checked a declaration Cloud holds; under the lease the Node proves the installed
     // bytes, declaration and Settings are that same one before any model authority exists.
     if let Some(configuration) = &spec.agent_configuration
@@ -136,6 +136,10 @@ where
     {
         return SessionEnd::agent_failed(error.code());
     }
+    // The checkout still has the clone's owner here; the hand-back below covers what Git wrote.
+    let stopping = shared.stopping.subscribe();
+    let restored = resume::restore_prior(
+        &shared.restorer,
         &shared.ledger,
         operation,
         execution,
@@ -177,12 +181,17 @@ where
             let Some(config) = shared.config.model_proxy.clone() else {
                 return SessionEnd::agent_failed("model_proxy_unavailable");
             };
-            // A frozen configuration hands the grant to the plugin's adapter; without one the
-            // package is a legacy OpenCode build whose configuration the Node still writes.
-            let route = spec
-                .agent_configuration
-                .as_ref()
-                .map_or(ModelRoute::LegacyOpenCode, ModelRoute::Adapter);
+            // A frozen configuration hands the grant to the plugin's adapter; without one only
+            // the legacy OpenCode package, whose configuration the Node still writes, may run.
+            // Any other plugin would receive a live token it never declared, so it is refused
+            // before a grant exists.
+            let route = match &spec.agent_configuration {
+                Some(configuration) => ModelRoute::Adapter(configuration),
+                None if spec.agent_plugin_id.as_str() == LEGACY_OPENCODE_PLUGIN => {
+                    ModelRoute::LegacyOpenCode
+                }
+                None => return SessionEnd::agent_failed("agent_model_configuration_required"),
+            };
             let home = &shared.config.home_directory;
             match ModelAccess::open(config, binding, execution, home, route).await {
                 Ok(access) => Some(access),

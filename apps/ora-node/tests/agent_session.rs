@@ -801,3 +801,48 @@ async fn a_configuration_the_installed_package_cannot_prove_never_gets_a_grant()
         (Vec::new(), Vec::<String>::new(), Vec::new())
     );
 }
+
+/// Only the legacy OpenCode package may take a model binding without a frozen configuration; any
+/// other plugin is refused before a grant exists, so it never sees a live token.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_undeclared_plugin_never_takes_the_legacy_model_route() {
+    use ora_node_protocol::{
+        AgentSessionSpec, ExecutionId, ModelBindingId, OperationId, PluginId, PluginVersion,
+    };
+    let fixture = Fixture::new();
+    let gateway = gateway::Gateway::new(&fixture.home());
+    let sessions = fixture.model_sessions(gateway.config.clone());
+    sessions.start(
+        OperationId::new(OPERATION),
+        ExecutionId::new(EXECUTION),
+        AgentSessionSpec {
+            agent_configuration: None,
+            node_id: fixture.node().node_id,
+            agent_plugin_id: PluginId::new(PLUGIN_ID),
+            agent_plugin_version: PluginVersion::new(PLUGIN_VERSION),
+            checkout_execution_id: ExecutionId::new(CHECKOUT_EXECUTION),
+            model_binding_id: Some(ModelBindingId::new("binding-1")),
+            prior_revision: None,
+            workspace_directory: vec![],
+            git_identity: identity(),
+            initial_turn: turn("turn-1", "must not be sent"),
+        },
+    );
+    let ended = fixture.ended().await;
+    sessions.shutdown().await;
+    assert_eq!(
+        (ended.reason, ended.detail.as_deref()),
+        (
+            AgentSessionEndReason::AgentFailed,
+            Some("agent_model_configuration_required")
+        )
+    );
+    assert_eq!(
+        (
+            fixture.ledger.events(),
+            grant_routes(&gateway),
+            fixture.plugin_pids()
+        ),
+        (Vec::new(), Vec::<String>::new(), Vec::new())
+    );
+}
