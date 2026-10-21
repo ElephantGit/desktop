@@ -32,6 +32,9 @@ struct Progress {
     retry_at: Instant,
     failures: u32,
     control_pending: bool,
+    // Derived only after this host has reconciled the original guardian and persisted all facts.
+    // Recovery starts without this cache, so old output authority is rebound before settling again.
+    settled: bool,
 }
 
 impl HostCoordinator {
@@ -84,6 +87,7 @@ impl HostCoordinator {
                 retry_at: Instant::now(),
                 failures: 0,
                 control_pending: false,
+                settled: false,
             });
             progress.retry_at = Instant::now();
             progress.control_pending = true;
@@ -166,6 +170,7 @@ impl HostCoordinator {
                 retry_at: Instant::now(),
                 failures: 0,
                 control_pending: false,
+                settled: false,
             });
             progress.failures = if observation.status == HostCoordination::Observing {
                 0
@@ -197,8 +202,15 @@ impl HostCoordinator {
                 || self
                     .progress
                     .get(&scope)
-                    .is_some_and(|progress| progress.retry_at > Instant::now())
+                    .is_some_and(|progress| progress.settled || progress.retry_at > Instant::now())
             {
+                continue;
+            }
+            if let Some(progress) = self.progress.get_mut(&scope)
+                && progress.status == HostCoordination::Observing
+                && self.state.scope_settled(scope)?
+            {
+                progress.settled = true;
                 continue;
             }
             let work = worker::prepare(&mut self.state, scope, &self.guardian, self.owner)?;
@@ -220,6 +232,74 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::os::unix::fs::PermissionsExt;
 
+    /// Confirmed terminal Scopes must not consume all exchange slots when their guardians stop replying.
+    #[tokio::test]
+    async fn closed_scope_guardians_cannot_block_a_fresh_scope()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let home = std::env::var_os("HOME").ok_or("fixture HOME missing")?;
+        let directory = tempfile::Builder::new()
+            .prefix("hc")
+            .permissions(std::fs::Permissions::from_mode(/*mode*/ 0o700))
+            .tempdir_in(home)?;
+        let guardian = directory.path().join("guardian");
+        std::fs::copy("/usr/bin/true", &guardian)?;
+        std::fs::set_permissions(&guardian, std::fs::Permissions::from_mode(/*mode*/ 0o700))?;
+        let mut host = HostCoordinator::new(
+            HostState::create(&directory.path().join("s"))?,
+            guardian.clone(),
+        );
+        let mut listeners = Vec::new();
+        for index in 1..=32 {
+            let scope: ScopeId = format!("00000000-0000-0000-0000-{index:012x}").parse()?;
+            host.create_scope(scope)?;
+            // The real launch boundary supplies the original access identity. The fixture has
+            // already observed closure; its old listener now accepts but never answers again.
+            drop(host.state.begin_guardian(scope, &guardian)?);
+            let access = host.state.guardian_access(scope)?.ok_or("missing access")?;
+            host.close(scope)?;
+            host.state.observe_scope(
+                scope,
+                ora_process_protocol::ScopeState::Closed(
+                    ora_process_protocol::CleanupEvidence::BestEffortComplete,
+                ),
+            )?;
+            host.progress.insert(
+                scope,
+                Progress {
+                    status: HostCoordination::Observing,
+                    retry_at: Instant::now(),
+                    failures: 0,
+                    control_pending: false,
+                    settled: false,
+                },
+            );
+            listeners.push(tokio::net::UnixListener::bind(
+                access
+                    .scope_dir
+                    .join(ora_process_protocol::GuardianChannel::Control.socket_name()),
+            )?);
+        }
+        let fresh: ScopeId = "ffffffff-ffff-ffff-ffff-ffffffffffff".parse()?;
+        host.create_scope(fresh)?;
+        let result = tokio::time::timeout(Duration::from_secs(/*secs*/ 2), async {
+            loop {
+                host.tick()?;
+                if host.state.guardian_access(fresh)?.is_some() {
+                    return Ok::<_, ProcessStateError>(());
+                }
+                tokio::time::sleep(Duration::from_millis(/*millis*/ 5)).await;
+            }
+        })
+        .await;
+        assert!(
+            result.is_ok(),
+            "confirmed closed guardians occupied all slots and prevented fresh Scope dispatch"
+        );
+        result??;
+        drop(listeners);
+        Ok(())
+    }
+
     /// A previously unavailable guardian must not delay newly accepted close intent behind backoff.
     #[tokio::test]
     async fn close_dispatches_without_waiting_for_observation_backoff()
@@ -240,6 +320,7 @@ mod tests {
                 retry_at: Instant::now() + Duration::from_secs(/*secs*/ 6),
                 failures: 6,
                 control_pending: false,
+                settled: false,
             },
         );
         host.close(scope)?;
@@ -274,6 +355,7 @@ mod tests {
                 retry_at,
                 failures: 6,
                 control_pending: false,
+                settled: false,
             },
         );
         host.close(scope)?;
