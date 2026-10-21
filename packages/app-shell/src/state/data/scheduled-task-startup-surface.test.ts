@@ -655,5 +655,71 @@ describe("startup surface of persisted scheduled task facts", () => {
       expect(shouldSurface).toBe(false);
       expect(errorToast).toHaveBeenCalledTimes(1);
     });
+
+    it("does not lose a post-cutoff fact across two failed migration reads", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(10_000);
+      window.localStorage.clear();
+      let pass = 0;
+      const client = createTestClient({
+        listScheduledTasks: async () => {
+          pass++;
+          return { tasks: [TASK, TASK_B] };
+        },
+        listScheduledTaskHistory: async ({ taskId }) => {
+          if (taskId === TASK.id) {
+            if (pass < 3) throw new Error("A unavailable");
+            return { entries: [missedAt(12_000n)] };
+          }
+          return { entries: [missedAt(pass === 1 ? 8_000n : 15_000n)] };
+        },
+      });
+      const queryClient = createTestQueryClient();
+      const { platform } = createPlatform();
+      await surfaceStartupScheduledFacts(client, queryClient, platform);
+      vi.setSystemTime(20_000);
+      await surfaceStartupScheduledFacts(client, queryClient, platform);
+      expect(errorToast).toHaveBeenCalledTimes(1);
+      expect(
+        window.localStorage.getItem("ora.scheduledTaskFactsFirstPassStartedAt"),
+      ).toBe("10000");
+      expect(window.localStorage.getItem("ora.scheduledTaskFactsSeenAt")).toBe(
+        "15000",
+      );
+      vi.setSystemTime(30_000);
+      await surfaceStartupScheduledFacts(client, queryClient, platform);
+      expect(errorToast).toHaveBeenCalledTimes(2);
+    });
+
+    it("surfaces a late commit with a timestamp sampled before the pass began", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(10_000);
+      let reads = 0;
+      const client = createTestClient({
+        listScheduledTasks: async () => ({ tasks: [TASK, TASK_B] }),
+        listScheduledTaskHistory: async ({ taskId }) => {
+          if (taskId === TASK.id) {
+            reads++;
+            return {
+              entries:
+                reads === 1
+                  ? [missedAt(5_000n)]
+                  : [missedAt(5_000n), missedAt(9_999n)],
+            };
+          }
+          return { entries: [failedRun(13_000n)] };
+        },
+      });
+      const queryClient = createTestQueryClient();
+      const { platform } = createPlatform();
+      await surfaceStartupScheduledFacts(client, queryClient, platform);
+      expect(errorToast).toHaveBeenCalledTimes(2);
+      expect(window.localStorage.getItem("ora.scheduledTaskFactsSeenAt")).toBe(
+        "10000",
+      );
+      vi.setSystemTime(20_000);
+      await surfaceStartupScheduledFacts(client, queryClient, platform);
+      expect(errorToast).toHaveBeenCalledTimes(3);
+    });
   });
 });

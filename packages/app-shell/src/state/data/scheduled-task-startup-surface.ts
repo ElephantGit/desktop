@@ -17,7 +17,9 @@ const SEEN_FACTS_INITIALIZED_STORAGE_KEY =
   "ora.scheduledTaskFactsSeenInitialized";
 const SEEN_FACTS_FIRST_PASS_STARTED_AT_STORAGE_KEY =
   "ora.scheduledTaskFactsFirstPassStartedAt";
+const TASK_WATERMARKS_STORAGE_KEY = "ora.scheduledTaskFactsTaskWatermarks";
 const MAX_SEEN_FACTS = 1_000;
+const MAX_TASK_WATERMARKS = 1_000;
 
 /** Reads the timestamp up to which persisted facts were already surfaced to the user. */
 function readSeenBaseline(): number {
@@ -93,6 +95,45 @@ function seenFactsInitialized(): boolean {
     );
   } catch {
     return false;
+  }
+}
+
+/**
+ * Reads the per-task suppression watermarks: for each task, the newest fact time its
+ * own successful history reads have observed. A task's watermark suppresses only that
+ * task's facts, so another task's newer facts can never absorb facts of a task whose
+ * reads failed or whose facts committed after the pass read it.
+ */
+function readTaskWatermarks(): Record<string, number> {
+  try {
+    const raw = window.localStorage.getItem(TASK_WATERMARKS_STORAGE_KEY);
+    if (raw === null) return {};
+    const value: unknown = JSON.parse(raw);
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      return {};
+    }
+    return Object.fromEntries(
+      Object.entries(value).filter(
+        ([, watermark]) =>
+          typeof watermark === "number" && Number.isFinite(watermark),
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function writeTaskWatermarks(watermarks: Record<string, number>): void {
+  try {
+    const retained = Object.entries(watermarks)
+      .sort(([, left], [, right]) => right - left)
+      .slice(0, MAX_TASK_WATERMARKS);
+    window.localStorage.setItem(
+      TASK_WATERMARKS_STORAGE_KEY,
+      JSON.stringify(Object.fromEntries(retained)),
+    );
+  } catch {
+    // Best effort: surfacing must not depend on storage availability.
   }
 }
 
@@ -332,10 +373,23 @@ async function surfaceStartupScheduledFactsOnce(
   let historiesComplete = true;
   const seen = readSeenFacts();
   let seenDirty = false;
+  const watermarks = readTaskWatermarks();
+  let watermarksDirty = false;
   const hasSeen = (key: string): boolean => Object.hasOwn(seen, key);
   const markSeen = (key: string, seenAt: number): void => {
     seen[key] = seenAt;
     seenDirty = true;
+  };
+  // A task's watermark only grows from facts its own reads observed; adoption by
+  // watermark is therefore immune to another task's baseline advance, and a task
+  // without a watermark falls back to the global baseline exactly once (its first
+  // sight), covering legacy facts recorded before this feature.
+  const observeWatermark = (taskId: string, factAt: number): void => {
+    const current = watermarks[taskId];
+    if (current === undefined || factAt > current) {
+      watermarks[taskId] = factAt;
+      watermarksDirty = true;
+    }
   };
 
   let tasks: ScheduledTask[];
@@ -367,18 +421,31 @@ async function surfaceStartupScheduledFactsOnce(
       const factAt = surfaceableFactAt(entry);
       const key = factKey(task.id, entry);
       if (factAt === null || key === null || hasSeen(key)) continue;
-      if (factAt <= baseline || (migrateOnly && factAt <= firstPassCutoff)) {
-        // Facts recorded before this feature (or already covered by the legacy baseline,
-        // including entries evicted from the bounded seen map) are adopted as seen without
-        // replaying them as notifications. The baseline still advances so these facts stay
-        // suppressed even when the bounded seen map later evicts them. During migration
-        // the first-pass cutoff bounds adoption so facts recorded after that pass began
-        // surface even though the initialized marker is still unwritten.
+      // Suppression follows the task's own watermark once one exists; facts of a
+      // task without one fall back to the global baseline exactly once. During
+      // migration, adoption is bounded by the first-pass cutoff alone: an
+      // incomplete earlier pass must not let any baseline absorb facts recorded
+      // after that pass began.
+      const suppresses = migrateOnly
+        ? factAt <= firstPassCutoff
+        : Object.hasOwn(watermarks, task.id)
+          ? factAt <= watermarks[task.id]
+          : factAt <= baseline;
+      if (suppresses) {
+        // Facts recorded before this feature (or already covered by this task's
+        // observed watermark, including entries evicted from the bounded seen map)
+        // are adopted as seen without replaying them as notifications. The
+        // baseline still advances so these facts stay suppressed even when the
+        // bounded seen map later evicts them. During migration the first-pass
+        // cutoff bounds adoption so facts recorded after that pass began surface
+        // even though the initialized marker is still unwritten.
         newest = Math.max(newest, factAt);
         markSeen(key, factAt);
+        observeWatermark(task.id, factAt);
         continue;
       }
       newest = Math.max(newest, factAt);
+      observeWatermark(task.id, factAt);
       const title =
         entry.kind === "missed"
           ? t("scheduledTask.notificationMissedTitle")
@@ -399,6 +466,7 @@ async function surfaceStartupScheduledFactsOnce(
   }
 
   if (seenDirty) writeSeenFacts(seen);
+  if (watermarksDirty) writeTaskWatermarks(watermarks);
   if (newest > legacyBaseline) {
     // Advancing only to this pass's start: a fact recorded after the pass read its task
     // carries a timestamp past this point, so the next pass still surfaces it instead of
