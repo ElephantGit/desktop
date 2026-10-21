@@ -27,9 +27,14 @@ WHERE worktree_base_branch IS NULL
 "#,
 ];
 
+const DOWN_STATEMENTS: &[&str] = &[
+    "ALTER TABLE scheduled_tasks DROP COLUMN worktree_base_branch;",
+    "ALTER TABLE scheduled_tasks DROP COLUMN schedule_anchor_at;",
+];
+
 /// Adds scheduler-only facts without guessing a branch when older project metadata lacks one.
 pub fn migration() -> Migration {
-    Migration::new("0016", UP_STATEMENTS, &[])
+    Migration::new("0016", UP_STATEMENTS, DOWN_STATEMENTS)
 }
 
 #[cfg(test)]

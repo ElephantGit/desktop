@@ -3,10 +3,12 @@ use super::Migration;
 const UP_STATEMENTS: &[&str] =
     &["ALTER TABLE scheduled_runs ADD COLUMN worktree_task_id TEXT NULL;"];
 
+const DOWN_STATEMENTS: &[&str] = &["ALTER TABLE scheduled_runs DROP COLUMN worktree_task_id;"];
+
 /// Persists the task-owned worktree a run executed in so history can open or discard
 /// the retained worktree and retention can bound it after a restart.
 pub fn migration() -> Migration {
-    Migration::new("0018", UP_STATEMENTS, &[])
+    Migration::new("0018", UP_STATEMENTS, DOWN_STATEMENTS)
 }
 
 #[cfg(test)]
