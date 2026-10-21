@@ -1464,11 +1464,13 @@ mod tests {
         run_integration(async {
             use ora_application::{
                 ProjectRepository, ScheduledOccurrenceRepository, ScheduledTaskRepository,
+                TaskRepository,
             };
             use ora_db::{
-                DatabaseBootstrapper, DatabaseLocation, SqliteProjectRepository,
-                SqliteScheduledRunRepository, SqliteScheduledTaskRepository,
-                SqliteWorktreeProvisioningLeaseRepository, default_migration_catalog,
+                DatabaseBootstrapper, DatabaseLocation, SqliteGitCleanupJobRepository,
+                SqliteProjectRepository, SqliteScheduledRunRepository, SqliteScheduledTaskRepository,
+                SqliteTaskRepository, SqliteWorktreeProvisioningLeaseRepository,
+                default_migration_catalog,
             };
             use ora_domain::{
                 AuditFields, Project, ProjectId, ScheduledOccurrence, ScheduledRun, ScheduledRunId,
@@ -1544,14 +1546,16 @@ mod tests {
                 .path()
                 .join("orphaned-worktrees")
                 .join("lease-recovery");
-            let branch = "ora/5c2a8e7d-3f4a-4b6c-9d8e-1a2b3c4d5e6f";
+            // The branch must match the production identity derivation, or the
+            // cleanup job fails identity validation before any Git call.
+            let branch = ora_application::branch_name_for_workspace(&workspace_id);
             let lease = WorktreeProvisioningLease::new(
                 WorktreeProvisioningLeaseId::new("lease-recovery"),
                 ProjectId::new("project-1"),
                 workspace_id.clone(),
                 git.repo_path().to_string_lossy().into_owned(),
                 checkout.to_string_lossy().into_owned(),
-                branch.to_string(),
+                branch.clone(),
                 /*lease_expires_at*/ 1_000, // already expired when the worker runs
                 /*now*/ 900,
             );
@@ -1562,7 +1566,7 @@ mod tests {
                 std::ffi::OsStr::new("worktree"),
                 std::ffi::OsStr::new("add"),
                 std::ffi::OsStr::new("-b"),
-                std::ffi::OsStr::new(branch),
+                std::ffi::OsStr::new(&branch),
                 checkout.as_os_str(),
             ])
             .expect("create the physical checkout");
@@ -1577,30 +1581,72 @@ mod tests {
             .expect("backend");
 
             // The cleanup worker's first pass reclaims the expired lease into a
-            // cleanup job; poll for the lease to disappear.
-            let mut reclaimed = false;
-            for _ in 0..300 {
-                let probe = DatabaseBootstrapper::system()
+            // job and completes it, removing the physical checkout and branch.
+            // Read failures are hard errors here: a claim of recovery must not
+            // pass on a probe that silently failed.
+            let reopen = || {
+                DatabaseBootstrapper::system()
                     .bootstrap_repository_pool(
                         &DatabaseLocation::path(&database_path),
                         &default_migration_catalog().expect("migration catalog"),
                     )
-                    .expect("reopen for polling");
-                if SqliteWorktreeProvisioningLeaseRepository::new(probe)
+                    .expect("reopen database")
+            };
+            let mut recovered = false;
+            for _ in 0..300 {
+                let probe = reopen();
+                let leases_gone = SqliteWorktreeProvisioningLeaseRepository::new(probe.clone())
                     .list_leases()
-                    .unwrap_or_default()
-                    .is_empty()
-                {
-                    reclaimed = true;
+                    .expect("list leases")
+                    .is_empty();
+                let jobs = ora_db::SqliteGitCleanupJobRepository::new(probe)
+                    .list_jobs()
+                    .expect("list cleanup jobs");
+                let completed = jobs.len() == 1
+                    && matches!(jobs[0].state, ora_domain::GitCleanupJobState::Completed);
+                if leases_gone && completed && !checkout.exists() {
+                    recovered = true;
                     break;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
             assert!(
-                reclaimed,
-                "the expired lease is reclaimed by the production cleanup worker after restart"
+                recovered,
+                "the expired lease's checkout and branch are reclaimed after restart"
             );
-            let _ = backend;
+            assert!(
+                git.run_git(["branch", "--list", &branch])
+                    .expect("list branch")
+                    .trim()
+                    .is_empty(),
+                "the branch is removed"
+            );
+
+            // A second restart must not duplicate the job or any side effect.
+            drop(backend);
+            let probe = reopen();
+            assert!(
+                SqliteWorktreeProvisioningLeaseRepository::new(probe.clone())
+                    .list_leases()
+                    .expect("list leases")
+                    .is_empty(),
+                "no lease remains after a second restart"
+            );
+            assert_eq!(
+                ora_db::SqliteGitCleanupJobRepository::new(probe.clone())
+                    .list_jobs()
+                    .expect("list cleanup jobs")
+                    .len(),
+                1,
+                "no duplicate cleanup job after a second restart"
+            );
+            assert_eq!(
+                SqliteTaskRepository::new(probe)
+                    .list_tasks()
+                    .expect("list tasks"),
+                Vec::new(),
+                "no task row was half-committed"
+            );
         });
     }
 
