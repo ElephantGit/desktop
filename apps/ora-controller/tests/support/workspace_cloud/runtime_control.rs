@@ -20,7 +20,7 @@ impl WorkspaceCloud {
         self.lock().force.next_permit_lifetime = Some(lifetime);
     }
 
-    /// Preserves the exact authority issued for each effect across Controller restarts.
+    /// Records every permit issued, in order, so tests can prove a retry obtained fresh authority.
     pub fn effect_permit_replies(
         &self,
     ) -> Vec<(proto::GetEffectPermitRequest, proto::RuntimeEffectPermit)> {

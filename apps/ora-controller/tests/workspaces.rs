@@ -373,13 +373,33 @@ impl World {
 
 /// Runs `test` against a Controller with a Substrate and no static Node.
 fn scenario<Fut: Future<Output = ()>>(requested_ref: &str, test: impl FnOnce(World) -> Fut) {
+    scenario_with_substrate_timeout(requested_ref, /*request_timeout_ms*/ 2_000, test);
+}
+
+/// Allows slow journal tests to retain the default scenario setup without timing out the request.
+fn scenario_with_substrate_timeout<Fut: Future<Output = ()>>(
+    requested_ref: &str,
+    request_timeout_ms: u64,
+    test: impl FnOnce(World) -> Fut,
+) {
     ora_logging::initialize_test_clock();
-    ora_logging::with_trace_logging(|| run_scenario(requested_ref, test));
+    ora_logging::with_trace_logging(|| {
+        run_scenario_with_substrate_timeout(requested_ref, request_timeout_ms, test)
+    });
 }
 
 /// The scenario body; the caller installs the test-scoped subscriber around it, so every task of
 /// the current-thread runtime logs under that subscriber.
 fn run_scenario<Fut: Future<Output = ()>>(requested_ref: &str, test: impl FnOnce(World) -> Fut) {
+    run_scenario_with_substrate_timeout(requested_ref, /*request_timeout_ms*/ 2_000, test);
+}
+
+/// Builds the same scenario with a request timeout chosen for the journal delay under test.
+fn run_scenario_with_substrate_timeout<Fut: Future<Output = ()>>(
+    requested_ref: &str,
+    request_timeout_ms: u64,
+    test: impl FnOnce(World) -> Fut,
+) {
     let root = tempfile::Builder::new()
         .permissions(fs::Permissions::from_mode(/*mode*/ 0o700))
         .tempdir_in(std::env::var_os("HOME").unwrap())
@@ -429,7 +449,7 @@ fn run_scenario<Fut: Future<Output = ()>>(requested_ref: &str, test: impl FnOnce
                         effects_url,
                         router_url,
                         atespace: "local".into(),
-                        request_timeout_ms: 2_000,
+                        request_timeout_ms,
                     }),
                 },
                 protected_state_directories: Vec::new(),

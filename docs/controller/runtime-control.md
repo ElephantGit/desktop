@@ -79,6 +79,10 @@ ensure never executed. A target rejection, execution failure or unreachable Subs
 independent targets. Cloud unavailability during permit or confirmation calls, or local lease loss,
 stops new dispatch. Every new PUT checks permit epoch, expiry and the current local lease after the
 journal GET, and checks again after any bounded Node control close; preparation never extends a permit.
+Local dispatch requires more than 2 seconds of permit lifetime remaining, matching Sandbox Server.
+For lifecycle effects, permit expiry within the same epoch enters RetryWait; the next attempt fetches
+a fresh permit and continues the original effect. An epoch mismatch ends the round without writing
+defer state.
 
 Before a new terminate PUT, the worker attempts to remove the existing Fleet target and send its
 Shutdown control close. A missing connection or close acknowledgement does not prevent termination.
@@ -89,8 +93,9 @@ admission error or a failed journal's top-level error) enters the existing Block
 cannot retransmit that ensure. Ordinary 503, Docker failures and stale permission are not reclassified
 as tombstones, and successful journals retain their historical results.
 
-The `ora-controller` tests in `src/cloud/substrate/put_admission.rs` and
-`tests/workspaces/force_stop.rs` exercise permit, control-close, termination-evidence and tombstone
+The `ora-controller` tests in `src/cloud/substrate/put_admission.rs`,
+`tests/workspaces/force_stop.rs`, `tests/workspaces/permit_expiry.rs` and
+`src/cloud/operations/eligibility.rs` exercise permit, control-close, termination-evidence and tombstone
 refusal boundaries over real HTTP/gRPC/WebSocket protocols with local doubles. They do not prove
 production authorization, real container destruction, or joint Cloud–Controller–Substrate fault
 recovery. The Controller never invents targets Cloud omitted.

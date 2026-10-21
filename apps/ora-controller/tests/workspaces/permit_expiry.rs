@@ -54,7 +54,7 @@ fn ordinary_delete_renews_short_lived_permit_without_restart() {
 
 /// Journal I/O consumes the PUT margin; reoffering the retry renews the same effect's authority.
 fn renew_short_lived_permit(operation_kind: proto::OperationKind) {
-    scenario("main", |world| async move {
+    let test = |world: World| async move {
         if operation_kind == proto::OperationKind::DeleteWorkspace {
             let create = world.cloud.queue(proto::OperationKind::CreateWorkspace);
             settled(&world, &create, proto::OperationState::Succeeded).await;
@@ -69,7 +69,7 @@ fn renew_short_lived_permit(operation_kind: proto::OperationKind) {
         // The GET begins above the two-second margin, then crosses it within its request timeout.
         world
             .cloud
-            .next_effect_permit_lifetime(Duration::from_secs(/*secs*/ 3));
+            .next_effect_permit_lifetime(Duration::from_secs(/*secs*/ 4));
         let operation = world.cloud.queue(operation_kind);
         let effect_id = tokio::time::timeout(Duration::from_secs(/*secs*/ 2), read)
             .await
@@ -200,7 +200,7 @@ fn renew_short_lived_permit(operation_kind: proto::OperationKind) {
                         late_ensure_fenced: true,
                     })
                 }
-                _ => panic!("unsupported recovery operation"),
+                other => panic!("unsupported recovery operation: {other:?}"),
             }),
         });
         assert_eq!(
@@ -213,7 +213,8 @@ fn renew_short_lived_permit(operation_kind: proto::OperationKind) {
             ),
             (expected, generation)
         );
-    });
+    };
+    scenario_with_substrate_timeout("main", /*request_timeout_ms*/ 5_000, test);
 }
 
 /// A permanent Substrate request refusal remains blocked rather than being offered as a retry.

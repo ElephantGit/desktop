@@ -253,6 +253,10 @@ fn validate_permit(
         return Err(SubstrateError::EpochMismatch);
     }
     if now_ms + MIN_PERMIT_REMAINING_MS >= permit.expires_at_ms {
+        ora_logging::ora_warn!(
+            remaining_ms = permit.expires_at_ms - now_ms,
+            "runtime effect permit has insufficient remaining lifetime"
+        );
         return Err(SubstrateError::PermitExpired);
     }
     Ok(())
