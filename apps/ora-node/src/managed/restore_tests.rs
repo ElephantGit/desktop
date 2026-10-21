@@ -27,6 +27,7 @@ fn session() -> StartAgentSessionMessage {
         execution_id: ExecutionId::new("restore-session"),
         payload: StartAgentSession {
             spec: AgentSessionSpec {
+                workspace_directory: Vec::new(),
                 node_id: NodeId::new("node"),
                 agent_plugin_id: PluginId::new("official/agent"),
                 agent_plugin_version: PluginVersion::new("1.0.0"),

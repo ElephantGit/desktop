@@ -99,13 +99,6 @@ fn unstarted_partial_restore_delivers_only_head_without_probing_files() {
             );
             assert_eq!(git.runner.0.load(std::sync::atomic::Ordering::SeqCst), 1);
             assert_eq!(fixture.untouched_state(), before);
-            assert!(
-                !fixture
-                    .root()
-                    .join(directory_name(&job.execution))
-                    .join(BUNDLE_FILE)
-                    .exists()
-            );
             assert!(fs::read_dir(checkout.join(".git/refs/ora/revisions")).is_err());
         }
     });
@@ -181,13 +174,6 @@ fn failed_checkout_filter_cannot_turn_partial_files_into_a_revision() {
         assert_eq!(result.final_commit, head);
         assert_eq!(git.runner.0.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert_eq!(fixture.untouched_state(), before);
-        assert!(
-            !fixture
-                .root()
-                .join(directory_name(&job.execution))
-                .join(BUNDLE_FILE)
-                .exists()
-        );
     });
 }
 

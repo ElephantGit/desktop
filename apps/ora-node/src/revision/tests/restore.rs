@@ -2,6 +2,19 @@
 //! Node clone ADR D9).
 use super::super::restore::RevisionRestorer;
 use super::*;
+
+/// The fixture runner has no host boundary, so its deadline is the caller's own timeout.
+impl crate::revision::RestoreGitRunner for CliGitRunner {
+    fn run_bounded_before(
+        &self,
+        command: &gitlancer::GitCommand,
+        stdout: usize,
+        stderr: usize,
+        _deadline: std::time::Instant,
+    ) -> Result<gitlancer::GitOutput, gitlancer::GitExecError> {
+        gitlancer::GitRunner::run_bounded(self, command, stdout, stderr)
+    }
+}
 use crate::GitAccessConfig;
 use crate::git_server::{GitServerAccess, RetryPolicy};
 use crate::session::{

@@ -379,6 +379,7 @@ impl crate::PriorRevisionRestore for UnknownRestore {
     async fn restore(
         &self,
         _request: crate::RestoreRequest,
+        _cancel: crate::RestoreCancel,
     ) -> Result<crate::Restored, crate::RestoreFailure> {
         Err(crate::RestoreFailure::Unavailable)
     }
@@ -428,6 +429,7 @@ fn production_driver_defers_unknown_restore_without_releasing_terminal_history()
                     OperationId::new("operation"),
                     execution.clone(),
                     AgentSessionSpec {
+                        workspace_directory: Vec::new(),
                         node_id: node.node_id.clone(),
                         agent_plugin_id: PluginId::new("official/ora-space.echo"),
                         agent_plugin_version: PluginVersion::new("1.0.0"),
