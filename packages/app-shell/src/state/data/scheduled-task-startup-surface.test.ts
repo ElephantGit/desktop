@@ -74,6 +74,9 @@ function failedRun(updatedAt: bigint, id = "run-1"): ScheduledTaskHistoryEntry {
     worktreePath: null,
     worktreeTaskId: null,
     failureReason: "timeout",
+    verdict: null,
+    verdictDetail: null,
+    verdictAt: null,
     createdAt: 2_000n,
     updatedAt,
   };

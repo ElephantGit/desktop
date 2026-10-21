@@ -22,7 +22,11 @@ import { useDeleteTask } from "../../state/hooks/use-workspace-mutations";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
 import { ScheduledTaskConfirmDialog } from "./scheduled-task-confirm-dialog";
-import { formatTimestamp, historyStatusLabel } from "./scheduled-task-format";
+import {
+  formatTimestamp,
+  historyStatusLabel,
+  historyVerdictLabel,
+} from "./scheduled-task-format";
 
 /** The run statuses whose history entry may still reference a retained worktree. */
 const RETAINED_WORKTREE_STATUSES = new Set([
@@ -157,6 +161,12 @@ export function ScheduledTaskHistoryDialog({
                           worktree: entry.worktreePath,
                         })}`}
                   </p>
+                  {historyVerdictLabel(entry, t) !== null && (
+                    <p className="mt-1 text-xs">
+                      {t("scheduledTask.verdictLabel")}:{" "}
+                      {historyVerdictLabel(entry, t)}
+                    </p>
+                  )}
                   {entry.worktreeTaskId !== null &&
                     RETAINED_WORKTREE_STATUSES.has(entry.status) &&
                     worktreeTaskIds.has(entry.worktreeTaskId) && (

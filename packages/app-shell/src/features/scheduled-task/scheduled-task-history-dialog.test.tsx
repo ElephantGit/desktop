@@ -51,6 +51,9 @@ function historyEntry(overrides: {
     worktreePath: "worktrees/kept",
     worktreeTaskId: overrides.worktreeTaskId,
     failureReason: null,
+    verdict: null,
+    verdictDetail: null,
+    verdictAt: null,
     createdAt: 10n,
     updatedAt: 15n,
   };

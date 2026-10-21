@@ -25,6 +25,9 @@ function failedHistory(id: string): ScheduledTaskHistoryEntry {
     worktreePath: null,
     worktreeTaskId: null,
     failureReason: "timeout",
+    verdict: null,
+    verdictDetail: null,
+    verdictAt: null,
     createdAt: 2_000n,
     updatedAt: 5_000n,
   };
