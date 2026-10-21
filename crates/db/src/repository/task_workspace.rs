@@ -604,7 +604,8 @@ mod scheduled_ownership_tests {
                 )
                 .expect("install delete trigger");
             Ok(())
-        });
+        })
+        .expect("install delete trigger");
 
         let outcome = SqliteTaskWorkspaceRepository::with_clock(pool.clone(), TestClock::new(10))
             .commit_worktree_task_for_scheduled_run(

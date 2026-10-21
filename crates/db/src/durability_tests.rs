@@ -317,3 +317,132 @@ fn outstanding_provisioning_lease_survives_a_power_cut() -> Result<(), Box<dyn s
     );
     Ok(())
 }
+
+#[test]
+fn a_crash_between_lease_write_and_ownership_commit_leaves_no_half_commit()
+-> Result<(), Box<dyn std::error::Error>> {
+    use crate::{RepositoryPool, SqliteScheduledRunRepository, SqliteScheduledTaskRepository};
+    use ora_application::{
+        ScheduledOccurrenceCandidate, ScheduledOccurrenceRepository, ScheduledTaskRepository,
+    };
+    use ora_domain::{
+        ScheduledOccurrence, ScheduledRun, ScheduledRunId, ScheduledTask, ScheduledTaskApproval,
+        ScheduledTaskExecutionLocation, ScheduledTaskId, ScheduledTaskSchedule,
+    };
+
+    let simulator = register_simulator();
+    let directory = TempDir::new()?;
+    let location = DatabaseLocation::path(simulator.database_uri(directory.path()));
+    let catalog = default_migration_catalog()?;
+
+    let pool = with_trace_logging(|| {
+        DatabaseBootstrapper::new(FixedTimestampSource)
+            .bootstrap_repository_pool(&location, &catalog)
+    })?;
+    SqliteProjectRepository::with_clock(pool.clone(), TestClock::new(10)).create_project(
+        Project::new(
+            ProjectId::new("project-1"),
+            "Crash-window project",
+            AuditFields::new(10, 10, /*is_deleted*/ false),
+        ),
+        WorkspaceLocation::local_filesystem(
+            directory.path().join("repo").to_string_lossy().into_owned(),
+        ),
+    )?;
+    let definition = ScheduledTask::new(
+        ScheduledTaskId::new("scheduled-task-1"),
+        "Quality report",
+        true,
+        ScheduledTaskSchedule::daily(9, 0)?,
+        ScheduledTaskExecutionLocation::Local,
+        ProjectId::new("project-1"),
+        AgentRef::parse("ora/agent")?,
+        None,
+        "Run the quality gate",
+        Some(ScheduledTaskApproval::full_auto_in_worktree(10)),
+        AuditFields::new(10, 10, false),
+    )?;
+    SqliteScheduledTaskRepository::new(pool.clone()).create_scheduled_task(definition.clone())?;
+    let run_id = ScheduledRunId::new("run-crash-window");
+    let run = ScheduledRun::accepted(
+        run_id.clone(),
+        ScheduledOccurrence {
+            task_id: definition.id.clone(),
+            scheduled_at: 1_000,
+        },
+        &definition,
+        1_001,
+    );
+    SqliteScheduledRunRepository::new(pool.clone())
+        .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::Run(Box::new(run)))?;
+    let workspace_id = WorkspaceId::new("workspace-crash");
+    let lease = WorktreeProvisioningLease::new(
+        WorktreeProvisioningLeaseId::new("lease-crash"),
+        ProjectId::new("project-1"),
+        workspace_id,
+        directory.path().join("repo").to_string_lossy().into_owned(),
+        directory
+            .path()
+            .join("worktrees")
+            .join("crash")
+            .to_string_lossy()
+            .into_owned(),
+        "ora/task-crash",
+        /*lease_expires_at*/ i64::MAX,
+        /*now*/ 10,
+    );
+    SqliteWorktreeProvisioningLeaseRepository::new(pool.clone()).create_lease(&lease)?;
+
+    // The write-ahead lease and the admitted run are durable; the ownership
+    // commit never ran. Cut power while the pool is still live: nothing gets a
+    // normal Drop path or compensation.
+    simulator.crash();
+    drop(pool);
+
+    let assert_crash_window_state =
+        |after: &RepositoryPool| -> Result<(), Box<dyn std::error::Error>> {
+            assert_eq!(
+                SqliteWorktreeProvisioningLeaseRepository::new(after.clone()).list_leases()?,
+                vec![lease.clone()],
+                "the write-ahead lease still owns the resources"
+            );
+            assert_eq!(
+                crate::repository::SqliteTaskRepository::new(after.clone()).list_tasks()?,
+                Vec::new(),
+                "no task rows were partially committed"
+            );
+            let binding = after.with_connection(|connection| {
+            let row = connection.query_row(
+                "SELECT worktree_task_id, worktree_path FROM scheduled_runs WHERE id = 'run-crash-window'",
+                [],
+                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+            )?;
+            Ok(row)
+        })?;
+            assert_eq!(
+                binding,
+                (None, None),
+                "the run never gained a partial ownership binding"
+            );
+            Ok(())
+        };
+
+    // First reboot: the in-memory state is gone, the durable rows remain.
+    let rebooted = with_trace_logging(|| {
+        DatabaseBootstrapper::new(FixedTimestampSource)
+            .bootstrap_repository_pool(&location, &catalog)
+    })?;
+    assert_crash_window_state(&rebooted)?;
+    drop(rebooted);
+
+    // Repeated reopen is idempotent: no recovery pass may create a task or
+    // duplicate a lease/binding on a second boot.
+    let rebooted_again = with_trace_logging(|| {
+        DatabaseBootstrapper::new(FixedTimestampSource)
+            .bootstrap_repository_pool(&location, &catalog)
+    })?;
+    assert_crash_window_state(&rebooted_again)?;
+
+    let _ = run_id;
+    Ok(())
+}
