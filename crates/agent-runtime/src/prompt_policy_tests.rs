@@ -115,6 +115,11 @@ impl ProcessSpawner for PipeSpawner {
 enum AgentInput {
     Finish(String, StopReason),
     Update(SessionNotification),
+    /// Asks the host to approve one tool call, exactly as a provider does mid-turn.
+    Permission {
+        session_id: String,
+        tool_call: Value,
+    },
     Disconnect,
     CancelReply {
         session_id: String,
@@ -436,6 +441,16 @@ async fn fake_agent(
             input = commands.recv() => match input {
                 Some(AgentInput::Finish(session, reason)) => Some(json!({"jsonrpc":"2.0","id":pending.remove(&session).expect("pending prompt"),"result":PromptResponse::new(reason)})),
                 Some(AgentInput::Update(update)) => Some(json!({"jsonrpc":"2.0","method":"session/update","params":update})),
+                Some(AgentInput::Permission { session_id, tool_call }) => Some(json!({
+                    "jsonrpc":"2.0",
+                    "id": format!("permission-{session_id}"),
+                    "method":"session/request_permission",
+                    "params":{
+                        "sessionId": session_id,
+                        "toolCall": tool_call,
+                        "options":[{"optionId":"allow-once","name":"Allow once","kind":"allow_once"}],
+                    },
+                })),
                 Some(AgentInput::Disconnect) | None => break,
                 Some(AgentInput::CancelReply { session_id, reply, configured }) => {
                     cancel_replies.insert(session_id, reply);
@@ -581,6 +596,107 @@ fn projected_child_activity_does_not_keep_an_unrelated_parent_prompt_alive() {
             ));
         }
         tokio::time::advance(Duration::from_secs(15)).await;
+        assert_eq!(fixture.next_frame().await["method"], "session/cancel");
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        assert!(matches!(
+            stream.recv().await.unwrap().unwrap(),
+            PromptSessionEvent::Retrying { retry: 1, .. }
+        ));
+        fixture
+            .agent
+            .send(AgentInput::Finish(
+                "parent".to_string(),
+                StopReason::EndTurn,
+            ))
+            .unwrap();
+        assert_eq!(completion(&mut stream).await, StopReason::EndTurn);
+        fixture.shutdown().await;
+    });
+}
+
+/// A projected child permission round trip is routed but cannot rearm the parent window.
+#[test]
+fn projected_child_permission_does_not_rearm_the_parent_prompt() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("parent");
+        let mut stream = fixture
+            .manager
+            .prompt_session(prompt("parent"))
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        tokio::time::advance(Duration::from_secs(30)).await;
+        fixture
+            .agent
+            .send(AgentInput::Permission {
+                session_id: "parent".to_string(),
+                tool_call: json!({
+                    "toolCallId": "child:tool",
+                    "_meta": {"opencode/child-session": {"id": "child", "parentID": "parent", "depth": 1}},
+                }),
+            })
+            .unwrap();
+        // The auto-allow response proves the request went through the production route.
+        let allowed = fixture.next_frame().await;
+        assert_eq!(allowed["id"], json!("permission-parent"));
+        assert_eq!(
+            allowed["result"]["outcome"]["optionId"],
+            json!("allow-once")
+        );
+        // The actor settles the permission in the same task; letting it run once
+        // keeps the timer advance below independent of scheduling order.
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(15)).await;
+        assert_eq!(fixture.next_frame().await["method"], "session/cancel");
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        assert!(matches!(
+            stream.recv().await.unwrap().unwrap(),
+            PromptSessionEvent::Retrying { retry: 1, .. }
+        ));
+        fixture
+            .agent
+            .send(AgentInput::Finish(
+                "parent".to_string(),
+                StopReason::EndTurn,
+            ))
+            .unwrap();
+        assert_eq!(completion(&mut stream).await, StopReason::EndTurn);
+        fixture.shutdown().await;
+    });
+}
+
+/// A parent tool's awaited permission still rearms the window through the routed actor.
+#[test]
+fn parent_permission_rearms_the_prompt_window() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("parent");
+        let mut stream = fixture
+            .manager
+            .prompt_session(prompt("parent"))
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        tokio::time::advance(Duration::from_secs(30)).await;
+        fixture
+            .agent
+            .send(AgentInput::Permission {
+                session_id: "parent".to_string(),
+                tool_call: json!({"toolCallId": "delegate"}),
+            })
+            .unwrap();
+        let allowed = fixture.next_frame().await;
+        assert_eq!(
+            allowed["result"]["outcome"]["optionId"],
+            json!("allow-once")
+        );
+        tokio::task::yield_now().await;
+        // The awaited parent permission rearmed the full window, so the original
+        // deadline no longer cancels the prompt.
+        tokio::time::advance(Duration::from_secs(15)).await;
+        assert!(fixture.frames.try_recv().is_err());
+        tokio::time::advance(Duration::from_secs(30)).await;
         assert_eq!(fixture.next_frame().await["method"], "session/cancel");
         assert_eq!(fixture.next_frame().await["method"], "session/prompt");
         assert!(matches!(
