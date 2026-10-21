@@ -1455,6 +1455,155 @@ mod tests {
         });
     }
 
+    /// A real restart replays recovery: a write-ahead lease with a physically
+    /// created checkout, abandoned before its ownership commit, is reclaimed by
+    /// the production cleanup worker into a job that removes the checkout and
+    /// branch — and a second restart must not duplicate any side effect.
+    #[test]
+    fn integration_expired_lease_is_reclaimed_after_a_crash_before_commit() {
+        run_integration(async {
+            use ora_application::{
+                ProjectRepository, ScheduledOccurrenceRepository, ScheduledTaskRepository,
+            };
+            use ora_db::{
+                DatabaseBootstrapper, DatabaseLocation, SqliteProjectRepository,
+                SqliteScheduledRunRepository, SqliteScheduledTaskRepository,
+                SqliteWorktreeProvisioningLeaseRepository, default_migration_catalog,
+            };
+            use ora_domain::{
+                AuditFields, Project, ProjectId, ScheduledOccurrence, ScheduledRun, ScheduledRunId,
+                ScheduledTask, ScheduledTaskApproval, ScheduledTaskExecutionLocation,
+                ScheduledTaskId, ScheduledTaskSchedule, WorkspaceId, WorkspaceLocation,
+                WorktreeProvisioningLease, WorktreeProvisioningLeaseId,
+            };
+            use tempfile::TempDir;
+
+            ora_logging::initialize_test_clock();
+            let temporary = TempDir::new().expect("backend fixture");
+            let git = GitTestScaffold::new("scheduled-lease-recovery").expect("Git fixture");
+            git.write_file(git.repo_path(), "README.md", "fixture\n")
+                .expect("seed repository");
+            git.stage_all_and_commit("initial").expect("initial commit");
+
+            let database_path = temporary.path().join("ora.sqlite3");
+            let pool = DatabaseBootstrapper::system()
+                .bootstrap_repository_pool(
+                    &DatabaseLocation::path(&database_path),
+                    &default_migration_catalog().expect("migration catalog"),
+                )
+                .expect("bootstrap database");
+            SqliteProjectRepository::with_clock(pool.clone(), crate::clock::SystemClock)
+                .create_project(
+                    Project::new(
+                        ProjectId::new("project-1"),
+                        "Lease recovery fixture",
+                        AuditFields::new(10, 10, /*is_deleted*/ false),
+                    ),
+                    WorkspaceLocation::local_filesystem(
+                        git.repo_path().to_string_lossy().into_owned(),
+                    ),
+                )
+                .expect("create project");
+            let definition = ScheduledTask::new(
+                ScheduledTaskId::new("scheduled-task-it"),
+                "Integration task",
+                true,
+                ScheduledTaskSchedule::daily(9, 0).expect("daily schedule"),
+                ScheduledTaskExecutionLocation::Local,
+                ProjectId::new("project-1"),
+                ora_domain::AgentRef::parse("ora/agent").expect("agent ref"),
+                None,
+                "Run the integration prompt",
+                Some(ScheduledTaskApproval::full_auto_in_worktree(10)),
+                AuditFields::new(10, 10, /*is_deleted*/ false),
+            )
+            .expect("task");
+            SqliteScheduledTaskRepository::new(pool.clone())
+                .create_scheduled_task(definition.clone())
+                .expect("create definition");
+            let run_id = ScheduledRunId::new("run-lease-recovery");
+            let run = ScheduledRun::accepted(
+                run_id.clone(),
+                ScheduledOccurrence {
+                    task_id: definition.id.clone(),
+                    scheduled_at: 1_000,
+                },
+                &definition,
+                1_001,
+            );
+            SqliteScheduledRunRepository::new(pool.clone())
+                .resolve_scheduled_occurrence(ora_application::ScheduledOccurrenceCandidate::run(
+                    run,
+                ))
+                .expect("admit run");
+
+            // A write-ahead lease whose checkout was physically created, then the
+            // process died before the ownership commit: no compensation runs.
+            let workspace_id = WorkspaceId::new("5c2a8e7d-3f4a-4b6c-9d8e-1a2b3c4d5e6f");
+            let checkout = temporary
+                .path()
+                .join("orphaned-worktrees")
+                .join("lease-recovery");
+            let branch = "ora/5c2a8e7d-3f4a-4b6c-9d8e-1a2b3c4d5e6f";
+            let lease = WorktreeProvisioningLease::new(
+                WorktreeProvisioningLeaseId::new("lease-recovery"),
+                ProjectId::new("project-1"),
+                workspace_id.clone(),
+                git.repo_path().to_string_lossy().into_owned(),
+                checkout.to_string_lossy().into_owned(),
+                branch.to_string(),
+                /*lease_expires_at*/ 1_000, // already expired when the worker runs
+                /*now*/ 900,
+            );
+            SqliteWorktreeProvisioningLeaseRepository::new(pool.clone())
+                .create_lease(&lease)
+                .expect("create lease");
+            git.run_git([
+                std::ffi::OsStr::new("worktree"),
+                std::ffi::OsStr::new("add"),
+                std::ffi::OsStr::new("-b"),
+                std::ffi::OsStr::new(branch),
+                checkout.as_os_str(),
+            ])
+            .expect("create the physical checkout");
+
+            // Crash: drop the pool without any commit or compensation.
+            drop(pool);
+
+            let backend = crate::Backend::open(crate::test_backend::backend_paths(
+                temporary.path(),
+                temporary.path(),
+            ))
+            .expect("backend");
+
+            // The cleanup worker's first pass reclaims the expired lease into a
+            // cleanup job; poll for the lease to disappear.
+            let mut reclaimed = false;
+            for _ in 0..300 {
+                let probe = DatabaseBootstrapper::system()
+                    .bootstrap_repository_pool(
+                        &DatabaseLocation::path(&database_path),
+                        &default_migration_catalog().expect("migration catalog"),
+                    )
+                    .expect("reopen for polling");
+                if SqliteWorktreeProvisioningLeaseRepository::new(probe)
+                    .list_leases()
+                    .unwrap_or_default()
+                    .is_empty()
+                {
+                    reclaimed = true;
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            assert!(
+                reclaimed,
+                "the expired lease is reclaimed by the production cleanup worker after restart"
+            );
+            let _ = backend;
+        });
+    }
+
     /// A workspace that cannot be resolved must be kept, not treated as clean.
     #[test]
     fn resolve_committed_checkout_path_is_conservative_when_the_workspace_is_gone() {
