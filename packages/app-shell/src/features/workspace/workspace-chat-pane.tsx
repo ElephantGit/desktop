@@ -181,6 +181,7 @@ export function WorkspaceChatPane({
       isLoading={isLoadingHistory}
       error={chatError}
       pendingPermissions={conversation?.pendingPermissions ?? []}
+      diagnostics={conversation?.diagnostics}
       skills={skills}
       roles={roles}
       availableCommands={conversation?.availableCommands ?? []}

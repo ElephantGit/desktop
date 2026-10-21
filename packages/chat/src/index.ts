@@ -32,3 +32,4 @@ export {
   type SessionConversation,
   type SessionUsage,
 } from "./store.ts";
+export type { RunDiagnostics } from "./diagnostics.ts";

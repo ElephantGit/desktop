@@ -9,6 +9,24 @@ same code for Cloud runs. Recording, switching and history are in [Session histo
 MCP delivery is in [Session MCP](session-mcp.md). Crate internals are in
 [`crates/agent-runtime/src/README.md`](../../crates/agent-runtime/src/README.md).
 
+## Runtime observations
+
+Workspace and workflow conversation views expose read-only run details: the latest live content,
+tool or plan observation and its client receipt time, known pending permission requests, active
+tools, and recognized provider retry/compaction reports. Missing reports remain unknown. Reloaded
+history does not refresh the live observation clock; changing provider or beginning another prompt
+clears stale observations. Parent and projected-child clocks and tools are shown separately;
+metadata-free child tool deltas retain their known source. Unobserved/replayed tools have an
+unconfirmed source rather than being assumed parent work. Observation ages are not timeout
+countdowns. Silence does not establish provider health or a child lifecycle. Only requests exposed
+by the host are listed; the current runtime auto-handles permissions, and unsupported question forms
+do not become pending UI requests.
+
+OpenCode child-session projections remain visible, but do not independently reset or pause their
+parent prompt's inactivity window. A child tool retains this exclusion across metadata-free deltas.
+The parent delegate's own in-progress update still pauses its existing timer; explicit Wait and
+cancel/error cleanup remain unchanged.
+
 ## Agents come from plugins
 
 Every agent is supplied by an installed `agent`-kind plugin; nothing is bundled, and Ora ships with

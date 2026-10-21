@@ -451,7 +451,7 @@ impl<H: AgentRuntimeHost> RuntimeActor<H> {
                         self.isolate_channel(channel).await;
                         return;
                     }
-                    liveness.permission_settled();
+                    liveness.permission_settled(&permission.request.tool_call);
                 }
                 ActiveInput::Event(SessionEvent::Response(response)) => {
                     if !pending.matches_response(&response) {

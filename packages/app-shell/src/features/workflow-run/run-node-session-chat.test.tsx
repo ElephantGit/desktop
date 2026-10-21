@@ -120,7 +120,7 @@ function renderDock(
       wrapper: createHookWrapper(client, createTestQueryClient(), chatStore),
     },
   );
-  return { client, handlers: clientHandlers };
+  return { client, handlers: clientHandlers, chatStore };
 }
 
 /** Renders the same session surface without granting node interaction controls. */
@@ -144,6 +144,44 @@ function renderReadOnlyDock() {
 }
 
 describe("RunNodeSessionChat", () => {
+  it("forwards the workflow conversation's live diagnostics to the shared panel", async () => {
+    const turn: ChatTurn = {
+      id: "turn",
+      userMessage: {
+        kind: "message",
+        id: "user",
+        role: "user",
+        content: "go",
+        createdAt: 1,
+      },
+      items: [],
+      status: "streaming",
+      stopReason: null,
+      error: null,
+      createdAt: 1,
+    };
+    const { chatStore } = renderDock("running", true, [turn]);
+    await act(async () =>
+      chatStore.setState((state) => ({
+        conversations: {
+          ...state.conversations,
+          [sessionId]: {
+            ...state.conversations[sessionId]!,
+            diagnostics: {
+              provider: { kind: "retry", attempt: 2 },
+              lastActivity: { kind: "message", receivedAt: 100 },
+            },
+          },
+        },
+      })),
+    );
+    expect(screen.getByTestId("run-diagnostics")).toHaveTextContent(
+      appI18n.t("chat.diagnosticsRetry", { attempt: 2 }),
+    );
+    expect(screen.getByTestId("run-diagnostics")).toHaveTextContent(
+      appI18n.t("chat.diagnosticsLastActivity"),
+    );
+  });
   it("renders the node session through the ordinary chat surface", () => {
     renderDock("awaiting_input", false);
 

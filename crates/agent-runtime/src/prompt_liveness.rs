@@ -1,4 +1,4 @@
-use agent_client_protocol_schema::v1::{SessionUpdate, ToolCallId, ToolCallStatus};
+use agent_client_protocol_schema::v1::{SessionUpdate, ToolCallId, ToolCallStatus, ToolCallUpdate};
 use ora_domain::PromptInactivityPolicy;
 use std::collections::HashSet;
 use std::time::Duration;
@@ -18,6 +18,8 @@ pub(super) struct PromptLiveness {
     running_tools: HashSet<ToolCallId>,
     pending_tools: HashSet<ToolCallId>,
     seen_pending_tools: HashSet<ToolCallId>,
+    /// Projection ownership survives later deltas that omit metadata for the same tool.
+    projected_tools: HashSet<ToolCallId>,
 }
 
 /// Identifies one automatic re-send of a stalled prompt, counted from the first retry.
@@ -53,6 +55,7 @@ impl PromptLiveness {
             running_tools: HashSet::new(),
             pending_tools: HashSet::new(),
             seen_pending_tools: HashSet::new(),
+            projected_tools: HashSet::new(),
         };
         liveness.reset_at(now);
         liveness
@@ -105,6 +108,7 @@ impl PromptLiveness {
         self.running_tools.clear();
         self.pending_tools.clear();
         self.seen_pending_tools.clear();
+        self.projected_tools.clear();
         self.reset_at(now);
         Some(PromptRetry {
             retry: u32::try_from(self.attempt).unwrap_or(u32::MAX),
@@ -118,6 +122,33 @@ impl PromptLiveness {
     }
 
     fn observe_at(&mut self, update: &SessionUpdate, now: Instant) {
+        // A display projection is not proof that this prompt awaits that child. Parent delegate
+        // tools keep their existing in-progress pause; child output cannot create another pause.
+        let (meta, tool) = match update {
+            SessionUpdate::AgentMessageChunk(chunk) | SessionUpdate::AgentThoughtChunk(chunk) => {
+                (&chunk.meta, None)
+            }
+            SessionUpdate::Plan(plan) => (&plan.meta, None),
+            SessionUpdate::ToolCall(call) => (&call.meta, Some(&call.tool_call_id)),
+            SessionUpdate::ToolCallUpdate(change) => (&change.meta, Some(&change.tool_call_id)),
+            _ => (&None, None),
+        };
+        let projected = meta
+            .as_ref()
+            .is_some_and(|meta| meta.contains_key("opencode/child-session"));
+        if let Some(id) = tool {
+            if projected {
+                self.projected_tools.insert(id.clone());
+                self.running_tools.remove(id);
+                self.pending_tools.remove(id);
+            }
+            if self.projected_tools.contains(id) {
+                return;
+            }
+        }
+        if projected {
+            return;
+        }
         match update {
             SessionUpdate::AgentMessageChunk(_)
             | SessionUpdate::AgentThoughtChunk(_)
@@ -139,7 +170,15 @@ impl PromptLiveness {
     }
 
     /// Rearms a full window after an awaited permission round trip.
-    pub(super) fn permission_settled(&mut self) {
+    pub(super) fn permission_settled(&mut self, tool: &ToolCallUpdate) {
+        if self.projected_tools.contains(&tool.tool_call_id)
+            || tool
+                .meta
+                .as_ref()
+                .is_some_and(|meta| meta.contains_key("opencode/child-session"))
+        {
+            return;
+        }
         self.reset_at(Instant::now());
     }
 
@@ -187,6 +226,22 @@ mod tests {
         Duration::from_secs(60),
         Duration::from_secs(90),
     ];
+
+    /// A background child's permission roundtrip does not prove parent progress either.
+    #[tokio::test(start_paused = true)]
+    async fn child_permission_does_not_renew_the_parent_deadline() {
+        let mut liveness = PromptLiveness::new(&SINGLE_WINDOW);
+        let original = liveness.deadline();
+        tokio::time::advance(Duration::from_secs(20)).await;
+        let child = serde_json::from_value(serde_json::json!({
+            "toolCallId":"child:tool", "_meta":{"opencode/child-session":{"id":"child","parentID":"root","depth":1}}
+        })).unwrap();
+        liveness.permission_settled(&child);
+        assert_eq!(liveness.deadline(), original);
+        let parent = serde_json::from_value(serde_json::json!({"toolCallId":"delegate"})).unwrap();
+        liveness.permission_settled(&parent);
+        assert_eq!(liveness.deadline(), Some(Instant::now() + SINGLE_WINDOW[0]));
+    }
 
     /// Diagnostics distinguish currently pending work from ids remembered for rearm deduplication.
     #[tokio::test(start_paused = true)]
