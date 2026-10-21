@@ -7,5 +7,10 @@ export interface LoopOutputInsertion {
   sourceHandle?: string | null;
 }
 
+export interface CanvasEdgeInsertion {
+  type: "canvas-edge";
+  edgeId: string;
+}
+
 export type WorkflowContainerInsertion =
-  IterationInsertion | LoopOutputInsertion;
+  IterationInsertion | LoopOutputInsertion | CanvasEdgeInsertion;

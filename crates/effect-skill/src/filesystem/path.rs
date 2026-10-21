@@ -126,6 +126,27 @@ pub(super) fn resource_root(resource: &EffectResource) -> Result<PathBuf, SkillD
     .ok_or(SkillDirectoryError::UnsafeOperationPath)
 }
 
+/// Checks persisted Workspace and Resource identity before accepting recovery evidence.
+///
+/// Recovery uses Prepare access to validate existing ancestors and resolve missing segments
+/// without creating directories. Observe loses the resolved identity on missing paths;
+/// Mutate would change the filesystem before recovery establishes authority.
+pub(super) fn verify_operation_root(
+    plan: &FilesystemOperationPlan,
+) -> Result<(), SkillDirectoryError> {
+    ensure_operation_paths_are_scoped(plan)?;
+    let resolved = resolve_declared_root(
+        &plan.workspace_root,
+        &plan.resource_relative_path,
+        RootAccess::Prepare,
+    )?
+    .ok_or(SkillDirectoryError::UnsafeOperationPath)?;
+    if resolved != plan.resource_root {
+        return Err(SkillDirectoryError::UnsafeOperationPath);
+    }
+    Ok(())
+}
+
 /// Prevents a journal payload from redirecting artifacts outside its Resource directory.
 pub(super) fn ensure_operation_paths_are_scoped(
     plan: &FilesystemOperationPlan,

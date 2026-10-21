@@ -79,6 +79,10 @@ import {
 } from "../workflow-iteration-graph";
 import { WorkflowIterationActionsProvider } from "./iteration-actions";
 import {
+  WorkflowEdgeHoverBridge,
+  WorkflowEdgeHoverProvider,
+} from "./workflow-edge-hover";
+import {
   WORKFLOW_ANNOTATION_Z_INDEX,
   WORKFLOW_NODE_Z_INDEX,
   WORKFLOW_SELECTED_NODE_Z_INDEX,
@@ -831,77 +835,87 @@ function WorkflowCanvasInner({
             onInsert={onInsertContainerNode}
             onToggleCollapsed={onToggleIterationCollapsed}
           >
-            <ReactFlow
-              className="workflow-flow bg-muted/25"
-              data-interaction-mode={interactionMode}
-              nodes={renderedNodes}
-              edges={canvasEdges}
-              nodeTypes={nodeTypes}
-              edgeTypes={edgeTypes}
-              defaultViewport={initialViewport}
-              minZoom={MIN_WORKFLOW_ZOOM}
-              maxZoom={MAX_WORKFLOW_ZOOM}
-              proOptions={{ hideAttribution: true }}
-              nodesFocusable
-              edgesFocusable
-              nodesDraggable={!readOnly}
-              nodesConnectable={!readOnly}
-              elementsSelectable={!readOnly}
-              elevateNodesOnSelect={false}
-              edgesReconnectable={!readOnly}
-              reconnectRadius={28}
-              connectionRadius={24}
-              deleteKeyCode={
-                readOnly ? WORKFLOW_NO_KEY_CODES : WORKFLOW_DELETE_KEY_CODES
-              }
-              multiSelectionKeyCode={null}
-              snapGrid={WORKFLOW_SNAP_GRID}
-              snapToGrid
-              // Auto-pan under a clamped iteration member moves the viewport while
-              // the node sticks to the frame edge, so the card jitters relative to
-              // the pointer. Users can still pan with the hand tool / middle drag.
-              autoPanOnNodeDrag={false}
-              panOnScroll={false}
-              zoomOnScroll
-              zoomOnPinch
-              // Left-drag box-selects multiple nodes; middle-drag keeps panning.
-              panOnDrag={
-                interactionMode === "hand"
-                  ? WORKFLOW_PAN_ON_DRAG_HAND
-                  : WORKFLOW_PAN_ON_DRAG_POINTER
-              }
-              selectionOnDrag={!readOnly && interactionMode === "pointer"}
-              selectNodesOnDrag={false}
-              isValidConnection={isValidConnection}
-              onNodesChange={handleNodesChange}
-              onEdgesChange={onEdgesChange}
-              onBeforeDelete={onBeforeDelete}
-              onDelete={onDelete}
-              onNodeDragStart={onNodeDragStart}
-              onNodeDragStop={handleNodeDragStop}
-              onNodeClick={handleNodeClick}
-              onConnectStart={handleConnectStart}
-              onConnect={onConnect}
-              onConnectEnd={finishNewConnection}
-              onReconnectStart={handleReconnectStart}
-              onReconnect={onReconnect}
-              onReconnectEnd={finishReconnect}
-              onEdgeDoubleClick={handleEdgeDoubleClick}
-              connectionLineComponent={WorkflowConnectionLine}
-              elevateEdgesOnSelect
-              defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
-              connectionLineStyle={CONNECTION_LINE_STYLE}
-            >
-              <Background
-                id="workflow-dots"
-                variant={BackgroundVariant.Dots}
-                gap={20}
-                size={1}
-                color="color-mix(in oklch, var(--foreground) 18%, transparent)"
-              />
-              <WorkflowAlignmentGuides guides={alignmentGuides} />
-              <WorkflowFlowOverview nodeCount={nodes.length} />
-            </ReactFlow>
+            <WorkflowEdgeHoverProvider>
+              <WorkflowEdgeHoverBridge>
+                {(edgeHover) => (
+                  <ReactFlow
+                    className="workflow-flow bg-muted/25"
+                    data-interaction-mode={interactionMode}
+                    nodes={renderedNodes}
+                    edges={canvasEdges}
+                    nodeTypes={nodeTypes}
+                    edgeTypes={edgeTypes}
+                    defaultViewport={initialViewport}
+                    minZoom={MIN_WORKFLOW_ZOOM}
+                    maxZoom={MAX_WORKFLOW_ZOOM}
+                    proOptions={{ hideAttribution: true }}
+                    nodesFocusable
+                    edgesFocusable
+                    nodesDraggable={!readOnly}
+                    nodesConnectable={!readOnly}
+                    elementsSelectable={!readOnly}
+                    elevateNodesOnSelect={false}
+                    edgesReconnectable={!readOnly}
+                    reconnectRadius={28}
+                    connectionRadius={24}
+                    deleteKeyCode={
+                      readOnly
+                        ? WORKFLOW_NO_KEY_CODES
+                        : WORKFLOW_DELETE_KEY_CODES
+                    }
+                    multiSelectionKeyCode={null}
+                    snapGrid={WORKFLOW_SNAP_GRID}
+                    snapToGrid
+                    // Auto-pan under a clamped iteration member moves the viewport while
+                    // the node sticks to the frame edge, so the card jitters relative to
+                    // the pointer. Users can still pan with the hand tool / middle drag.
+                    autoPanOnNodeDrag={false}
+                    panOnScroll={false}
+                    zoomOnScroll
+                    zoomOnPinch
+                    // Left-drag box-selects multiple nodes; middle-drag keeps panning.
+                    panOnDrag={
+                      interactionMode === "hand"
+                        ? WORKFLOW_PAN_ON_DRAG_HAND
+                        : WORKFLOW_PAN_ON_DRAG_POINTER
+                    }
+                    selectionOnDrag={!readOnly && interactionMode === "pointer"}
+                    selectNodesOnDrag={false}
+                    isValidConnection={isValidConnection}
+                    onNodesChange={handleNodesChange}
+                    onEdgesChange={onEdgesChange}
+                    onBeforeDelete={onBeforeDelete}
+                    onDelete={onDelete}
+                    onNodeDragStart={onNodeDragStart}
+                    onNodeDragStop={handleNodeDragStop}
+                    onNodeClick={handleNodeClick}
+                    onConnectStart={handleConnectStart}
+                    onConnect={onConnect}
+                    onConnectEnd={finishNewConnection}
+                    onReconnectStart={handleReconnectStart}
+                    onReconnect={onReconnect}
+                    onReconnectEnd={finishReconnect}
+                    onEdgeDoubleClick={handleEdgeDoubleClick}
+                    onEdgeMouseEnter={edgeHover.onEdgeMouseEnter}
+                    onEdgeMouseLeave={edgeHover.onEdgeMouseLeave}
+                    connectionLineComponent={WorkflowConnectionLine}
+                    elevateEdgesOnSelect
+                    defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
+                    connectionLineStyle={CONNECTION_LINE_STYLE}
+                  >
+                    <Background
+                      id="workflow-dots"
+                      variant={BackgroundVariant.Dots}
+                      gap={20}
+                      size={1}
+                      color="color-mix(in oklch, var(--foreground) 18%, transparent)"
+                    />
+                    <WorkflowAlignmentGuides guides={alignmentGuides} />
+                    <WorkflowFlowOverview nodeCount={nodes.length} />
+                  </ReactFlow>
+                )}
+              </WorkflowEdgeHoverBridge>
+            </WorkflowEdgeHoverProvider>
           </WorkflowIterationActionsProvider>
         </WorkflowConnectionStateProvider>
 

@@ -302,6 +302,12 @@ it("renders marketplace plugins from the registry index", async () => {
   renderSettings(client);
 
   expect(await screen.findByText("Weather")).toBeInTheDocument();
+  const header = screen.getByRole("banner");
+  expect(header).toHaveClass("shrink-0");
+  expect(header).toContainElement(
+    screen.getByRole("textbox", { name: /搜索插件|Search plugins/ }),
+  );
+  expect(header).not.toContainElement(screen.getByText("Weather"));
   expect(screen.getByText("Weather plugin")).toBeInTheDocument();
   const installButton = screen.getByRole("button", { name: /安装|Install/ });
   expect(

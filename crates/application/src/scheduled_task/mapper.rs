@@ -44,6 +44,7 @@ pub(crate) fn map_history_entry(entry: ScheduledTaskHistoryEntry) -> ContractHis
             status: map_run_status(run.status),
             session_id: run.session_id.map(|id| id.to_string()),
             worktree_path: run.worktree_path,
+            worktree_task_id: run.worktree_task_id.map(|id| id.to_string()),
             failure_reason: run.failure_reason.map(map_failure_reason),
             created_at: run.created_at,
             updated_at: run.updated_at,

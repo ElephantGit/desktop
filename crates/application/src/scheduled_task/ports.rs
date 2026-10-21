@@ -129,6 +129,16 @@ pub trait ScheduledRunLifecycleRepository {
         transition: ScheduledRunTransition,
         transitioned_at: i64,
     ) -> Result<ScheduledRunTransitionResolution, RepositoryError>;
+
+    /// Lists finished runs that still reference a task-owned worktree, ordered oldest
+    /// terminal transition first, so retention can delete the oldest kept worktree.
+    fn list_scheduled_runs_with_retained_worktrees(
+        &self,
+    ) -> Result<Vec<ScheduledRun>, RepositoryError>;
+
+    /// Clears one run's retained-worktree link after its worktree task was discarded, so
+    /// retention sweeps and history pruning stop tracking the discarded worktree.
+    fn clear_retained_worktree_link(&self, run_id: &ScheduledRunId) -> Result<(), RepositoryError>;
 }
 
 /// Supplies stable identifiers for newly admitted Scheduled Runs.

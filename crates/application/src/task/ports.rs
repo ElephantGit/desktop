@@ -108,3 +108,10 @@ impl TaskWorktreeProvisionerError {
         }
     }
 }
+
+/// Reports whether a task's workspace still hosts live execution activity.
+pub trait TaskActivityRepository {
+    /// Returns `true` while a session or workflow run occupies the task workspace, so
+    /// callers must not clean up the task's worktree underneath the running work.
+    fn task_has_running_activity(&self, task_id: &TaskId) -> Result<bool, RepositoryError>;
+}

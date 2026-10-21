@@ -25,7 +25,7 @@ use operation::{
 };
 use path::{
     RootAccess, ensure_operation_paths_are_scoped, resolve_declared_root, resolve_resource_root,
-    resource_root,
+    resource_root, verify_operation_root,
 };
 
 pub const MARKER_FILE_NAME: &str = ".ora-managed.json";
@@ -295,6 +295,7 @@ impl SkillDirectoryResourceAdapter {
         let VersionedAdapterPlan::FilesystemDirectoryV1(plan) = operation.payload() else {
             return Err(SkillDirectoryError::UnsupportedAdapterPlan);
         };
+        verify_operation_root(plan)?;
         if !state_matches_planned(operation, plan)? {
             return Err(SkillDirectoryError::VerificationFailed {
                 operation: operation.identity().clone(),
@@ -305,6 +306,29 @@ impl SkillDirectoryResourceAdapter {
             proof: AdapterReceipt {
                 version: 1,
                 payload: json!({ "state": "planned" }),
+            },
+        })
+    }
+
+    /// Verifies the exact expected baseline so recovery can close a journal without effect.
+    fn verify_expected_operation(
+        self,
+        operation: &EffectOperation,
+    ) -> Result<VerificationReceipt, SkillDirectoryError> {
+        let VersionedAdapterPlan::FilesystemDirectoryV1(plan) = operation.payload() else {
+            return Err(SkillDirectoryError::UnsupportedAdapterPlan);
+        };
+        verify_operation_root(plan)?;
+        if !state_matches_expected(operation, plan)? {
+            return Err(SkillDirectoryError::ExpectedVerificationFailed {
+                operation: operation.identity().clone(),
+            });
+        }
+        Ok(VerificationReceipt {
+            operation: operation.identity().clone(),
+            proof: AdapterReceipt {
+                version: 1,
+                payload: json!({ "state": "expected" }),
             },
         })
     }
@@ -382,6 +406,15 @@ impl ResourceAdapter for SkillDirectoryResourceAdapter {
             .map_err(ResourceAdapterError::new)
     }
 
+    fn verify_expected(
+        &self,
+        operation: &EffectOperation,
+    ) -> Result<VerificationReceipt, ResourceAdapterError> {
+        (*self)
+            .verify_expected_operation(operation)
+            .map_err(ResourceAdapterError::new)
+    }
+
     fn cleanup(
         &self,
         artifact: &OperationArtifact,
@@ -435,6 +468,8 @@ pub enum SkillDirectoryError {
     RecoveryRequired { operation: EffectOperationId },
     #[error("operation {operation} did not reach exact planned state")]
     VerificationFailed { operation: EffectOperationId },
+    #[error("operation {operation} did not stay at its exact expected baseline")]
+    ExpectedVerificationFailed { operation: EffectOperationId },
     #[error("artifact {artifact} no longer matches its cleanup authority")]
     ArtifactFingerprintMismatch { artifact: ArtifactId },
     #[error("Effect Resource filesystem operation failed: {path:?}")]

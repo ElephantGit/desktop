@@ -187,7 +187,14 @@ export function SettingsDialog() {
             </aside>
 
             <ScrollArea className="min-h-0">
-              <div className="mx-auto w-full max-w-3xl p-5 pb-12 sm:p-8 sm:pb-12">
+              <div
+                className={cn(
+                  "mx-auto w-full max-w-3xl",
+                  category === "plugins"
+                    ? "flex h-full min-h-0 flex-col overflow-hidden"
+                    : "p-5 pb-12 sm:p-8 sm:pb-12",
+                )}
+              >
                 {category === "appearance" && (
                   <AppearanceSettings
                     settings={settings}

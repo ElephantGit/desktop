@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type {
@@ -19,6 +19,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
   Input,
+  ScrollArea,
   toast,
 } from "@ora/ui";
 import {
@@ -286,52 +287,62 @@ export function PluginsSettings({
 
   if (detailPlugin !== null && detailPlugin !== undefined) {
     return (
-      <PluginReadmeView
-        plugin={detailPlugin}
-        installed={installedById.get(detailPlugin.id)}
-        onBack={() => {
-          setReadmePlugin(null);
-          onDetailClose?.();
-        }}
-      />
+      <PluginsScroll>
+        <PluginReadmeView
+          plugin={detailPlugin}
+          installed={installedById.get(detailPlugin.id)}
+          onBack={() => {
+            setReadmePlugin(null);
+            onDetailClose?.();
+          }}
+        />
+      </PluginsScroll>
     );
   }
 
   if (managingSources) {
-    return <PluginSourcesManager onBack={() => setManagingSources(false)} />;
+    return (
+      <PluginsScroll>
+        <PluginSourcesManager onBack={() => setManagingSources(false)} />
+      </PluginsScroll>
+    );
   }
 
   if (managing) {
     if (configurationPlugin !== null) {
       return (
-        <PluginConfigurationEditor
-          pluginId={configurationPlugin.id}
-          displayName={configurationPlugin.displayName}
-          onBack={() => setConfigurationPlugin(null)}
-          onNavigationGuardChange={onNavigationGuardChange}
-        />
+        <PluginsScroll>
+          <PluginConfigurationEditor
+            pluginId={configurationPlugin.id}
+            displayName={configurationPlugin.displayName}
+            onBack={() => setConfigurationPlugin(null)}
+            onNavigationGuardChange={onNavigationGuardChange}
+          />
+        </PluginsScroll>
       );
     }
     return (
-      <PluginManager
-        plugins={installed.data ?? []}
-        onBack={() => setManaging(false)}
-        availableById={availableById}
-        onImport={() => void handleImport()}
-        importing={importPlugin.isPending || selecting}
-        onConfigure={(plugin) =>
-          setConfigurationPlugin({
-            id: plugin.id,
-            displayName: plugin.displayName,
-          })
-        }
-      />
+      <PluginsScroll>
+        <PluginManager
+          plugins={installed.data ?? []}
+          onBack={() => setManaging(false)}
+          availableById={availableById}
+          onImport={() => void handleImport()}
+          importing={importPlugin.isPending || selecting}
+          onConfigure={(plugin) =>
+            setConfigurationPlugin({
+              id: plugin.id,
+              displayName: plugin.displayName,
+            })
+          }
+        />
+      </PluginsScroll>
     );
   }
 
   return (
-    <div className="space-y-5">
-      <header>
+    <>
+      <header className="shrink-0 border-b border-border px-5 pt-5 pb-4 sm:px-8 sm:pt-8">
         <div className="flex items-center gap-1.5">
           <h2 className="text-lg font-semibold">
             {t("settings.plugins.title")}
@@ -353,134 +364,146 @@ export function PluginsSettings({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-      </header>
 
-      <div className="space-y-3">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="relative min-w-0 flex-1">
-            <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={t("settings.plugins.search")}
-              aria-label={t("settings.plugins.search")}
-              className="pl-8"
-            />
+        <div className="mt-5 space-y-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <div className="relative min-w-0 flex-1">
+              <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={t("settings.plugins.search")}
+                aria-label={t("settings.plugins.search")}
+                className="pl-8"
+              />
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="shrink-0 min-w-32"
+              disabled={syncing}
+              onClick={() =>
+                sync.mutate(undefined, {
+                  onError: (cause) => {
+                    showContractError(cause, t("settings.plugins.syncFailed"));
+                  },
+                  // A sync that refreshed nothing still answers with the listings it kept, so a
+                  // plain success toast would hide the fact that part of the catalog is stale.
+                  onSuccess: (response) => {
+                    if (response.failedSources.length === 0) return;
+                    toast.warning(
+                      t("settings.plugins.syncFailures.title", {
+                        count: response.failedSources.length,
+                      }),
+                      {
+                        description: response.failedSources
+                          .map((failure) => failure.url)
+                          .join(" "),
+                      },
+                    );
+                  },
+                })
+              }
+              aria-label={t("settings.plugins.syncMarketplace")}
+            >
+              {syncing ? (
+                <IconLoader2 className="animate-spin" />
+              ) : (
+                <IconRefresh />
+              )}
+              <span className="hidden sm:inline">
+                {syncing
+                  ? t("settings.plugins.syncingMarketplace")
+                  : t("settings.plugins.syncMarketplace")}
+              </span>
+            </Button>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="shrink-0 min-w-32"
-            disabled={syncing}
-            onClick={() =>
-              sync.mutate(undefined, {
-                onError: (cause) => {
-                  showContractError(cause, t("settings.plugins.syncFailed"));
-                },
-                // A sync that refreshed nothing still answers with the listings it kept, so a
-                // plain success toast would hide the fact that part of the catalog is stale.
-                onSuccess: (response) => {
-                  if (response.failedSources.length === 0) return;
-                  toast.warning(
-                    t("settings.plugins.syncFailures.title", {
-                      count: response.failedSources.length,
-                    }),
-                    {
-                      description: response.failedSources
-                        .map((failure) => failure.url)
-                        .join(" "),
-                    },
-                  );
-                },
-              })
-            }
-            aria-label={t("settings.plugins.syncMarketplace")}
-          >
-            {syncing ? (
-              <IconLoader2 className="animate-spin" />
-            ) : (
-              <IconRefresh />
-            )}
-            <span className="hidden sm:inline">
-              {syncing
-                ? t("settings.plugins.syncingMarketplace")
-                : t("settings.plugins.syncMarketplace")}
-            </span>
-          </Button>
+
+          <span className="block text-xs text-muted-foreground">
+            {lastSynced}
+          </span>
         </div>
+      </header>
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="space-y-5 px-5 pt-5 pb-12 sm:px-8">
+          {syncFailures.length > 0 && (
+            <Alert>
+              <IconAlertTriangle />
+              <AlertTitle>
+                {t("settings.plugins.syncFailures.title", {
+                  count: syncFailures.length,
+                })}
+              </AlertTitle>
+              <AlertDescription>
+                <p>{t("settings.plugins.syncFailures.description")}</p>
+                <ul className="mt-1 space-y-0.5">
+                  {syncFailures.map((failure) => (
+                    <li key={failure.url} className="break-all">
+                      {failure.label}
+                    </li>
+                  ))}
+                </ul>
+              </AlertDescription>
+            </Alert>
+          )}
 
-        <span className="block text-xs text-muted-foreground">
-          {lastSynced}
-        </span>
+          {visiblePlugins.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">
+              {t("settings.plugins.empty")}
+            </p>
+          ) : (
+            <div className="space-y-6">
+              {groupedPlugins.map(([kind, plugins]) => (
+                <section key={kind}>
+                  <h3 className="mb-2 text-sm font-semibold">
+                    {MARKETPLACE_KIND_LABELS[kind] ?? kind}
+                  </h3>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {plugins.map((plugin) => (
+                      <AvailablePluginCard
+                        key={plugin.id}
+                        plugin={plugin}
+                        installed={installedById.get(plugin.id)}
+                        onSelect={setReadmePlugin}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          )}
 
-        {syncFailures.length > 0 && (
-          <Alert>
-            <IconAlertTriangle />
-            <AlertTitle>
-              {t("settings.plugins.syncFailures.title", {
-                count: syncFailures.length,
-              })}
-            </AlertTitle>
-            <AlertDescription>
-              <p>{t("settings.plugins.syncFailures.description")}</p>
-              <ul className="mt-1 space-y-0.5">
-                {syncFailures.map((failure) => (
-                  <li key={failure.url} className="break-all">
-                    {failure.label}
-                  </li>
-                ))}
-              </ul>
-            </AlertDescription>
-          </Alert>
-        )}
-      </div>
+          <InstalledPacksSection
+            packs={packInstallations.data ?? []}
+            availableById={availableById}
+            onUninstall={(packId) => setUninstallingPack(packId)}
+          />
 
-      {visiblePlugins.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">
-          {t("settings.plugins.empty")}
-        </p>
-      ) : (
-        <div className="space-y-6">
-          {groupedPlugins.map(([kind, plugins]) => (
-            <section key={kind}>
-              <h3 className="mb-2 text-sm font-semibold">
-                {MARKETPLACE_KIND_LABELS[kind] ?? kind}
-              </h3>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {plugins.map((plugin) => (
-                  <AvailablePluginCard
-                    key={plugin.id}
-                    plugin={plugin}
-                    installed={installedById.get(plugin.id)}
-                    onSelect={setReadmePlugin}
-                  />
-                ))}
-              </div>
-            </section>
-          ))}
+          {uninstallingPack !== null && (
+            <PackUninstallConfirm
+              packId={uninstallingPack}
+              open
+              onOpenChange={(open) => {
+                if (!open) setUninstallingPack(null);
+              }}
+              onConfirm={() => {
+                uninstallPackMutation.mutate(uninstallingPack);
+              }}
+              busy={uninstallPackMutation.isPending}
+            />
+          )}
         </div>
-      )}
+      </ScrollArea>
+    </>
+  );
+}
 
-      <InstalledPacksSection
-        packs={packInstallations.data ?? []}
-        availableById={availableById}
-        onUninstall={(packId) => setUninstallingPack(packId)}
-      />
-
-      {uninstallingPack !== null && (
-        <PackUninstallConfirm
-          packId={uninstallingPack}
-          open
-          onOpenChange={(open) => {
-            if (!open) setUninstallingPack(null);
-          }}
-          onConfirm={() => {
-            uninstallPackMutation.mutate(uninstallingPack);
-          }}
-          busy={uninstallPackMutation.isPending}
-        />
-      )}
-    </div>
+/** Scrolls a plugin subview inside the fixed-height settings pane. */
+function PluginsScroll({ children }: { children: ReactNode }) {
+  return (
+    <ScrollArea className="min-h-0 flex-1">
+      <div className="p-5 pb-12 sm:p-8 sm:pb-12">{children}</div>
+    </ScrollArea>
   );
 }
 

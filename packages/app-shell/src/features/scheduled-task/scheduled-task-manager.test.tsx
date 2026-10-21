@@ -254,6 +254,44 @@ describe("ScheduledTaskManager consent handling", () => {
     });
   });
 
+  it("keeps the new-task title outside the scrolling form body", async () => {
+    const user = userEvent.setup();
+    renderManager(scheduledTaskHandlers([], []));
+    await user.click(
+      await screen.findByRole("button", { name: "新建定时任务" }),
+    );
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.className).toContain("overflow-hidden");
+    const title = screen.getByRole("heading", { name: "新建定时任务" });
+    expect(title.closest("[data-slot=dialog-header]")?.className).toContain(
+      "shrink-0",
+    );
+    expect(
+      screen
+        .getByRole("button", { name: "创建任务" })
+        .closest("[data-slot=dialog-footer]")?.className,
+    ).toContain("shrink-0");
+  });
+
+  it("filters the project list from the searchable field", async () => {
+    const user = userEvent.setup();
+    renderManager(scheduledTaskHandlers([], []));
+    await user.click(
+      await screen.findByRole("button", { name: "新建定时任务" }),
+    );
+
+    const project = await screen.findByRole("combobox", { name: "项目" });
+    await user.click(project);
+    await user.clear(project);
+    await user.type(project, "Another");
+
+    expect(
+      await screen.findByRole("option", { name: "Another project" }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "Ora Desktop" })).toBeNull();
+  });
+
   it("the card enable toggle keeps consent instead of echoing a new grant", async () => {
     const user = userEvent.setup();
     const tasks = [CONSENTED_DISABLED_TASK];

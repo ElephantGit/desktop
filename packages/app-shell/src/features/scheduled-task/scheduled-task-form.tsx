@@ -25,6 +25,7 @@ import {
   Switch,
   Textarea,
 } from "@ora/ui";
+import { SearchableChoice } from "./searchable-choice";
 import { localizeContractError } from "../../i18n/contract-error";
 import {
   useCreateScheduledTask,
@@ -81,7 +82,7 @@ export function ScheduledTaskForm({
   const [validationError, setValidationError] = useState(false);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const pending = createTask.isPending || updateTask.isPending;
-  const agentOptions = useMemo(
+  const agentEntries = useMemo(
     () =>
       task !== null && !agents.some((agent) => agent.agentRef === task.agentRef)
         ? [
@@ -90,6 +91,24 @@ export function ScheduledTaskForm({
           ]
         : agents,
     [agents, task],
+  );
+  const projectOptions = useMemo(
+    () =>
+      projects.map((project) => ({
+        value: project.id,
+        label: project.name.trim() === "" ? project.id : project.name,
+        keywords: project.id,
+      })),
+    [projects],
+  );
+  const agentOptions = useMemo(
+    () =>
+      agentEntries.map((agent) => ({
+        value: agent.agentRef,
+        label: agent.label.trim() === "" ? agent.agentRef : agent.label,
+        keywords: agent.agentRef,
+      })),
+    [agentEntries],
   );
 
   const toggleWeekday = (weekday: ScheduledTaskWeekday) => {
@@ -166,9 +185,9 @@ export function ScheduledTaskForm({
 
   return (
     <Dialog open={open} onOpenChange={(next) => !pending && onOpenChange(next)}>
-      <DialogContent className="max-h-[86vh] overflow-y-auto sm:max-w-xl">
+      <DialogContent className="flex max-h-[86vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
         <form onSubmit={submit} className="contents">
-          <DialogHeader>
+          <DialogHeader className="shrink-0 border-b px-4 py-3 pr-10">
             <DialogTitle>
               {task === null ? t("scheduledTask.new") : t("scheduledTask.edit")}
             </DialogTitle>
@@ -176,9 +195,9 @@ export function ScheduledTaskForm({
               {t("scheduledTask.description")}
             </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4">
+          <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto px-4 py-4">
             <div className="grid gap-1.5">
-              <Label htmlFor="scheduled-task-name">
+              <Label htmlFor="scheduled-task-name" className="font-normal">
                 {t("scheduledTask.name")}
               </Label>
               <Input
@@ -190,7 +209,7 @@ export function ScheduledTaskForm({
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="scheduled-task-prompt">
+              <Label htmlFor="scheduled-task-prompt" className="font-normal">
                 {t("scheduledTask.prompt")}
               </Label>
               <Textarea
@@ -201,14 +220,19 @@ export function ScheduledTaskForm({
                 onChange={(event) => setPrompt(event.target.value)}
               />
             </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="grid gap-1.5">
-                <Label>{t("scheduledTask.project")}</Label>
-                <Select
+            <div className="grid gap-4">
+              <div className="grid min-w-0 gap-1.5">
+                <Label htmlFor="scheduled-task-project" className="font-normal">
+                  {t("scheduledTask.project")}
+                </Label>
+                <SearchableChoice
+                  id="scheduled-task-project"
                   value={projectId}
                   disabled={pending}
-                  onValueChange={(value) => {
-                    const nextProjectId = value ?? "";
+                  options={projectOptions}
+                  placeholder={t("scheduledTask.searchProject")}
+                  emptyLabel={t("scheduledTask.noMatchingProjects")}
+                  onValueChange={(nextProjectId) => {
                     setProjectId(nextProjectId);
                     // Consent is scoped to the selected project. Switching a
                     // project therefore requires an intentional new opt-in.
@@ -216,41 +240,25 @@ export function ScheduledTaskForm({
                       setApproved(false);
                     }
                   }}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {projects.map((project) => (
-                      <SelectItem key={project.id} value={project.id}>
-                        {project.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                />
               </div>
-              <div className="grid gap-1.5">
-                <Label>{t("scheduledTask.agent")}</Label>
-                <Select
+              <div className="grid min-w-0 gap-1.5">
+                <Label htmlFor="scheduled-task-agent" className="font-normal">
+                  {t("scheduledTask.agent")}
+                </Label>
+                <SearchableChoice
+                  id="scheduled-task-agent"
                   value={agentRef}
                   disabled={pending}
-                  onValueChange={(value) => setAgentRef(value ?? "")}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {agentOptions.map((agent) => (
-                      <SelectItem key={agent.agentRef} value={agent.agentRef}>
-                        {agent.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  options={agentOptions}
+                  placeholder={t("scheduledTask.searchAgent")}
+                  emptyLabel={t("scheduledTask.noMatchingAgents")}
+                  onValueChange={setAgentRef}
+                />
               </div>
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="scheduled-task-model">
+              <Label htmlFor="scheduled-task-model" className="font-normal">
                 {t("scheduledTask.model")}
               </Label>
               <Input
@@ -261,7 +269,9 @@ export function ScheduledTaskForm({
               />
             </div>
             <div className="grid gap-2">
-              <Label>{t("scheduledTask.schedule")}</Label>
+              <Label className="font-normal">
+                {t("scheduledTask.schedule")}
+              </Label>
               <Select
                 value={scheduleKind}
                 disabled={pending}
@@ -287,7 +297,10 @@ export function ScheduledTaskForm({
               </Select>
               {scheduleKind === "every_hours" ? (
                 <div className="grid gap-1.5">
-                  <Label htmlFor="scheduled-task-interval">
+                  <Label
+                    htmlFor="scheduled-task-interval"
+                    className="font-normal"
+                  >
                     {t("scheduledTask.interval")}
                   </Label>
                   <Input
@@ -303,7 +316,7 @@ export function ScheduledTaskForm({
                 </div>
               ) : (
                 <div className="grid gap-1.5">
-                  <Label htmlFor="scheduled-task-time">
+                  <Label htmlFor="scheduled-task-time" className="font-normal">
                     {t("scheduledTask.time")}
                   </Label>
                   <Input
@@ -317,7 +330,9 @@ export function ScheduledTaskForm({
               )}
               {scheduleKind === "weekly" && (
                 <div className="grid gap-1.5">
-                  <Label>{t("scheduledTask.weekdays")}</Label>
+                  <Label className="font-normal">
+                    {t("scheduledTask.weekdays")}
+                  </Label>
                   <div className="flex flex-wrap gap-1.5">
                     {WEEKDAYS.map((day) => {
                       const selected = weekdays.includes(day.value);
@@ -388,7 +403,7 @@ export function ScheduledTaskForm({
               </p>
             )}
           </div>
-          <DialogFooter>
+          <DialogFooter className="mx-0 mb-0 shrink-0">
             <Button
               type="submit"
               disabled={

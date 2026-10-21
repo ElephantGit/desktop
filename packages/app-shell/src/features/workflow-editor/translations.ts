@@ -339,6 +339,7 @@ export const workflowEditorTranslations = {
       "节点不能跨区域拖动，请使用迭代区域内的添加节点入口。",
     "settings.workflow.iteration.noSupportedNodes":
       "当前没有可用于迭代区域的节点",
+    "settings.workflow.insertOnEdge": "在连线上插入节点",
     "settings.workflow.iteration.insertOnEdge": "在内部连线上插入节点",
     "settings.workflow.iteration.appendBranch": "在 {{branch}} 分支后添加节点",
     "settings.workflow.iteration.appendOutput": "在 {{name}} 后添加节点",
@@ -914,6 +915,7 @@ export const workflowEditorTranslations = {
       "Nodes cannot move across region boundaries. Use the add-node entry inside the iteration region.",
     "settings.workflow.iteration.noSupportedNodes":
       "No node types are available in iteration regions",
+    "settings.workflow.insertOnEdge": "Insert a node on this edge",
     "settings.workflow.iteration.insertOnEdge":
       "Insert a node on the internal edge",
     "settings.workflow.iteration.appendBranch":

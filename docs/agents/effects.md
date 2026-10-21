@@ -94,8 +94,24 @@ journal exists, an interrupted or ambiguous operation moves its Attempt, Target 
 `RecoveryRequired` after the worker's lease expires, with blocking manual Conditions; a still-valid
 worker is never quarantined. The scheduler excludes a recovering Target instead of guessing or
 planning a second operation, and staging and backup Artifacts are kept until exact cleanup
-authority succeeds. There is currently no automatic or user-facing action that clears
-`RecoveryRequired`.
+authority succeeds. Nothing clears `RecoveryRequired` automatically; its one exit is the
+controlled `recoverEffectTarget` command, which proves every quarantined operation against the
+adapter before closing it. An operation whose external state equals its exact planned state
+finalizes and keeps its ownership ledger row; one that still equals its exact expected baseline
+closes as `FinalizedWithoutEffect` and grants nothing, because its mutation provably never became
+durable. An operation that proves neither state keeps the Target quarantined — recovery never
+replays a mutation, never grants unproven ownership, and never rewrites immutable projection
+history. Closing the last journal clears the Target's manual Conditions, returns its request to
+pending, and lets ordinary reconciliation converge against current Desired State; a retiring
+Target additionally advances its Scope epoch so its empty retirement projection lands on a fresh
+immutable identity. Recovering one Target never clears another Target's quarantine on a shared
+Resource; the Resource keeps its evidence pointed at a still-quarantined operation.
+
+Recovery revalidates the journal's persisted Workspace and Resource paths without creating
+directories, and requires the resolved root to match the journal. Files, links, inaccessible paths
+and redirected roots cannot prove a Missing state; a safely missing Resource can. The effects data
+owner runs recovery and refreshes only selectors that observed that Target, so unrelated Workspace
+and Agent readiness caches remain unchanged.
 
 ## Audit and business time
 
@@ -105,7 +121,11 @@ the write transaction and reuse that sample for the transaction. Each row preser
 times equal but never regress them or confer generation or fencing authority.
 
 The reconciler samples business time at preparation, after apply and after readiness; operations in
-one Attempt share the preparation time. Recovery records an independent `detected_at`. Worker
+one Attempt share the preparation time. Recovery records an independent `detected_at` only while
+an operation is `RecoveryRequired`. The closing transaction copies each operation's original
+detection time, identity and closure outcome into the `recovery_finalized` audit event before clearing
+its active `detected_at`; the event's `occurred_at` is the closing transaction's audit time, not the
+detection time. Audit failure rolls back the closure as well. Worker
 claims, recovery scans and retry scheduling take fresh samples, and a retry delay starts when the
 failure is handled. Receipt `received_at` means local durable reception. Conditions keep their
 identity and first observation and never regress their last observation. Status reads return audit
@@ -116,6 +136,8 @@ revision key; an unchanged publication creates no revision.
 
 - `getEffectTargetStatus` exposes a Target's desired, observed, applied and ready generations,
   recovery identity and current Conditions to the frontend.
+- `recoverEffectTarget` is the controlled exit from `RecoveryRequired`; the chat send gate offers
+  it while readiness is blocked by a recovery quarantine, and a refusal keeps the quarantine.
 - Plugin registration exposes `effectResources`. Agent Consumers implement `effect/coordinate`,
   `effect/reactivate` and `effect/verify_ready`; those payloads stay behind the `ConsumerAdapter`
   boundary and add no agent-specific phases to the generic machinery.
@@ -126,5 +148,6 @@ revision key; an unchanged publication creates no revision.
 
 Schema: migration `0006` (Scopes, Sources and Revisions, Desired State, Consumers and Targets,
 Resources and bindings, projections, ownership, statuses, Conditions, requests and claims,
-Attempts, Operations and Artifacts, receipts, audit events) and `0010` (independent recovery
-detection time). See [Persistence](../core/persistence.md).
+Attempts, Operations and Artifacts, receipts, audit events), `0010` (independent recovery
+detection time) and `0019` (the `finalized_without_effect` closure phase, added by rebuilding the
+operation journal through staging copies). See [Persistence](../core/persistence.md).
