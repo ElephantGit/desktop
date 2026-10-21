@@ -7,7 +7,8 @@ use ora_domain::{
     AgentRef, MAX_CONCURRENT_LOCAL_SCHEDULED_RUNS, MAX_SCHEDULED_TASK_HISTORY_ENTRIES, ProjectId,
     ScheduledMissReason, ScheduledMissedOccurrence, ScheduledOccurrence, ScheduledRun,
     ScheduledRunFailureReason, ScheduledRunId, ScheduledRunSnapshot, ScheduledRunStatus,
-    ScheduledRunTransition, ScheduledTaskHistoryEntry, ScheduledTaskId, SessionId, TaskId,
+    ScheduledRunTransition, ScheduledRunVerdict, ScheduledTaskHistoryEntry, ScheduledTaskId,
+    SessionId, TaskId,
 };
 use rusqlite::{Row, Transaction, TransactionBehavior, params};
 
@@ -99,6 +100,7 @@ impl ScheduledTaskHistoryRepository for SqliteScheduledRunRepository {
                             r.worktree_base_branch, r.agent_ref, r.model, r.prompt, r.approval_policy,
                             r.approval_consented_at, r.status, r.session_id,
                             r.worktree_path, r.worktree_task_id, r.failure_reason,
+                            r.verdict, r.verdict_detail,
                             r.created_at, r.updated_at
                       FROM scheduled_occurrences o
                       LEFT JOIN scheduled_runs r
@@ -147,7 +149,7 @@ impl ScheduledRunLifecycleRepository for SqliteScheduledRunRepository {
                             worktree_base_branch, agent_ref, model, prompt,
                             approval_policy, approval_consented_at, status,
                             session_id, worktree_path, worktree_task_id, failure_reason,
-                            created_at, updated_at
+                            verdict, verdict_detail, created_at, updated_at
                      FROM scheduled_runs
                      WHERE status NOT IN ('accepted', 'running')
                        AND worktree_task_id IS NOT NULL
@@ -171,6 +173,29 @@ impl ScheduledRunLifecycleRepository for SqliteScheduledRunRepository {
                     params![run_id.as_ref()],
                 )?;
                 Ok(())
+            })
+            .map_err(repository_error_from_database)
+    }
+
+    /// Persists one independent business verdict and its detail onto a run row,
+    /// leaving the execution-layer status and failure reason untouched. The
+    /// write is bounded to runs that still exist.
+    fn annotate_scheduled_run_verdict(
+        &self,
+        run_id: &ScheduledRunId,
+        verdict: ScheduledRunVerdict,
+        detail: Option<&str>,
+        annotated_at: i64,
+    ) -> Result<bool, RepositoryError> {
+        self.pool
+            .with_connection_mut(|connection| {
+                let updated = connection.execute(
+                    "UPDATE scheduled_runs
+                     SET verdict = ?1, verdict_detail = ?2, updated_at = ?3
+                     WHERE id = ?4",
+                    params![verdict.as_str(), detail, annotated_at, run_id.as_ref(),],
+                )?;
+                Ok(updated == 1)
             })
             .map_err(repository_error_from_database)
     }
@@ -409,7 +434,7 @@ fn load_scheduled_run(
     let mut statement = transaction.prepare(
         "SELECT id, task_id, scheduled_at, task_revision, project_id, worktree_base_branch, agent_ref,
                 model, prompt, approval_policy, approval_consented_at, status,
-                session_id, worktree_path, worktree_task_id, failure_reason, created_at, updated_at
+                session_id, worktree_path, worktree_task_id, failure_reason, verdict, verdict_detail, created_at, updated_at
          FROM scheduled_runs
          WHERE task_id = ?1 AND scheduled_at = ?2",
     )?;
@@ -428,7 +453,7 @@ fn load_scheduled_run_by_id(
     let mut statement = transaction.prepare(
         "SELECT id, task_id, scheduled_at, task_revision, project_id, worktree_base_branch, agent_ref,
                 model, prompt, approval_policy, approval_consented_at, status,
-                session_id, worktree_path, worktree_task_id, failure_reason, created_at, updated_at
+                session_id, worktree_path, worktree_task_id, failure_reason, verdict, verdict_detail, created_at, updated_at
          FROM scheduled_runs
          WHERE id = ?1",
     )?;
@@ -475,6 +500,11 @@ fn map_scheduled_run_row(row: &Row<'_>) -> Result<ScheduledRun, crate::DatabaseE
             .get::<_, Option<String>>("failure_reason")?
             .map(|value| parse_failure_reason(&value))
             .transpose()?,
+        verdict: row
+            .get::<_, Option<String>>("verdict")?
+            .map(|value| parse_verdict(&value))
+            .transpose()?,
+        verdict_detail: row.get("verdict_detail")?,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
     })
@@ -532,6 +562,20 @@ fn parse_failure_reason(value: &str) -> Result<ScheduledRunFailureReason, crate:
     }
 }
 
+fn parse_verdict(value: &str) -> Result<ScheduledRunVerdict, crate::DatabaseError> {
+    match value {
+        "pass" => Ok(ScheduledRunVerdict::Pass),
+        "warn" => Ok(ScheduledRunVerdict::Warn),
+        "fail" => Ok(ScheduledRunVerdict::Fail),
+        "blocked" => Ok(ScheduledRunVerdict::Blocked),
+        "idle" => Ok(ScheduledRunVerdict::Idle),
+        "range_unresolved" => Ok(ScheduledRunVerdict::RangeUnresolved),
+        _ => Err(crate::DatabaseError::CorruptScheduledRunVerdict(
+            value.to_string(),
+        )),
+    }
+}
+
 fn missed_reason_column(reason: ScheduledMissReason) -> &'static str {
     match reason {
         ScheduledMissReason::AppNotRunning => "app_not_running",
@@ -563,9 +607,9 @@ mod tests {
     use ora_domain::{
         AgentRef, AuditFields, Project, ProjectId, ScheduledMissReason, ScheduledMissedOccurrence,
         ScheduledOccurrence, ScheduledRun, ScheduledRunFailureReason, ScheduledRunId,
-        ScheduledRunStatus, ScheduledRunTransition, ScheduledTask, ScheduledTaskApproval,
-        ScheduledTaskExecutionLocation, ScheduledTaskHistoryEntry, ScheduledTaskId,
-        ScheduledTaskSchedule, SessionId, TaskId, WorkspaceLocation,
+        ScheduledRunStatus, ScheduledRunTransition, ScheduledRunVerdict, ScheduledTask,
+        ScheduledTaskApproval, ScheduledTaskExecutionLocation, ScheduledTaskHistoryEntry,
+        ScheduledTaskId, ScheduledTaskSchedule, SessionId, TaskId, WorkspaceLocation,
     };
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
@@ -1328,5 +1372,80 @@ mod tests {
         .expect("task");
         task.freeze_worktree_base_branch("main");
         task
+    }
+
+    #[test]
+    fn annotate_verdict_persists_and_leaves_execution_status_untouched() {
+        let (temp_dir, pool) = bootstrapped_pool();
+        seed_definition(&pool, temp_dir.path());
+        let repository = SqliteScheduledRunRepository::new(pool.clone());
+        let run = ScheduledRun::accepted(
+            ScheduledRunId::new("run-verdict"),
+            occurrence(90),
+            &scheduled_task(),
+            91,
+        );
+        repository
+            .resolve_scheduled_occurrence(ScheduledOccurrenceCandidate::run(run))
+            .expect("admit run");
+        repository
+            .transition_scheduled_run(
+                &ScheduledRunId::new("run-verdict"),
+                ScheduledRunTransition::Start {
+                    session_id: SessionId::new("session-1"),
+                    worktree_path: "worktrees/run-verdict".to_string(),
+                    worktree_task_id: TaskId::new("task-verdict"),
+                },
+                100,
+            )
+            .expect("start run");
+        repository
+            .transition_scheduled_run(
+                &ScheduledRunId::new("run-verdict"),
+                ScheduledRunTransition::Succeed,
+                200,
+            )
+            .expect("succeed run");
+
+        let annotated = repository
+            .annotate_scheduled_run_verdict(
+                &ScheduledRunId::new("run-verdict"),
+                ScheduledRunVerdict::Fail,
+                Some("Critical: unhandled overflow"),
+                300,
+            )
+            .expect("annotate verdict");
+        assert!(annotated, "a live run accepts the annotation");
+        // A nonexistent run reports not-annotated, without erroring.
+        assert!(
+            !repository
+                .annotate_scheduled_run_verdict(
+                    &ScheduledRunId::new("run-missing"),
+                    ScheduledRunVerdict::Pass,
+                    None,
+                    300,
+                )
+                .expect("annotate missing run")
+        );
+
+        // The succeeded run now carries the independent business fail verdict.
+        let history = repository
+            .list_scheduled_task_history(&ScheduledTaskId::new("scheduled-task-1"))
+            .expect("read history");
+        let run = history
+            .into_iter()
+            .find_map(|entry| match entry {
+                ScheduledTaskHistoryEntry::Run(run) if run.id.as_ref() == "run-verdict" => {
+                    Some(run)
+                }
+                _ => None,
+            })
+            .expect("run in history");
+        assert_eq!(run.status, ScheduledRunStatus::Succeeded);
+        assert_eq!(run.verdict, Some(ScheduledRunVerdict::Fail));
+        assert_eq!(
+            run.verdict_detail.as_deref(),
+            Some("Critical: unhandled overflow")
+        );
     }
 }
