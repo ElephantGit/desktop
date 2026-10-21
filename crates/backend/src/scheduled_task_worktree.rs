@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use gitlancer::git::diff::{DiffRequest, DiffScope};
 use gitlancer::git::status::StatusEntriesRequest;
@@ -10,9 +10,10 @@ use ora_application::{
 };
 use ora_contracts::DeleteTaskRequest;
 use ora_db::{
-    RepositoryPool, SqliteScheduledRunRepository, SqliteTaskRepository, SqliteWorktreeRepository,
+    RepositoryPool, SqliteScheduledRunRepository, SqliteTaskRepository, SqliteWorkspaceRepository,
+    SqliteWorktreeRepository,
 };
-use ora_domain::{ScheduledRun, ScheduledRunId, TaskId};
+use ora_domain::{ScheduledRun, ScheduledRunId, TaskId, WorkspaceId, WorkspaceLocation};
 
 use crate::task::{TaskApi, resolve_project_cwd};
 
@@ -47,12 +48,10 @@ pub(super) struct ScheduledWorktreeJanitor {
     tasks: Arc<TaskApi>,
     pool: RepositoryPool,
     relative_path_base: PathBuf,
-    /// Live handle to the worktree root, resolved per sweep so recovery paths for
-    /// runs without a recorded path follow the current provisioning root.
-    worktree_root: Arc<RwLock<PathBuf>>,
     runs: SqliteScheduledRunRepository,
     task_rows: SqliteTaskRepository,
     worktrees: SqliteWorktreeRepository,
+    workspaces: SqliteWorkspaceRepository,
 }
 
 impl ScheduledWorktreeJanitor {
@@ -60,15 +59,14 @@ impl ScheduledWorktreeJanitor {
         tasks: Arc<TaskApi>,
         pool: RepositoryPool,
         relative_path_base: PathBuf,
-        worktree_root: Arc<RwLock<PathBuf>>,
     ) -> Self {
         Self {
             tasks,
             relative_path_base,
-            worktree_root,
             runs: SqliteScheduledRunRepository::new(pool.clone()),
             task_rows: SqliteTaskRepository::new(pool.clone()),
             worktrees: SqliteWorktreeRepository::new(pool.clone()),
+            workspaces: SqliteWorkspaceRepository::new(pool.clone()),
             pool,
         }
     }
@@ -106,17 +104,12 @@ impl ScheduledWorktreeJanitor {
     /// Existence is checked before path handling: a deleted task's stale link is cleared
     /// even when the run has no recorded path, or it would be exempt from history pruning
     /// forever. A run without a recorded path (an ownership commit that crashed before
-    /// `Start`) is classified against the path resolved from its committed task's
-    /// workspace identity — a missing path is never treated as evidence of a clean worktree.
+    /// `Start`) is classified against the path resolved from its committed workspace
+    /// identity — a missing path is never treated as evidence of a clean worktree.
     pub(super) async fn enforce_retention(&self) {
         let Ok(runs) = self.runs.list_scheduled_runs_with_retained_worktrees() else {
             return;
         };
-        let worktree_root = self
-            .worktree_root
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
         let mut candidates = Vec::with_capacity(runs.len());
         for run in runs {
             let Some(task_id) = run.worktree_task_id.clone() else {
@@ -143,10 +136,17 @@ impl ScheduledWorktreeJanitor {
             };
             let worktree_path = match run.worktree_path.clone() {
                 Some(path) => path,
-                None => worktree_root
-                    .join(owned_task.workspace_id.as_ref())
-                    .to_string_lossy()
-                    .into_owned(),
+                // Resolve the committed workspace's persisted location, never the live
+                // worktree root: a root change between provisioning and recovery must not
+                // classify a missing inferred path as a clean (discardable) checkout.
+                None => {
+                    let Some(path) = self.resolve_committed_checkout_path(&owned_task.workspace_id)
+                    else {
+                        // Unresolvable: keep the run and its link rather than guessing.
+                        continue;
+                    };
+                    path
+                }
             };
             let in_use = self.task_in_use(&task_id);
             let has_changes = self.classify_worktree(&run, &task_id, &worktree_path);
@@ -160,6 +160,19 @@ impl ScheduledWorktreeJanitor {
         }
         for (task_id, run_id) in retention_discards(&candidates, MAX_RETAINED_SCHEDULED_WORKTREES) {
             self.discard_task(&task_id, &run_id).await;
+        }
+    }
+
+    /// Resolves the persisted local-filesystem checkout path for a committed workspace.
+    ///
+    /// Returns `None` when the workspace row is missing, its location is not a local
+    /// filesystem path, or the read failed — every such case must conservatively keep
+    /// the run instead of treating an unknown path as clean.
+    fn resolve_committed_checkout_path(&self, workspace_id: &WorkspaceId) -> Option<String> {
+        let workspace = self.workspaces.find_workspace(workspace_id).ok()??;
+        match workspace.location {
+            WorkspaceLocation::LocalFilesystem { path } => Some(path),
+            WorkspaceLocation::Ssh { .. } | WorkspaceLocation::RemoteTarget { .. } => None,
         }
     }
 
@@ -674,7 +687,6 @@ mod tests {
                 tasks.clone(),
                 pool.clone(),
                 temporary.path().to_path_buf(),
-                std::sync::Arc::new(std::sync::RwLock::new(temporary.path().join("worktrees"))),
             );
             let run_row = runs
                 .list_scheduled_runs_with_retained_worktrees()
@@ -865,7 +877,6 @@ mod tests {
                 tasks.clone(),
                 pool.clone(),
                 temporary.path().to_path_buf(),
-                std::sync::Arc::new(std::sync::RwLock::new(temporary.path().join("worktrees"))),
             )
             .enforce_retention()
             .await;
@@ -1031,7 +1042,6 @@ mod tests {
                 tasks.clone(),
                 pool.clone(),
                 temporary.path().to_path_buf(),
-                std::sync::Arc::new(std::sync::RwLock::new(temporary.path().join("worktrees"))),
             );
             janitor.enforce_retention().await;
 
@@ -1292,6 +1302,173 @@ mod tests {
                 "the settled run's clean worktree is reclaimed after the session stopped"
             );
             let _ = backend;
+        });
+    }
+
+    /// The retained-worktree sweep must resolve a run without a recorded path
+    /// from the committed workspace's persisted location, never from the live
+    /// worktree root: after the root moves, a guessed path would be missing and
+    /// a dirty checkout under the old root could be force-deleted as if clean.
+    #[test]
+    fn integration_retention_resolves_a_missing_path_from_the_committed_workspace() {
+        run_integration(async {
+            use ora_application::{
+                ScheduledOccurrenceRepository, ScheduledRunLifecycleRepository,
+                ScheduledTaskRepository, TaskRepository,
+            };
+            use ora_contracts::CreateProjectRequest;
+            use ora_db::{
+                DatabaseBootstrapper, DatabaseLocation, SqliteScheduledRunRepository,
+                SqliteScheduledTaskRepository, SqliteTaskRepository, default_migration_catalog,
+            };
+            use ora_domain::{
+                ScheduledOccurrence, ScheduledRun, ScheduledRunId, ScheduledRunTransition,
+            };
+            use tempfile::TempDir;
+
+            ora_logging::initialize_test_clock();
+            let temporary = TempDir::new().expect("backend fixture");
+            let git = GitTestScaffold::new("scheduled-null-path-recovery").expect("Git fixture");
+            git.write_file(git.repo_path(), "README.md", "fixture\n")
+                .expect("seed repository");
+            git.stage_all_and_commit("initial").expect("initial commit");
+            let backend = crate::Backend::open(crate::test_backend::backend_paths(
+                temporary.path(),
+                temporary.path(),
+            ))
+            .expect("backend");
+            let tasks = backend.tasks();
+            let project = backend
+                .projects()
+                .create(CreateProjectRequest {
+                    name: "Null-path fixture".to_string(),
+                    main_workspace_path: git.repo_path().to_string_lossy().into_owned(),
+                })
+                .expect("project")
+                .project;
+
+            let database_path = temporary.path().join("ora.sqlite3");
+            let pool = DatabaseBootstrapper::system()
+                .bootstrap_repository_pool(
+                    &DatabaseLocation::path(&database_path),
+                    &default_migration_catalog().expect("migration catalog"),
+                )
+                .expect("reopen database pool");
+            let definition = integration_scheduled_task(&project.id);
+            SqliteScheduledTaskRepository::new(pool.clone())
+                .create_scheduled_task(definition.clone())
+                .expect("create definition");
+            let runs = SqliteScheduledRunRepository::new(pool.clone());
+            let run_id = ScheduledRunId::new("run-null-path");
+            let run = ScheduledRun::accepted(
+                run_id.clone(),
+                ScheduledOccurrence {
+                    task_id: definition.id.clone(),
+                    scheduled_at: 1_000,
+                },
+                &definition,
+                1_001,
+            );
+            runs.resolve_scheduled_occurrence(ora_application::ScheduledOccurrenceCandidate::run(
+                run,
+            ))
+            .expect("admit run");
+            let created = tasks
+                .create_for_scheduled_run(crate::task::ScheduledRunWorktreeCommand {
+                    project_id: project.id.clone(),
+                    title: "Scheduled run run-null-path".to_string(),
+                    base_branch: "main".to_string(),
+                    run_id: run_id.to_string(),
+                })
+                .expect("scheduled provisioning");
+            let worktree_task_id = ora_domain::TaskId::new(&created.task.id);
+            // A dirty result left in the committed checkout, then the recorded
+            // path is lost (legacy/corrupted row) — recovery must still find the
+            // persisted checkout and keep the dirty result instead of discarding.
+            std::fs::write(
+                std::path::PathBuf::from(&created.worktree_path).join("uncommitted.txt"),
+                "keep me",
+            )
+            .expect("dirty the worktree");
+            runs.transition_scheduled_run(
+                &run_id,
+                ScheduledRunTransition::Fail {
+                    reason: ora_domain::ScheduledRunFailureReason::ExecutionError,
+                },
+                1_100,
+            )
+            .expect("settle run");
+            // Manufacture the defensive NULL-path state through a raw connection.
+            {
+                let connection = rusqlite::Connection::open(&database_path).expect("raw sqlite");
+                connection
+                    .execute(
+                        "UPDATE scheduled_runs SET worktree_path = NULL WHERE id = 'run-null-path'",
+                        [],
+                    )
+                    .expect("null the recorded path");
+            }
+
+            let janitor = super::ScheduledWorktreeJanitor::new(
+                tasks.clone(),
+                pool.clone(),
+                temporary.path().to_path_buf(),
+            );
+            janitor.enforce_retention().await;
+
+            // The dirty checkout is resolved from the persisted workspace location
+            // and must be kept, not silently discarded.
+            assert!(
+                SqliteTaskRepository::new(pool.clone())
+                    .find_task(&worktree_task_id)
+                    .expect("task probe")
+                    .is_some(),
+                "a dirty worktree behind a missing recorded path is kept"
+            );
+            let retained = runs
+                .list_scheduled_runs_with_retained_worktrees()
+                .expect("retained list")
+                .into_iter()
+                .filter(|run| run.id == run_id)
+                .count();
+            assert_eq!(retained, 1, "the dirty worktree stays retained");
+        });
+    }
+
+    /// A workspace that cannot be resolved must be kept, not treated as clean.
+    #[test]
+    fn resolve_committed_checkout_path_is_conservative_when_the_workspace_is_gone() {
+        run_integration(async {
+            use ora_db::{
+                DatabaseBootstrapper, DatabaseLocation, RepositoryPool, default_migration_catalog,
+            };
+            use tempfile::TempDir;
+
+            ora_logging::initialize_test_clock();
+            let temporary = TempDir::new().expect("fixture");
+            let pool: RepositoryPool = DatabaseBootstrapper::system()
+                .bootstrap_repository_pool(
+                    &DatabaseLocation::path(temporary.path().join("ora.sqlite3")),
+                    &default_migration_catalog().expect("catalog"),
+                )
+                .expect("bootstrap");
+            let janitor = super::ScheduledWorktreeJanitor::new(
+                crate::Backend::open(crate::test_backend::backend_paths(
+                    temporary.path(),
+                    temporary.path(),
+                ))
+                .expect("backend")
+                .tasks(),
+                pool,
+                temporary.path().to_path_buf(),
+            );
+            assert_eq!(
+                janitor.resolve_committed_checkout_path(&ora_domain::WorkspaceId::new(
+                    "missing-workspace"
+                )),
+                None,
+                "a missing workspace keeps the run instead of guessing a path"
+            );
         });
     }
 }

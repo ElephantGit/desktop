@@ -302,13 +302,6 @@ impl TaskApi {
             .map(|root| root.clone())
             .map_err(|_poisoned| ApplicationError::TaskWorktreeRootUnavailable)
     }
-
-    /// Shares the live worktree-root handle so long-lived consumers (the
-    /// scheduled worktree janitor) resolve paths against the current root at
-    /// sweep time instead of a stale construction-time snapshot.
-    pub(crate) fn worktree_root_handle(&self) -> Arc<RwLock<PathBuf>> {
-        Arc::clone(&self.worktree_root)
-    }
 }
 
 /// Converts project repository failures encountered during dynamic task routing.

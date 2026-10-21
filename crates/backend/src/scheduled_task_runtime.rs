@@ -64,7 +64,6 @@ impl ScheduledTaskRuntime {
             tasks_api.clone(),
             pool.clone(),
             tasks_api.relative_path_base().to_path_buf(),
-            tasks_api.worktree_root_handle(),
         );
         let runtime = Arc::new(Self {
             scheduler,
