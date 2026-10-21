@@ -47,12 +47,15 @@ pub(super) fn restorer(
             .map_err(ora_node_db::Error::from)
     };
     let mut runner = host()?;
-    // Every restore command records its original Run identity before the host sees it.
+    // Every restore command records its original Run identity before the host sees it, whether it
+    // runs as the workload user in the checkout or as the Node for Git Server access.
     runner.track_restore(stops.clone());
+    let mut node_runner = host()?;
+    node_runner.track_restore(stops.clone());
     Ok(Some(
         RevisionRestorer::new(
             DeliveryGit::new(runner, policy),
-            AsNode(host()?),
+            AsNode(node_runner),
             access,
             config.repository_root.clone(),
             node.git.runner().process_config().workload_uid,

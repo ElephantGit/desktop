@@ -5,11 +5,11 @@
 //! borrows the checkout's objects, negotiating from the clone's base commit so only what the
 //! checkout lacks is sent, and checks that it is the prior final commit. The workload user then
 //! takes the objects from the transport repository into the checkout and moves the Workspace
-//! branch there. Everything runs on a blocking thread; the transport repository is removed when
-//! the restore ends and its original stop is confirmed, whatever the outcome. One absolute
-//! deadline, owned by the deployment, bounds the fetch and every workload Git command; neither a
-//! retry nor a wait grants more time, and unknown original stop evidence retains the inputs across
-//! restart without rerunning the restore.
+//! branch there. Everything runs on a blocking thread; the transport repository is removed once
+//! the restore ends and every original command of it has confirmed its stop, whatever the
+//! outcome. One absolute deadline, owned by the deployment, bounds the Git Server accesses and
+//! every workload Git command at both identities; neither a retry nor a wait grants more time, and
+//! unknown original stop evidence retains the inputs across restart without rerunning the restore.
 
 mod config;
 mod git;
@@ -24,7 +24,6 @@ use crate::session::{
     PriorRevisionRestore, RestoreCancel, RestoreFailure, RestoreRequest, Restored,
 };
 use git::GitRestore;
-use gitlancer::GitRunner;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -117,7 +116,7 @@ impl<R: Send + 'static, N: Send + 'static> Drop for RevisionRestorer<R, N> {
 impl<R, N> PriorRevisionRestore for RevisionRestorer<R, N>
 where
     R: RestoreGitRunner + Send + 'static,
-    N: GitRunner + Send + 'static,
+    N: RestoreGitRunner + Send + 'static,
 {
     /// Anchors the stop clock before cancellation can reach the command boundary.
     fn request_stop(&self, execution: &ora_node_protocol::ExecutionId) {
@@ -162,77 +161,110 @@ where
         let root = self.repository_root.clone();
         let owner = self.owner;
         let shutdown = self.shutdown.clone();
+        let stops = self.stops.clone();
         tokio::task::spawn_blocking(move || {
             let stopping = || shutdown.requested() || cancel.requested();
             let mut git = git.lock().unwrap_or_else(PoisonError::into_inner);
             let Some((workload, node)) = git.as_mut() else {
                 return Err(RestoreFailure::Unavailable);
             };
-            // Every later workload command is journaled against this session before admission.
+            // Every restore command records its original Run before the host sees it, whether the
+            // Node or the workload user runs it, and both share the session's stop cancellation.
             workload.bind_restore(&request.execution, cancel.clone());
+            node.bind_restore(&request.execution, cancel.clone());
+            let commands = runner::RestoreCommands {
+                runner: &*node,
+                deadline,
+            };
             let execution = request.execution.as_str();
-            let transport =
-                TransportRepository::create(node, &root, TRANSPORT_KIND, &request.execution)
-                    .and_then(|transport| {
-                        transport.borrow_objects(&request.checkout.join(".git"))?;
-                        transport.negotiate_from(node, &[&request.base_commit])?;
-                        Ok(transport)
-                    })
+            let transport = TransportRepository::prepare(&root, TRANSPORT_KIND, &request.execution)
+                .map_err(|error| {
+                    ora_logging::ora_warn!(execution_id = %execution, error = %error, "restore transport repository could not be prepared");
+                    RestoreFailure::Unavailable
+                })?;
+            let restored = (|| -> Result<Restored, RestoreFailure> {
+                transport.init(&commands).map_err(|error| {
+                    ora_logging::ora_warn!(execution_id = %execution, error = %error, "restore transport repository could not be created");
+                    RestoreFailure::Unavailable
+                })?;
+                transport
+                    .borrow_objects(&request.checkout.join(".git"))
                     .map_err(|error| {
-                        ora_logging::ora_warn!(execution_id = %execution, error = %error, "restore transport repository could not be prepared");
+                        ora_logging::ora_warn!(execution_id = %execution, error = %error, "restore transport repository could not borrow the checkout's objects");
                         RestoreFailure::Unavailable
                     })?;
-            let prior = &request.prior;
-            access
-                .fetch(
-                    node,
-                    &transport,
-                    &prior.git_repository_url,
-                    &request.execution,
-                    &[format!("{}:refs/ora/prior", prior.delivery_ref.as_str())],
-                    &stopping,
-                )
-                .map_err(|failure| {
-                    ora_logging::ora_warn!(execution_id = %execution, failure = ?failure, "prior delivery ref was not fetched");
-                    match failure {
-                        // The Git Server answers missing and unreadable refs the same way: the
-                        // prior Revision's Git content is permanently out of reach.
-                        GitServerFailure::Denied | GitServerFailure::MissingRef => {
-                            RestoreFailure::BaseUnavailable
-                        }
-                        // A 401 only says the Node's own git-access material is wrong or
-                        // expired; it must not mark the prior Revision unresumable, so a later
-                        // session may try again once the deployment is fixed.
-                        GitServerFailure::Unauthenticated
-                        | GitServerFailure::Unavailable
-                        | GitServerFailure::Stopped => RestoreFailure::Unavailable,
-                    }
+                // Local staging between Git commands takes the same admission fence as Git.
+                commands.check_admission().map_err(|error| {
+                    ora_logging::ora_warn!(execution_id = %execution, error = %error, "restore admission was refused");
+                    RestoreFailure::Unavailable
                 })?;
-            // A delivery ref only ever gets created, so another commit is a defect; it stays
-            // retryable instead of making Cloud give up on the Revision.
-            match transport.commit_of(node, "refs/ora/prior") {
-                Ok(Some(commit)) if commit == prior.final_commit => {}
-                Ok(_) | Err(_) => {
-                    ora_logging::ora_warn!(execution_id = %execution, "prior delivery ref does not hold the prior final commit");
+                transport
+                    .negotiate_from(&commands, &[&request.base_commit])
+                    .map_err(|error| {
+                        ora_logging::ora_warn!(execution_id = %execution, error = %error, "restore transport repository could not negotiate its base");
+                        RestoreFailure::Unavailable
+                    })?;
+                let prior = &request.prior;
+                access
+                    .fetch(
+                        &commands,
+                        &transport,
+                        &prior.git_repository_url,
+                        &request.execution,
+                        &[format!("{}:refs/ora/prior", prior.delivery_ref.as_str())],
+                        &stopping,
+                    )
+                    .map_err(|failure| {
+                        ora_logging::ora_warn!(execution_id = %execution, failure = ?failure, "prior delivery ref was not fetched");
+                        match failure {
+                            // The Git Server answers missing and unreadable refs the same way: the
+                            // prior Revision's Git content is permanently out of reach.
+                            GitServerFailure::Denied | GitServerFailure::MissingRef => {
+                                RestoreFailure::BaseUnavailable
+                            }
+                            // A 401 only says the Node's own git-access material is wrong or
+                            // expired; it must not mark the prior Revision unresumable, so a later
+                            // session may try again once the deployment is fixed.
+                            GitServerFailure::Unauthenticated
+                            | GitServerFailure::Unavailable
+                            | GitServerFailure::Stopped => RestoreFailure::Unavailable,
+                        }
+                    })?;
+                // A delivery ref only ever gets created, so another commit is a defect; it stays
+                // retryable instead of making Cloud give up on the Revision.
+                match transport.commit_of(&commands, "refs/ora/prior") {
+                    Ok(Some(commit)) if commit == prior.final_commit => {}
+                    Ok(_) | Err(_) => {
+                        ora_logging::ora_warn!(execution_id = %execution, "prior delivery ref does not hold the prior final commit");
+                        return Err(RestoreFailure::Unavailable);
+                    }
+                }
+                if stopping() {
                     return Err(RestoreFailure::Unavailable);
                 }
+                transport.hand_over(owner).map_err(|error| {
+                    ora_logging::ora_warn!(execution_id = %execution, error = %error, "restore transport repository could not be handed over");
+                    RestoreFailure::Unavailable
+                })?;
+                workload.restore(&GitRestore {
+                    checkout: &request.checkout,
+                    transport: transport.path(),
+                    prior,
+                    branch: &request.branch,
+                    base_commit: &request.base_commit,
+                    deadline,
+                    stopping: &stopping,
+                })
+            })();
+            // The workload user reads objects out of the transport repository, so it stays until
+            // every original command of this restore has proven that it stopped.
+            if stops
+                .as_ref()
+                .is_some_and(|stops| stops.retains_inputs(&request.execution))
+            {
+                transport.keep();
             }
-            if stopping() {
-                return Err(RestoreFailure::Unavailable);
-            }
-            transport.hand_over(owner).map_err(|error| {
-                ora_logging::ora_warn!(execution_id = %execution, error = %error, "restore transport repository could not be handed over");
-                RestoreFailure::Unavailable
-            })?;
-            workload.restore(&GitRestore {
-                checkout: &request.checkout,
-                transport: transport.path(),
-                prior,
-                branch: &request.branch,
-                base_commit: &request.base_commit,
-                deadline,
-                stopping: &stopping,
-            })
+            restored
         })
         .await
         .unwrap_or(Err(RestoreFailure::Unavailable))

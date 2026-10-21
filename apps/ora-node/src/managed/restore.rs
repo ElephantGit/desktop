@@ -119,6 +119,16 @@ impl RestoreStops {
             .is_empty())
     }
 
+    /// Whether an original command of this restore may still be running, so the inputs it reads
+    /// stay on disk. An unreadable journal keeps them too: missing evidence is never permission.
+    pub(crate) fn retains_inputs(&self, execution: &ExecutionId) -> bool {
+        !self
+            .journal
+            .pending_restore_attempts(execution)
+            .map(|pending| pending.is_empty())
+            .unwrap_or(/*default*/ false)
+    }
+
     /// A Closed scope and an exited direct process are independent required observations.
     async fn prove(&self, attempt: &RestoreAttempt) -> io::Result<bool> {
         let original = &attempt.process;

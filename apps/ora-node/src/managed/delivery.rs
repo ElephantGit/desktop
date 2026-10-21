@@ -41,6 +41,40 @@ impl<H: std::borrow::Borrow<CloneHost>> GitRunner for AsNode<H> {
     }
 }
 
+impl<H: std::borrow::BorrowMut<CloneHost>> RestoreGitRunner for AsNode<H> {
+    /// A restore's Node-identity commands belong to the original session like the workload's.
+    fn bind_restore(
+        &mut self,
+        execution: &ora_node_protocol::ExecutionId,
+        cancellation: crate::session::RestoreCancel,
+    ) {
+        self.0.borrow_mut().bind_restore(execution, cancellation);
+    }
+
+    /// Admission fences Git Server, transport and `commit_of` commands between steps.
+    fn check_admission(&self) -> Result<(), GitExecError> {
+        self.0.borrow().check_admission()
+    }
+
+    /// Runs within the restore's absolute cutoff, with the same original-Run evidence as the
+    /// workload's commands, so a slow Git Server fetch cannot outlive it.
+    fn run_bounded_before(
+        &self,
+        command: &GitCommand,
+        stdout: usize,
+        stderr: usize,
+        deadline: Instant,
+    ) -> Result<GitOutput, GitExecError> {
+        self.0.borrow().run_scoped(
+            command,
+            stdout,
+            stderr,
+            RunAs::Node,
+            Budget::Restore(deadline),
+        )
+    }
+}
+
 impl GitRunner for CloneHost {
     /// Captures both streams up to the guardian limit.
     fn run(&self, command: &GitCommand) -> Result<GitOutput, GitExecError> {
