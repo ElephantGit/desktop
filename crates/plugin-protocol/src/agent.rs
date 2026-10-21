@@ -26,6 +26,10 @@ pub struct AgentStartContext {
     #[ts(type = "string")]
     pub cwd: PathBuf,
     pub host_version: String,
+    /// Present only for the versioned platform-model path, and never stored in session history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "import(\"./model_context.ts\").AgentModelContext")]
+    pub model_context: Option<crate::AgentModelContext>,
 }
 
 /// Wire protocol used inside the bidirectional `agent/acp` notification.
@@ -43,6 +47,9 @@ pub enum AgentProtocol {
 pub struct AgentStartResult {
     pub protocol: AgentProtocol,
     pub acp_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "import(\"./model_context.ts\").AgentModelApplied")]
+    pub model_applied: Option<crate::AgentModelApplied>,
 }
 
 impl AgentStartResult {
@@ -51,6 +58,7 @@ impl AgentStartResult {
         Self {
             protocol: AgentProtocol::Acp,
             acp_version: SUPPORTED_ACP_VERSION,
+            model_applied: None,
         }
     }
 }

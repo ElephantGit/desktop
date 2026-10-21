@@ -151,6 +151,7 @@ async fn spawn_plugin_connection<A: AgentAttach>(
         &plugin_id.canonical(),
         home_directory,
         env!("CARGO_PKG_VERSION"),
+        plugin_host.model_context(),
     )
     .await
     {

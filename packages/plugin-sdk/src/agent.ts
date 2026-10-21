@@ -10,9 +10,10 @@ import {
   AGENT_UNUSABLE,
   type AgentEffectCoordinationContext,
   type AgentEffectReadinessContext,
-  type AgentListModelsResult,
   type AgentListModelsParams,
+  type AgentListModelsResult,
   type AgentModel as WireAgentModel,
+  type AgentModelApplied,
   type AgentStartContext,
   type AgentStartResult,
   EFFECT_METHODS,
@@ -20,6 +21,7 @@ import {
   type JsonValue,
   SUPPORTED_ACP_VERSION,
 } from "./protocol/index.ts";
+import { parseModelContext, verifyModelApplied } from "./model_context.ts";
 
 export type {
   AgentEffectCoordinationContext,
@@ -76,7 +78,10 @@ export interface AgentDefinition {
    * and `AGENT_UNUSABLE` when the one this package ships cannot run at all; `spawnAgentProcess`
    * raises both for a plugin that resolves its CLI through the host.
    */
-  start(context: AgentStartContext, send: AcpSender): void | Promise<void>;
+  start(
+    context: AgentStartContext,
+    send: AcpSender,
+  ): void | AgentModelApplied | Promise<void | AgentModelApplied>;
   /** Terminates the agent while leaving this plugin process alive. */
   stop(): void | Promise<void>;
   /** Lists selectable models outside any session. */
@@ -100,12 +105,16 @@ export function defineAgent(definition: AgentDefinition): Plugin {
 
   plugin.declareEmit(AGENT_METHODS.acp);
   plugin.registerMethod(AGENT_METHODS.start, async (input) => {
-    await definition.start(parseStartContext(input), send);
+    const context = parseStartContext(input);
+    const applied = await definition.start(context, send);
     // ACP is the only protocol Ora carries today; the field exists so a plugin that translates a
     // private protocol can declare it later without changing the notification channel.
     return {
       protocol: "acp",
       acpVersion: SUPPORTED_ACP_VERSION,
+      ...(context.modelContext
+        ? { modelApplied: verifyModelApplied(context.modelContext, applied) }
+        : {}),
     } satisfies AgentStartResult;
   });
   plugin.registerMethod(AGENT_METHODS.stop, async () => {
@@ -203,5 +212,11 @@ function parseStartContext(input: JsonValue): AgentStartContext {
       "agent/start requires a cwd and hostVersion",
     );
   }
-  return { cwd: input.cwd, hostVersion: input.hostVersion };
+  return {
+    cwd: input.cwd,
+    hostVersion: input.hostVersion,
+    ...(input.modelContext === undefined
+      ? {}
+      : { modelContext: parseModelContext(input.modelContext) }),
+  };
 }

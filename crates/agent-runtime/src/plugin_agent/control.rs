@@ -114,15 +114,38 @@ pub(super) async fn start_agent(
     runtime: &PluginRuntime,
     cwd: &Path,
     host_version: &str,
+    model_context: Option<ora_plugin_protocol::AgentModelContext>,
 ) -> Result<(), PluginAgentError> {
+    let expected = model_context
+        .as_ref()
+        .map(|context| ora_plugin_protocol::AgentModelApplied {
+            adapter_version: context.configuration.adapter_version,
+            declaration_fingerprint: context.configuration.declaration_fingerprint.clone(),
+            configuration_revision: context.configuration.configuration_revision,
+        });
     let params = serde_json::to_value(AgentStartContext {
         cwd: cwd.to_path_buf(),
         host_version: host_version.to_string(),
+        model_context,
     })
     .map_err(|error| PluginAgentError::Failed(error.to_string()))?;
-    let result = runtime.invoke(AGENT_START_METHOD, params).await?;
+    // Remote errors may contain arbitrary plugin text. Sensitive startup must never echo it.
+    let result = runtime
+        .invoke(AGENT_START_METHOD, params)
+        .await
+        .map_err(|error| {
+            if expected.is_some() {
+                PluginAgentError::Failed("agent_model_adapter_failed".into())
+            } else {
+                error.into()
+            }
+        })?;
     let result: AgentStartResult = serde_json::from_value(result).map_err(|error| {
-        PluginAgentError::Failed(format!("invalid {AGENT_START_METHOD} result: {error}"))
+        if expected.is_some() {
+            PluginAgentError::Failed("agent_model_adapter_failed".into())
+        } else {
+            PluginAgentError::Failed(format!("invalid {AGENT_START_METHOD} result: {error}"))
+        }
     })?;
     if result.acp_version != SUPPORTED_ACP_VERSION {
         return Err(PluginAgentError::ContractIncomplete(format!(
@@ -131,6 +154,11 @@ pub(super) async fn start_agent(
         )));
     }
     let AgentProtocol::Acp = result.protocol;
+    if expected.is_some() && result.model_applied != expected {
+        return Err(PluginAgentError::ContractIncomplete(
+            "agent_model_adapter_not_applied".into(),
+        ));
+    }
     Ok(())
 }
 
