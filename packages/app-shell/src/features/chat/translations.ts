@@ -18,6 +18,7 @@ export const chatTranslations = {
     "chat.diagnosticsRequestLimit":
       "仅列出宿主交给界面的请求；自动处理的权限和未支持的问题表单不会出现在这里。",
     "chat.diagnosticsNoLiveTime": "未知；历史重放不代表刚发生的活动",
+    "chat.diagnosticsNoActivityYet": "本次尝试尚未观察到活动",
     "chat.diagnosticsSilence": "{{seconds}} 秒未收到父回合新活动",
     "chat.diagnosticsActivity_message": "收到回复",
     "chat.diagnosticsActivity_thought": "收到思考",
@@ -322,7 +323,8 @@ export const chatTranslations = {
     "chat.agentEffectRecovery.title": "Agent 技能同步需要手动恢复",
     "chat.agentEffectRecovery.action": "恢复",
     "chat.agentEffectRecovery.pending": "正在恢复…",
-    "chat.agentEffectRecovery.refused": "恢复未完成：{{message}}。外部状态与记录不一致，请检查工作区目录后重试。",
+    "chat.agentEffectRecovery.refused":
+      "恢复未完成：{{message}}。外部状态与记录不一致，请检查工作区目录后重试。",
     "chat.copyCode": "复制代码",
     "chat.codeCopied": "代码已复制",
     "chat.collapseCode": "收起代码",
@@ -365,6 +367,7 @@ export const chatTranslations = {
     "chat.diagnosticsRequestLimit":
       "Only requests exposed by the host appear here. Automatically handled permissions and unsupported question forms are not listed.",
     "chat.diagnosticsNoLiveTime": "Unknown; replay is not new activity",
+    "chat.diagnosticsNoActivityYet": "No activity observed in this attempt yet",
     "chat.diagnosticsSilence": "No new parent activity for {{seconds}} seconds",
     "chat.diagnosticsActivity_message": "Reply received",
     "chat.diagnosticsActivity_thought": "Thought received",

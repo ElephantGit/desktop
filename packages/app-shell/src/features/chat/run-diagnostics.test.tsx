@@ -24,6 +24,18 @@ describe("run diagnostics", () => {
     expect(screen.queryByText(/healthy|stalled/i)).not.toBeInTheDocument();
   });
 
+  it("says no activity was observed yet instead of calling a fresh attempt a replay", () => {
+    render(
+      <RunDiagnosticsPanel turns={[]} isResponding pendingPermissions={[]} />,
+    );
+    expect(
+      screen.getByText("No activity observed in this attempt yet"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Unknown; replay is not new activity"),
+    ).not.toBeInTheDocument();
+  });
+
   it("reports elapsed silence without creating activity and releases its timer", () => {
     vi.useFakeTimers();
     try {

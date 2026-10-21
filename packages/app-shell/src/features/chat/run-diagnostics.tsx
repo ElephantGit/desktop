@@ -69,7 +69,11 @@ export function RunDiagnosticsPanel({
         <dt>{t("chat.diagnosticsLastActivity")}</dt>
         <dd>
           {lastActivity === undefined ? (
-            t("chat.diagnosticsNoLiveTime")
+            isResponding ? (
+              t("chat.diagnosticsNoActivityYet")
+            ) : (
+              t("chat.diagnosticsNoLiveTime")
+            )
           ) : (
             <>
               {t(`chat.diagnosticsActivity_${lastActivity.kind}`)} ·{" "}
