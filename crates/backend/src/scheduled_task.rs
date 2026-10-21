@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+#[path = "scheduled_task_calendar.rs"]
+mod calendar;
 #[path = "scheduled_task_runtime.rs"]
 mod runtime;
 #[path = "scheduled_task_worktree.rs"]
