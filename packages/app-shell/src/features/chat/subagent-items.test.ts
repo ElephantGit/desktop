@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { ChatToolCall, ChatTurnItem } from "@ora/chat";
-import { delegationReturned, groupSubagentItems } from "./subagent-items";
+import {
+  delegationReturned,
+  groupSubagentItems,
+  parentStreamItems,
+} from "./subagent-items";
 
 const item = (id: string, parentID: string, depth: number): ChatTurnItem => ({
   kind: "message",
@@ -112,5 +116,23 @@ describe("delegation result association", () => {
     expect(
       delegationReturned([delegation("call", undefined, "completed")], "child"),
     ).toBe(false);
+  });
+
+  it("keeps a top-level child scoped to the parent stream", () => {
+    const insideAnotherChild = {
+      ...delegation("inner", "sibling", "completed"),
+      metadata: {
+        "opencode/child-session": { id: "worker", parentID: "root", depth: 1 },
+      },
+    };
+    expect(
+      delegationReturned(parentStreamItems([insideAnotherChild]), "sibling"),
+    ).toBe(false);
+    expect(
+      delegationReturned(
+        parentStreamItems([delegation("call", "sibling", "completed")]),
+        "sibling",
+      ),
+    ).toBe(true);
   });
 });

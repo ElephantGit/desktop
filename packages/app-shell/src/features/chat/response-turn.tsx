@@ -16,6 +16,7 @@ import {
 import { TurnDiffSummary } from "./turn-diff-summary";
 import { formatElapsedDuration } from "../../lib/format";
 import { SubagentGroup } from "./subagent-group";
+import { parentStreamItems } from "./subagent-items";
 
 interface ResponseTurnProps {
   turn: ChatTurn;
@@ -77,7 +78,7 @@ export function DisplayTurnItemView({
       return (
         <SubagentGroup
           group={item}
-          parentItems={turn.items}
+          parentItems={parentStreamItems(turn.items)}
           turnStatus={turn.status}
           parentEnded={
             turn.stopReason !== null ||

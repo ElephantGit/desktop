@@ -120,3 +120,15 @@ export function delegationReturned(
   }
   return latest !== undefined && delegationResultCompleted(latest);
 }
+
+/**
+ * Filters a turn to the parent session's own stream.
+ *
+ * Top-level children are launched from the parent stream, so a delegation found inside another
+ * child's stream must not settle them; a nested group uses its parent group's items instead.
+ */
+export function parentStreamItems(items: ChatTurnItem[]): ChatTurnItem[] {
+  return items.filter(
+    (item) => childSessionSource(item.metadata) === undefined,
+  );
+}
