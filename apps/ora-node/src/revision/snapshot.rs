@@ -33,8 +33,8 @@ pub(crate) struct GitPolicy {
 
 /// Runs delivery Git with the deployment's policy, whatever runner executes it.
 pub(crate) struct DeliveryGit<R> {
-    runner: R,
-    policy: GitPolicy,
+    pub(super) runner: R,
+    pub(super) policy: GitPolicy,
 }
 
 /// What the snapshot produced: the run changed the Workspace exactly when the final commit is
@@ -68,6 +68,25 @@ pub(crate) struct SnapshotRequest<'a> {
 impl<R: GitRunner> DeliveryGit<R> {
     pub(crate) fn new(runner: R, policy: GitPolicy) -> Self {
         Self { runner, policy }
+    }
+
+    /// An unstarted incomplete restore may leave mixed files; only its two allowed HEADs matter.
+    pub(crate) fn unchanged_head(
+        &self,
+        request: &SnapshotRequest<'_>,
+    ) -> Result<Snapshot, SnapshotFailure> {
+        let head = CommitId::new(
+            self.output(
+                request.checkout,
+                &["rev-parse", "--verify", "HEAD^{commit}"],
+                &[],
+            )
+            .map_err(|error| log(error, SnapshotFailure::CheckoutUnavailable))?,
+        );
+        if head != *request.base_commit && request.prior_final_commit != Some(&head) {
+            return Err(SnapshotFailure::CheckoutUnavailable);
+        }
+        Ok(Snapshot::Unchanged { final_commit: head })
     }
 
     /// Saves the checkout's HEAD chain plus remaining changes under the Revision ref.
@@ -171,7 +190,18 @@ impl<R: GitRunner> DeliveryGit<R> {
         args: &[&str],
         variables: &[(&str, &str)],
     ) -> Result<String, GitExecError> {
-        self.run(self.command(checkout, args, variables))
+        self.output_command(checkout, args, variables, GitIntent::Mutating)
+    }
+
+    /// Keeps intent explicit when restore fetches missing prerequisites over the network.
+    pub(super) fn output_command(
+        &self,
+        checkout: &Path,
+        args: &[&str],
+        variables: &[(&str, &str)],
+        intent: GitIntent,
+    ) -> Result<String, GitExecError> {
+        self.run(self.command_with(checkout, args, variables, intent))
     }
 
     /// The hardened command running `args` in the checkout.
@@ -180,6 +210,17 @@ impl<R: GitRunner> DeliveryGit<R> {
         checkout: &Path,
         args: &[&str],
         variables: &[(&str, &str)],
+    ) -> GitCommand {
+        self.command_with(checkout, args, variables, GitIntent::Mutating)
+    }
+
+    /// Builds one hardened command with the caller's Git intent.
+    fn command_with(
+        &self,
+        checkout: &Path,
+        args: &[&str],
+        variables: &[(&str, &str)],
+        intent: GitIntent,
     ) -> GitCommand {
         let mut env = self.policy.env.clone();
         for (name, value) in variables {
@@ -190,7 +231,7 @@ impl<R: GitRunner> DeliveryGit<R> {
             full.extend(["-c".to_owned(), config.to_owned()]);
         }
         full.extend(args.iter().map(|arg| (*arg).to_owned()));
-        GitCommand::new(checkout.to_path_buf(), full, env, GitIntent::Mutating)
+        GitCommand::new(checkout.to_path_buf(), full, env, intent)
     }
 
     /// Runs a command built by [`DeliveryGit::command`] and returns its trimmed standard output.

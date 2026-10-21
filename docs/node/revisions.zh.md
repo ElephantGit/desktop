@@ -78,12 +78,43 @@ Git Server 的暂时性失败最多尝试三次，间隔 5 秒和 30 秒；401�
 3. 如果上一个 Revision 的基础提交不在当前快照的历史中，就在第一轮输入后追加一段固定的英文说明，写明恢复的提交、它的基础
    提交和分支，并建议运行 `ora-git fetch upstream`。
 
-拉取和导入共享一个 5 分钟的截止时间，重试也计算在内。交付 ref 不存在、403 或 401 与 429 以外的其他 4xx 时，会话以
+拉取和导入共享一个绝对截止，重试也计算在内。它默认 5 分钟，通过 Node 服务配置
+`"restore": { "deadline_ms": 300000 }` 调整；该值必须是正整数，表示有限且可表达的时长，非法配置拒绝服务启动。等待恢复
+Git 锁、重试和迟到的 host 交换都不重置截止。交付 ref 不存在、403 或 401 与 429 以外的其他 4xx 时，会话以
 `agent_failed{prior_revision_base_unavailable}` 结束：前序 Revision 的 Git 内容永久取不到。401 只说明 Node 自己的
 git-access 身份没有通过认证，所以会话以可由之后的运行再续的 `agent_failed{prior_revision_unavailable}` 结束；同一材料重试
-不会通过，时限内也不重试。其他拉取、校验或检出失败，以及截止时间到期，同样以 `agent_failed{prior_revision_unavailable}` 结束。两种情况都不会启动插件进程。恢复期间 Node 停止或收到 `EndSession`，
-恢复会在下一条 Git 命令之前停下并等待正在运行的那条，所以会话只在恢复不再写 checkout 之后才结束。恢复期间重启，会话
-以 `interrupted` 结束。传输仓库用完即删，启动时也会清扫。
+不会通过，时限内也不重试。其他拉取、校验或检出失败，以及截止时间到期，同样以 `agent_failed{prior_revision_unavailable}` 结束。
+两种情况都不会启动插件进程。恢复期间 Node 停止或收到 `EndSession`，恢复会在下一条 Git 命令之前停下并等待正在运行的那条，
+所以会话只在恢复不再写 checkout 之后才结束。恢复期间重启，会话以 `interrupted` 结束。传输仓库只在这次恢复的每条原命令都
+取得停止确认之后才删除；所以启动清理会保留每个恢复尚未了结的会话的传输仓库，不会在恢复流程开始前先清空。
+
+每条受管恢复 Git 命令（无论 Node 身份还是工作负载身份）使用自身命令截止和恢复截止中更早的值。到期后不再启动新命令；
+进行中的 host 交换同样受这个截止约束，不能因更长的传输超时推迟关闭请求。执行到期后的清理与原 Scope 关闭确认使用独立的
+清理预算。迟到的祖先检查不能把已经到期的恢复改判成功。到期不是停止证据。
+
+## 停止确认与半恢复隔离
+
+恢复 Git 在 host 接受命令前，把原 Scope/Run 与会话身份一起持久化，Node 身份的命令（建传输仓库、Git Server 拉取、
+`commit_of`）和工作负载身份的导入都在内。首次停止请求先落盘再发 Close；取消只在等待或命令边界生效，不丢弃正在执行的
+阻塞工作线程。只有原 Scope 已观测到 `Closed` 且原 Run 的直接进程已经退出，才允许会话终态、传输仓库清理、交付或
+checkout 复用。当前 Linux guardian 使用 BestEffort，尽力清理完成不等于 Strong 的静止保证。
+
+部署配置为 `"restore": { "deadline_ms": 300000, "stop_confirmation_ms": 600000 }`。停止确认上限默认十分钟，
+必须为正的有限时长且大于恢复截止；从首次停止请求冻结，重试、重启、重连、配置变更和 Cloud 窗口均不续期。原停止证据未知时
+保留身份、输入、待补报原因和 checkout 冲突责任；到期停止本会话的 host 证据轮询，原执行查询显示 `stop_unconfirmed`、原
+Scope/Run、首次请求与上限时间、实际纳管保证。到期不发终态，不授权清理或复用。启动交接及后续执行查询只能重试关闭、查询
+这些原身份，迟到证据仍在原执行上补报一次；恢复不重做。升级前尚未完成的旧恢复按持久事实判定：已完成的旧终态只作为历史
+保留，不拦截后续准入；`last_sequence` 不为零的旧会话同样如此，因为 v9/v10 的恢复在 Agent 启动前同步完成，只有 Agent
+线程事件会推进这个计数，而 Controller 的确认只删掉出站事件行、不会把它清零；升级时处于 Accepted、从未启动过 actor 的
+会话保持 pending 阶段，因为当时不可能有恢复进程。剩下的 `legacy_unknown` 恰好是升级那一刻可能正在恢复的会话：它们没有
+Node 侧出口，由残留回收契约（specs#126）在取得真实证据或运维显式确认后释放。
+
+账本先记录恢复完成，再允许插件启动。带前序输入、恢复未完成且 Agent 从未获准启动的会话，在确认停止后交付只读 HEAD：
+只接受 clone 基线或前序最终提交，恒为 `unchanged`，不探查混合工作区，不快照、不写 Revision ref。停止未知时连 HEAD 都
+不读。原进程归属未知的传输仓库保留；清理失败单独记录，不改变停止证据。
+
+以上实现[已批准的恢复截止 ADR](https://github.com/ora-space/specs/blob/main/decisions/node/revision/20261018-complete-restore-deadline-and-cancel-confirmation.md)
+的 Node 侧语义。
 
 ## Git Server 访问材料
 
@@ -101,3 +132,5 @@ git-access 身份没有通过认证，所以会话以可由之后的运行再续
 - 仓库配置仍可以选择由 `git add` 运行的 clean 或 smudge 过滤器，它们和 Agent 本身一样以工作负载身份运行。
 - 在传输仓库中解析借用的 checkout 对象没有单独的资源限制。
 - 旧版 Node 在 Node home 中留下的 `revision-restores/` 目录不会被删除。
+- `base_unavailable` 依赖远端对缺失对象的措辞；措辞不同的服务器会被报告为可重试的 `unavailable`。
+

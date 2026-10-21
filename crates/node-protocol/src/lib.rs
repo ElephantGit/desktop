@@ -51,8 +51,8 @@ pub use message::{
     RemoveWorktreeMessage, RevisionResultMessage, RuntimeBinding, RuntimeControlState,
     SessionCommandAccepted, SessionCommandAcceptedMessage, SessionCommandRejected,
     SessionCommandRejectedMessage, SessionCommandRejection, StartAgentSession,
-    StartAgentSessionMessage, SubmitUserTurn, SubmitUserTurnMessage, ThreadEventMessage,
-    UploadGrant, UploadGrantMessage, UploadGrantNeeded, UploadGrantNeededMessage, ValidateMessage,
-    WorktreeFailedMessage, WorktreeReadyMessage, WorktreeRemovalFailedMessage,
-    WorktreeRemovedMessage,
+    StartAgentSessionMessage, StopContainment, StopUnconfirmed, SubmitUserTurn,
+    SubmitUserTurnMessage, ThreadEventMessage, UploadGrant, UploadGrantMessage, UploadGrantNeeded,
+    UploadGrantNeededMessage, ValidateMessage, WorktreeFailedMessage, WorktreeReadyMessage,
+    WorktreeRemovalFailedMessage, WorktreeRemovedMessage,
 };

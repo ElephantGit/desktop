@@ -3,6 +3,12 @@ use super::*;
 use std::path::PathBuf;
 
 impl<G: WriteGuard> SessionJournal<G> {
+    /// A released actor with unknown stop evidence is not a sealed terminal session.
+    pub fn session_completed(&self, execution: &ExecutionId) -> Result<bool, Error> {
+        Ok(read(&self.lock()?.connection, execution)?
+            .is_some_and(|record| matches!(record.state, ExecutionState::Completed(_))))
+    }
+
     /// Returns the exact persisted destination only for a completed successful clone. Missing,
     /// pending, failed and other execution families do not supply a checkout.
     pub fn checkout(&self, execution: &ExecutionId) -> Result<Option<PathBuf>, Error> {

@@ -22,8 +22,8 @@ pub use repository_model::{
 };
 pub use revision::{DeliveryPlan, DeliveryProgress, FrozenOutcome, RevisionDelivery};
 pub use session::{
-    CommandAdmission, SessionCommandInput, SessionCommandSettlement, SessionCommandState,
-    SessionExecution, SessionJournal,
+    CommandAdmission, RestoreAttempt, RestorePhase, SessionCommandInput, SessionCommandSettlement,
+    SessionCommandState, SessionExecution, SessionJournal,
 };
 
 use ora_node_protocol::NodeId;

@@ -105,6 +105,7 @@ async fn takeover_is_atomic_in_both_delivery_orders_and_conflicts_never_ack() {
             operation_id: command.operation_id.clone(),
             execution_id: command.execution_id.clone(),
             payload: ExecutionStatus {
+                stop_unconfirmed: Vec::new(),
                 node: session.clone(),
                 state: ExecutionState::Completed(ExecutionResult::Clone(Box::new(
                     event.payload.clone(),

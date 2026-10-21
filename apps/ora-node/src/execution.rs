@@ -19,6 +19,7 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
         }
         if let Some(record) = self.database.existing(&command)? {
             return Ok(ExecutionStatus {
+                stop_unconfirmed: Vec::new(),
                 node: self.identity.clone(),
                 state: record.progress.state(),
             });
@@ -32,6 +33,7 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
                 let result = self.failed(&command, reason);
                 self.database.reject(&command, result.clone())?;
                 return Ok(ExecutionStatus {
+                    stop_unconfirmed: Vec::new(),
                     node: self.identity.clone(),
                     state: ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
                         result,
@@ -51,6 +53,7 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
                 );
                 self.database.reject(&command, result.clone())?;
                 return Ok(ExecutionStatus {
+                    stop_unconfirmed: Vec::new(),
                     node: self.identity.clone(),
                     state: ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
                         result,
@@ -73,6 +76,7 @@ impl<G: WorktreeGit, W: WriteGuard, C: Clock> Node<G, W, C> {
             .existing(&command)?
             .ok_or(ora_node_db::Error::InvalidTransition)?;
         Ok(ExecutionStatus {
+            stop_unconfirmed: Vec::new(),
             node: self.identity.clone(),
             state: record.progress.state(),
         })

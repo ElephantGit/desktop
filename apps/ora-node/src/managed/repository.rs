@@ -32,6 +32,8 @@ pub(crate) enum RunAs {
 /// over, which lets a restart settle the same Run without anything this value remembered.
 pub(crate) struct CloneHost {
     pub(super) config: ProcessConfig,
+    pub(super) restore_stops: Option<super::RestoreStops>,
+    pub(super) restore_context: Option<super::RestoreContext>,
     pub(super) shutdown: Shutdown,
     owner: RunLifetime,
     pub(super) runtime: tokio::runtime::Runtime,
@@ -46,6 +48,8 @@ impl CloneHost {
     ) -> std::io::Result<Self> {
         Ok(Self {
             config,
+            restore_stops: None,
+            restore_context: None,
             shutdown,
             owner,
             runtime: tokio::runtime::Builder::new_current_thread()

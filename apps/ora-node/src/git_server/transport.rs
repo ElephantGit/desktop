@@ -5,7 +5,9 @@
 //! fetched objects to the workload user, whose Git must reach the transport repository by path,
 //! and the Node home is closed to it. Each repository starts `0700` and Node-owned, and contains
 //! no credentials at any time: the access material is only ever on a command line. A repository
-//! is removed when its work ends, and the whole root is cleared when the Node starts.
+//! is removed when its work ends, or, for work whose original stop is unconfirmed, only once that
+//! evidence arrives; the whole root is cleared when the Node starts, except the clone and restore
+//! repositories a recorded execution may still read.
 use gitlancer::{GitCommand, GitEnv, GitIntent, GitRunner};
 use ora_node_protocol::{CommitId, ExecutionId};
 use std::fs;
@@ -31,6 +33,21 @@ impl TransportRepository {
         kind: &str,
         execution: &ExecutionId,
     ) -> io::Result<Self> {
+        let repository = Self::prepare(repository_root, kind, execution)?;
+        repository.init(runner)?;
+        Ok(repository)
+    }
+
+    /// Creates the empty directory without running any command in it.
+    ///
+    /// A restore needs the handle before its first command exists so that it can keep the
+    /// directory when that command's stop stays unknown; creation that ran Git itself would have
+    /// to drop (and delete) the directory before its own evidence could be read.
+    pub(crate) fn prepare(
+        repository_root: &Path,
+        kind: &str,
+        execution: &ExecutionId,
+    ) -> io::Result<Self> {
         let root = repository_root.join(TRANSPORT_ROOT);
         let mut builder = fs::DirBuilder::new();
         builder.mode(/*mode*/ 0o711);
@@ -44,12 +61,17 @@ impl TransportRepository {
         let path = Self::location(repository_root, kind, execution);
         remove(&path)?;
         fs::DirBuilder::new().mode(/*mode*/ 0o700).create(&path)?;
-        let repository = Self { path };
-        repository.git(runner, &["init", "--bare", "--quiet", "--template="])?;
+        Ok(Self { path })
+    }
+
+    /// Initializes a prepared directory as a bare repository with the fixed settings every
+    /// command in it relies on.
+    pub(crate) fn init<R: GitRunner>(&self, runner: &R) -> io::Result<()> {
+        self.git(runner, &["init", "--bare", "--quiet", "--template="])?;
         // Written by the Node into its own configuration, so even a command that forgets the
         // per-command setting never enumerates a borrowed checkout's refs.
-        repository.git(runner, &["config", "core.alternateRefsCommand", "true"])?;
-        Ok(repository)
+        self.git(runner, &["config", "core.alternateRefsCommand", "true"])?;
+        Ok(())
     }
 
     /// Where the repository of `kind` work for `execution` lives. The name is a digest because

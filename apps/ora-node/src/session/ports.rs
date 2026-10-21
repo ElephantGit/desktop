@@ -62,6 +62,30 @@ pub trait SessionLedger: Clone + Send + Sync + 'static {
         ended: AgentSessionEnded,
     ) -> Result<Sequence, Self::Error>;
 
+    /// History may be released only after the durable terminal, including deferred restores.
+    fn session_completed(&self, _execution: &ExecutionId) -> Result<bool, Self::Error> {
+        Ok(true)
+    }
+
+    /// Persists a terminal intention while original restore stop evidence is still pending.
+    fn defer_restore_end(
+        &self,
+        _execution: &ExecutionId,
+        _ended: &AgentSessionEnded,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Persists restoration success before plugin admission.
+    fn restored(&self, _execution: &ExecutionId) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Records admission before a plugin can have a side effect.
+    fn agent_admitted(&self, _execution: &ExecutionId) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     /// Returns every queued command of the execution in acceptance order.
     ///
     /// The whole queue rather than its head, because an `EndSession` accepted behind queued user
@@ -183,7 +207,17 @@ impl RestoreFailure {
 /// Once `cancel` is set, implementations start no further Git and return as soon as what they
 /// already started has ended: the driver awaits that before the session may end, so a delivery
 /// never reads a checkout a restore is still writing.
+/// what Git itself wrote into the checkout. The driver waits for original stop proof before ending;
+/// an expired proof wait transfers durable responsibility without a terminal result.
 pub trait PriorRevisionRestore: Send + Sync + 'static {
+    /// Anchors the stop clock before cancellation can reach the command boundary.
+    fn request_stop(&self, _execution: &ExecutionId) {}
+
+    /// Waits for original stop proof, with its independent durable bound.
+    fn confirm_stop(&self, _execution: &ExecutionId) -> impl Future<Output = bool> + Send {
+        async { true }
+    }
+
     /// Leaves the checkout's branch at the prior final commit, or says why it could not.
     fn restore(
         &self,
@@ -195,6 +229,17 @@ pub trait PriorRevisionRestore: Send + Sync + 'static {
 /// A Node without restore never advertises it, so the Controller sends it no resumed session;
 /// one that arrives anyway cannot be restored and ends as unavailable.
 impl<R: PriorRevisionRestore> PriorRevisionRestore for Option<R> {
+    fn request_stop(&self, execution: &ExecutionId) {
+        if let Some(restorer) = self {
+            restorer.request_stop(execution);
+        }
+    }
+    async fn confirm_stop(&self, execution: &ExecutionId) -> bool {
+        match self {
+            Some(restorer) => restorer.confirm_stop(execution).await,
+            None => true,
+        }
+    }
     /// Delegates to the configured restorer, if any.
     async fn restore(
         &self,

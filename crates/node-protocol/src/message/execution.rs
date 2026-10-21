@@ -39,8 +39,29 @@ pub enum ExecutionState {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ExecutionStatus {
+    /// Named residual evidence; an expired wait is never a completed execution.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stop_unconfirmed: Vec<StopUnconfirmed>,
     pub node: NodeRuntimeIdentity,
     pub state: ExecutionState,
+}
+
+/// The containment actually selected for the original process; BestEffort is not quiescence.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StopContainment {
+    BestEffort,
+    Strong,
+}
+
+/// Query evidence retains the original identities and non-resetting stop clock.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StopUnconfirmed {
+    pub scope_id: String,
+    pub run_id: String,
+    pub first_stop_at_ms: i64,
+    pub bound_at_ms: i64,
+    pub guarantee: StopContainment,
 }
 
 /// Complete GetExecutionStatus envelope, including only metadata valid for this message.
@@ -120,6 +141,15 @@ impl ValidateMessage for ExecutionStatusMessage {
             .node
             .validate()
             .map_err(|field| MessageValidationError::EmptyField { field })?;
+        if payload.stop_unconfirmed.iter().any(|evidence| {
+            evidence.scope_id.trim().is_empty()
+                || evidence.run_id.trim().is_empty()
+                || evidence.bound_at_ms <= evidence.first_stop_at_ms
+        }) || (!payload.stop_unconfirmed.is_empty()
+            && matches!(payload.state, ExecutionState::Completed(_)))
+        {
+            return Err(MessageValidationError::InvalidStopEvidence);
+        }
         if let ExecutionState::Completed(result) = &payload.state {
             result.validate()?;
             let result_node = result.node();

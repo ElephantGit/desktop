@@ -356,6 +356,7 @@ async fn session_end_round_trips_as_event_and_completed_status() -> Result<(), T
                 operation_id: OperationId::new(OPERATION),
                 execution_id: ExecutionId::new(EXECUTION),
                 payload: ExecutionStatus {
+                    stop_unconfirmed: Vec::new(),
                     node: node(),
                     state: ExecutionState::Completed(ExecutionResult::AgentSession(result)),
                 },

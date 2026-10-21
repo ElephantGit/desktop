@@ -15,6 +15,7 @@ fn real_create_remove_replay_and_acknowledgement() {
         assert_eq!(
             ready,
             ExecutionStatus {
+                stop_unconfirmed: Vec::new(),
                 node: node.identity().clone(),
                 state: ExecutionState::Completed(ora_node_protocol::ExecutionResult::Worktree(
                     WorktreeExecutionResult::Ready(WorktreeReady {
@@ -38,6 +39,7 @@ fn real_create_remove_replay_and_acknowledgement() {
         assert_eq!(
             node.status(&query(&command)).unwrap().payload,
             ExecutionStatus {
+                stop_unconfirmed: Vec::new(),
                 node: node.identity().clone(),
                 state: ready.state.clone()
             }

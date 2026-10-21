@@ -37,13 +37,29 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
         // work that used it finished, or resumes from durable state (a clone's next fetch pass,
         // a delivery's frozen plan, a restore that ended with its session). Only clones whose
         // workload sequence still has to read the snapshot keep theirs.
-        let keep: Vec<_> = self
+        let mut keep: Vec<_> = self
             .database
             .recoverable_clones()?
             .iter()
             .filter(|record| snapshot::reads_transport(record))
             .map(|record| snapshot::transport_path(&config, record))
             .collect();
+        // A restore hands its transport repository to the workload user, whose Git reads the
+        // objects out of it. Only original stop evidence releases that input, so an unsettled
+        // session keeps it across restarts just as it keeps the checkout's responsibility.
+        keep.extend(
+            self.database
+                .restore_sessions()?
+                .iter()
+                .filter(|record| !matches!(record.state, ExecutionState::Completed(_)))
+                .map(|record| {
+                    crate::git_server::TransportRepository::location(
+                        &config.repository_root,
+                        crate::revision::RESTORE_TRANSPORT_KIND,
+                        &record.command.execution_id,
+                    )
+                }),
+        );
         crate::git_server::purge_transports(&config.repository_root, &keep).map_err(|error| {
             Error::Configuration(format!(
                 "transport repositories could not be cleared: {error}"
@@ -116,6 +132,7 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
             self.drive_clone(record)?;
             self.refresh_clone_state()?;
             return Ok(ExecutionStatus {
+                stop_unconfirmed: Vec::new(),
                 node: self.identity.clone(),
                 state: self
                     .database
@@ -159,6 +176,7 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
             }
             return Ok((
                 ExecutionStatus {
+                    stop_unconfirmed: Vec::new(),
                     node: self.identity.clone(),
                     state: record.progress.state(),
                 },
@@ -188,6 +206,7 @@ impl<W: WriteGuard, C: Clock> Node<gitlancer::Git<ManagedGitRunner<W>>, W, C> {
         self.state = NodeState::RecoveryPending;
         Ok((
             ExecutionStatus {
+                stop_unconfirmed: Vec::new(),
                 node: self.identity.clone(),
                 state: record.progress.state(),
             },

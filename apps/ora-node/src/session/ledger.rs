@@ -6,6 +6,28 @@ use ora_node_protocol::{AgentSessionEnded, CommandId, ExecutionId, Sequence, Thr
 impl<G: WriteGuard + Send + Sync + 'static> SessionLedger for SessionJournal<G> {
     type Error = ora_node_db::Error;
 
+    /// History release follows durable terminal evidence, never actor lifetime alone.
+    fn session_completed(&self, execution: &ExecutionId) -> Result<bool, Self::Error> {
+        SessionJournal::session_completed(self, execution)
+    }
+
+    /// Retains the intended original terminal while stop proof is pending.
+    fn defer_restore_end(
+        &self,
+        execution: &ExecutionId,
+        ended: &AgentSessionEnded,
+    ) -> Result<(), Self::Error> {
+        SessionJournal::defer_restore_end(self, execution, ended)
+    }
+    /// Persists the restore boundary before any plugin can be admitted.
+    fn restored(&self, execution: &ExecutionId) -> Result<(), Self::Error> {
+        SessionJournal::restored(self, execution)
+    }
+    /// An admission fact survives a later Node crash.
+    fn agent_admitted(&self, execution: &ExecutionId) -> Result<(), Self::Error> {
+        SessionJournal::agent_admitted(self, execution)
+    }
+
     /// Allocates the sequence only after the database commits the event.
     fn append_thread_event(
         &self,

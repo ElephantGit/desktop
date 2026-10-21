@@ -332,6 +332,7 @@ fn bounded_replay_skips_full_streams_without_acknowledging_them() {
     let mut second = command();
     second.execution_id = ExecutionId::new("b");
     second.operation_id = OperationId::new("b-op");
+    second.payload.spec.checkout_execution_id = ExecutionId::new("b-clone");
     db.accept_session(&second).unwrap();
     journal.end_session(&second.execution_id, ended()).unwrap();
     let before = db.pending_events().unwrap();

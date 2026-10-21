@@ -1,9 +1,15 @@
 //! Node-owned Git execution association; process facts remain owned by host and guardian.
+#[cfg(test)]
+mod deadline_tests;
 mod delivery;
 mod repository;
+mod restore;
+#[cfg(test)]
+mod restore_tests;
 mod transport;
 pub(crate) use delivery::AsNode;
 pub(crate) use repository::{AttemptSettlement, CloneHost, RunAs};
+pub(crate) use restore::{RestoreContext, RestoreStops, StopCheck};
 
 use crate::git::ExecutionGitRunner;
 use gitlancer::{GitCommand, GitExecError, GitIntent, GitOutput, GitRunner};

@@ -51,6 +51,21 @@ where
     R: PriorRevisionRestore,
 {
     let end = prepare_and_converse(&shared, &operation, &execution, spec, &wake).await;
+    let ended = AgentSessionEnded {
+        node: shared.node.clone(),
+        reason: end.reason,
+        detail: end.detail.map(str::to_string),
+    };
+    if super::model::seal_unstarted_history(&shared.sessions_root(), &execution).is_err() {
+        return false;
+    }
+    if shared.ledger.defer_restore_end(&execution, &ended).is_err() {
+        return false;
+    }
+    if !shared.restorer.confirm_stop(&execution).await {
+        // A deliberate handover is not an actor failure and emits no terminal event.
+        return true;
+    }
     match shared.ledger.queued_commands(&execution) {
         Ok(queued) => {
             for queued in queued {
@@ -66,11 +81,7 @@ where
             ora_warn!(execution_id = %execution, error = %error, "session queue unreadable at end");
         }
     }
-    let ended = AgentSessionEnded {
-        node: shared.node.clone(),
-        reason: end.reason,
-        detail: end.detail.map(str::to_string),
-    };
+
     match shared.ledger.end_session(&execution, ended) {
         Ok(_) => true,
         Err(error) => {
@@ -118,15 +129,21 @@ where
     let stopping = shared.stopping.subscribe();
     let restored = resume::restore_prior(
         &shared.restorer,
+        &shared.ledger,
         operation,
         execution,
         &cloned,
         &mut spec,
-        stopping,
-        ended_before_start(&shared.ledger, execution, wake),
+        resume::EndSignals {
+            stopping,
+            ended: ended_before_start(&shared.ledger, execution, wake),
+        },
     );
     if let Err(end) = restored.await {
         return end;
+    }
+    if spec.prior_revision.is_some() && shared.ledger.restored(execution).is_err() {
+        return SessionEnd::agent_failed("prior_revision_unavailable");
     }
     // Declared before the lifecycle so that, on every path, it is dropped (and its directory
     // removed) only after the lifecycle and the plugin it ran are gone.
@@ -186,6 +203,12 @@ where
     {
         access.close().await;
         return SessionEnd::agent_failed(error.0);
+    }
+    if shared.ledger.agent_admitted(execution).is_err() {
+        if let Some(access) = &mut model_access {
+            access.close().await;
+        }
+        return SessionEnd::agent_failed("agent_start_failed");
     }
     let mut environment = model_access
         .as_ref()

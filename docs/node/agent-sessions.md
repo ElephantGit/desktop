@@ -119,8 +119,9 @@ written, and the Node appends the Thread event there, so every Thread record is 
 order and a crash leaves the JSONL at most one line ahead. Once a Thread append fails, the mirror stops
 for good and the session ends as `agent_failed{thread_unavailable}`.
 
-After a restart, every session without a terminal result is ended as `interrupted` before the control
-listener opens; agents are never resumed. Graceful shutdown cancels live conversations, waits for plugin
+After a restart, agents are never resumed. An unfinished restore first hands over its original
+Scope/Run; only stop confirmation permits `interrupted`. Unknown original stop evidence keeps the
+session nonterminal and fences delivery and checkout reuse (see [Revision recovery](revisions.md)). Graceful shutdown cancels live conversations, waits for plugin
 cleanup and commits terminal evidence before releasing the database lease. `sealed_history` answers
 `history_unavailable` while a session still runs and otherwise returns its JSONL.
 

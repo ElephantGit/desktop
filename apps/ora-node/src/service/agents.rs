@@ -21,13 +21,16 @@ pub(super) type Restorer = RevisionRestorer<CloneHost, AsNode<CloneHost>>;
 pub(super) type SessionHost =
     AgentSessions<SessionJournal, SessionJournal, DirectoryPluginCatalog, Option<Restorer>>;
 
-/// Composes restore when this Node can run both sessions and delivery Git: restore runs Git in the
-/// checkouts clone created, with delivery's policy, and fetches from the Git Server with the
-/// git-access identity, so without clone and git-access configuration there is nothing to restore.
+/// Retains original restore inputs until handover, then composes restore when this Node can run
+/// both sessions and delivery Git: restore runs Git in the checkouts clone created, with
+/// delivery's policy, and fetches from the Git Server with the git-access identity, so without
+/// clone and git-access configuration there is nothing to restore.
 pub(super) fn restorer(
     node: &ManagedNode,
     agent: Option<&AgentConfig>,
     shutdown: crate::Shutdown,
+    restore_policy: crate::revision::RestorePolicy,
+    stops: &crate::managed::RestoreStops,
 ) -> Result<Option<Restorer>, crate::Error> {
     let (Some(_), Some(policy), Some(access), Some(config)) = (
         agent,
@@ -43,14 +46,129 @@ pub(super) fn restorer(
             .detached_clone_host()
             .map_err(ora_node_db::Error::from)
     };
-    Ok(Some(RevisionRestorer::new(
-        DeliveryGit::new(host()?, policy),
-        AsNode(host()?),
-        access,
-        config.repository_root.clone(),
-        node.git.runner().process_config().workload_uid,
-        shutdown,
-    )))
+    let mut runner = host()?;
+    // Every restore command records its original Run identity before the host sees it, whether it
+    // runs as the workload user in the checkout or as the Node for Git Server access.
+    runner.track_restore(stops.clone());
+    let mut node_runner = host()?;
+    node_runner.track_restore(stops.clone());
+    Ok(Some(
+        RevisionRestorer::new(
+            DeliveryGit::new(runner, policy),
+            AsNode(node_runner),
+            access,
+            config.repository_root.clone(),
+            node.git.runner().process_config().workload_uid,
+            shutdown,
+            restore_policy,
+        )
+        .with_stops(stops.clone()),
+    ))
+}
+
+/// Crash handover and late queries never rerun restore or invent a second Agent identity.
+pub(super) async fn reconcile(
+    node: &mut ManagedNode,
+    host: Option<&SessionHost>,
+    stops: &crate::managed::RestoreStops,
+    check: crate::managed::StopCheck,
+    only: Option<&ora_node_protocol::ExecutionId>,
+) -> Result<(), crate::Error> {
+    let journal = &stops.journal;
+    for record in node.database.recoverable_sessions()? {
+        let execution = &record.command.execution_id;
+        // An execution-status query proves only the execution it names, so it never pays for
+        // every other pending stop bound on the worker thread.
+        if only.is_some_and(|only| only != execution)
+            || host.is_some_and(|host| host.is_live(execution))
+        {
+            continue;
+        }
+        let phase = journal.restore_phase(execution)?;
+        if phase == Some(ora_node_db::RestorePhase::LegacyUnknown) {
+            continue;
+        }
+        let ended = journal
+            .deferred_restore_end(execution)?
+            .unwrap_or(AgentSessionEnded {
+                node: node.identity().clone(),
+                reason: AgentSessionEndReason::Interrupted,
+                detail: None,
+            });
+        // A failed ledger read defers this record only; the next pass retries it.
+        if let Err(error) = journal.defer_restore_end(execution, &ended) {
+            ora_logging::ora_warn!(execution_id = %execution, error = %error, "restore end could not be deferred");
+            continue;
+        }
+        let confirmed = match stops.poll(execution, check).await {
+            Ok(confirmed) => confirmed,
+            Err(error) => {
+                ora_logging::ora_warn!(execution_id = %execution, error = %error, "restore stop evidence is unavailable");
+                continue;
+            }
+        };
+        if !confirmed {
+            continue;
+        }
+        if phase.is_some()
+            && let Err(detail) = crate::session::seal_unstarted_history(
+                &node.home_directory().join("sessions"),
+                execution,
+            )
+        {
+            ora_logging::ora_warn!(execution_id = %execution, error = %detail, "unstarted history could not be sealed");
+            continue;
+        }
+        if let Err(error) = journal.end_session(execution, ended) {
+            ora_logging::ora_warn!(execution_id = %execution, error = %error, "restore session could not be ended");
+            continue;
+        }
+        cleanup_restore(node, journal, &record)?;
+    }
+    Ok(())
+}
+
+/// Startup cleanup consumes retained stop facts; unassociated or unknown directories stay intact.
+fn sweep_restores(node: &ManagedNode, journal: &SessionJournal) -> Result<(), crate::Error> {
+    for record in node.database.restore_sessions()? {
+        cleanup_restore(node, journal, &record)?;
+    }
+    Ok(())
+}
+
+/// Live late-proof settlement and startup retry consume the same original safety facts.
+fn cleanup_restore(
+    node: &ManagedNode,
+    journal: &SessionJournal,
+    record: &ora_node_db::SessionExecution,
+) -> Result<(), crate::Error> {
+    let execution = &record.command.execution_id;
+    if !journal.session_completed(execution)?
+        || journal.restore_phase(execution)? == Some(ora_node_db::RestorePhase::LegacyUnknown)
+        || !journal.pending_restore_attempts(execution)?.is_empty()
+    {
+        return Ok(());
+    }
+    // The transport repository may still be read by an unconfirmed original process.
+    if let Some(config) = node.clone_config() {
+        let transport = crate::git_server::TransportRepository::location(
+            &config.repository_root,
+            crate::revision::RESTORE_TRANSPORT_KIND,
+            execution,
+        );
+        crate::git_server::remove_transport(&transport);
+    }
+    // Inputs of a restore started before the Git Server switch are retained until the same proof.
+    let legacy = node
+        .home_directory()
+        .join("revision-restores")
+        .join(ora_utils::hash::sha256_hex(execution.as_str().as_bytes()));
+    if let Err(error) = std::fs::remove_dir_all(&legacy)
+        && error.kind() != io::ErrorKind::NotFound
+    {
+        ora_logging::ora_warn!(execution_id = %execution, error = %error, "confirmed restore input cleanup failed");
+    }
+    Ok(())
 }
 
 /// Checks the Agent configuration before anything starts.
@@ -201,6 +319,13 @@ pub(super) fn workload(
     }
 }
 
+/// Restore composition and stop authority shared by startup, the worker and status queries.
+pub(super) struct Recovery<'a> {
+    pub(super) restorer: Option<Restorer>,
+    pub(super) shutdown: &'a crate::Shutdown,
+    pub(super) stops: &'a crate::managed::RestoreStops,
+}
+
 /// Recovers every unfinished input before the control listener is published, even without Agent
 /// configuration. Recovery never spawns an Agent or treats the old input as permission to resume.
 pub(super) fn open(
@@ -209,9 +334,13 @@ pub(super) fn open(
     workload: SessionWorkload,
     timezone: &str,
     catalog: DirectoryPluginCatalog,
-    restorer: Option<Restorer>,
-    shutdown: &crate::Shutdown,
+    recovery: Recovery<'_>,
 ) -> Result<Option<SessionHost>, crate::Error> {
+    let Recovery {
+        restorer,
+        shutdown,
+        stops,
+    } = recovery;
     let journal = node.database.session_journal()?;
     let ora_git = config
         .and_then(|config| config.ora_git_directory.as_deref())
@@ -244,19 +373,18 @@ pub(super) fn open(
             Some(broker) => host.with_ora_git(broker),
             None => host,
         });
-    for record in node.database.recoverable_sessions()? {
-        let ended = match &host {
-            Some(host) => host.recover_interrupted(&record.command.execution_id),
-            None => AgentSessionEnded {
-                node: node.identity().clone(),
-                reason: AgentSessionEndReason::Interrupted,
-                detail: None,
-            },
-        };
-        journal.end_session(&record.command.execution_id, ended)?;
-    }
-    // Every session the previous process ran has ended above, so its directories are unused.
-    if let SessionWorkload::Separate { directory, .. } = &workload {
+    tokio::runtime::Handle::current().block_on(reconcile(
+        node,
+        host.as_ref(),
+        stops,
+        crate::managed::StopCheck::Handover,
+        None,
+    ))?;
+    sweep_restores(node, &journal)?;
+    // Unknown restore responsibility also retains its session placement across restart.
+    if node.database.recoverable_sessions()?.is_empty()
+        && let SessionWorkload::Separate { directory, .. } = &workload
+    {
         crate::session::purge_workload_directory(directory).map_err(ora_node_db::Error::from)?;
     }
     Ok(host)
@@ -354,6 +482,7 @@ pub(super) fn start(
             operation_id: input.operation_id.clone(),
             execution_id: input.execution_id.clone(),
             payload: ExecutionStatus {
+                stop_unconfirmed: Vec::new(),
                 node: node.identity().clone(),
                 state,
             },

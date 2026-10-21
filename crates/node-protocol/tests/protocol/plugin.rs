@@ -128,6 +128,7 @@ fn result_cases(result: PluginExecutionResult, wire: Value) -> [Case; 2] {
                     operation_id: OperationId::new("operation-1"),
                     execution_id: ExecutionId::new("execution-plugins"),
                     payload: ExecutionStatus {
+                        stop_unconfirmed: Vec::new(),
                         node: node(),
                         state: ExecutionState::Completed(ExecutionResult::Plugin(result)),
                     },

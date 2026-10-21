@@ -11,10 +11,170 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
+/// Rejects every operation except the one HEAD read allowed to an incomplete, unstarted restore.
+struct HeadOnly(std::sync::atomic::AtomicUsize);
+
+impl gitlancer::GitRunner for HeadOnly {
+    /// A scratch-index probe, update-ref or bundle command makes this regression fail directly.
+    fn run(
+        &self,
+        command: &gitlancer::GitCommand,
+    ) -> Result<gitlancer::GitOutput, gitlancer::GitExecError> {
+        self.run_bounded(command, usize::MAX, usize::MAX)
+    }
+
+    /// Delegates the permitted read to real Git without modifying process environment.
+    fn run_bounded(
+        &self,
+        command: &gitlancer::GitCommand,
+        stdout: usize,
+        stderr: usize,
+    ) -> Result<gitlancer::GitOutput, gitlancer::GitExecError> {
+        assert!(command.args.ends_with(&[
+            "rev-parse".to_string(),
+            "--verify".to_string(),
+            "HEAD^{commit}".to_string()
+        ]));
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        CliGitRunner.run_bounded(command, stdout, stderr)
+    }
+}
+
+/// Partial checkout files are never turned into new content at either permitted HEAD.
+#[test]
+fn unstarted_partial_restore_delivers_only_head_without_probing_files() {
+    let dispatcher = tracing::Dispatch::new(
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_test_writer()
+            .finish(),
+    );
+    tracing::dispatcher::with_default(&dispatcher, || {
+        for restored_head in [false, true] {
+            let fixture = Fixture::new();
+            let checkout = fixture.checkout();
+            let mut job = fixture.job();
+            job.mode = SnapshotMode::UnstartedRestore;
+            fs::write(checkout.join("edited.txt"), "prior committed content\n").unwrap();
+            git(&checkout, &["add", "-A"]);
+            git(&checkout, &["commit", "-m", "prior"]);
+            let prior = CommitId::new(git(&checkout, &["rev-parse", "HEAD"]));
+            job.spec.prior_revision = Some(PriorRevisionCommit {
+                revision_id: RevisionId::new("prior"),
+                final_commit: prior.clone(),
+            });
+            if !restored_head {
+                git(&checkout, &["reset", "--hard", fixture.base.as_str()]);
+            }
+            // A failed/killed checkout may leave both tracked modifications and new partial files.
+            fs::write(checkout.join("edited.txt"), "partial checkout content\n").unwrap();
+            fs::write(checkout.join("partial.txt"), "must never be delivered\n").unwrap();
+            fs::write(
+                checkout.join(".git/index.lock"),
+                "retained failure evidence\n",
+            )
+            .unwrap();
+            let before = fixture.untouched_state();
+            let runner = HeadOnly(std::sync::atomic::AtomicUsize::new(/*v*/ 0));
+            let git = DeliveryGit::new(
+                runner,
+                GitPolicy {
+                    env: GitEnv::automation_defaults()
+                        .with_variable("GIT_CONFIG_NOSYSTEM", "1")
+                        .with_variable("GIT_CONFIG_GLOBAL", "/dev/null"),
+                    config_args: vec![],
+                },
+            );
+            let plan = prepare(&git, &fixture.root(), &job).unwrap();
+            let FrozenOutcome::Unchanged(result) = plan.outcome else {
+                panic!("partial restore was delivered");
+            };
+            assert_eq!(
+                result.final_commit,
+                if restored_head {
+                    prior
+                } else {
+                    fixture.base.clone()
+                }
+            );
+            assert_eq!(git.runner.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert_eq!(fixture.untouched_state(), before);
+            assert!(fs::read_dir(checkout.join(".git/refs/ora/revisions")).is_err());
+        }
+    });
+}
+
 /// An origin with one base commit, the checkout cloned from it, and a sealed history.
 struct Fixture {
     directory: tempfile::TempDir,
     base: CommitId,
+}
+
+/// A real non-atomic checkout failure leaves early files at the target while HEAD is unchanged.
+#[test]
+fn failed_checkout_filter_cannot_turn_partial_files_into_a_revision() {
+    let subscriber = tracing::Dispatch::new(
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_test_writer()
+            .finish(),
+    );
+    tracing::dispatcher::with_default(&subscriber, || {
+        let fixture = Fixture::new();
+        let checkout = fixture.checkout();
+        fs::write(
+            checkout.join(".gitattributes"),
+            "kept.txt filter=ora-broken\n",
+        )
+        .unwrap();
+        fs::write(checkout.join("edited.txt"), "restored first\n").unwrap();
+        fs::write(checkout.join("kept.txt"), "restored last\n").unwrap();
+        git(&checkout, &["add", "-A"]);
+        git(&checkout, &["commit", "-m", "prior target"]);
+        let prior = CommitId::new(git(&checkout, &["rev-parse", "HEAD"]));
+        git(&checkout, &["reset", "--hard", fixture.base.as_str()]);
+        git(&checkout, &["config", "filter.ora-broken.smudge", "exit 1"]);
+        git(&checkout, &["config", "filter.ora-broken.required", "true"]);
+        let failed = std::process::Command::new("git")
+            .current_dir(&checkout)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .args(["checkout", "--force", "-B", "main", prior.as_str()])
+            .output()
+            .unwrap();
+        assert!(!failed.status.success());
+        assert!(String::from_utf8_lossy(&failed.stderr).contains("smudge filter"));
+        assert_eq!(
+            fs::read_to_string(checkout.join("edited.txt")).unwrap(),
+            "restored first\n"
+        );
+        let head = CommitId::new(git(&checkout, &["rev-parse", "HEAD"]));
+        assert_eq!(head, fixture.base);
+        let before = fixture.untouched_state();
+        let mut job = fixture.job();
+        job.mode = SnapshotMode::UnstartedRestore;
+        job.spec.prior_revision = Some(PriorRevisionCommit {
+            revision_id: RevisionId::new("prior"),
+            final_commit: prior,
+        });
+        let runner = HeadOnly(std::sync::atomic::AtomicUsize::new(/*v*/ 0));
+        let git = DeliveryGit::new(
+            runner,
+            GitPolicy {
+                env: GitEnv::automation_defaults()
+                    .with_variable("GIT_CONFIG_NOSYSTEM", "1")
+                    .with_variable("GIT_CONFIG_GLOBAL", "/dev/null"),
+                config_args: vec![],
+            },
+        );
+        let plan = prepare(&git, &fixture.root(), &job).unwrap();
+        let FrozenOutcome::Unchanged(result) = plan.outcome else {
+            panic!("failed checkout became a deliverable snapshot");
+        };
+        assert_eq!(result.final_commit, head);
+        assert_eq!(git.runner.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(fixture.untouched_state(), before);
+    });
 }
 
 impl Fixture {
@@ -50,6 +210,7 @@ impl Fixture {
     /// The delivery of this fixture's checkout and history.
     fn job(&self) -> Preparation {
         Preparation {
+            mode: crate::revision::SnapshotMode::Worktree,
             execution: ExecutionId::new("deliver-execution"),
             spec: DeliverRevisionSpec {
                 node_id: NodeId::new("node"),

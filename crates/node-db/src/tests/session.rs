@@ -3,6 +3,7 @@ use super::*;
 use ora_node_protocol::*;
 use pretty_assertions::assert_eq;
 mod recovery;
+mod restore;
 
 /// Supplies valid immutable input independently of the agent runtime.
 pub(super) fn command() -> StartAgentSessionMessage {
