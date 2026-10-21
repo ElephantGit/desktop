@@ -7,6 +7,7 @@ mod agent;
 mod child_process;
 mod effect;
 mod frame;
+mod model_context;
 mod registration;
 mod storage;
 mod workbench;
@@ -15,6 +16,7 @@ pub use agent::*;
 pub use child_process::*;
 pub use effect::*;
 pub use frame::*;
+pub use model_context::*;
 pub use registration::*;
 pub use storage::*;
 pub use workbench::*;
@@ -42,6 +44,7 @@ pub fn export_typescript_bindings_to(
 ) -> Result<(), ExportError> {
     let config = Config::new().with_out_dir(output_directory.as_ref());
     agent::export(&config)?;
+    model_context::export(&config)?;
     child_process::export(&config)?;
     effect::export(&config)?;
     registration::export(&config)?;

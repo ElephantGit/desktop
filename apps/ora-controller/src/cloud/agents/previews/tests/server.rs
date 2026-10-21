@@ -133,6 +133,7 @@ impl ExecutionService for Server {
                                 }],
                             }),
                             prior_revision: None,
+                            workspace_directory: Vec::new(),
                         },
                     )),
                 }),
@@ -220,12 +221,6 @@ impl AgentRunService for Server {
         &self,
         _: Request<proto::GrantRevisionUploadRequest>,
     ) -> Result<Response<proto::GrantRevisionUploadResponse>, Status> {
-        Err(Status::unimplemented("unused"))
-    }
-    async fn grant_revision_download(
-        &self,
-        _: Request<proto::GrantRevisionDownloadRequest>,
-    ) -> Result<Response<proto::GrantRevisionDownloadResponse>, Status> {
         Err(Status::unimplemented("unused"))
     }
 }

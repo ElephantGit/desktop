@@ -22,16 +22,16 @@ fallback for the other.
   `0x4f524143`, schema version 1 and exact schema and integrity checks, and an OS lease on the sibling
   `ora-controller.sqlite3.lock` (beside the database so SQLite's own locks never collide with it on
   macOS or Windows). A different ControllerId or an unknown existing file is rejected; there is no
-  HOME-derived location, reset or automatic rebinding. Only this form implements `CloneIntake`
-  (`accept_request`, `operations`, `operation`), which an embedding caller reaches through
-  `ControllerHandle`.
+  HOME-derived location, reset or automatic rebinding. It reconciles, takes over and reports the
+  clone dispatches its database already holds; it has no intake of new work.
 - **`CloudStore`** opens no database and takes no file lease: every operation is a call on the
   [Cloud contract](cloud-contract.md), committed by Cloud in PostgreSQL. Acceptance belongs to
-  Cloud's public API, so there is no local intake.
+  Cloud's public API.
 
-`accept_request(request_id, spec)` writes the complete input and target Node before returning
-stable operation and execution ids; repeating it returns the original command and changed input is
-rejected. `result(execution_id)` reads a durable terminal `ExecutionOutcome` (`ready { path,
+There is no local clone intake: a Workspace clone takes a Git Server snapshot input that only Cloud
+can fix, so a deployment without Cloud cannot produce a valid one
+([snapshot clone input and execution ref grants](https://github.com/ora-space/specs/blob/main/decisions/cloud/controller-integration/20261016-snapshot-clone-input-and-execution-ref-grants.md)).
+`result(execution_id)` reads a durable terminal `ExecutionOutcome` (`ready { path,
 commit }` or `failed { reason, retained_path }` plus the Node incarnation); absence is not proof of
 failure. `pending_dispatches(node)` lists executions without a durable result, which a reconnected
 session keeps querying. Query completion and event delivery share one takeover transaction, and only
@@ -57,8 +57,8 @@ submission loop or produces an acknowledgement. Preview relay requires both Cont
 ora-controller --config /absolute/path/controller.json [--single-node]
 ```
 
-`ControllerRuntime::open(RuntimeConfig)` supports embedding: `handle()` exposes durable acceptance
-and lookup, and `run(shutdown)` owns reconnect loops without installing signal handlers.
+`ControllerRuntime::open(RuntimeConfig)` supports embedding, and `run(shutdown)` owns reconnect loops
+without installing signal handlers.
 `Service::start(DeploymentConfig, NodeHosting)` composes the runtime and an optionally hosted Node.
 Invalid flags and configuration fail before any lease is taken.
 
@@ -144,11 +144,13 @@ committed), unknown (reply lost, same identity only) and stale eligibility (the 
 re-acquired). While the lease is not held nothing is claimed, dispatched or acknowledged, and the
 Controller never falls back to writing locally.
 
-Claimed tenant work is validated as a Node command and registered with `RecordDispatch` before the
-Node session delivers it, in batches of at most 16 so a long queue never delays lease renewal. Work
-for a static Node is claimed only after a session with that Node completed its handshake in this
-process, proving the configured `node_id` is the Node behind the endpoint; a dispatch names its Node
-for good, so work registered under a wrong id would wait forever.
+Claimed work is validated as a Node command and registered with `RecordDispatch` before the Node
+session delivers it, in batches of at most 16 so a long queue never delays lease renewal. Every work
+item names the Workspace sandbox it runs in (Agent sessions and Revision deliveries); Cloud hands out no
+tenant-level clones, and an item without a target is logged once and left queued in Cloud. Without a
+`substrate` section, claims start only after a session with the static Node completed its handshake in
+this process, proving the configured `node_id` is the Node behind the endpoint; a dispatch names its
+Node for good, so work registered under a wrong id would wait forever.
 
 While holding the lease the Controller keeps one `Watch` stream open:
 
@@ -175,7 +177,7 @@ operation with the claimed version:
 |---|---|
 | sandbox | Executes the ensure effect and advances with its evidence (`sandboxInstanceId`, `nodeId`) |
 | node | Opens a Node session through `router_url` with `ate-target-actor: <atespace>/<externalId>` and waits for Cloud to list it connected |
-| clone | Dispatches the latest clone through the Node session and advances once its result is ready |
+| clone | Forwards the snapshot input Cloud froze (`clone_input`) to `RecordDispatch` and the Node verbatim, and advances once it is ready |
 | plugin | Dispatches the frozen plugin install or removal plan, see [Node plugins](../node/plugins.md) |
 | quiesce | Closes the sandbox's dispatch gate and reports idle only when nothing is pending or unresolved |
 | terminate | Stops the Node session, then executes the terminate effect |
@@ -185,8 +187,11 @@ operation with the claimed version:
 before writing it and re-reads the same id after a timeout or server error, so an effect whose reply
 was lost is never sent twice under a new identity. A failed effect defers with `external_failure`, a
 timed-out one with `substrate_timeout`, and an unconfirmed termination blocks with
-`termination_unconfirmed`. A clone whose ref the Node protocol refuses (such as `HEAD`) blocks the
-step without a dispatch.
+`termination_unconfirmed`. The Controller never builds a clone input from Project or Workspace fields:
+a clone step whose snapshot carries no `clone_input`, or one the Node protocol refuses (see
+[Repository clone](../node/repository-clone.md#input)), blocks with `external_failure` without a
+dispatch. A ready clone is taken over only when its commit equals the input's `base_commit`; otherwise
+it is neither taken over nor acknowledged.
 
 Sandbox Node targets come only from Cloud's sandbox rows; a sandbox whose NodeId collides with a
 static Node is refused, and the Controller never recreates a sandbox on its own. After a handshake it

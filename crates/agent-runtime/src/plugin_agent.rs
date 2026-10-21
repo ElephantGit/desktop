@@ -39,6 +39,7 @@ pub(crate) async fn attach(
     plugin_id: &str,
     home_directory: &Path,
     host_version: &str,
+    model_context: Option<ora_plugin_protocol::AgentModelContext>,
 ) -> Result<LaunchedPluginAgent, PluginAgentError> {
     let AgentPluginAttachment {
         runtime,
@@ -51,7 +52,7 @@ pub(crate) async fn attach(
     })?;
     let effect_declaration = effect::registered_consumer_declaration(&plugin_id, &registration)
         .map_err(|error| PluginAgentError::ContractIncomplete(error.to_string()))?;
-    control::start_agent(&runtime, home_directory, host_version).await?;
+    control::start_agent(&runtime, home_directory, host_version, model_context).await?;
     inbound::discard_frames_before_start(&mut notifications, &plugin_id.canonical());
 
     Ok(LaunchedPluginAgent {

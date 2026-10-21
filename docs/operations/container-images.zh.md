@@ -46,6 +46,10 @@ docker build -f docker/Dockerfile --target controller -t ora-controller:local .
 版本由 `.deno-version` 指定，构建时根据 `scripts/sidecar-checksums.json`（Linux x64 和 arm64）校验压缩包和可执行文件，没有固定
 值的架构会让构建失败。Agent 会话通过 `agent.deno_path` 使用它。
 
+`ora-git` 安装在 workload `PATH` 上的 `/usr/local/bin/ora-git`，Agent 的进程可以直接找到它。它只向当前会话的
+`ORA_GIT_SOCKET` 发送固定请求，socket 目录由 `agent.ora_git_directory` 指定；Git Server 凭据只留在 Node。见
+[ora-git](../node/ora-git.zh.md)。
+
 ## Controller 镜像
 
 以非特权的 `controller` 用户（UID 10001）运行 `ora-controller`，以 `/var/lib/ora-controller` 作为私有 home。部署挂载配置并传入

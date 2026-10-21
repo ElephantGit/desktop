@@ -49,8 +49,8 @@ Ora Cloud ◀── mTLS gRPC，主动拨出 ── ora-controller ── Substr
 - Cloud（`ora-space/cloud` 仓库）是租户、Workspace、运行和权限的权威方。Controller 认领 Cloud 的工作，驱动沙盒的生命周期，并把
   Node 事件和 Thread 记录中继回去，自己从不决定业务状态，见 [Controller](controller/controller.zh.md) 和
   [Cloud 契约](controller/cloud-contract.zh.md)。
-- 在每个沙盒中，Node clone 仓库、安装插件、用与 Desktop 相同的 Agent 运行时运行 Agent 会话，并交付 Revision，见
-  [Node](node/node.zh.md)。
+- 在每个沙盒中，Node 从 Git Server 快照 clone Workspace、安装插件、用与 Desktop 相同的 Agent 运行时运行 Agent 会话，
+  并把 Revision 交付到 Git Server，见 [Node](node/node.zh.md)。
 - Node 运行的每条 Git 命令都经过进程宿主和每个 Scope 一个的 guardian，所以启动和清理都是持久的事实，见
   [进程运行时](process/process-runtime.zh.md)。
 - 权限从头到尾都有栅栏：Cloud 授权，Controller 每次派发都获取新的许可，Node 隔离过期的资格，见

@@ -1,10 +1,7 @@
 //! Production composition and durable admission of Agent sessions.
 use super::{AgentConfig, ServiceConfig};
-use crate::managed::CloneHost;
-use crate::revision::{
-    DeliveryGit, DownloadGrants, HttpDownloader, RESTORE_ROOT, RestorePolicy, RevisionRestorer,
-    purge_restores,
-};
+use crate::managed::{AsNode, CloneHost};
+use crate::revision::{DeliveryGit, RevisionRestorer};
 use crate::{
     AgentSessions, DirectoryPluginCatalog, ManagedNode, ProcessConfig, SessionConfig,
     SessionHost as _, SessionWorkload,
@@ -12,51 +9,47 @@ use crate::{
 use ora_node_db::{CommandAdmission, SessionCommandInput, SessionJournal};
 use ora_node_protocol::*;
 use ora_process::ProcessIdentity;
-use ora_utils::http::{FetchOptions, ProxyConfig, ReqwestFetcher};
 use ora_utils::path::{TrustedPathKind, canonicalize_longest_existing_prefix, open_trusted_path};
 use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::path::Component;
 use std::time::Duration;
 
-/// Restores prior Revisions with delivery's Git and the presigned downloader.
-pub(super) type Restorer = RevisionRestorer<CloneHost, HttpDownloader>;
+/// Restores prior Revisions with delivery's Git and Node-identity Git Server access.
+pub(super) type Restorer = RevisionRestorer<CloneHost, AsNode<CloneHost>>;
 
 pub(super) type SessionHost =
     AgentSessions<SessionJournal, SessionJournal, DirectoryPluginCatalog, Option<Restorer>>;
 
-/// Bounds one bundle request; the restore deadline bounds the whole download anyway.
-const FETCH_OPTIONS: FetchOptions = FetchOptions {
-    connect_timeout: Duration::from_secs(/*secs*/ 30),
-    total_timeout: Duration::from_secs(/*secs*/ 5 * 60),
-};
-
-/// Clears what restores of a previous process left, then composes restore when this Node can run
-/// both sessions and delivery Git: restore runs Git in the checkouts clone created, with
-/// delivery's policy, so without clone configuration there is nothing to restore into.
+/// Composes restore when this Node can run both sessions and delivery Git: restore runs Git in the
+/// checkouts clone created, with delivery's policy, and fetches from the Git Server with the
+/// git-access identity, so without clone and git-access configuration there is nothing to restore.
 pub(super) fn restorer(
     node: &ManagedNode,
     agent: Option<&AgentConfig>,
-    downloads: DownloadGrants,
+    shutdown: crate::Shutdown,
 ) -> Result<Option<Restorer>, crate::Error> {
-    let root = node.home_directory().join(RESTORE_ROOT);
-    purge_restores(&root).map_err(ora_node_db::Error::from)?;
-    let (Some(_), Some(policy)) = (agent, node.delivery_git_policy()?) else {
+    let (Some(_), Some(policy), Some(access), Some(config)) = (
+        agent,
+        node.delivery_git_policy()?,
+        node.git_server(),
+        node.clone_config(),
+    ) else {
         return Ok(None);
     };
-    let runner = node
-        .git
-        .runner()
-        .detached_clone_host()
-        .map_err(ora_node_db::Error::from)?;
+    let host = || {
+        node.git
+            .runner()
+            .detached_clone_host()
+            .map_err(ora_node_db::Error::from)
+    };
     Ok(Some(RevisionRestorer::new(
-        DeliveryGit::new(runner, policy),
-        HttpDownloader::new(ReqwestFetcher::new(ProxyConfig::default()), FETCH_OPTIONS),
-        downloads,
-        node.node_id().clone(),
-        root,
+        DeliveryGit::new(host()?, policy),
+        AsNode(host()?),
+        access,
+        config.repository_root.clone(),
         node.git.runner().process_config().workload_uid,
-        RestorePolicy::DEFAULT,
+        shutdown,
     )))
 }
 
@@ -68,13 +61,18 @@ pub(super) fn restorer(
 /// serve. The directory must already exist as the deployment's: owned by the Node's own identity
 /// (root in a sandbox) and writable by nobody else, because the Node creates, links and removes
 /// trees inside it with that authority. It must also not overlap any state or checkout root, so
-/// purging it can never reach them.
+/// purging it can never reach them. The `ora-git` directory is checked by [`validate_ora_git`].
 pub(super) fn validate(agent: &AgentConfig, config: &ServiceConfig) -> io::Result<()> {
     if !agent.deno_path.is_absolute() || agent.ready_timeout_ms == 0 {
         return Err(io::Error::other(
             "agent needs an absolute Deno path and a positive ready timeout",
         ));
     }
+    validate_workload(agent, config)?;
+    validate_ora_git(agent, config)
+}
+
+fn validate_workload(agent: &AgentConfig, config: &ServiceConfig) -> io::Result<()> {
     let directory = match (&agent.workload_directory, config.process.workload_uid) {
         (None, None) => return Ok(()),
         (Some(directory), Some(_)) => directory,
@@ -102,6 +100,68 @@ pub(super) fn validate(agent: &AgentConfig, config: &ServiceConfig) -> io::Resul
             "agent workload directory must belong to the Node identity and be writable by no one else",
         ));
     }
+    if overlaps(directory, config, &[]) {
+        return Err(io::Error::other(
+            "agent workload directory overlaps Node state, host state or the clone root",
+        ));
+    }
+    Ok(())
+}
+
+/// Checks the `ora-git` socket directory, which the Node creates when missing and clears of its
+/// own sockets when it starts: the same absolute path rules as the workload directory, owned by
+/// the Node identity with no one else allowed to list or change it (so `/run` or `/tmp` are
+/// refused), under a parent only trusted owners control, and overlapping no Node, host, clone or
+/// workload directory.
+fn validate_ora_git(agent: &AgentConfig, config: &ServiceConfig) -> io::Result<()> {
+    let Some(directory) = agent.ora_git_directory.as_deref() else {
+        return Ok(());
+    };
+    let refuse = |reason: &str| {
+        Err(io::Error::other(format!(
+            "agent ora_git_directory {reason}"
+        )))
+    };
+    let Some(parent) = directory.parent().filter(|_| {
+        directory.is_absolute()
+            && directory.to_str().is_some()
+            && !directory
+                .components()
+                .any(|component| matches!(component, Component::ParentDir))
+    }) else {
+        return refuse("must be an absolute UTF-8 path without parent traversal, below the root");
+    };
+    // SAFETY: geteuid only reads the process identity.
+    let owner = unsafe { libc::geteuid() };
+    match open_trusted_path(directory, owner, TrustedPathKind::Directory) {
+        Ok(opened) => {
+            let metadata = opened.metadata()?;
+            if metadata.uid() != owner || metadata.mode() & 0o066 != 0 {
+                return refuse(
+                    "must belong to the Node identity and be readable and writable by no one else",
+                );
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            if open_trusted_path(parent, owner, TrustedPathKind::Directory).is_err() {
+                return refuse("must be created under a directory only trusted owners control");
+            }
+        }
+        Err(_) => return refuse("must be a directory only trusted owners control"),
+    }
+    let workload = agent.workload_directory.as_deref();
+    if overlaps(directory, config, &[workload]) {
+        return refuse("overlaps Node state, host state, the clone root or the workload directory");
+    }
+    Ok(())
+}
+
+/// Whether `directory` contains, or is contained in, a directory whose contents the Node manages.
+fn overlaps(
+    directory: &std::path::Path,
+    config: &ServiceConfig,
+    others: &[Option<&std::path::Path>],
+) -> bool {
     let directory = canonicalize_longest_existing_prefix(directory);
     let protected = [
         Some(config.node.home_directory.as_path()),
@@ -111,15 +171,14 @@ pub(super) fn validate(agent: &AgentConfig, config: &ServiceConfig) -> io::Resul
             .as_ref()
             .map(|clone| clone.repository_root.as_path()),
     ];
-    for path in protected.into_iter().flatten() {
-        let path = canonicalize_longest_existing_prefix(path);
-        if path.starts_with(&directory) || directory.starts_with(&path) {
-            return Err(io::Error::other(
-                "agent workload directory overlaps Node state, host state or the clone root",
-            ));
-        }
-    }
-    Ok(())
+    protected
+        .into_iter()
+        .chain(others.iter().copied())
+        .flatten()
+        .any(|path| {
+            let path = canonicalize_longest_existing_prefix(path);
+            path.starts_with(&directory) || directory.starts_with(&path)
+        })
 }
 
 /// Derives where and as whom agents run from configuration [`validate`] already accepted.
@@ -151,8 +210,14 @@ pub(super) fn open(
     timezone: &str,
     catalog: DirectoryPluginCatalog,
     restorer: Option<Restorer>,
+    shutdown: &crate::Shutdown,
 ) -> Result<Option<SessionHost>, crate::Error> {
     let journal = node.database.session_journal()?;
+    let ora_git = config
+        .and_then(|config| config.ora_git_directory.as_deref())
+        .map(|directory| ora_git(node, directory, journal.clone(), shutdown.clone()))
+        .transpose()?
+        .flatten();
     let host = config
         .map(|config| {
             let timezone = timezone
@@ -174,7 +239,11 @@ pub(super) fn open(
                 restorer,
             ))
         })
-        .transpose()?;
+        .transpose()?
+        .map(|host| match ora_git {
+            Some(broker) => host.with_ora_git(broker),
+            None => host,
+        });
     for record in node.database.recoverable_sessions()? {
         let ended = match &host {
             Some(host) => host.recover_interrupted(&record.command.execution_id),
@@ -191,6 +260,45 @@ pub(super) fn open(
         crate::session::purge_workload_directory(directory).map_err(ora_node_db::Error::from)?;
     }
     Ok(host)
+}
+
+/// Composes the `ora-git` service when the Node can reach the Git Server: Node-identity access
+/// from transport repositories, checkout Git as the workload user with delivery's policy.
+fn ora_git(
+    node: &ManagedNode,
+    directory: &std::path::Path,
+    ledger: SessionJournal,
+    shutdown: crate::Shutdown,
+) -> Result<Option<std::sync::Arc<dyn crate::ora_git::OraGitBroker>>, crate::Error> {
+    let (Some(policy), Some(access), Some(config)) = (
+        node.delivery_git_policy()?,
+        node.git_server(),
+        node.clone_config(),
+    ) else {
+        return Ok(None);
+    };
+    let host = || {
+        node.git
+            .runner()
+            .detached_clone_host()
+            .map_err(ora_node_db::Error::from)
+    };
+    let owner = node.git.runner().process_config().workload_uid;
+    // SAFETY: geteuid only reads the process identity.
+    let peer_uid = owner.unwrap_or_else(|| unsafe { libc::geteuid() });
+    let service = crate::ora_git::OraGitService::new(crate::ora_git::OraGitParts {
+        directory: directory.to_path_buf(),
+        peer_uid,
+        workload: DeliveryGit::new(host()?, policy),
+        node: AsNode(host()?),
+        access,
+        repository_root: config.repository_root.clone(),
+        owner,
+        ledger,
+        shutdown,
+    })
+    .map_err(ora_node_db::Error::from)?;
+    Ok(Some(std::sync::Arc::new(std::sync::Arc::new(service))))
 }
 
 /// A repeated start only reports durable state; it never relaunches an existing session.

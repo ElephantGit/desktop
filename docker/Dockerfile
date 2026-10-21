@@ -17,10 +17,10 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
     cargo build --locked --release \
-      -p ora-node -p ora-process-host -p ora-process-guardian -p ora-controller && \
+      -p ora-node -p ora-git -p ora-process-host -p ora-process-guardian -p ora-controller && \
     mkdir -p /out && \
     cp target/release/ora-node target/release/ora-process-host \
-       target/release/ora-process-guardian target/release/ora-controller /out/
+       target/release/ora-process-guardian target/release/ora-controller target/release/ora-git /out/
 
 # Deno runs every plugin on the Node. The version is .deno-version and the archive and executable
 # digests come from scripts/sidecar-checksums.json, the same reviewed pins the desktop sidecars use;
@@ -65,6 +65,7 @@ RUN apt-get update && \
 # the Node refuses a writable clone Git configuration in release builds. The parent directories exist
 # before these COPYs because `--chmod` would otherwise also apply to the directories it creates.
 COPY --from=build --chmod=0755 /out/ora-node /out/ora-process-host /out/ora-process-guardian /opt/ora/bin/
+COPY --from=build --chmod=0755 /out/ora-git /usr/local/bin/ora-git
 COPY --from=deno --chmod=0755 /out/deno /opt/ora/bin/deno
 COPY --chmod=0644 docker/clone.gitconfig /etc/ora/clone.gitconfig
 COPY --chmod=0755 docker/node-entrypoint.sh /opt/ora/bin/node-entrypoint.sh

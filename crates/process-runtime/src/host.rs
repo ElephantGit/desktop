@@ -31,6 +31,7 @@ struct Progress {
     status: HostCoordination,
     retry_at: Instant,
     failures: u32,
+    control_pending: bool,
 }
 
 impl HostCoordinator {
@@ -73,7 +74,20 @@ impl HostCoordinator {
 
     /// Seals admission synchronously; a previously accepted in-flight Start remains covered by close.
     pub fn close(&mut self, scope: ScopeId) -> Result<HostScopeView, ProcessStateError> {
+        let already_requested = self.state.scope_close_requested(scope)?;
         self.state.request_scope_close(scope)?;
+        // Observation backoff must not defer newly accepted control intent. An in-flight
+        // exchange still owns its Scope; tick picks up the durable close on its next pass.
+        if !already_requested {
+            let progress = self.progress.entry(scope).or_insert(Progress {
+                status: HostCoordination::Pending,
+                retry_at: Instant::now(),
+                failures: 0,
+                control_pending: false,
+            });
+            progress.retry_at = Instant::now();
+            progress.control_pending = true;
+        }
         self.query_scope(scope)
     }
 
@@ -151,6 +165,7 @@ impl HostCoordinator {
                 status: HostCoordination::Pending,
                 retry_at: Instant::now(),
                 failures: 0,
+                control_pending: false,
             });
             progress.failures = if observation.status == HostCoordination::Observing {
                 0
@@ -159,8 +174,13 @@ impl HostCoordinator {
             };
             // Stagger Scope retries without inventing an attempt limit or abandoning responsibility.
             let jitter = scope.to_string().bytes().map(u64::from).sum::<u64>() % 100;
-            progress.retry_at = Instant::now()
-                + Duration::from_millis((100_u64 << progress.failures).min(5000) + jitter);
+            progress.retry_at = if progress.control_pending {
+                Instant::now()
+            } else {
+                Instant::now()
+                    + Duration::from_millis((100_u64 << progress.failures).min(5000) + jitter)
+            };
+            progress.control_pending = false;
             progress.status = observation.status;
         }
         let scopes = self.state.scope_intents()?;
@@ -185,8 +205,118 @@ impl HostCoordinator {
             self.jobs
                 .spawn(async move { (scope, work.observe().await) });
             self.active.insert(scope);
+            if let Some(progress) = self.progress.get_mut(&scope) {
+                progress.control_pending = false;
+            }
             self.cursor = Some(scope);
         }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// A previously unavailable guardian must not delay newly accepted close intent behind backoff.
+    #[tokio::test]
+    async fn close_dispatches_without_waiting_for_observation_backoff()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let home = std::env::var_os("HOME").ok_or("fixture HOME missing")?;
+        let directory = tempfile::Builder::new()
+            .prefix("hc")
+            .permissions(std::fs::Permissions::from_mode(/*mode*/ 0o700))
+            .tempdir_in(home)?;
+        let state = HostState::create(&directory.path().join("s"))?;
+        let mut host = HostCoordinator::new(state, directory.path().join("unused"));
+        let scope = ScopeId::new();
+        host.create_scope(scope)?;
+        host.progress.insert(
+            scope,
+            Progress {
+                status: HostCoordination::Unavailable,
+                retry_at: Instant::now() + Duration::from_secs(/*secs*/ 6),
+                failures: 6,
+                control_pending: false,
+            },
+        );
+        host.close(scope)?;
+        host.tick()?;
+        assert!(
+            host.active.contains(&scope),
+            "accepted close is still waiting behind observation backoff"
+        );
+        Ok(())
+    }
+
+    /// A repeated close is observation traffic, not permission to defeat failure backoff.
+    #[tokio::test]
+    async fn duplicate_close_preserves_retry_backoff() -> Result<(), Box<dyn std::error::Error>> {
+        let home = std::env::var_os("HOME").ok_or("fixture HOME missing")?;
+        let directory = tempfile::Builder::new()
+            .prefix("hc")
+            .permissions(std::fs::Permissions::from_mode(/*mode*/ 0o700))
+            .tempdir_in(home)?;
+        let mut host = HostCoordinator::new(
+            HostState::create(&directory.path().join("s"))?,
+            directory.path().join("unused"),
+        );
+        let scope = ScopeId::new();
+        host.create_scope(scope)?;
+        host.close(scope)?;
+        let retry_at = Instant::now() + Duration::from_secs(/*secs*/ 6);
+        host.progress.insert(
+            scope,
+            Progress {
+                status: HostCoordination::Unavailable,
+                retry_at,
+                failures: 6,
+                control_pending: false,
+            },
+        );
+        host.close(scope)?;
+        assert_eq!(host.progress[&scope].retry_at, retry_at);
+        host.tick()?;
+        assert!(!host.active.contains(&scope));
+        Ok(())
+    }
+
+    /// A close accepted during the first exchange survives its stale unavailable observation.
+    #[tokio::test]
+    async fn close_during_first_exchange_is_dispatched_after_that_exchange()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let home = std::env::var_os("HOME").ok_or("fixture HOME missing")?;
+        let directory = tempfile::Builder::new()
+            .prefix("hc")
+            .permissions(std::fs::Permissions::from_mode(/*mode*/ 0o700))
+            .tempdir_in(home)?;
+        let mut host = HostCoordinator::new(
+            HostState::create(&directory.path().join("s"))?,
+            directory.path().join("unused"),
+        );
+        let scope = ScopeId::new();
+        host.create_scope(scope)?;
+        host.active.insert(scope);
+        host.jobs.spawn(async move {
+            (
+                scope,
+                worker::Observation {
+                    scope: None,
+                    runs: vec![],
+                    status: HostCoordination::Unavailable,
+                },
+            )
+        });
+        host.close(scope)?;
+        assert!(host.active.contains(&scope));
+        tokio::task::yield_now().await;
+        host.tick()?;
+        assert!(
+            host.active.contains(&scope),
+            "stale exchange put the accepted close back into failure backoff"
+        );
         Ok(())
     }
 }

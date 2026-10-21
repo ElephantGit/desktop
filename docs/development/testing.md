@@ -46,6 +46,7 @@ Some suites need extra setup:
 
 - Node standalone tests run the real Node, host and guardian executables; build them first with
   `cargo build -p ora-node -p ora-controller -p ora-process-host -p ora-process-guardian`.
-- Clone tests over SSH need an OpenSSH client and server and the system `/run/sshd` directory; the
-  fixture daemon runs as the ordinary test user on an ephemeral port.
+- Clone, delivery, restore and `ora-git` tests run a local Git Server double with client-certificate
+  TLS backed by `git http-backend` (the `git-server` feature of `ora-test-support`), built only on
+  Linux.
 - The privileged helper test is ignored by default, see [Linux helper](../process/linux-helper.md#launch-gate).

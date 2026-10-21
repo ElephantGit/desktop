@@ -16,6 +16,13 @@ export {
   spawnAgentProcess,
 } from "./agent_process.ts";
 export type { EffectResourceDeclaration } from "./plugin.ts";
+export type {
+  AgentBoundModel,
+  AgentModelApplied,
+  AgentModelConfiguration,
+  AgentModelContext,
+  AgentModelProtocol,
+} from "./protocol/model_context.ts";
 export {
   createLogger,
   createStderrLogSink,

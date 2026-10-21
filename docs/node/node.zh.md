@@ -32,7 +32,8 @@ stdin 都不是命令通道。
 
 更多的配置段用来启用能力：`clone`（[仓库 clone](repository-clone.zh.md)）、`control`
 （[控制会话](control-session.zh.md)）、`agent`（[Agent 会话](agent-sessions.zh.md)）、`plugins`
-（[插件](plugins.zh.md)）和 `git_access`（[Revision](revisions.zh.md#git-server-访问材料)）。
+（[插件](plugins.zh.md)）和 `git_access`（[Revision](revisions.zh.md#git-server-访问材料)），
+clone、Revision 交付和 [ora-git](ora-git.zh.md) 都需要后者；Cloud 模式的 Node 没有它时拒绝启动。
 `process.workload_uid` 让 Git 工作负载和 Agent 以单独的用户运行。
 
 - `"Discover"` 保留已有的 NodeId 或生成第一个；`{ "Require": "id" }` 强制使用一个已登记的身份。每次启动都
@@ -82,6 +83,7 @@ rootless 下的尽力而为，不是强隔离：逃逸的后代进程或死掉�
 | 7 | `plugin_executions`、`plugin_outbox` |
 | 8 | `node_executions`、`execution_events`、`session_commands`：Agent 会话 |
 | 9 | `revision_deliveries`、`revision_outbox` |
+| 10 | `workspace_branch_heads`：`ora-git` 推送时声明的自己 Workspace 分支的值 |
 
 所有执行族共享 `execution_identities`，防止不同族之间的 key 冲突。完成时，资源事实、终止结果和它的原始事件
 一起提交；状态读取从不确认。确认必须匹配 Node、operation、execution 和序号，并且只删除投递记录，结果和去重
