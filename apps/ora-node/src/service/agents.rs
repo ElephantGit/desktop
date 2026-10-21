@@ -316,6 +316,13 @@ pub(super) fn workload(
     }
 }
 
+/// Restore composition and stop authority shared by startup, the worker and status queries.
+pub(super) struct Recovery<'a> {
+    pub(super) restorer: Option<Restorer>,
+    pub(super) shutdown: &'a crate::Shutdown,
+    pub(super) stops: &'a crate::managed::RestoreStops,
+}
+
 /// Recovers every unfinished input before the control listener is published, even without Agent
 /// configuration. Recovery never spawns an Agent or treats the old input as permission to resume.
 pub(super) fn open(
@@ -324,10 +331,13 @@ pub(super) fn open(
     workload: SessionWorkload,
     timezone: &str,
     catalog: DirectoryPluginCatalog,
-    restorer: Option<Restorer>,
-    shutdown: &crate::Shutdown,
-    stops: &crate::managed::RestoreStops,
+    recovery: Recovery<'_>,
 ) -> Result<Option<SessionHost>, crate::Error> {
+    let Recovery {
+        restorer,
+        shutdown,
+        stops,
+    } = recovery;
     let journal = node.database.session_journal()?;
     let ora_git = config
         .and_then(|config| config.ora_git_directory.as_deref())

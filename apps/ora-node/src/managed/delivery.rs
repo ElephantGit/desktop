@@ -97,16 +97,6 @@ impl RestoreGitRunner for CloneHost {
         }
     }
 
-    /// Missing storage or unknown original process evidence retains all restore input files.
-    fn cleanup_safe(&self) -> bool {
-        self.restore_context.as_ref().is_none_or(|context| {
-            context
-                .stops
-                .journal
-                .pending_restore_attempts(&context.execution)
-                .is_ok_and(|attempts| attempts.is_empty())
-        })
-    }
     /// Caps the host exchange as well as process polling without clipping Scope cleanup.
     fn run_bounded_before(
         &self,

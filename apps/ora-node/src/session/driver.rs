@@ -134,8 +134,10 @@ where
         execution,
         &cloned,
         &mut spec,
-        stopping,
-        ended_before_start(&shared.ledger, execution, wake),
+        resume::EndSignals {
+            stopping,
+            ended: ended_before_start(&shared.ledger, execution, wake),
+        },
     );
     if let Err(end) = restored.await {
         return end;

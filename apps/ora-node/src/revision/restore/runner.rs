@@ -19,10 +19,6 @@ pub(crate) trait RestoreGitRunner: GitRunner {
         Ok(())
     }
 
-    /// False retains files still reachable by an unconfirmed original process.
-    fn cleanup_safe(&self) -> bool {
-        true
-    }
     /// Runs under min(the command's own budget, the remaining restore deadline).
     fn run_bounded_before(
         &self,
@@ -44,10 +40,6 @@ impl<R: RestoreGitRunner> RestoreGitRunner for RestoreCommands<'_, R> {
     fn check_admission(&self) -> Result<(), GitExecError> {
         check(self.deadline)?;
         self.runner.check_admission()
-    }
-    /// File ownership remains with an unknown original process.
-    fn cleanup_safe(&self) -> bool {
-        self.runner.cleanup_safe()
     }
     /// Keeps nested Git steps on the same deadline and evidence owner.
     fn run_bounded_before(

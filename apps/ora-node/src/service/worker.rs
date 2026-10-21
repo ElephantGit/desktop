@@ -92,9 +92,11 @@ pub(super) fn run(
             workload,
             &config.timezone,
             plugins.catalog.clone(),
-            restorer,
-            &shutdown,
-            &stops,
+            agents::Recovery {
+                restorer,
+                shutdown: &shutdown,
+                stops: &stops,
+            },
         )
         .map_err(|e| e.to_string())?;
         Ok::<_, String>((

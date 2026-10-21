@@ -51,9 +51,8 @@ impl RestoreConfig {
             ));
         }
         Ok(RestorePolicy {
-            stop_confirmation: Duration::from_millis(self.stop_confirmation_ms),
             deadline,
-            ..RestorePolicy::DEFAULT
+            stop_confirmation: Duration::from_millis(self.stop_confirmation_ms),
         })
     }
 }

@@ -30,9 +30,12 @@ pub(super) async fn restore_prior<R: PriorRevisionRestore, L: super::ports::Sess
     execution: &ExecutionId,
     checkout: &ClonedCheckout,
     spec: &mut AgentSessionSpec,
-    mut stopping: watch::Receiver<bool>,
-    ended: impl Future<Output = SessionEnd>,
+    signals: EndSignals<impl Future<Output = SessionEnd>>,
 ) -> Result<(), SessionEnd> {
+    let EndSignals {
+        mut stopping,
+        ended,
+    } = signals;
     let Some(prior) = spec.prior_revision.clone() else {
         return Ok(());
     };
@@ -103,6 +106,12 @@ fn note_restored(
             Err(SessionEnd::agent_failed(failure.detail()))
         }
     }
+}
+
+/// The two ways a session can end while its restore is still running.
+pub(super) struct EndSignals<F> {
+    pub(super) stopping: watch::Receiver<bool>,
+    pub(super) ended: F,
 }
 
 /// A durable EndSession and Node stop are checked before restore admission and plugin handoff.
