@@ -135,6 +135,81 @@ test("late attribution, opaque replacement and unknown child outcomes survive fi
   store.getState().dispose();
 });
 
+test("cleared or invalid child sources settle as parent tools in live and reloaded turns", async () => {
+  for (const invalid of [
+    null,
+    { id: " ", parentID: "root", depth: 1 },
+    { id: "child", parentID: " ", depth: 1 },
+    { id: "child", parentID: "root", depth: 1.5 },
+  ]) {
+    const meta = { "opencode/child-session": invalid };
+    const client: ChatSessionClient = {
+      prompt: () =>
+        events<PromptSessionEvent>([
+          {
+            type: "session_update",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "tool",
+              title: "Work",
+              status: "in_progress",
+              _meta: source("child"),
+            },
+          },
+          {
+            type: "session_update",
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "tool",
+              _meta: meta,
+            },
+          },
+          { type: "completed", stopReason: "end_turn" },
+        ]),
+      load: () =>
+        events<LoadSessionEvent>([
+          {
+            type: "session_update",
+            update: {
+              sessionUpdate: "user_message_chunk",
+              content: { type: "text", text: "go" },
+            },
+          },
+          {
+            type: "session_update",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "tool",
+              title: "Work",
+              status: "completed",
+              _meta: meta,
+            },
+          },
+          { type: "turn_ended", stopReason: "end_turn" },
+          { type: "completed" },
+        ]),
+      setConfig: async () => ({ configOptions: [] }),
+      respondToPermission: async () => ({}),
+    };
+    const store = createChatStore(client);
+    await store.getState().sendMessage({ oraSessionId: "live", text: "go" });
+    const liveItem = store.getState().conversations.live!.turns[0]!.items[0]!;
+    await store.getState().loadSession("live");
+    const cold = createChatStore(client);
+    await cold.getState().loadSession("cold");
+    for (const item of [
+      liveItem,
+      store.getState().conversations.live!.turns[0]!.items[0]!,
+      cold.getState().conversations.cold!.turns[0]!.items[0]!,
+    ]) {
+      assert.equal(item.kind, "toolCall");
+      if (item.kind === "toolCall") assert.equal(item.status, "completed");
+    }
+    store.getState().dispose();
+    cold.getState().dispose();
+  }
+});
+
 test("a source switch does not discard leading whitespace or merge unidentified runs", async () => {
   const updates = [text("left", " "), text("right", "B"), text("left", "A")];
   const client: ChatSessionClient = {

@@ -22,6 +22,7 @@ import type {
 import { currentModel } from "./model-option.ts";
 import { observeDiagnostics, type RunDiagnostics } from "./diagnostics.ts";
 import {
+  childSessionSource,
   mergeToolMetadata,
   metadataKey,
   withItemMetadata,
@@ -1542,7 +1543,7 @@ function settleActiveToolCalls(
         ? {
             ...item,
             status:
-              item.metadata && "opencode/child-session" in item.metadata
+              childSessionSource(item.metadata) !== undefined
                 ? "unknown"
                 : status,
             updatedAt: timestamp,
