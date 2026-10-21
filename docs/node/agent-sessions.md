@@ -48,9 +48,13 @@ already in use is refused); `prompt_session_as_message` records the host's messa
 `messageId` of every block of the user message.
 
 The run's Git identity is exported as `GIT_AUTHOR_*`/`GIT_COMMITTER_*` on the plugin process and on
-every process the host spawns for it; the Node writes no Git configuration. These variables are
-layered on the inherited environment, so model credentials and proxy settings from the Node's
-environment still reach the agent.
+every process the host spawns for it; the Node writes no Git configuration. For a session with a
+frozen Agent configuration, these variables join an otherwise empty environment that keeps only
+`PATH`, `LANG`, `LC_ALL` and `TMPDIR`, so model credentials, proxy settings and CLI configuration in
+the Node's environment never reach the agent (see
+[Agent configuration](../plugins/agent-configuration.md)). Any other session layers them on the
+inherited environment, where the Node's own model credentials and proxy settings still reach the
+agent.
 
 ### Separate workload user
 

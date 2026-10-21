@@ -42,7 +42,7 @@ a response to an earlier Hello and enforcing handshake order belong to the sessi
 | `runtime_control` | `bind_runtime` and the `controlled_*` envelopes | `runtime_control_state` |
 | `plugin_install` | `install_plugins`, `remove_plugins` | `plugins_result` |
 | `agent_session` | `start_agent_session`, `submit_user_turn`, `end_session` | `thread_event`, `agent_session_ended`, `session_command_accepted`, `session_command_rejected` |
-| `model_proxy` | Model-bound session starts | |
+| `model_proxy` | Model-bound session starts | `model_adapter` in `hello_accepted` (see below) |
 | `revision_delivery` | `deliver_revision`, `upload_grant` | `revision_result`, `upload_grant_needed` |
 | `revision_restore` | `start_agent_session` with `prior_revision` | Restore failure codes in `agent_session_ended` |
 
@@ -78,7 +78,16 @@ fact). See [Runtime control](../controller/runtime-control.md).
   per plugin; `plugins_failed` means the whole execution could not run.
 - **Agent sessions.** A session names the agent plugin and version, the clone execution whose checkout
   it uses (never a Node path), a Git identity that cannot corrupt a signature line, and the first user
-  turn (text, at most 64 KiB), optionally `model_binding_id` and `prior_revision`. `thread_event`
+  turn (text, at most 64 KiB), optionally `model_binding_id` and `prior_revision`. A session for a
+  plugin-owned model adapter also carries `agent_configuration`: the plugin id, version and target,
+  package SHA-256, schema and adapter contract versions, declaration fingerprint, configuration
+  revision, validated Settings as JSON text (an object of at most 256 KiB), protocol and the bound
+  model's id, name, context window and output limit. It always comes with a `model_binding_id` and
+  never with a credential. A Node advertises what it can run that way as `model_adapter` beside
+  `model_proxy` in `hello_accepted` (contract version, target, protocols); the Controller dispatches
+  such a session only to a Node whose `model_adapter` admits the frozen configuration. An older Node
+  advertises none and is never sent one; it would reject the unknown field rather than ignore it.
+  `thread_event`
   carries one settled `ora-history` record as an opaque JSON object of at most 256 KiB (`truncated`
   marks a shortened one) and shares the execution's gap-free sequence with the terminal
   `agent_session_ended`, whose `detail` is a short snake_case code. Commands carry a `command_id`;

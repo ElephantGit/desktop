@@ -38,7 +38,7 @@ ADR。
 | `runtime_control` | `bind_runtime` 和各个 `controlled_*` 信封 | `runtime_control_state` |
 | `plugin_install` | `install_plugins`、`remove_plugins` | `plugins_result` |
 | `agent_session` | `start_agent_session`、`submit_user_turn`、`end_session` | `thread_event`、`agent_session_ended`、`session_command_accepted`、`session_command_rejected` |
-| `model_proxy` | 绑定了模型的会话启动 | |
+| `model_proxy` | 绑定了模型的会话启动 | `hello_accepted` 中的 `model_adapter`（见下文） |
 | `revision_delivery` | `deliver_revision`、`upload_grant` | `revision_result`、`upload_grant_needed` |
 | `revision_restore` | 带 `prior_revision` 的 `start_agent_session` | `agent_session_ended` 中的恢复失败代码 |
 
@@ -67,6 +67,11 @@ operation id；`input_closed`；以及签发和过期时间。`ControlledClone`�
   的多个下载地址，每个都带小写的 SHA-256。单项失败按插件报告；`plugins_failed` 表示整个执行无法运行。
 - **Agent 会话。** 会话指明 Agent 插件和版本、它所用 checkout 对应的 clone 执行（从不是 Node 路径）、一个不会破坏
   签名行的 Git 身份，以及第一个用户轮次（文本，最多 64 KiB），可选 `model_binding_id` 和 `prior_revision`。
+  由插件自带模型 adapter 的会话还带 `agent_configuration`：插件 id、版本和 target，包的 SHA-256，schema 和 adapter
+  契约版本，声明指纹，配置修订号，以 JSON 文本保存的已校验 Settings（一个最多 256 KiB 的对象），协议，以及绑定模型的
+  id、名称、上下文窗口和输出上限。它总是与 `model_binding_id` 一起出现，从不携带凭据。Node 在 `hello_accepted` 里于
+  `model_proxy` 旁用 `model_adapter` 宣告它能这样运行什么（契约版本、target、协议）；Controller 只把这类会话派发给
+  `model_adapter` 能接纳该冻结配置的 Node。旧 Node 不宣告，也不会收到这类会话；收到时它会拒绝未知字段，而不是忽略。
   `thread_event` 携带一条已定稿的 `ora-history` 记录，作为最多 256 KiB 的不透明 JSON 对象（`truncated` 标记被截短的
   记录），并与终止的 `agent_session_ended` 共享该执行无间隙的序号，后者的 `detail` 是一个简短的 snake_case 代码。
   命令带 `command_id`；它们的回复没有序号，不需要确认，丢失的回复靠重发找回。
