@@ -1,8 +1,39 @@
-use agent_client_protocol_schema::v1::{SessionUpdate, ToolCallId, ToolCallStatus, ToolCallUpdate};
+use agent_client_protocol_schema::v1::{
+    Meta, SessionUpdate, ToolCallId, ToolCallStatus, ToolCallUpdate,
+};
 use ora_domain::PromptInactivityPolicy;
 use std::collections::HashSet;
 use std::time::Duration;
 use tokio::time::Instant;
+
+/// Which side of a parent/child projection one update's metadata names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Projection {
+    /// Metadata carries a valid child source, so the update only displays child work.
+    Projected,
+    /// Metadata is omitted, so ownership already recorded for this tool still applies.
+    Inherited,
+    /// Metadata clears or invalidates the source, returning the tool to its parent.
+    Parent,
+}
+
+impl Projection {
+    /// Classifies metadata with the history crate's source rule, so the timer and the transcript
+    /// agree on which sources count as a child (ADR D1).
+    fn of(meta: Option<&Meta>) -> Self {
+        let named = meta.is_some_and(|meta| meta.contains_key("opencode/child-session"));
+        if !named {
+            return Self::Inherited;
+        }
+        // The namespace is opaque replacement data: an explicit null or a malformed object
+        // clears every earlier source instead of naming a child (ADR D2).
+        if ora_history::child_source_id(meta).is_some() {
+            Self::Projected
+        } else {
+            Self::Parent
+        }
+    }
+}
 
 /// Session-local inactivity policy for one active prompt.
 ///
@@ -133,20 +164,27 @@ impl PromptLiveness {
             SessionUpdate::ToolCallUpdate(change) => (&change.meta, Some(&change.tool_call_id)),
             _ => (&None, None),
         };
-        let projected = meta
-            .as_ref()
-            .is_some_and(|meta| meta.contains_key("opencode/child-session"));
+        let projection = Projection::of(meta.as_ref());
         if let Some(id) = tool {
-            if projected {
-                self.projected_tools.insert(id.clone());
-                self.running_tools.remove(id);
-                self.pending_tools.remove(id);
+            match projection {
+                Projection::Projected => {
+                    self.projected_tools.insert(id.clone());
+                    self.running_tools.remove(id);
+                    self.pending_tools.remove(id);
+                    return;
+                }
+                // A cleared or malformed source republishes the same tool as the parent's, so
+                // stop discarding its later deltas before this one is applied.
+                Projection::Parent => {
+                    self.projected_tools.remove(id);
+                }
+                Projection::Inherited => {
+                    if self.projected_tools.contains(id) {
+                        return;
+                    }
+                }
             }
-            if self.projected_tools.contains(id) {
-                return;
-            }
-        }
-        if projected {
+        } else if projection == Projection::Projected {
             return;
         }
         match update {
@@ -171,15 +209,21 @@ impl PromptLiveness {
 
     /// Rearms a full window after an awaited permission round trip.
     pub(super) fn permission_settled(&mut self, tool: &ToolCallUpdate) {
-        if self.projected_tools.contains(&tool.tool_call_id)
-            || tool
-                .meta
-                .as_ref()
-                .is_some_and(|meta| meta.contains_key("opencode/child-session"))
-        {
-            return;
+        match Projection::of(tool.meta.as_ref()) {
+            // A child's round trip is not parent progress.
+            Projection::Projected => {}
+            // Explicitly cleared sources belong to the parent again, whose awaited round trips
+            // always rearm.
+            Projection::Parent => {
+                self.projected_tools.remove(&tool.tool_call_id);
+                self.reset_at(Instant::now());
+            }
+            Projection::Inherited => {
+                if !self.projected_tools.contains(&tool.tool_call_id) {
+                    self.reset_at(Instant::now());
+                }
+            }
         }
-        self.reset_at(Instant::now());
     }
 
     fn observe_tool(&mut self, id: &ToolCallId, status: Option<ToolCallStatus>, now: Instant) {
@@ -214,9 +258,11 @@ impl PromptLiveness {
 mod tests {
     use super::{PromptLiveness, PromptLivenessSnapshot, PromptRetry};
     use agent_client_protocol_schema::v1::{
-        Plan, SessionUpdate, ToolCall, ToolCallStatus, UsageUpdate,
+        Meta, Plan, SessionUpdate, ToolCall, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
+        UsageUpdate,
     };
     use pretty_assertions::assert_eq;
+    use serde_json::{Value, json};
     use std::time::Duration;
     use tokio::time::Instant;
 
@@ -226,6 +272,95 @@ mod tests {
         Duration::from_secs(60),
         Duration::from_secs(90),
     ];
+
+    /// Builds the metadata one update carries for the `opencode/child-session` namespace.
+    fn child_meta(source: &Value) -> Meta {
+        serde_json::from_value(json!({ "opencode/child-session": source })).unwrap()
+    }
+
+    /// Builds an in-progress delta for the delegate tool with the given namespace value.
+    fn delegate_in_progress(source: &Value) -> SessionUpdate {
+        SessionUpdate::ToolCallUpdate(
+            ToolCallUpdate::new(
+                "delegate",
+                ToolCallUpdateFields::new().status(ToolCallStatus::InProgress),
+            )
+            .meta(child_meta(source)),
+        )
+    }
+
+    /// A source the history crate accepts, so both consumers agree it names a child.
+    fn valid_source() -> Value {
+        json!({"id":"child","parentID":"root","depth":1})
+    }
+
+    /// An explicit null republishes a running delegate as the parent's instead of ending its pause.
+    #[test]
+    fn cleared_child_source_keeps_a_running_delegate_paused() {
+        let base = Instant::now();
+        let mut liveness = PromptLiveness::new_at(&SINGLE_WINDOW, base);
+        liveness.observe_at(
+            &delegate_in_progress(&Value::Null),
+            base + Duration::from_secs(10),
+        );
+        assert_eq!(liveness.deadline(), None);
+
+        // The tool stays the parent's, so its completion settles the prompt normally.
+        liveness.observe_at(
+            &SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+                "delegate",
+                ToolCallUpdateFields::new().status(ToolCallStatus::Completed),
+            )),
+            base + Duration::from_secs(20),
+        );
+        assert_eq!(liveness.deadline(), Some(base + Duration::from_secs(80)));
+    }
+
+    /// Every malformed or cleared source belongs to the parent and cannot end a running pause.
+    #[test]
+    fn invalid_child_sources_do_not_end_a_running_pause() {
+        let base = Instant::now();
+        for source in [
+            Value::Null,
+            json!({}),
+            json!({"id":"  ","parentID":"root","depth":1}),
+            json!({"id":"child","parentID":"  ","depth":1}),
+            json!({"id":"child","parentID":"root","depth":0}),
+            json!({"id":"child","parentID":"root","depth":-1}),
+            json!({"id":"child","parentID":"root","depth":1.5}),
+            json!({"id":"child","parentID":"root","depth":"1"}),
+            json!({"id":"child","parentID":"root","depth":9007199254740992u64}),
+        ] {
+            let mut liveness = PromptLiveness::new_at(&SINGLE_WINDOW, base);
+            liveness.observe_at(&delegate_in_progress(&valid_source()), base);
+            // A valid source only displays child work: it never pauses the parent prompt.
+            assert_eq!(liveness.deadline(), Some(base + SINGLE_WINDOW[0]));
+            liveness.observe_at(
+                &delegate_in_progress(&source),
+                base + Duration::from_secs(10),
+            );
+            // Clearing it returns the tool to the parent, whose running state pauses the prompt.
+            assert_eq!(liveness.deadline(), None);
+        }
+    }
+
+    /// A cleared source makes the awaited permission round trip the parent's again.
+    #[tokio::test(start_paused = true)]
+    async fn cleared_child_source_permission_rearms_the_parent_deadline() {
+        let mut liveness = PromptLiveness::new(&SINGLE_WINDOW);
+        tokio::time::advance(Duration::from_secs(20)).await;
+        let cleared = ToolCallUpdate::new("delegate", ToolCallUpdateFields::new())
+            .meta(child_meta(&Value::Null));
+        liveness.permission_settled(&cleared);
+        assert_eq!(liveness.deadline(), Some(Instant::now() + SINGLE_WINDOW[0]));
+
+        // The cleared delta also stops discarding the same tool's later metadata-less deltas.
+        liveness.observe(&SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+            "delegate",
+            ToolCallUpdateFields::new().status(ToolCallStatus::InProgress),
+        )));
+        assert_eq!(liveness.deadline(), None);
+    }
 
     /// A background child's permission roundtrip does not prove parent progress either.
     #[tokio::test(start_paused = true)]
