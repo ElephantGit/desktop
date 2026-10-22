@@ -4,6 +4,11 @@ use super::{Binding, Permission};
 
 pub(super) const BINDINGS: &[Binding] = &[
     Binding::Unary {
+        operation: "getSessionBindings",
+        handler: "commands::session::get_session_bindings",
+        permission: Permission::MainWebview,
+    },
+    Binding::Unary {
         operation: "startSession",
         handler: "commands::session::start_session",
         permission: Permission::MainWebview,

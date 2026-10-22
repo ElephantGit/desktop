@@ -222,6 +222,7 @@ impl Backend {
 
         let session = Arc::new(Sessions::new(
             pool.clone(),
+            sessions_root.clone(),
             agent_runtime.clone(),
             workflow_run.session_turns(),
             app_events.publisher(),

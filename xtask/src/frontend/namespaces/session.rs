@@ -6,6 +6,14 @@ const NAMESPACE: &str = "session";
 
 pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
     FrontendEndpoint {
+        operation_name: "getSessionBindings",
+        namespace: NAMESPACE,
+        member_name: "bindings",
+        request_type: "GetSessionBindingsRequest",
+        response_type: "GetSessionBindingsResponse",
+        response_mode: FrontendResponseMode::Unary,
+    },
+    FrontendEndpoint {
         operation_name: "startSession",
         namespace: NAMESPACE,
         member_name: "start",

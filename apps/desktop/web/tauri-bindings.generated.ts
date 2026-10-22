@@ -62,6 +62,7 @@ export const tauriCommands = {
   getRuntimeLogLevel: "get_runtime_log_level",
   getScheduledTask: "get_scheduled_task",
   getSession: "get_session",
+  getSessionBindings: "get_session_bindings",
   getSkill: "get_skill",
   getSkillImport: "get_skill_import",
   getTask: "get_task",

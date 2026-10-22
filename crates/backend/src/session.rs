@@ -10,6 +10,7 @@ use ora_contracts::*;
 use ora_db::{RepositoryPool, SqliteSessionRepository};
 use std::sync::Arc;
 
+mod bindings;
 #[cfg(test)]
 mod tests;
 
@@ -18,6 +19,8 @@ mod tests;
 /// Lists exclude unpublished workflow sessions, title edits commit before actor adoption and
 /// notification, and prompt streams retain the workflow-owned cleanup hook when dropped.
 pub struct Sessions {
+    repository: SqliteSessionRepository,
+    sessions_root: std::path::PathBuf,
     get: GetSessionHandler<SqliteSessionRepository>,
     list: ListSessionsHandler<SqliteSessionRepository>,
     rename: RenameSessionHandler<SqliteSessionRepository, SystemClock>,
@@ -30,12 +33,15 @@ impl Sessions {
     /// Captures the shared runtime and restricted workflow-turn coordination from composition.
     pub(crate) fn new(
         pool: RepositoryPool,
+        sessions_root: std::path::PathBuf,
         agent_runtime: Arc<AgentRuntimeManager>,
         workflow_turns: WorkflowSessionTurns,
         app_events: AppEventPublisher,
     ) -> Self {
         let repository = SqliteSessionRepository::new(pool);
         Self {
+            repository: repository.clone(),
+            sessions_root,
             get: GetSessionHandler::new(repository.clone()),
             list: ListSessionsHandler::new(repository.clone()),
             rename: RenameSessionHandler::new(repository, SystemClock),
@@ -45,6 +51,35 @@ impl Sessions {
         }
     }
 
+    /// Reads bounded diagnostic batches off the async executor; each session fails independently.
+    pub async fn bindings(
+        &self,
+        request: GetSessionBindingsRequest,
+    ) -> Result<GetSessionBindingsResponse, BackendError> {
+        let ids: Vec<_> = request
+            .session_ids
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        if ids.len() > 32 {
+            return Err(BackendError::new(
+                crate::error::ErrorClassification::InvalidRequest,
+                PublicError::InvalidRequest(EmptyErrorParams {}),
+                "at most 32 diagnostic sessions per batch",
+            ));
+        }
+        let repository = self.repository.clone();
+        let root = self.sessions_root.clone();
+        tokio::task::spawn_blocking(move || GetSessionBindingsResponse {
+            sessions: ids
+                .iter()
+                .map(|id| bindings::read(&repository, &root, id))
+                .collect(),
+        })
+        .await
+        .map_err(|error| BackendError::internal("binding query worker failed", error))
+    }
     /// Creates and persists a provider session on first use.
     pub async fn start(
         &self,

@@ -11,6 +11,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
 
+#[path = "binding_tests.rs"]
+mod binding_tests;
+
 struct Fixture {
     sessions: Arc<Sessions>,
     events: Arc<AppEventHub>,
