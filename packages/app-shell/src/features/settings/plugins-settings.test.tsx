@@ -8,6 +8,7 @@ import type {
   InstalledPlugin,
   PackInstallationStatus,
   PluginLogo,
+  PluginConfigurationDetails,
 } from "@ora/contracts";
 import { toast } from "@ora/ui";
 import { AppI18nProvider } from "../../i18n/i18n";
@@ -134,6 +135,15 @@ it("preserves and explicitly clears secret Skill fields with a restart reminder"
     preserveSettingIds: ["token", "flag"],
   });
   await screen.findByText(/已保存|Saved/);
+  expect(screen.getByLabelText("Count")).toHaveValue("");
+  expect(
+    (await save.mock.results[0]!.value).configuration.settings.every(
+      (field: PluginConfigurationDetails["settings"][number]) =>
+        field.storedValue === null &&
+        field.effectiveValue === null &&
+        field.declaration.default === null,
+    ),
+  ).toBe(true);
   await user.selectOptions(screen.getByLabelText("Flag"), "false");
   await user.click(
     screen.getAllByRole("button", { name: /重置此项|Reset field/ })[0]!,
