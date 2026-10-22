@@ -296,7 +296,7 @@ fn reconcile_removes_a_file_with_no_registered_row() {
 #[cfg(unix)]
 #[test]
 fn rejects_an_artifact_directory_that_is_a_symlink() {
-    let (_temporary, store, run_id) = fixture();
+    let (temporary, store, run_id) = fixture();
     let workspace = temporary.path().join("worktree");
     fs::create_dir_all(&workspace).expect("create workspace");
     let outside = temporary.path().join("outside");

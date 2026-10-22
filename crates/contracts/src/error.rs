@@ -555,6 +555,8 @@ mod tests {
             PublicError::TaskNotFound(empty),
             PublicError::ScheduledTaskNotFound(empty),
             PublicError::ScheduledTaskConflict(empty),
+            PublicError::ScheduledRunNotFound(empty),
+            PublicError::ScheduledRunArtifactNotFound(empty),
             PublicError::ResourceInUse(empty),
             PublicError::WorktreeRequiresGitRepository(empty),
             PublicError::TaskBaseBranchRequired(empty),
@@ -694,6 +696,8 @@ mod tests {
                 | PublicError::TaskNotFound(_)
                 | PublicError::ScheduledTaskNotFound(_)
                 | PublicError::ScheduledTaskConflict(_)
+                | PublicError::ScheduledRunNotFound(_)
+                | PublicError::ScheduledRunArtifactNotFound(_)
                 | PublicError::ResourceInUse(_)
                 | PublicError::WorktreeRequiresGitRepository(_)
                 | PublicError::TaskBaseBranchRequired(_)
@@ -793,7 +797,7 @@ mod tests {
     #[test]
     fn public_error_codes_match_serde_tags_for_every_variant() {
         let samples = public_error_samples();
-        assert_eq!(samples.len(), 117);
+        assert_eq!(samples.len(), 119);
 
         for error in samples {
             let serialized = serde_json::to_value(&error).unwrap();
