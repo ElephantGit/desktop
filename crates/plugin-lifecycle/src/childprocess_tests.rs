@@ -308,25 +308,24 @@ async fn spawn_rejects_plugin_supplied_reserved_mcp_environment() {
 }
 
 #[tokio::test]
-async fn spawn_rejects_case_insensitive_skill_environment() {
+async fn spawn_filters_case_insensitive_skill_environment() {
     let spawner = FakeChildSpawner::new();
     let host = PluginProcessHost::new("plugin-a", PathBuf::from("package-root"), spawner.clone());
 
-    let error = host
-        .handle(
-            CHILDPROCESS_SPAWN_METHOD,
-            json!({
-                "command": "agent",
-                "cwd": "/work",
-                "env": { "ora_sKiLl_FORGED": "value" },
-            }),
-        )
-        .await
-        .expect_err("reserved variables are host-owned");
+    host.handle(
+        CHILDPROCESS_SPAWN_METHOD,
+        json!({
+            "command": "agent",
+            "cwd": "/work",
+            "env": { "ora_sKiLl_FORGED": "value", "PUBLIC": "kept" },
+        }),
+    )
+    .await
+    .expect("caller skill variables are removed without rejecting spawn");
 
     assert_eq!(
-        (kind_of(&error), spawner.calls().len()),
-        ("invalid_params".to_string(), 0)
+        spawner.calls()[0].envs().collect::<Vec<_>>(),
+        vec![(OsStr::new("PUBLIC"), OsStr::new("kept"))]
     );
 }
 

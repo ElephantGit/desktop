@@ -347,14 +347,15 @@ where
             .stdin(ProcessStdio::Piped)
             .stdout(ProcessStdio::Piped)
             .stderr(ProcessStdio::Piped);
-        if request.env.iter().any(|(key, _)| {
-            key.to_ascii_uppercase().starts_with(MCP_ENVIRONMENT_PREFIX)
-                || key.to_ascii_uppercase().starts_with("ORA_SKILL_")
-        }) {
+        if request
+            .env
+            .iter()
+            .any(|(key, _)| key.starts_with(MCP_ENVIRONMENT_PREFIX))
+        {
             return Err(ChildProcessError::new(
                 ChildProcessErrorKind::InvalidParams,
                 format!(
-                    "environment variable names beginning with `{MCP_ENVIRONMENT_PREFIX}` or `ORA_SKILL_` are reserved"
+                    "environment variable names beginning with `{MCP_ENVIRONMENT_PREFIX}` are reserved"
                 ),
             )
             .into());
@@ -374,6 +375,9 @@ where
             spec = spec.cwd(cwd);
         }
         for (key, value) in request.env {
+            if key.to_ascii_uppercase().starts_with("ORA_SKILL_") {
+                continue;
+            }
             spec = spec.env(key, value);
         }
         for (key, value) in host_environment {

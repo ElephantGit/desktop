@@ -1,9 +1,11 @@
 //! Freezes Skill configuration at backend startup for both Agent process launch paths.
 
-use ora_plugin_config::{ConfigurationService, resolve_skill_environment};
+use ora_plugin_config::{
+    ConfigurationService, SkillEnvironmentError, resolve_skill_environment, skill_environment_key,
+};
 use ora_plugin_lifecycle::ChildProcessEnvironmentProvider;
 use ora_plugin_manager::{PluginContribution, PluginManager};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -14,7 +16,8 @@ pub(crate) struct SkillEnvironment(Arc<BTreeMap<String, String>>);
 impl SkillEnvironment {
     /// Reads only valid installed Skill packages and never exposes rejected configuration values.
     pub(crate) fn capture(home: &Path, configuration: &ConfigurationService) -> Self {
-        let mut environment = BTreeMap::new();
+        let mut candidates = BTreeMap::new();
+        let mut names: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
         for plugin in PluginManager::discover(home).installed_plugins() {
             if !matches!(plugin.contributes, PluginContribution::Skill(_)) {
                 continue;
@@ -29,13 +32,43 @@ impl SkillEnvironment {
                     continue;
                 }
             };
-            if let Some(values) = resolve_skill_environment(&id, &details) {
-                environment.extend(values);
-            } else {
-                ora_logging::ora_warn!(plugin_id = %id, "Skill environment omitted: configuration is incomplete or incompatible with process environment values");
+            let values = match resolve_skill_environment(&id, &details) {
+                Ok(values) => Some(values),
+                Err(SkillEnvironmentError::NameCollision) => None,
+                Err(SkillEnvironmentError::InvalidConfiguration) => {
+                    ora_logging::ora_warn!(plugin_id = %id, "Skill environment omitted: configuration is incomplete or incompatible with process environment values");
+                    continue;
+                }
+            };
+            // A locally colliding package must still disqualify every other owner of its names.
+            for setting in details
+                .settings
+                .iter()
+                .filter(|setting| setting.effective_value.is_some())
+            {
+                names
+                    .entry(skill_environment_key(&id, &setting.declaration.id).to_ascii_uppercase())
+                    .or_default()
+                    .push((id.clone(), setting.declaration.id.clone()));
+            }
+            if let Some(values) = values {
+                candidates.insert(id, values);
             }
         }
-        Self(Arc::new(environment))
+        let mut rejected = BTreeSet::new();
+        for owners in names.values().filter(|owners| owners.len() > 1) {
+            for (plugin_id, field_id) in owners {
+                rejected.insert(plugin_id.clone());
+                ora_logging::ora_warn!(plugin_id = %plugin_id, field_id = %field_id, "Skill environment omitted: environment name collision");
+            }
+        }
+        Self(Arc::new(
+            candidates
+                .into_iter()
+                .filter(|(id, _)| !rejected.contains(id))
+                .flat_map(|(_, values)| values)
+                .collect(),
+        ))
     }
 }
 
@@ -60,6 +93,122 @@ mod tests {
     use super::*;
     use ora_plugin_config::{SettingValue, skill_environment_key};
     use pretty_assertions::assert_eq;
+
+    #[derive(Clone, Default)]
+    struct Diagnostics(Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Diagnostics {
+        /// Records every structured field to detect accidental value disclosure.
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _context: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            struct Fields(String);
+            impl tracing::field::Visit for Fields {
+                /// Retains field names and values for the redaction assertion.
+                fn record_debug(
+                    &mut self,
+                    field: &tracing::field::Field,
+                    value: &dyn std::fmt::Debug,
+                ) {
+                    self.0.push_str(&format!("{field}={value:?};"));
+                }
+            }
+            let mut fields = Fields(String::new());
+            event.record(&mut fields);
+            self.0.lock().unwrap().push(fields.0);
+        }
+    }
+
+    /// Uses real package discovery and config parsing for each collision family in both orders.
+    #[test]
+    fn collisions_omit_entire_packages_and_diagnostics_never_include_values() {
+        ora_logging::initialize_test_clock();
+        for pair in [
+            [("a/b-c", "token"), ("a/b.c", "token")],
+            [("a-b/c", "token"), ("a/b-c", "token")],
+            [("a/b", "tokenA"), ("a/b", "tokena")],
+        ] {
+            for reverse in [false, true] {
+                let diagnostics = Diagnostics::default();
+                ora_logging::with_recorded_trace_logging(diagnostics.clone(), || {
+                    let root = tempfile::tempdir().unwrap();
+                    let mut plugins =
+                        BTreeMap::<&str, serde_json::Map<String, serde_json::Value>>::new();
+                    let mut declarations = vec![pair[0], pair[1], ("other/safe-token", "token")];
+                    if reverse {
+                        declarations.reverse();
+                    }
+                    for (id, field) in declarations {
+                        let settings = plugins.entry(id).or_default();
+                        for field in [field, "unrelated"] {
+                            settings.insert(field.into(), serde_json::json!({"type":"string","title":"Value","description":"Value","default":"test-only-sensitive-value"}));
+                        }
+                    }
+                    // An unusable package has no candidate names and must not poison a valid owner.
+                    let invalid = if reverse {
+                        serde_json::json!({"type":"string","title":"Value","description":"Value","required":true})
+                    } else {
+                        serde_json::json!({"type":"string","title":"Value","description":"Value","default":"test-only-sensitive-value\0"})
+                    };
+                    plugins
+                        .entry("other-safe/token")
+                        .or_default()
+                        .insert("token".into(), invalid);
+                    for (id, settings) in plugins {
+                        let (namespace, identifier) = id.split_once('/').unwrap();
+                        let package = root
+                            .path()
+                            .join("plugins/installed")
+                            .join(namespace)
+                            .join(identifier)
+                            .join("1.0.0");
+                        std::fs::create_dir_all(package.join("assets/demo")).unwrap();
+                        std::fs::write(package.join("orax.toml"), format!("identifier = \"{identifier}\"\nnamespace = \"{namespace}\"\nkind = \"skill\"\nversion = \"1.0.0\"\ndescription = \"Demo\"\n")).unwrap();
+                        std::fs::write(
+                            package.join("assets/demo/SKILL.md"),
+                            "---\nname: demo\ndescription: Demo\n---\n",
+                        )
+                        .unwrap();
+                        std::fs::write(
+                            package.join("assets/config.json"),
+                            serde_json::json!({"schemaVersion":1,"settings":settings}).to_string(),
+                        )
+                        .unwrap();
+                    }
+                    let snapshot = SkillEnvironment::capture(
+                        root.path(),
+                        &ConfigurationService::new(root.path()),
+                    );
+                    assert_eq!(
+                        snapshot.plugin_environment("agent"),
+                        BTreeMap::from([
+                            (
+                                skill_environment_key("other/safe-token", "token"),
+                                "test-only-sensitive-value".into()
+                            ),
+                            (
+                                skill_environment_key("other/safe-token", "unrelated"),
+                                "test-only-sensitive-value".into()
+                            ),
+                        ])
+                    );
+                });
+                let messages = diagnostics.0.lock().unwrap().join("\n");
+                assert!(
+                    messages.contains("environment name collision"),
+                    "{messages}"
+                );
+                assert!(messages.contains("plugin_id="), "{messages}");
+                assert!(messages.contains("field_id="), "{messages}");
+                assert!(
+                    !messages.contains("test-only-sensitive-value"),
+                    "{messages}"
+                );
+            }
+        }
+    }
 
     /// Real discovery and storage changes do not mutate the already captured process environment.
     #[test]

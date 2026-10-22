@@ -35,6 +35,7 @@ async fn real_agent_and_direct_child_share_environment_without_non_agent_injecti
         let script = root.path().join("main.js");
         let source = format!(
             r#"
+if (Deno.env.get("ora_skill_inherited") !== undefined) Deno.exit(9);
 const present = Deno.env.get("ORA_SKILL_FIXTURE") === "test-only-value";
 const child = await new Deno.Command(Deno.execPath(), {{args:["eval", 'Deno.exit(Deno.env.get("ORA_SKILL_FIXTURE") === "test-only-value" ? 0 : 1)'], stdout:"null", stderr:"null"}}).output();
 const payload = new TextEncoder().encode(JSON.stringify({{jsonrpc:"2.0",method:"ora/register",params:{{methods:[present ? "present" : "absent", child.success ? "child_present" : "child_absent"],emits:[]}}}}));
@@ -91,6 +92,21 @@ setInterval(() => {{}}, 1000);
     }
 }
 
+/// Seeds only a subprocess environment, avoiding global environment mutation in parallel tests.
+#[test]
+fn agent_launch_removes_inherited_lowercase_skill_variables() {
+    let result = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "environment_tests::real_agent_and_direct_child_share_environment_without_non_agent_injection", "--nocapture"])
+        .env("ora_skill_inherited", "untrusted-parent")
+        .output().unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(String::from_utf8_lossy(&result.stdout).contains("1 passed"));
+}
+
 /// Host spawn supplies the same snapshot both with an explicit workspace and without cwd.
 #[tokio::test]
 async fn real_host_child_receives_snapshot_with_or_without_cwd() {
@@ -107,7 +123,8 @@ async fn real_host_child_receives_snapshot_with_or_without_cwd() {
             "Deno.writeTextFileSync({}, Deno.env.get('ORA_SKILL_FIXTURE') === 'test-only-value' ? 'ok' : 'missing')",
             serde_json::to_string(&receipt).unwrap()
         );
-        let mut request = serde_json::json!({"command":"deno","args":["eval",script]});
+        let mut request = serde_json::json!({"command":"deno","args":["eval",script],
+            "env":{"ora_sKiLl_FIXTURE":"forged","ORA_SKILL_FIXTURE":"forged"}});
         if with_cwd {
             request["cwd"] = serde_json::json!(root.path());
         }

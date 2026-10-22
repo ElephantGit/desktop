@@ -1,52 +1,72 @@
-//! Resolves one complete Skill configuration into a collision-free process environment.
+//! Resolves one complete Skill configuration into a readable process environment.
 
 use crate::{ConfigurationCompleteness, ConfigurationDetails, ConfigurationSummary};
 use std::collections::BTreeMap;
+
+/// Separates unusable configuration from valid values whose names collide, without carrying values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillEnvironmentError {
+    /// Missing, incomplete or OS-incompatible values do not participate in the snapshot.
+    InvalidConfiguration,
+    /// Valid values still participate in global collision detection, but cannot be injected.
+    NameCollision,
+}
 
 /// Resolves all values atomically; incomplete or OS-incompatible configurations yield no variables.
 pub fn resolve_skill_environment(
     plugin_id: &str,
     details: &ConfigurationDetails,
-) -> Option<BTreeMap<String, String>> {
+) -> Result<BTreeMap<String, String>, SkillEnvironmentError> {
     if details.summary
         != (ConfigurationSummary::Available {
             completeness: ConfigurationCompleteness::Complete,
         })
     {
-        return None;
+        return Err(SkillEnvironmentError::InvalidConfiguration);
     }
     let mut environment = BTreeMap::new();
+    let mut collision = false;
     for setting in &details.settings {
         if setting.value_error_code.is_some() {
-            return None;
+            return Err(SkillEnvironmentError::InvalidConfiguration);
         }
         if let Some(value) = &setting.effective_value {
             let value = value.as_runtime_text();
             if value.contains('\0') {
-                return None;
+                return Err(SkillEnvironmentError::InvalidConfiguration);
             }
-            environment.insert(
-                skill_environment_key(plugin_id, &setting.declaration.id),
-                value,
-            );
+            if environment
+                .insert(
+                    skill_environment_key(plugin_id, &setting.declaration.id),
+                    value,
+                )
+                .is_some()
+            {
+                collision = true;
+            }
         }
     }
-    Some(environment)
+    if collision {
+        Err(SkillEnvironmentError::NameCollision)
+    } else {
+        Ok(environment)
+    }
 }
 
-/// Encodes identities without case folding or lossy punctuation replacement, including on Windows.
+/// Uses ASCII uppercase alphanumerics and replaces each other Unicode scalar with one underscore.
 pub fn skill_environment_key(plugin_id: &str, setting_id: &str) -> String {
-    let mut key = String::from("ORA_SKILL_P");
-    for byte in plugin_id.as_bytes() {
-        const HEX: &[u8; 16] = b"0123456789ABCDEF";
-        key.push(char::from(HEX[usize::from(byte >> 4)]));
-        key.push(char::from(HEX[usize::from(byte & 15)]));
-    }
-    key.push_str("_S");
-    for byte in setting_id.as_bytes() {
-        const HEX: &[u8; 16] = b"0123456789ABCDEF";
-        key.push(char::from(HEX[usize::from(byte >> 4)]));
-        key.push(char::from(HEX[usize::from(byte & 15)]));
+    let mut key = String::from("ORA_SKILL_");
+    for (index, part) in [plugin_id, setting_id].into_iter().enumerate() {
+        if index > 0 {
+            key.push('_');
+        }
+        key.extend(part.chars().map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        }));
     }
     key
 }
@@ -57,6 +77,47 @@ mod tests {
     use crate::ConfigurationService;
     use pretty_assertions::assert_eq;
     use serde_json::json;
+
+    /// Unknown aliases cannot override ordinary inherited environment variables.
+    #[test]
+    fn rejects_environment_aliases() {
+        for member in ["env", "environment", "environmentVariable", "name"] {
+            let mut declaration = json!({"schemaVersion":1,"settings":{"token":{
+                "type":"string","title":"Token","description":"Token"
+            }}});
+            declaration["settings"]["token"][member] = json!("GITHUB_TOKEN");
+            assert!(crate::compile_declaration(declaration.to_string().as_bytes()).is_err());
+        }
+    }
+
+    /// A collision rejects even the other noncolliding fields in this package.
+    #[test]
+    fn rejects_same_package_collisions() {
+        let root = tempfile::tempdir().unwrap();
+        let package = root.path().join("package");
+        std::fs::create_dir_all(package.join("assets")).unwrap();
+        for pair in [["tokenA", "tokena"], ["aValue", "avalue"]] {
+            let setting =
+                json!({"type":"string","title":"Value","description":"Value","default":"private"});
+            let mut settings = serde_json::Map::new();
+            for id in [pair[0], pair[1], "unrelated"] {
+                settings.insert(id.into(), setting.clone());
+            }
+            std::fs::write(
+                package.join("assets/config.json"),
+                json!({"schemaVersion":1,"settings":settings}).to_string(),
+            )
+            .unwrap();
+            let details = ConfigurationService::new(root.path())
+                .get("official/demo", &package)
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                resolve_skill_environment("official/demo", &details),
+                Err(SkillEnvironmentError::NameCollision)
+            );
+        }
+    }
 
     /// Drives declaration parsing, defaults, completeness and serialization through the real store.
     #[test]
@@ -90,9 +151,9 @@ mod tests {
             assert_eq!(
                 resolve_skill_environment("official/demo", &details),
                 if invalid {
-                    None
+                    Err(SkillEnvironmentError::InvalidConfiguration)
                 } else {
-                    Some(BTreeMap::from([
+                    Ok(BTreeMap::from([
                         (
                             skill_environment_key("official/demo", "token"),
                             "private".into(),
@@ -113,21 +174,28 @@ mod tests {
             .get("official/demo", assets.parent().unwrap())
             .unwrap()
             .unwrap();
-        assert_eq!(resolve_skill_environment("official/demo", &details), None);
+        assert_eq!(
+            resolve_skill_environment("official/demo", &details),
+            Err(SkillEnvironmentError::InvalidConfiguration)
+        );
     }
 
-    /// Case and punctuation retain their identity even on case-insensitive environment implementations.
+    /// Readable names follow the portable ASCII rule; secret still participates in fingerprints.
     #[test]
-    fn names_are_injective_and_secret_changes_affect_fingerprints() {
+    fn readable_names_and_secret_changes_affect_fingerprints() {
         assert_eq!(
-            skill_environment_key("a/b", "token"),
-            "ORA_SKILL_P612F62_S746F6B656E"
+            skill_environment_key("official/demo", "token"),
+            "ORA_SKILL_OFFICIAL_DEMO_TOKEN"
         );
         let keys = [("a/b", "token"), ("a-b", "token"), ("a/b", "Token")]
             .map(|(plugin, setting)| skill_environment_key(plugin, setting));
         assert_eq!(
             keys.iter().collect::<std::collections::BTreeSet<_>>().len(),
-            3
+            1
+        );
+        assert_eq!(
+            skill_environment_key("a/b-.é中", "x__9"),
+            "ORA_SKILL_A_B_____X__9"
         );
         let plain = br#"{"schemaVersion":1,"settings":{"token":{"type":"string","title":"Token","description":"Token"}}}"#;
         let mut secret: serde_json::Value = serde_json::from_slice(plain).unwrap();
