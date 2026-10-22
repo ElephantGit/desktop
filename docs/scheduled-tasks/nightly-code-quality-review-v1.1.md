@@ -81,7 +81,7 @@ Run in order on the `TARGET_SHA` snapshot, favoring incremental / already-cached
 2. Key unit tests (incremental first)
 3. lint / static checks
 4. type check (if applicable)
-5. `git diff --check`
+5. `git diff --check BASE_SHA..TARGET_SHA` — check committed whitespace in the resolved range; a bare `git diff --check` on a clean checkout compares only the empty worktree diff and can falsely pass
 
 Record the command, exit code, pass/fail counts. SKIPPED ≠ PASS; distinguish environment/dependency insufficiency and timeout from genuine code failures. Reserve time for the final report.
 

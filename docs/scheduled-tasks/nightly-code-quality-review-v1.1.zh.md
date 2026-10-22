@@ -81,7 +81,7 @@
 2. 关键单元测试（增量优先）
 3. lint / 静态检查
 4. type check（适用）
-5. `git diff --check`
+5. `git diff --check BASE_SHA..TARGET_SHA` — 检查已解析比较范围内已提交内容的空白错误；在干净的 checkout 上运行裸 `git diff --check` 只会比较空的工作区差异，可能误报通过
 
 记录命令、退出码、通过/失败数。SKIPPED ≠ PASS；环境/依赖不足、超时必须与真实代码失败区分。为最终报告预留时间。
 
