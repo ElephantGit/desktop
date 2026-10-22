@@ -880,6 +880,64 @@ fn running_delegate_pauses_default_policy_until_it_finishes() {
     });
 }
 
+/// Republishing a running delegate with an explicit null keeps its pause and still settles it.
+#[test]
+fn cleared_child_source_keeps_the_delegate_pause_and_settles_on_completion() {
+    run_case(async {
+        let mut fixture = Fixture::new().await;
+        fixture.add_session("parent");
+        let mut parent = fixture
+            .manager
+            .prompt_session(prompt("parent"))
+            .await
+            .unwrap();
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        for value in [
+            json!({"sessionUpdate":"tool_call","toolCallId":"delegate","title":"Explore","status":"in_progress"}),
+            // Late tool metadata replaces the namespace; an explicit null names no child.
+            json!({"sessionUpdate":"tool_call_update","toolCallId":"delegate","status":"in_progress","_meta":{"opencode/child-session":null}}),
+        ] {
+            let notification: SessionNotification =
+                serde_json::from_value(json!({"sessionId":"parent","update":value})).unwrap();
+            fixture
+                .agent
+                .send(AgentInput::Update(notification))
+                .unwrap();
+            parent.recv().await.unwrap().unwrap();
+        }
+
+        // The delegate is still the parent's, so the default timer cannot cut it short.
+        // Draining the scheduler proves no retry is merely waiting for its next poll.
+        tokio::time::advance(Duration::from_secs(7200)).await;
+        for _ in 0..100 {
+            tokio::task::yield_now().await;
+        }
+        assert!(parent.try_recv().is_none());
+        assert!(fixture.frames.try_recv().is_err());
+
+        // Its completion still settles the prompt and restarts the ordinary window.
+        let notification: SessionNotification = serde_json::from_value(json!({
+            "sessionId":"parent",
+            "update":{"sessionUpdate":"tool_call_update","toolCallId":"delegate","status":"completed"}
+        }))
+        .unwrap();
+        fixture
+            .agent
+            .send(AgentInput::Update(notification))
+            .unwrap();
+        parent.recv().await.unwrap().unwrap();
+        tokio::time::advance(Duration::from_secs(45)).await;
+        assert_eq!(fixture.next_frame().await["method"], "session/cancel");
+        assert_eq!(fixture.next_frame().await["method"], "session/prompt");
+        assert!(matches!(
+            parent.recv().await.unwrap().unwrap(),
+            PromptSessionEvent::Retrying { retry: 1, .. }
+        ));
+        parent.cancel_and_wait().await.unwrap();
+        fixture.shutdown().await;
+    });
+}
+
 /// The unchanged default exhausts precisely three confirmed retries and then isolates its session.
 #[test]
 fn default_policy_exhausts_three_retries() {
