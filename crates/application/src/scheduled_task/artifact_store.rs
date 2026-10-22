@@ -144,18 +144,30 @@ impl ScheduledArtifactStore {
             }
         }
 
-        if run_directory.exists() {
-            // The whole reconciliation is refused when the storage tree was replaced by links,
-            // so a sweep never deletes a file outside the artifact root.
-            check_directory_without_symlinks(&run_directory)?;
+        if self.storage_directory_present(&run_directory)? {
             remove_unregistered_entries(&run_directory, "", &expected)?;
         }
         Ok(mismatched)
     }
 
+    /// Returns whether `path` is a real directory chain with no link or reparse point in it.
+    ///
+    /// Cleanup must use this instead of `Path::exists`, because `exists` follows a junction and
+    /// would let deletion escape the artifact root.
+    fn storage_directory_present(&self, path: &Path) -> Result<bool, ScheduledArtifactStoreError> {
+        match check_directory_without_symlinks(path) {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error.into()),
+        }
+    }
+
     /// Deletes one run's whole storage directory, ignoring an already-missing directory.
     pub fn delete_run(&self, run_id: &ScheduledRunId) -> Result<(), ScheduledArtifactStoreError> {
         let run_directory = self.run_directory(run_id)?;
+        if !self.storage_directory_present(&run_directory)? {
+            return Ok(());
+        }
         match fs::remove_dir_all(run_directory) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -167,6 +179,9 @@ impl ScheduledArtifactStore {
     pub fn list_run_directories(
         &self,
     ) -> Result<Vec<(String, PathBuf)>, ScheduledArtifactStoreError> {
+        if !self.storage_directory_present(&self.root)? {
+            return Ok(Vec::new());
+        }
         let entries = match fs::read_dir(&self.root) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -199,6 +214,9 @@ impl ScheduledArtifactStore {
     ) -> Result<(), ScheduledArtifactStoreError> {
         for (name, path) in self.list_run_directories()? {
             if known.contains(&name) {
+                continue;
+            }
+            if !self.storage_directory_present(&path)? {
                 continue;
             }
             match fs::remove_dir_all(&path) {

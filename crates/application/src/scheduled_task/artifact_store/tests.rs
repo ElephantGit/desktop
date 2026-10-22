@@ -1,4 +1,6 @@
+use std::collections::HashSet;
 use std::fs;
+use std::path::Path;
 
 use ora_domain::{
     SCHEDULED_ARTIFACT_DIRECTORY, ScheduledArtifactKind, ScheduledArtifactRejection,
@@ -17,6 +19,24 @@ fn fixture() -> (TempDir, ScheduledArtifactStore, ScheduledRunId) {
 
 fn artifact_source(workspace: &std::path::Path) -> std::path::PathBuf {
     workspace.join(SCHEDULED_ARTIFACT_DIRECTORY)
+}
+
+/// Creates a directory link without following it; Windows junctions need no privilege.
+#[cfg(unix)]
+fn link_directory(target: &Path, link: &Path) {
+    std::os::unix::fs::symlink(target, link).expect("create directory symlink");
+}
+
+/// Creates a directory junction through mklink, which is a cmd builtin.
+#[cfg(windows)]
+fn link_directory(target: &Path, link: &Path) {
+    let status = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .status()
+        .expect("run mklink");
+    assert!(status.success(), "mklink /J failed");
 }
 
 #[test]
@@ -218,6 +238,38 @@ fn reconcile_removes_unregistered_files_and_reports_missing_or_resized_rows() {
             .count(),
         0
     );
+}
+
+#[test]
+fn delete_run_refuses_a_linked_storage_root() {
+    let (temporary, store, run_id) = fixture();
+    let outside = temporary.path().join("outside");
+    let outside_run = outside.join(run_id.as_ref());
+    fs::create_dir_all(&outside_run).expect("create outside run directory");
+    let sentinel = outside_run.join("sentinel.md");
+    fs::write(&sentinel, "keep").expect("write sentinel");
+    link_directory(&outside, store.root());
+
+    assert!(store.delete_run(&run_id).is_err());
+    assert_eq!(fs::read(&sentinel).expect("sentinel survives"), b"keep");
+}
+
+#[test]
+fn orphan_sweep_refuses_a_linked_storage_root() {
+    let (temporary, store, _) = fixture();
+    let outside = temporary.path().join("outside");
+    let orphan_run = outside.join("run-2");
+    fs::create_dir_all(&orphan_run).expect("create orphan run directory");
+    let sentinel = orphan_run.join("sentinel.md");
+    fs::write(&sentinel, "keep").expect("write sentinel");
+    link_directory(&outside, store.root());
+
+    assert!(
+        store
+            .remove_run_directories_not_in(&HashSet::new())
+            .is_err()
+    );
+    assert_eq!(fs::read(&sentinel).expect("sentinel survives"), b"keep");
 }
 
 #[test]
