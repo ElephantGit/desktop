@@ -1,0 +1,151 @@
+import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createChatStore } from "@ora/chat";
+import type {
+  GetSessionBindingsResponse,
+  SessionBindings,
+} from "@ora/contracts";
+import { appI18n } from "../../i18n/i18n-instance";
+import { ContractsClientContext } from "../../contracts-client-context";
+import { ChatStoreContext } from "../../chat-store-context";
+import {
+  createTestClient,
+  type TestHandlers,
+} from "../../test/contracts-transport";
+import { SessionInformation, BindingTimeline } from "./session-information";
+
+beforeEach(async () => {
+  await act(() => appI18n.changeLanguage("en-US"));
+});
+
+const binding = (
+  sessionId: string,
+  id = "opaque/full-session-id",
+): SessionBindings => ({
+  type: "available",
+  sessionId,
+  history: "readable",
+  segments: [
+    {
+      key: "history:0",
+      agentRef: "org.agent",
+      agentSessionId: id,
+      recordedAt: "2026-10-22T10:00:00+08:00",
+      current: false,
+    },
+    {
+      key: "history:2",
+      agentRef: "org.agent",
+      agentSessionId: id,
+      recordedAt: "2026-10-22T11:00:00+08:00",
+      current: true,
+    },
+  ],
+});
+
+function fixture(handlers: TestHandlers) {
+  const client = createTestClient(handlers);
+  const store = createChatStore(client.session);
+  const cache = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return function Surface({ id }: { id?: string }) {
+    return (
+      <QueryClientProvider client={cache}>
+        <ContractsClientContext value={client}>
+          <ChatStoreContext value={store}>
+            <SessionInformation key={id} sessionId={id} />
+          </ChatStoreContext>
+        </ContractsClientContext>
+      </QueryClientProvider>
+    );
+  };
+}
+
+describe("session information", () => {
+  it("only queries on demand, preserves repeated segments and copies complete ids", async () => {
+    const user = userEvent.setup();
+    const write = vi.spyOn(navigator.clipboard, "writeText");
+    const read = vi.fn(({ sessionIds }: { sessionIds: string[] }) => ({
+      sessions: sessionIds.map((id) => binding(id)),
+    }));
+    const Surface = fixture({ getSessionBindings: read });
+    render(<Surface id="ora-1" />);
+    expect(read).not.toHaveBeenCalled();
+    expect(
+      screen.queryByText("opaque/full-session-id"),
+    ).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", {
+        name: appI18n.t("chat.sessionInformation"),
+      }),
+    );
+    expect(await screen.findAllByText("opaque/full-session-id")).toHaveLength(
+      2,
+    );
+    await user.click(
+      screen.getAllByRole("button", {
+        name: appI18n.t("chat.bindingCopy"),
+      })[1]!,
+    );
+    expect(write).toHaveBeenCalledWith("opaque/full-session-id");
+    expect(screen.getAllByTestId("run-diagnostics")).toHaveLength(1);
+  });
+
+  it("aborts an old session query and never adopts its late response in the new panel", async () => {
+    const user = userEvent.setup();
+    let release!: (value: GetSessionBindingsResponse) => void;
+    let oldSignal: AbortSignal | undefined;
+    const Surface = fixture({
+      getSessionBindings: ({ sessionIds }, options) => {
+        if (sessionIds[0] === "old") {
+          oldSignal = options?.signal;
+          return new Promise((resolve) => {
+            release = resolve;
+          });
+        }
+        return { sessions: [binding("new", "new-provider-id")] };
+      },
+    });
+    const view = render(<Surface id="old" />);
+    await user.click(
+      screen.getByRole("button", {
+        name: appI18n.t("chat.sessionInformation"),
+      }),
+    );
+    await waitFor(() => expect(oldSignal).toBeDefined());
+    view.rerender(<Surface id="new" />);
+    expect(oldSignal?.aborted).toBe(true);
+    await user.click(
+      screen.getByRole("button", {
+        name: appI18n.t("chat.sessionInformation"),
+      }),
+    );
+    await screen.findAllByText("new-provider-id");
+    await act(async () => {
+      release({ sessions: [binding("old", "old-provider-id")] });
+    });
+    expect(screen.queryByText("old-provider-id")).not.toBeInTheDocument();
+  });
+
+  it("does not mistake unavailable history for an uncreated provider", () => {
+    render(
+      <BindingTimeline
+        result={{
+          type: "available",
+          sessionId: "s",
+          history: "unavailable",
+          segments: [],
+        }}
+      />,
+    );
+    expect(
+      screen.getByText(appI18n.t("chat.bindingHistory_unavailable")),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(appI18n.t("chat.bindingNotCreated")),
+    ).not.toBeInTheDocument();
+  });
+});

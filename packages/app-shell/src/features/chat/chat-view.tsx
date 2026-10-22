@@ -6,13 +6,14 @@ import { LandingHeading } from "./empty-state";
 import { MessageList } from "./message-list";
 import type { ConversationNavigationPresentation } from "./conversation-navigator";
 import { Button, Tooltip, TooltipContent, TooltipTrigger } from "@ora/ui";
-import type { ChatModelChange, ChatTurn, RunDiagnostics } from "@ora/chat";
-import { RunDiagnosticsPanel } from "./run-diagnostics";
+import type { ChatModelChange, ChatTurn } from "@ora/chat";
+import { SessionInformation } from "./session-information";
 import type { Agent, SessionPermissionRequest, Skill } from "@ora/contracts";
 import { useTranslation } from "react-i18next";
 import type { SessionSetupPresentation } from "./session-setup";
 
 interface ChatViewProps {
+  sessionId?: string;
   taskId?: string;
   projectId?: string;
   workspaceId?: string;
@@ -35,7 +36,6 @@ interface ChatViewProps {
   isLoading?: boolean;
   error: string | null;
   pendingPermissions?: SessionPermissionRequest[];
-  diagnostics?: RunDiagnostics;
   disabled?: boolean;
   /** Overrides composer disablement for the agent/model picker. */
   modelSelectorDisabled?: boolean;
@@ -89,6 +89,7 @@ const SLIDE_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
  * mounted across checkout switches.
  */
 export function ChatView({
+  sessionId,
   taskId,
   projectId,
   workspaceId,
@@ -101,7 +102,6 @@ export function ChatView({
   isLoading = false,
   error,
   pendingPermissions = [],
-  diagnostics,
   disabled = false,
   modelSelectorDisabled = disabled,
   modelSelectorSessionId,
@@ -167,6 +167,7 @@ export function ChatView({
 
   return (
     <main
+      data-session-transcript={sessionId}
       className={`flex min-h-0 flex-1 flex-col bg-background ${isEmpty ? "overflow-y-auto" : ""}`}
       // Right-click stays inside Ora: suppress the browser/OS context menu (Refresh,
       // Back, Inspect) across the whole pane. Per-item menus like the chat file link's
@@ -230,14 +231,7 @@ export function ChatView({
               {error}
             </p>
           )}
-          {turns.length > 0 && (
-            <RunDiagnosticsPanel
-              diagnostics={diagnostics}
-              turns={turns}
-              isResponding={isResponding}
-              pendingPermissions={pendingPermissions}
-            />
-          )}
+          <SessionInformation key={sessionId ?? "new"} sessionId={sessionId} />
           {pendingPermissions.map((request) => (
             <section
               key={request.permissionRequestId}

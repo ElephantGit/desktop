@@ -110,6 +110,7 @@ export function createContractsClient(transport: ContractTransport): ContractsCl
       update: (request, options) => executeOperation("updateScheduledTask", request, transport, options),
     },
     session: {
+      bindings: (request, options) => executeOperation("getSessionBindings", request, transport, options),
       cancelPrompt: (request, options) => executeOperation("cancelSessionPrompt", request, transport, options),
       delete: (request, options) => executeOperation("deleteSession", request, transport, options),
       get: (request, options) => executeOperation("getSession", request, transport, options),

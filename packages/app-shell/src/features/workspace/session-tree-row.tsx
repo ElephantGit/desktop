@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import {
@@ -24,6 +24,7 @@ import { useRenameSession } from "../../state/hooks/use-workspace-mutations";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useUnreadSessionsStore } from "../../state/stores/unread-sessions-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
+import { SessionInformationDialog } from "../chat/session-information";
 import { TreeRowOverflowTooltip } from "./tree-row-overflow-tooltip";
 import { useInlineTreeRename } from "./use-inline-tree-rename";
 
@@ -53,6 +54,7 @@ export const SessionTreeRow = memo(function SessionTreeRow({
   deleteAs,
 }: SessionTreeRowProps) {
   const { t } = useTranslation();
+  const [informationOpen, setInformationOpen] = useState(false);
   const renameSession = useRenameSession();
   const selectSession = useWorkspaceSelectionStore((s) => s.selectSession);
   const setDeleteTarget = useUiStore((s) => s.setDeleteTarget);
@@ -141,99 +143,110 @@ export const SessionTreeRow = memo(function SessionTreeRow({
   );
 
   return (
-    <ContextMenu>
-      <ContextMenuTrigger
-        render={
-          <div
-            className={`group/tree flex h-9 items-center rounded-md transition-colors ${
-              active
-                ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                : "hover:bg-sidebar-accent/70"
-            }`}
-            onContextMenu={(event) => event.preventDefault()}
-          />
-        }
-      >
-        {renaming ? (
-          <div
-            className="flex h-full min-w-0 flex-1 items-center gap-2"
-            style={{ paddingLeft: `${8 + depth * 18}px` }}
-          >
-            <span className="flex size-[18px] shrink-0 items-center justify-center">
-              {icon}
-            </span>
-            <Input
-              ref={inputRef}
-              value={draft}
-              maxLength={maxLength}
-              aria-label={t("sidebar.rename")}
-              className="h-7 flex-1 border-transparent bg-background px-1.5 text-[13px] shadow-none"
-              onChange={(event) => setDraft(event.target.value)}
-              onClick={(event) => event.stopPropagation()}
-              onKeyDown={onInputKeyDown}
-              onBlur={onInputBlur}
-            />
-          </div>
-        ) : (
-          <TreeRowOverflowTooltip text={title}>
+    <>
+      {informationOpen && (
+        <SessionInformationDialog
+          sessionId={sessionId}
+          onClose={() => setInformationOpen(false)}
+        />
+      )}
+      <ContextMenu>
+        <ContextMenuTrigger
+          render={
             <div
-              role="button"
-              tabIndex={0}
-              onClick={handleSelect}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter" && event.key !== " ") return;
-                event.preventDefault();
-                handleSelect();
-              }}
-              className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md text-left text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className={`group/tree flex h-9 items-center rounded-md transition-colors ${
+                active
+                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                  : "hover:bg-sidebar-accent/70"
+              }`}
+              onContextMenu={(event) => event.preventDefault()}
+            />
+          }
+        >
+          {renaming ? (
+            <div
+              className="flex h-full min-w-0 flex-1 items-center gap-2"
               style={{ paddingLeft: `${8 + depth * 18}px` }}
             >
               <span className="flex size-[18px] shrink-0 items-center justify-center">
                 {icon}
               </span>
-              <span className="min-w-0 flex-1 truncate font-medium">
-                {title}
-              </span>
+              <Input
+                ref={inputRef}
+                value={draft}
+                maxLength={maxLength}
+                aria-label={t("sidebar.rename")}
+                className="h-7 flex-1 border-transparent bg-background px-1.5 text-[13px] shadow-none"
+                onChange={(event) => setDraft(event.target.value)}
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={onInputKeyDown}
+                onBlur={onInputBlur}
+              />
             </div>
-          </TreeRowOverflowTooltip>
-        )}
-        {!renaming && (
-          <div className="mr-1 flex items-center opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100 group-focus-within/tree:opacity-100">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label={t("sidebar.archive")}
-              onClick={(event) => {
-                event.stopPropagation();
-                handleArchive();
-              }}
-            >
-              <IconArchive />
-            </Button>
-          </div>
-        )}
-      </ContextMenuTrigger>
-      {/* Rename suppresses restore so the editor keeps focus; other actions still return it. */}
-      <ContextMenuContent
-        className="w-44"
-        finalFocus={() => restoreMenuFocus.current}
-      >
-        <ContextMenuItem onClick={beginRename}>
-          <IconPencil />
-          {t("sidebar.rename")}
-        </ContextMenuItem>
-        <ContextMenuItem onClick={handleArchive}>
-          <IconArchive />
-          {t("sidebar.archive")}
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem variant="destructive" onClick={handleDelete}>
-          <IconTrash />
-          {t("common.delete")}
-        </ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
+          ) : (
+            <TreeRowOverflowTooltip text={title}>
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={handleSelect}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  handleSelect();
+                }}
+                className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md text-left text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                style={{ paddingLeft: `${8 + depth * 18}px` }}
+              >
+                <span className="flex size-[18px] shrink-0 items-center justify-center">
+                  {icon}
+                </span>
+                <span className="min-w-0 flex-1 truncate font-medium">
+                  {title}
+                </span>
+              </div>
+            </TreeRowOverflowTooltip>
+          )}
+          {!renaming && (
+            <div className="mr-1 flex items-center opacity-0 transition-opacity duration-100 group-hover/tree:opacity-100 group-focus-within/tree:opacity-100">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t("sidebar.archive")}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  handleArchive();
+                }}
+              >
+                <IconArchive />
+              </Button>
+            </div>
+          )}
+        </ContextMenuTrigger>
+        {/* Rename suppresses restore so the editor keeps focus; other actions still return it. */}
+        <ContextMenuContent
+          className="w-44"
+          finalFocus={() => restoreMenuFocus.current}
+        >
+          <ContextMenuItem onClick={() => setInformationOpen(true)}>
+            {t("chat.sessionInformation")}
+          </ContextMenuItem>
+          <ContextMenuItem onClick={beginRename}>
+            <IconPencil />
+            {t("sidebar.rename")}
+          </ContextMenuItem>
+          <ContextMenuItem onClick={handleArchive}>
+            <IconArchive />
+            {t("sidebar.archive")}
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem variant="destructive" onClick={handleDelete}>
+            <IconTrash />
+            {t("common.delete")}
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+    </>
   );
 });
 

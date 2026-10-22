@@ -1,4 +1,12 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { SESSION_CHILD_NAVIGATION } from "./session-child-navigation";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   forcePlainTextClipboard,
@@ -172,6 +180,53 @@ export function MessageList({
     ensureAnchorMounted,
   });
 
+  const [childTarget, setChildTarget] = useState<string>();
+  const { pauseFollowing } = navigation;
+  useEffect(() => {
+    const transcript = scrollRef.current?.closest("[data-session-transcript]");
+    if (!transcript) return;
+    const locate = (event: Event) => {
+      if (!(event instanceof CustomEvent) || typeof event.detail !== "string")
+        return;
+      if (
+        !rows.some((row) => row.key === event.detail && row.type === "display")
+      )
+        return;
+      event.preventDefault();
+      pauseFollowing();
+      setChildTarget(event.detail);
+    };
+    transcript.addEventListener(SESSION_CHILD_NAVIGATION, locate);
+    return () =>
+      transcript.removeEventListener(SESSION_CHILD_NAVIGATION, locate);
+  }, [rows, pauseFollowing]);
+
+  // Wait for a windowed row to mount before focusing its existing expandable tree.
+  const virtualRows = virtualizer.getVirtualItems();
+  useLayoutEffect(() => {
+    if (!childTarget) return;
+    const target = Array.from(
+      contentRef.current?.querySelectorAll<HTMLElement>(
+        "[data-session-child-row]",
+      ) ?? [],
+    ).find((node) => node.dataset.sessionChildRow === childTarget);
+    if (target) {
+      target.scrollIntoView?.({ block: "center" });
+      // The dialog releases its modal inert boundary during unmount. Focus only
+      // after that cleanup so the browser can focus the existing transcript.
+      const frame = requestAnimationFrame(() => {
+        target
+          .querySelector<HTMLElement>("button")
+          ?.focus({ preventScroll: true });
+        setChildTarget(undefined);
+      });
+      return () => cancelAnimationFrame(frame);
+    } else if (windowed) {
+      const index = rows.findIndex((row) => row.key === childTarget);
+      if (index >= 0) virtualizer.scrollToIndex(index, { align: "center" });
+    }
+  }, [childTarget, windowed, rows, virtualizer, virtualRows]);
+
   const chatLinkForTurn = useCallback(
     (turnIndex: number): ChatLinkContextValue | null => {
       const turnIndexValue = artifactIndices[turnIndex] ?? {
@@ -190,7 +245,7 @@ export function MessageList({
   );
 
   const renderedRows = windowed
-    ? virtualizer.getVirtualItems().map((virtualItem) => {
+    ? virtualRows.map((virtualItem) => {
         const row = rows[virtualItem.index];
         if (row === undefined) return null;
         return (

@@ -101,3 +101,11 @@ async_backend_command!(
     sessions.rename,
     "Executes rename_session through the session-owned interface."
 );
+
+async_backend_command!(
+    get_session_bindings,
+    GetSessionBindingsRequest,
+    GetSessionBindingsResponse,
+    sessions.bindings,
+    "Reads bounded binding projections without starting a provider."
+);

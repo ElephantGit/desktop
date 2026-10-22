@@ -15,6 +15,7 @@ export * from "./dto/project.ts";
 export * from "./dto/proxy.ts";
 export * from "./dto/runtime-log-level.ts";
 export * from "./dto/scheduled-task.ts";
+export * from "./dto/session-diagnostics.ts";
 export * from "./dto/session.ts";
 export * from "./dto/skill-import.ts";
 export * from "./dto/skill.ts";

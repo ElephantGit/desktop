@@ -55,6 +55,7 @@ desktop_command_registry! {
     commands::settings::get_runtime_log_level,
     commands::scheduled_task::get_scheduled_task,
     commands::session::get_session,
+    commands::session::get_session_bindings,
     commands::skill::get_skill,
     commands::skill::get_skill_import,
     commands::task::get_task,

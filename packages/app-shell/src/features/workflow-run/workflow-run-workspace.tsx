@@ -1,3 +1,4 @@
+import { RunSessionIndex } from "./run-session-index";
 import {
   excludedWorkflowNodeIds,
   unrecognizedWorkflowKinds,
@@ -587,6 +588,13 @@ export function WorkflowRunWorkspace({ runId }: WorkflowRunWorkspaceProps) {
             )}
           </div>
         </DragRegion>
+        {runQuery.data && (
+          <RunSessionIndex
+            key={runId}
+            runId={runId}
+            executions={runQuery.data.sessionExecutions ?? []}
+          />
+        )}
 
         <div
           className="flex shrink-0 items-center gap-1.5"
