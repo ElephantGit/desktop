@@ -7,6 +7,7 @@ mod marketplace_source;
 mod pack_installation;
 mod project;
 mod scheduled_approval;
+mod scheduled_artifact;
 mod scheduled_run;
 mod scheduled_task;
 mod session;

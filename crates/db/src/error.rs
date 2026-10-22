@@ -50,6 +50,12 @@ pub enum DatabaseError {
     CorruptScheduledRunFailureReason(String),
     #[error("Scheduled Run verdict is corrupt: {0}")]
     CorruptScheduledRunVerdict(String),
+    #[error("Scheduled Run artifact kind is corrupt: {0}")]
+    CorruptScheduledArtifactKind(String),
+    #[error("Scheduled Run artifact size is out of range: {0}")]
+    CorruptScheduledArtifactSize(String),
+    #[error("Scheduled Run artifact rejection reason is corrupt: {0}")]
+    CorruptScheduledArtifactRejectionReason(String),
     #[error("scheduled occurrence outcome is corrupt: {0}")]
     CorruptScheduledOccurrenceOutcome(String),
     #[error("scheduled occurrence missed reason is corrupt: {0}")]

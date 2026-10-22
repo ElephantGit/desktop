@@ -13,7 +13,10 @@ use ora_db::{
     RepositoryPool, SqliteScheduledRunRepository, SqliteTaskRepository, SqliteWorkspaceRepository,
     SqliteWorktreeRepository,
 };
-use ora_domain::{ScheduledRun, ScheduledRunId, TaskId, WorkspaceId, WorkspaceLocation};
+use ora_domain::{
+    SCHEDULED_ARTIFACT_DIRECTORY, ScheduledRun, ScheduledRunId, TaskId, WorkspaceId,
+    WorkspaceLocation,
+};
 
 use crate::task::{TaskApi, resolve_project_cwd};
 
@@ -278,18 +281,38 @@ fn git_worktree_has_changes(
             worktree: &worktree,
         })
         .ok()?;
-    if !status.entries.is_empty() {
+    // The artifact directory is a declared output, so its files never count as worktree
+    // changes — even when the agent staged or committed them.
+    if status
+        .entries
+        .iter()
+        .any(|entry| !is_declared_artifact_path(&entry.path))
+    {
         return Some(true);
     }
     let base_commit_id = baseline_commit_id?;
     let diff = git
-        .diff(DiffRequest {
-            worktree: &worktree,
-            base_commit_id: Some(&CommitId::new(base_commit_id)),
-            scope: DiffScope::Committed,
-        })
+        .diff_excluding_paths(
+            DiffRequest {
+                worktree: &worktree,
+                base_commit_id: Some(&CommitId::new(base_commit_id)),
+                scope: DiffScope::Committed,
+            },
+            &[SCHEDULED_ARTIFACT_DIRECTORY],
+        )
         .ok()?;
     Some(!diff.patch.is_empty())
+}
+
+/// Reports whether one status path belongs to the fixed artifact directory.
+///
+/// Git may collapse an untracked directory to a single trailing-slash entry, so the match
+/// strips trailing separators before comparing the directory itself or one of its children.
+fn is_declared_artifact_path(path: &str) -> bool {
+    let path = path.trim_end_matches(['/', '\\']);
+    path == SCHEDULED_ARTIFACT_DIRECTORY
+        || path.starts_with(&format!("{SCHEDULED_ARTIFACT_DIRECTORY}/"))
+        || path.starts_with(&format!("{SCHEDULED_ARTIFACT_DIRECTORY}\\"))
 }
 
 /// Selects the worktrees to discard from finished runs, oldest first.
@@ -503,6 +526,73 @@ mod tests {
             git_worktree_has_changes(&repo, &checkout, Some(baseline)),
             Some(true)
         );
+    }
+
+    #[test]
+    fn untracked_artifacts_do_not_mark_a_worktree_modified() {
+        let (scaffold, repo, baseline, checkout) = scaffold_with_worktree();
+        scaffold
+            .write_file(&checkout, ".ora-scheduled-artifacts/report.md", "report")
+            .expect("write artifact");
+
+        assert_eq!(
+            git_worktree_has_changes(&repo, &checkout, Some(baseline)),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn committed_artifacts_do_not_mark_a_worktree_modified() {
+        let (scaffold, repo, baseline, checkout) = scaffold_with_worktree();
+        scaffold
+            .write_file(&checkout, ".ora-scheduled-artifacts/report.md", "report")
+            .expect("write artifact");
+        scaffold
+            .run_git_in(&checkout, ["add", "-A"])
+            .expect("stage artifact");
+        scaffold
+            .run_git_in(&checkout, ["commit", "--no-gpg-sign", "-m", "artifact"])
+            .expect("commit artifact");
+
+        assert_eq!(
+            git_worktree_has_changes(&repo, &checkout, Some(baseline)),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn a_change_outside_the_artifact_directory_still_marks_the_worktree_modified() {
+        let (scaffold, repo, baseline, checkout) = scaffold_with_worktree();
+        scaffold
+            .write_file(&checkout, ".ora-scheduled-artifacts/report.md", "report")
+            .expect("write artifact");
+        scaffold
+            .write_file(&checkout, "notes.txt", "agent output")
+            .expect("write ordinary file");
+
+        assert_eq!(
+            git_worktree_has_changes(&repo, &checkout, Some(baseline)),
+            Some(true)
+        );
+    }
+
+    /// Recognizes the fixed directory itself and every descendant, in either separator style.
+    #[test]
+    fn recognizes_declared_artifact_paths() {
+        use super::is_declared_artifact_path;
+
+        assert!(is_declared_artifact_path(".ora-scheduled-artifacts"));
+        assert!(is_declared_artifact_path(".ora-scheduled-artifacts/"));
+        assert!(is_declared_artifact_path(
+            ".ora-scheduled-artifacts/report.md"
+        ));
+        assert!(is_declared_artifact_path(
+            ".ora-scheduled-artifacts\\nested\\report.md"
+        ));
+        assert!(!is_declared_artifact_path("notes.txt"));
+        assert!(!is_declared_artifact_path(
+            "nested/.ora-scheduled-artifacts/report.md"
+        ));
     }
 
     #[test]

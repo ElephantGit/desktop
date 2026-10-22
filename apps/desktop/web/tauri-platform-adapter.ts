@@ -25,6 +25,7 @@ import {
   type PluginMarketplaceCapability,
   type ResolveDownloadOutcome,
   type SaveTextFileOptions,
+  type ScheduledArtifactsCapability,
   type SelectPathOptions,
   type SelectSavePathOptions,
   type SurfaceBounds,
@@ -210,6 +211,14 @@ export class TauriPlatformAdapter implements PlatformAdapter {
     downloadToday: () => this.downloadTodayLog(),
     downloadPluginLog: (pluginId, fileStem) =>
       this.downloadPluginLog(pluginId, fileStem),
+  };
+
+  readonly scheduledArtifacts: ScheduledArtifactsCapability = {
+    download: async (runId, relativePath, destination) => {
+      await invoke("download_scheduled_run_artifact", {
+        request: { runId, relativePath, destination },
+      });
+    },
   };
 
   readonly worktreeStorage = {

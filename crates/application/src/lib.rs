@@ -28,15 +28,19 @@ pub use project::{
 };
 pub use repository_error::{BoxRepositorySource, RepositoryError};
 pub use scheduled_task::{
-    AdmitScheduledOccurrenceHandler, CreateScheduledTaskHandler, DeleteScheduledTaskHandler,
-    GetScheduledTaskHandler, GitScheduledTaskTargetValidator, ListScheduledTaskHistoryHandler,
-    ListScheduledTasksHandler, OfflineRecoveryResolution, PreparedScheduledTaskUpdate,
+    AdmitScheduledOccurrenceHandler, CollectScheduledRunArtifactsHandler,
+    CollectedScheduledArtifacts, CopyScheduledRunArtifactHandler, CreateScheduledTaskHandler,
+    DeleteScheduledTaskHandler, GetScheduledTaskHandler, GitScheduledTaskTargetValidator,
+    ListScheduledRunArtifactsHandler, ListScheduledTaskHistoryHandler, ListScheduledTasksHandler,
+    OfflineRecoveryResolution, PreparedScheduledTaskUpdate, ReadScheduledRunArtifactHandler,
     RecordOfflineMissedOccurrenceHandler, RevokeScheduledTaskApprovalHandler,
+    ScheduledArtifactRunRecord, ScheduledArtifactStore, ScheduledArtifactStoreError,
     ScheduledOccurrenceCandidate, ScheduledOccurrenceRepository, ScheduledOccurrenceResolution,
-    ScheduledRunIdGenerator, ScheduledRunLifecycleRepository, ScheduledRunTransitionResolution,
-    ScheduledTaskHistoryRepository, ScheduledTaskIdGenerator, ScheduledTaskRepository,
-    ScheduledTaskTargetValidator, ScheduledTaskUpdateResolution, UpdateScheduledTaskHandler,
-    UuidScheduledRunIdGenerator, UuidScheduledTaskIdGenerator,
+    ScheduledRunArtifactRepository, ScheduledRunIdGenerator, ScheduledRunLifecycleRepository,
+    ScheduledRunTransitionResolution, ScheduledTaskHistoryRepository, ScheduledTaskIdGenerator,
+    ScheduledTaskRepository, ScheduledTaskTargetValidator, ScheduledTaskUpdateResolution,
+    SweepScheduledRunArtifactsHandler, UpdateScheduledTaskHandler, UuidScheduledRunIdGenerator,
+    UuidScheduledTaskIdGenerator,
 };
 pub use session::{
     DeleteSessionHandler, GetSessionHandler, ListSessionsHandler, RenameSessionHandler,

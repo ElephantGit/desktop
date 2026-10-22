@@ -96,6 +96,7 @@ operation:
 | SQLite database (including `user_config`) | `<data root>/ora.sqlite3` |
 | Logs | `<data root>/logs/ora.log` |
 | Session history | `<data root>/sessions/` |
+| Scheduled run artifacts | `<data root>/scheduled-artifacts/<run id>/` |
 | Skill packages | `<data root>/atoms/skills/` |
 | Instance lock | `<data root>/instance.lock` |
 | Plugins, marketplace sources, plugin data and logs | `~/.ora/plugins/` |

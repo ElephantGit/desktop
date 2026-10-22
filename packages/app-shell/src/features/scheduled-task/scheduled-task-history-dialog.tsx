@@ -21,6 +21,7 @@ import { useTasks } from "../../state/hooks/use-tasks";
 import { useDeleteTask } from "../../state/hooks/use-workspace-mutations";
 import { useUiStore } from "../../state/stores/ui-store";
 import { useWorkspaceSelectionStore } from "../../state/stores/workspace-selection-store";
+import { ScheduledTaskArtifactsDialog } from "./scheduled-task-artifacts-dialog";
 import { ScheduledTaskConfirmDialog } from "./scheduled-task-confirm-dialog";
 import {
   formatTimestamp,
@@ -49,6 +50,7 @@ export function ScheduledTaskHistoryDialog({
   const queryClient = useQueryClient();
   const deleteWorktreeTask = useDeleteTask();
   const [discardTaskId, setDiscardTaskId] = useState<string | null>(null);
+  const [artifactsRunId, setArtifactsRunId] = useState<string | null>(null);
 
   const close = () => onOpenChange(false);
 
@@ -167,6 +169,18 @@ export function ScheduledTaskHistoryDialog({
                       {historyVerdictLabel(entry, t)}
                     </p>
                   )}
+                  {entry.status === "succeeded" && (
+                    <div className="mt-2 flex justify-end">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setArtifactsRunId(entry.id)}
+                      >
+                        {t("scheduledTask.artifacts")}
+                      </Button>
+                    </div>
+                  )}
                   {entry.worktreeTaskId !== null &&
                     RETAINED_WORKTREE_STATUSES.has(entry.status) &&
                     worktreeTaskIds.has(entry.worktreeTaskId) && (
@@ -195,6 +209,12 @@ export function ScheduledTaskHistoryDialog({
             </article>
           ))}
         </div>
+        {artifactsRunId !== null && (
+          <ScheduledTaskArtifactsDialog
+            runId={artifactsRunId}
+            onOpenChange={(open) => !open && setArtifactsRunId(null)}
+          />
+        )}
         {discardTaskId !== null && (
           <ScheduledTaskConfirmDialog
             title={t("scheduledTask.discardTitle")}

@@ -2,7 +2,7 @@
 
 [English](scheduled-tasks.md) | 中文
 
-定时任务是一个持久化、带 revision 的定义，按计划对某个项目运行一段 prompt：每日汇报、周期性的代码质量检查、待办整理。相关决策是 [local 与 cloud 执行归属](https://github.com/ora-space/specs/blob/main/decisions/desktop/core/scheduled-task/0-local-and-cloud-execution-ownership.md) ADR（`approved`）。代码在 `crates/domain/src/scheduled_task.rs` 和 `scheduled_run.rs`、`crates/application/src/scheduled_task`、`crates/backend/src/scheduled_task.rs`，以及 `scheduled_tasks`、`scheduled_runs` 和 `scheduled_occurrences` 表（迁移 `0015`）。
+定时任务是一个持久化、带 revision 的定义，按计划对某个项目运行一段 prompt：每日汇报、周期性的代码质量检查、待办整理。相关决策是 [local 与 cloud 执行归属](https://github.com/ora-space/specs/blob/main/decisions/desktop/core/scheduled-task/0-local-and-cloud-execution-ownership.md) ADR（`approved`）。代码在 `crates/domain/src/scheduled_task.rs` 和 `scheduled_run.rs`、`crates/application/src/scheduled_task`、`crates/backend/src/scheduled_task.rs`，以及 `scheduled_tasks`、`scheduled_runs` 和 `scheduled_occurrences` 表（迁移 `0015`）、verdict 列（迁移 `0020`）和产物清单表（迁移 `0021`）。
 
 ## 已交付的部分
 
@@ -16,6 +16,8 @@
 | `deleteScheduledTask` | 软删除定义；运行和错过的历史保留 |
 | `revokeScheduledTaskApproval` | 撤回无人值守的授权并停用任务 |
 | `listScheduledTaskHistory` | 按最新在前列出运行和错过的触发点 |
+| `listScheduledRunArtifacts` | 列出一次运行收集到的产物与被拒绝的候选 |
+| `readScheduledRunArtifact` | 读取一个已存储产物的有界文本预览 |
 
 ## 定义
 
@@ -37,6 +39,20 @@
 - 实时观测最多可以迟到十分钟。更晚的观测，或者 Desktop 没有运行期间经过的时间，记为错过的触发点（`late_trigger`、`app_not_running`），而不是失败的运行。长时间关机之后，每个任务只记录最近的一个到期时间；启动时十分钟窗口仍未关闭的时间留给实时调度器处理。
 - 运行只向前推进：`accepted`、`running`、`succeeded`、`failed` 或 `cancelled`。因为任务仍在运行或已有四个本地运行处于活跃状态而无法开始的触发点，变为 `skipped_busy` 或 `skipped_capacity`。失败原因有 `target_unavailable`、`model_unavailable`、`worktree_failed`、`approval_policy_invalid`、`timeout` 和 `execution_error`。
 - 每个任务的历史最多保留 100 条运行和错过的条目，删除任务不会删除它们。
+
+## 业务结论与运行产物
+
+运行的业务结论独立于执行层状态：`succeeded` 的运行可以携带 `fail`。runtime 从 Agent 最终的
+Assistant 轮中解析 `QA_VERDICT: <pass|warn|fail|blocked|idle|range_unresolved>`（可紧跟一行
+`QA_DETAIL: ...`），在 `RunFinished` 之前单次写入。未采用该约定的任务、失败/取消/超时的运行以及
+旧历史都显示为「未报告」。
+
+产物使用运行 worktree 下的固定目录 `.ora-scheduled-artifacts/`。在 `succeeded` 收尾时、janitor
+可能回收 worktree 之前，runtime 把白名单类型（`markdown`、`json`、`txt`、`log`、`xml`、`html`）
+的文件复制到 `<数据根目录>/scheduled-artifacts/<run id>/`。该目录不计入 worktree 改动判定，因此
+只写了产物的运行仍会被正常回收。单次运行上限为 64 个产物、单产物 10 MiB、总计 64 MiB；被拒绝的
+候选会连同原因保留在历史中可见。每个任务最多保留 10 次运行的产物（最新优先）；仍保留 worktree
+的运行不受该上限约束、也不计入数量；历史裁剪会一并删除对应的产物清单与文件。
 
 ## 旧版本遗留的 worktree 任务
 

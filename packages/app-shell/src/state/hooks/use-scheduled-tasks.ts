@@ -9,6 +9,10 @@ import { useContractsClient } from "../../contracts-client-context";
 export const scheduledTaskKeys = {
   all: ["scheduledTasks"] as const,
   history: (taskId: string) => ["scheduledTasks", taskId, "history"] as const,
+  runArtifacts: (runId: string) =>
+    ["scheduledTasks", "runArtifacts", runId] as const,
+  artifactPreview: (runId: string, relativePath: string) =>
+    ["scheduledTasks", "runArtifacts", runId, "preview", relativePath] as const,
 };
 
 /** Loads every visible Scheduled Task definition. */
@@ -30,6 +34,35 @@ export function useScheduledTaskHistory(taskId: string) {
       client.scheduledTask
         .listHistory({ taskId })
         .then((response) => response.entries),
+  });
+}
+
+/** Loads one run's artifact manifest and rejected-candidate log. */
+export function useScheduledRunArtifacts(runId: string, enabled: boolean) {
+  const client = useContractsClient();
+  return useQuery({
+    queryKey: scheduledTaskKeys.runArtifacts(runId),
+    queryFn: () => client.scheduledTask.listRunArtifacts({ runId }),
+    enabled,
+  });
+}
+
+/** Loads one artifact's bounded text preview while its dialog is open. */
+export function useScheduledRunArtifactPreview(
+  runId: string,
+  relativePath: string | null,
+) {
+  const client = useContractsClient();
+  return useQuery({
+    queryKey: scheduledTaskKeys.artifactPreview(runId, relativePath ?? ""),
+    queryFn: () => {
+      if (relativePath === null) return Promise.resolve(null);
+      return client.scheduledTask.readRunArtifact({
+        runId,
+        relativePath,
+      });
+    },
+    enabled: relativePath !== null,
   });
 }
 

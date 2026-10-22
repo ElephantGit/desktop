@@ -6,11 +6,17 @@ const UP_STATEMENTS: &[&str] = &[
     "ALTER TABLE scheduled_runs ADD COLUMN verdict_at INTEGER NULL;",
 ];
 
+const DOWN_STATEMENTS: &[&str] = &[
+    "ALTER TABLE scheduled_runs DROP COLUMN verdict;",
+    "ALTER TABLE scheduled_runs DROP COLUMN verdict_detail;",
+    "ALTER TABLE scheduled_runs DROP COLUMN verdict_at;",
+];
+
 /// Adds the nullable business verdict and its free-text detail to run rows, so a run
 /// can carry a machine-readable conclusion independently of its execution status.
 /// Existing rows keep `NULL` and are read as "not reported".
 pub fn migration() -> Migration {
-    Migration::new("0020", UP_STATEMENTS, &[])
+    Migration::new("0020", UP_STATEMENTS, DOWN_STATEMENTS)
 }
 
 #[cfg(test)]

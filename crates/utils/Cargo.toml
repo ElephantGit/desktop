@@ -58,7 +58,7 @@ zip = { workspace = true, optional = true }
 libc = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true }
+windows-sys = { workspace = true, features = ["Win32_Security", "Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 flate2 = { workspace = true }

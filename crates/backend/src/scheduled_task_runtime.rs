@@ -1,12 +1,13 @@
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use agent_client_protocol_schema::v1::{ContentBlock, StopReason, TextContent};
 use ora_application::{
     AdmitScheduledOccurrenceHandler, Clock, RecordOfflineMissedOccurrenceHandler,
-    ScheduledOccurrenceResolution, ScheduledRunLifecycleRepository, ScheduledTaskRepository,
-    UuidScheduledRunIdGenerator,
+    ScheduledArtifactStore, ScheduledOccurrenceResolution, ScheduledRunLifecycleRepository,
+    ScheduledTaskRepository, UuidScheduledRunIdGenerator,
 };
 use ora_contracts::{
     PromptSessionEvent, PromptSessionRequest, StartSessionRequest, StopSessionRequest,
@@ -25,6 +26,7 @@ use crate::app_event::AppEventPublisher;
 use crate::task::ScheduledRunWorktreeCommand;
 use crate::{Sessions, TaskApi, clock::SystemClock};
 
+use super::artifact::ScheduledRunArtifactRuntime;
 use super::calendar::{
     calendar_cron_expression, is_schedulable, latest_calendar_occurrence_at_or_before,
     recent_scheduled_occurrences,
@@ -43,6 +45,7 @@ pub(super) struct ScheduledTaskRuntime {
     tasks: SqliteScheduledTaskRepository,
     runs: SqliteScheduledRunRepository,
     executor: DesktopScheduledRunExecutor,
+    artifacts: ScheduledRunArtifactRuntime,
     clock: SystemClock,
     handles: Mutex<HashMap<String, ScheduledTaskHandle>>,
 }
@@ -61,24 +64,29 @@ impl ScheduledTaskRuntime {
         sessions: Arc<Sessions>,
         clock: SystemClock,
         events: AppEventPublisher,
+        artifact_store: ScheduledArtifactStore,
     ) -> Arc<Self> {
         let janitor = ScheduledWorktreeJanitor::new(
             tasks_api.clone(),
             pool.clone(),
             tasks_api.relative_path_base().to_path_buf(),
         );
+        let runs = SqliteScheduledRunRepository::new(pool.clone());
+        let artifacts = ScheduledRunArtifactRuntime::new(pool.clone(), artifact_store, clock);
         let runtime = Arc::new(Self {
             scheduler,
-            tasks: SqliteScheduledTaskRepository::new(pool.clone()),
-            runs: SqliteScheduledRunRepository::new(pool.clone()),
+            tasks: SqliteScheduledTaskRepository::new(pool),
+            runs: runs.clone(),
             executor: DesktopScheduledRunExecutor {
                 tasks: tasks_api,
                 sessions,
-                runs: SqliteScheduledRunRepository::new(pool),
+                runs,
                 clock,
                 janitor,
+                artifacts: artifacts.clone(),
                 events,
             },
+            artifacts,
             clock,
             handles: Mutex::new(HashMap::new()),
         });
@@ -108,12 +116,14 @@ impl ScheduledTaskRuntime {
         // more kept worktrees than the retention bound. The sweep is best-effort: a lost pass
         // is retried by the next finished run.
         let janitor = self.executor.janitor.clone();
+        let artifacts = self.artifacts.clone();
         match self.scheduler.schedule_after(Duration::ZERO, async move {
             janitor.enforce_retention().await;
+            artifacts.sweep();
         }) {
             Ok(handle) => handle.detach(),
             Err(error) => {
-                ora_warn!(error = %error, "scheduled task worktree retention sweep could not be queued")
+                ora_warn!(error = %error, "scheduled task retention sweep could not be queued")
             }
         }
     }
@@ -190,6 +200,11 @@ impl ScheduledTaskRuntime {
         let _ = handles.remove(task_id.as_ref());
     }
 
+    /// Enforces artifact retention after a newly inserted occurrence may have pruned history.
+    fn sweep_artifacts(&self) {
+        self.artifacts.sweep();
+    }
+
     fn schedule_hourly(
         self: &Arc<Self>,
         task: ScheduledTask,
@@ -258,6 +273,16 @@ impl ScheduledTaskRuntime {
             UuidScheduledRunIdGenerator::new(),
         )
         .handle(&task, scheduled_at, observed_at);
+        // A newly inserted occurrence may have pruned the oldest history row; its artifact
+        // rows are removed after that transaction commits, here and by the next startup sweep.
+        let inserted = matches!(
+            &admission,
+            Ok(ScheduledOccurrenceResolution::Admitted(_))
+                | Ok(ScheduledOccurrenceResolution::Missed(_))
+        );
+        if inserted {
+            self.sweep_artifacts();
+        }
         match admission {
             Ok(ScheduledOccurrenceResolution::Admitted(run)) => self.executor.execute(run).await,
             // A late live observation persists a missed fact; announce it once so the user
@@ -348,6 +373,7 @@ struct DesktopScheduledRunExecutor {
     runs: SqliteScheduledRunRepository,
     clock: SystemClock,
     janitor: ScheduledWorktreeJanitor,
+    artifacts: ScheduledRunArtifactRuntime,
     events: AppEventPublisher,
 }
 
@@ -592,10 +618,14 @@ impl DesktopScheduledRunExecutor {
             return;
         }
         self.annotate_verdict(run, session_id);
+        self.artifacts.collect(&run.id, Path::new(worktree_path));
         self.publish_finished(run, &ScheduledRunTransition::Succeed);
         self.janitor
             .run_finished(run, worktree_task_id, Some(worktree_path))
             .await;
+        // Linked runs are exempt from the artifact bound; sweeping after the janitor sees
+        // the link this run just cleared, if the worktree was discarded.
+        self.artifacts.sweep();
     }
 
     /// Parses the documented verdict sentinel out of the run's final Assistant turn and
