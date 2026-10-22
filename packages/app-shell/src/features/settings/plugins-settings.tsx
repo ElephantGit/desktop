@@ -313,6 +313,9 @@ export function PluginsSettings({
       return (
         <PluginsScroll>
           <PluginConfigurationEditor
+            requiresRestart={
+              installedById.get(configurationPlugin.id)?.kind === "skill"
+            }
             pluginId={configurationPlugin.id}
             displayName={configurationPlugin.displayName}
             onBack={() => setConfigurationPlugin(null)}

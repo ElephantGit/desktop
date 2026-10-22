@@ -341,6 +341,24 @@ function commitPluginConfiguration(
   return configuration;
 }
 
+/** Projects host-owned values without returning hidden scalars to the editor. */
+function editorConfiguration(
+  configuration: PluginConfigurationDetails,
+): PluginConfigurationDetails {
+  const response = structuredClone(configuration);
+  response.settings = response.settings.map((field) =>
+    field.redacted
+      ? {
+          ...field,
+          declaration: { ...field.declaration, default: null },
+          storedValue: null,
+          effectiveValue: null,
+        }
+      : field,
+  );
+  return response;
+}
+
 /** Mirrors the two optimistic-concurrency failures returned by the desktop contract. */
 function configurationWriteConflict(
   code:
@@ -397,13 +415,13 @@ export function pluginHandlers(state: PluginMemoryState) {
       const configuration = state.pluginConfigurations.get(req.pluginId);
       if (configuration === undefined)
         throw new Error(`plugin configuration ${req.pluginId} not found`);
-      return { configuration: structuredClone(configuration) };
+      return { configuration: editorConfiguration(configuration) };
     },
     savePluginConfiguration: async (req) => ({
-      configuration: structuredClone(commitPluginConfiguration(state, req)),
+      configuration: editorConfiguration(commitPluginConfiguration(state, req)),
     }),
     resetPluginConfiguration: async (req) => ({
-      configuration: structuredClone(
+      configuration: editorConfiguration(
         commitPluginConfiguration(state, {
           pluginId: req.pluginId,
           expectedRevision:
