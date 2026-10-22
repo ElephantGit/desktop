@@ -37,7 +37,24 @@ describe("useAppEvents", () => {
       });
     };
     const queryClient = createTestQueryClient();
-    const refetch = vi.spyOn(queryClient, "refetchQueries");
+    const readSessions = vi.fn(async () => []);
+    const readBindings = vi.fn(async () => ({
+      type: "not_found",
+      sessionId: "session-1",
+    }));
+    const readUnrelated = vi.fn(async () => "unrelated");
+    await queryClient.fetchQuery({
+      queryKey: sessionKeys.sessions,
+      queryFn: readSessions,
+    });
+    await queryClient.fetchQuery({
+      queryKey: sessionKeys.bindings("session-1"),
+      queryFn: readBindings,
+    });
+    await queryClient.fetchQuery({
+      queryKey: ["unrelated"],
+      queryFn: readUnrelated,
+    });
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
 
     const { result, unmount } = renderHookWithClient(
@@ -47,7 +64,9 @@ describe("useAppEvents", () => {
     );
 
     await waitFor(() => expect(result.current.ready).toBe(true));
-    expect(refetch).toHaveBeenCalledWith({ queryKey: sessionKeys.sessions });
+    expect(readSessions).toHaveBeenCalledTimes(2);
+    expect(readBindings).toHaveBeenCalledTimes(2);
+    expect(readUnrelated).toHaveBeenCalledTimes(1);
     expect(invalidate).toHaveBeenCalledWith({ queryKey: sessionKeys.sessions });
 
     unmount();
