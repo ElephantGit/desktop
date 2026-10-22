@@ -186,6 +186,23 @@ pub enum ScheduledRunFailureReason {
     ExecutionError,
 }
 
+/// Independent, machine-readable business conclusion a run's agent reported.
+///
+/// It is nullable: old histories and runs whose agent never wrote a verdict read as
+/// "not reported". It is independent of `ScheduledRunStatus` and
+/// `ScheduledRunFailureReason`, so a run can be `succeeded` while its verdict is `fail`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "scheduled-task.ts")]
+pub enum ScheduledRunVerdict {
+    Pass,
+    Warn,
+    Fail,
+    Blocked,
+    Idle,
+    RangeUnresolved,
+}
+
 /// Explains why a planned occurrence did not create a Scheduled Run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -214,6 +231,9 @@ pub enum ScheduledTaskHistoryEntry {
         /// The task-owned worktree this run executed in; present only after the run started.
         worktree_task_id: Option<String>,
         failure_reason: Option<ScheduledRunFailureReason>,
+        verdict: Option<ScheduledRunVerdict>,
+        verdict_detail: Option<String>,
+        verdict_at: Option<i64>,
         created_at: i64,
         updated_at: i64,
     },
@@ -351,6 +371,7 @@ pub(crate) fn export(config: &ts_rs::Config) -> Result<(), ts_rs::ExportError> {
     ListScheduledTasksResponse::export(config)?;
     ScheduledRunStatus::export(config)?;
     ScheduledRunFailureReason::export(config)?;
+    ScheduledRunVerdict::export(config)?;
     ScheduledMissReason::export(config)?;
     ScheduledTaskHistoryEntry::export(config)?;
     ScheduledTaskEvent::export(config)?;

@@ -1,6 +1,7 @@
 use ora_domain::{
     ScheduledMissedOccurrence, ScheduledOccurrence, ScheduledRun, ScheduledRunId,
-    ScheduledRunTransition, ScheduledTask, ScheduledTaskHistoryEntry, ScheduledTaskId,
+    ScheduledRunTransition, ScheduledRunVerdict, ScheduledTask, ScheduledTaskHistoryEntry,
+    ScheduledTaskId,
 };
 use std::path::Path;
 
@@ -139,6 +140,17 @@ pub trait ScheduledRunLifecycleRepository {
     /// Clears one run's retained-worktree link after its worktree task was discarded, so
     /// retention sweeps and history pruning stop tracking the discarded worktree.
     fn clear_retained_worktree_link(&self, run_id: &ScheduledRunId) -> Result<(), RepositoryError>;
+
+    /// Persists one independent business verdict and its detail onto a run row, leaving the
+    /// execution-layer status and failure reason untouched. Returns `false` when the run no
+    /// longer exists or has not reached `succeeded`, the only annotatable state.
+    fn annotate_scheduled_run_verdict(
+        &self,
+        run_id: &ScheduledRunId,
+        verdict: ScheduledRunVerdict,
+        detail: Option<&str>,
+        annotated_at: i64,
+    ) -> Result<bool, RepositoryError>;
 }
 
 /// Supplies stable identifiers for newly admitted Scheduled Runs.

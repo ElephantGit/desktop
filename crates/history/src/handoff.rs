@@ -1,3 +1,4 @@
+use crate::metadata::child_source_id;
 use crate::reader::{HistoryIntegrity, SessionHistory};
 use crate::record::HistoryRecord;
 use agent_client_protocol_schema::v1::ContentBlock;
@@ -260,6 +261,46 @@ fn absorb_update(turn: &mut HandoffTurn, update: &SessionUpdate) {
         // handoff until this Ora version understands their semantics.
         _ => {}
     }
+}
+
+/// Returns the text of the final Assistant turn in a session's history.
+///
+/// The scheduled-run verdict sentinel is read from the agent's last message, so this
+/// folds every settled assistant-message chunk in the final turn into one LF-joined
+/// string. A `TurnEnded` closes a turn; a trailing turn that a crash left unterminated
+/// still counts. Non-text content and non-message updates are ignored, matching the
+/// transcript projection [`render_handoff`] relies on.
+pub fn final_assistant_message(history: &SessionHistory) -> Option<String> {
+    let mut current: Vec<String> = Vec::new();
+    let mut last: Option<Vec<String>> = None;
+    for line in &history.lines {
+        if let HistoryRecord::TurnEnded { .. } = &line.record {
+            if !current.is_empty() {
+                last = Some(std::mem::take(&mut current));
+            }
+            continue;
+        }
+        let HistoryRecord::Update { update, .. } = &line.record else {
+            continue;
+        };
+        let SessionUpdate::AgentMessageChunk(chunk) = update.as_ref() else {
+            continue;
+        };
+        // Child-session projections belong to a delegated agent. Letting a child's
+        // sentinel win would annotate the whole run with a subagent's conclusion.
+        if child_source_id(chunk.meta.as_ref()).is_some() {
+            continue;
+        }
+        let ContentBlock::Text(text) = &chunk.content else {
+            continue;
+        };
+        current.push(text.text.clone());
+    }
+    if !current.is_empty() {
+        last = Some(current);
+    }
+    last.filter(|parts| !parts.is_empty())
+        .map(|parts| parts.join("\n"))
 }
 
 /// Renders one content block as transcript text.

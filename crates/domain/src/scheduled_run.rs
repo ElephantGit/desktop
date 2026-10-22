@@ -111,6 +111,96 @@ pub enum ScheduledRunFailureReason {
     ExecutionError,
 }
 
+/// Independent, machine-readable business conclusion a run's agent reports in
+/// addition to the execution-layer status. It never derives from [`ScheduledRunStatus`]
+/// or [`ScheduledRunFailureReason`]: a run can be `Succeeded` while its business
+/// verdict is `Fail`, and vice versa for infrastructure-only outcomes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScheduledRunVerdict {
+    Pass,
+    Warn,
+    Fail,
+    Blocked,
+    Idle,
+    RangeUnresolved,
+}
+
+impl ScheduledRunVerdict {
+    /// Returns the stable column and contract representation of this verdict.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Warn => "warn",
+            Self::Fail => "fail",
+            Self::Blocked => "blocked",
+            Self::Idle => "idle",
+            Self::RangeUnresolved => "range_unresolved",
+        }
+    }
+
+    /// Parses the case-insensitive contract token back into a verdict.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "pass" => Some(Self::Pass),
+            "warn" => Some(Self::Warn),
+            "fail" => Some(Self::Fail),
+            "blocked" => Some(Self::Blocked),
+            "idle" => Some(Self::Idle),
+            "range_unresolved" => Some(Self::RangeUnresolved),
+            _ => None,
+        }
+    }
+}
+
+/// Bounds the free-text detail an agent may attach to a verdict, in Unicode characters.
+pub const MAX_SCHEDULED_RUN_VERDICT_DETAIL_CHARS: usize = 2_000;
+
+/// One parsed business verdict and the free-text detail reported alongside it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScheduledRunVerdictAnnotation {
+    pub verdict: ScheduledRunVerdict,
+    pub detail: Option<String>,
+}
+
+/// Parses the documented verdict sentinel out of the final Assistant turn text.
+///
+/// The frozen contract (approved ADR) matches a line of the form
+/// `QA_VERDICT: <pass|warn|fail|blocked|idle|range_unresolved>` followed optionally
+/// by the immediately next line `QA_DETAIL: <free text>`. Marker and value are
+/// case-insensitive, end-of-line whitespace is ignored, a match never crosses a line
+/// boundary, and the first marker occurrence wins: a first marker carrying an illegal
+/// value is a format violation and yields "not reported" rather than scanning further.
+/// A detail longer than [`MAX_SCHEDULED_RUN_VERDICT_DETAIL_CHARS`] is likewise rejected.
+///
+/// Returns `None` when no marker is present, the value is illegal, or the detail is
+/// over-long; callers treat `None` as "not reported" and never rewrite run facts.
+pub fn parse_scheduled_run_verdict(text: &str) -> Option<ScheduledRunVerdictAnnotation> {
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let mut lines = normalized.split('\n');
+    while let Some(line) = lines.next() {
+        let lower = line.to_ascii_lowercase();
+        let Some(marker_start) = lower.find("qa_verdict:") else {
+            continue;
+        };
+        let after = &line[marker_start + "qa_verdict:".len()..];
+        let verdict = ScheduledRunVerdict::parse(after)?;
+        let detail = lines.next().and_then(|next| {
+            let next_lower = next.to_ascii_lowercase();
+            let detail_start = next_lower.find("qa_detail:")?;
+            Some(next[detail_start + "qa_detail:".len()..].trim().to_string())
+        });
+        if detail
+            .as_ref()
+            .is_some_and(|value| value.chars().count() > MAX_SCHEDULED_RUN_VERDICT_DETAIL_CHARS)
+        {
+            return None;
+        }
+        return Some(ScheduledRunVerdictAnnotation { verdict, detail });
+    }
+    None
+}
+
 /// Names one forward-only lifecycle change requested by the local execution adapter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScheduledRunTransition {
@@ -151,6 +241,14 @@ pub struct ScheduledRun {
     /// The task-owned worktree created for this run, kept for retained-worktree history.
     pub worktree_task_id: Option<TaskId>,
     pub failure_reason: Option<ScheduledRunFailureReason>,
+    /// Independent business conclusion reported by the run's agent; `None` until reported,
+    /// and displayed as "not reported" without affecting the execution-layer status.
+    pub verdict: Option<ScheduledRunVerdict>,
+    /// Free-text detail the agent attaches to the verdict, bounded by the application layer.
+    pub verdict_detail: Option<String>,
+    /// When the verdict was annotated, independent of `updated_at` so retention ordering
+    /// (which sorts by `updated_at`) is never affected by a verdict write.
+    pub verdict_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -180,6 +278,9 @@ impl ScheduledRun {
             worktree_path: None,
             worktree_task_id: None,
             failure_reason: None,
+            verdict: None,
+            verdict_detail: None,
+            verdict_at: None,
             created_at: accepted_at,
             updated_at: accepted_at,
         }
@@ -243,7 +344,7 @@ mod tests {
     use crate::{
         AgentRef, AuditFields, ProjectId, ScheduledMissReason, ScheduledOccurrence,
         ScheduledOccurrenceTiming, ScheduledRun, ScheduledRunId, ScheduledRunStatus,
-        ScheduledRunTransition, ScheduledTask, ScheduledTaskApproval,
+        ScheduledRunTransition, ScheduledRunVerdict, ScheduledTask, ScheduledTaskApproval,
         ScheduledTaskExecutionLocation, ScheduledTaskId, ScheduledTaskSchedule, SessionId, TaskId,
     };
 
@@ -412,5 +513,98 @@ mod tests {
             AuditFields::new(1, 1, false),
         )
         .expect("valid task")
+    }
+
+    /// Verifies the stable column/contract representation and the default absence of a
+    /// verdict on a freshly admitted run.
+    #[test]
+    fn verdict_has_a_stable_representation_and_defaults_to_unreported() {
+        use crate::ScheduledRunVerdict;
+
+        assert_eq!(ScheduledRunVerdict::Pass.as_str(), "pass");
+        assert_eq!(ScheduledRunVerdict::Warn.as_str(), "warn");
+        assert_eq!(ScheduledRunVerdict::Fail.as_str(), "fail");
+        assert_eq!(ScheduledRunVerdict::Blocked.as_str(), "blocked");
+        assert_eq!(ScheduledRunVerdict::Idle.as_str(), "idle");
+        assert_eq!(
+            ScheduledRunVerdict::RangeUnresolved.as_str(),
+            "range_unresolved"
+        );
+
+        let run = ScheduledRun::accepted(
+            ScheduledRunId::new("run-1"),
+            ScheduledOccurrence {
+                task_id: ScheduledTaskId::new("task-1"),
+                scheduled_at: 1_000,
+            },
+            &scheduled_task(),
+            1_001,
+        );
+        assert_eq!(run.verdict, None);
+        assert_eq!(run.verdict_detail, None);
+    }
+
+    fn parse(text: &str) -> Option<(crate::ScheduledRunVerdict, Option<String>)> {
+        crate::parse_scheduled_run_verdict(text)
+            .map(|annotation| (annotation.verdict, annotation.detail))
+    }
+
+    #[test]
+    fn parses_the_case_insensitive_sentinel_and_following_detail() {
+        assert_eq!(
+            parse("QA_VERDICT: pass"),
+            Some((ScheduledRunVerdict::Pass, None))
+        );
+        assert_eq!(
+            parse("qa_verdict: Fail\r\nQA_DETAIL: Critical overflow\r\n"),
+            Some((
+                ScheduledRunVerdict::Fail,
+                Some("Critical overflow".to_string())
+            ))
+        );
+        assert_eq!(
+            parse("inspect\ndone\nQA_VERDICT: range_unresolved "),
+            Some((ScheduledRunVerdict::RangeUnresolved, None))
+        );
+    }
+
+    #[test]
+    fn takes_the_first_marker_and_rejects_an_illegal_value() {
+        assert_eq!(
+            parse("QA_VERDICT: pass\nQA_VERDICT: fail"),
+            Some((ScheduledRunVerdict::Pass, None))
+        );
+        assert_eq!(parse("QA_VERDICT: banana\nQA_VERDICT: pass"), None);
+        assert_eq!(parse("no marker here"), None);
+    }
+
+    #[test]
+    fn only_reads_detail_from_the_immediately_following_line() {
+        assert_eq!(
+            parse("QA_VERDICT: warn\nsome other line\nQA_DETAIL: late"),
+            Some((ScheduledRunVerdict::Warn, None))
+        );
+    }
+
+    #[test]
+    fn rejects_an_over_long_detail() {
+        let long = "x".repeat(crate::MAX_SCHEDULED_RUN_VERDICT_DETAIL_CHARS + 1);
+        let text = format!("QA_VERDICT: fail\nQA_DETAIL: {long}");
+        assert_eq!(parse(&text), None);
+
+        let boundary = "y".repeat(crate::MAX_SCHEDULED_RUN_VERDICT_DETAIL_CHARS);
+        let text = format!("QA_VERDICT: fail\nQA_DETAIL: {boundary}");
+        assert_eq!(
+            parse(&text),
+            Some((ScheduledRunVerdict::Fail, Some(boundary)))
+        );
+    }
+
+    #[test]
+    fn ignores_non_verdict_marker_prefixes_without_a_valid_token() {
+        assert_eq!(
+            parse("results: QA_VERDICT: pass"),
+            Some((ScheduledRunVerdict::Pass, None))
+        );
     }
 }

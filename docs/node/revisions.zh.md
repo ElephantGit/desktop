@@ -133,4 +133,3 @@ Node 侧出口，由残留回收契约（specs#126）在取得真实证据或运
 - 在传输仓库中解析借用的 checkout 对象没有单独的资源限制。
 - 旧版 Node 在 Node home 中留下的 `revision-restores/` 目录不会被删除。
 - `base_unavailable` 依赖远端对缺失对象的措辞；措辞不同的服务器会被报告为可重试的 `unavailable`。
-
