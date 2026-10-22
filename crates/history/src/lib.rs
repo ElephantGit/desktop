@@ -33,6 +33,7 @@ pub use assembler::{AssembledRecord, HistoryAssembler};
 pub use clock::{FixedHistoryClock, HistoryClock};
 pub use error::HistoryError;
 pub use handoff::{binding_needs_handoff, render_handoff};
+pub use metadata::child_source_id;
 pub use path::history_path;
 pub use reader::{
     HistoryIntegrity, SessionHistory, read_session_history, read_session_history_up_to,

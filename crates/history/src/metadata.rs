@@ -1,7 +1,10 @@
 use agent_client_protocol_schema::v1::Meta;
 
 /// Identifies a valid OpenCode projection; cleared or malformed sources belong to the parent.
-pub(super) fn child_source_id(meta: Option<&Meta>) -> Option<&str> {
+///
+/// Transcript attribution and prompt liveness share this one rule, so a source history calls
+/// the parent's can never hold a different ownership in the inactivity timer.
+pub fn child_source_id(meta: Option<&Meta>) -> Option<&str> {
     let source = meta?.get("opencode/child-session")?;
     let id = source
         .get("id")?
