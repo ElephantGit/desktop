@@ -2,6 +2,9 @@ use super::*;
 use ora_history::{AgentSwitch, HistoryLine, HistoryRecord, SCHEMA_VERSION, SessionMeta};
 use pretty_assertions::assert_eq;
 
+#[path = "binding_anomaly_tests.rs"]
+mod anomaly_tests;
+
 /// Writes real JSONL beside the real SQLite fixture; no actor or plugin is installed.
 fn history(fixture: &Fixture, records: Vec<HistoryRecord>) -> Vec<SessionBindingSegment> {
     let root = fixture._temporary.path().join("sessions");
