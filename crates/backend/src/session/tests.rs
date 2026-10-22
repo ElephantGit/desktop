@@ -16,6 +16,7 @@ mod binding_tests;
 
 struct Fixture {
     sessions: Arc<Sessions>,
+    plugins: crate::Plugins,
     events: Arc<AppEventHub>,
     database: PathBuf,
     _temporary: TempDir,
@@ -61,6 +62,7 @@ impl Fixture {
             .expect("session row");
         Self {
             sessions: backend.sessions(),
+            plugins: backend.plugins(),
             events: backend.app_events(),
             database,
             _temporary: temporary,

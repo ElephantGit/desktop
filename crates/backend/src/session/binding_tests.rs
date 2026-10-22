@@ -4,6 +4,8 @@ use pretty_assertions::assert_eq;
 
 #[path = "binding_anomaly_tests.rs"]
 mod anomaly_tests;
+#[path = "binding_boundary_tests.rs"]
+mod boundary_tests;
 
 /// Writes real JSONL beside the real SQLite fixture; no actor or plugin is installed.
 fn history(fixture: &Fixture, records: Vec<HistoryRecord>) -> Vec<SessionBindingSegment> {
