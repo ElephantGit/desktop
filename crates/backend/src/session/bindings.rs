@@ -60,9 +60,11 @@ pub(super) fn read_consistent(
             continue;
         }
         if !after.agent_session_id.trim().is_empty() {
+            // An incomplete prefix cannot prove which occurrence is current when ids recur.
             match segments.last_mut() {
                 Some(last)
-                    if last.agent_ref == after.agent_ref.as_str()
+                    if history == BindingHistoryState::Readable
+                        && last.agent_ref == after.agent_ref.as_str()
                         && last.agent_session_id == after.agent_session_id =>
                 {
                     last.current = true

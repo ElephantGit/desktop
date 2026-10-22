@@ -274,6 +274,69 @@ fn binding_reads_retry_once_and_refuse_a_continuously_changing_row() {
 }
 
 #[test]
+fn truncated_history_never_marks_an_old_matching_binding_as_current() {
+    run_test(async {
+        let fixture = Fixture::stopped();
+        let mut segments = history(
+            &fixture,
+            vec![HistoryRecord::Meta(meta(&fixture, "provider-session"))],
+        );
+        let path =
+            ora_history::history_path(&fixture._temporary.path().join("sessions"), "session-1")
+                .unwrap();
+        let mut bytes = std::fs::read(&path).unwrap();
+        // Both later switches are outside the bounded prefix, although the row is back on A.
+        bytes.resize(8 * 1024 * 1024, b' ');
+        bytes.push(b'\n');
+        for (seq, from, to, id) in [
+            (1, "ora-space.fixture", "ora-space.other", "other-session"),
+            (
+                2,
+                "ora-space.other",
+                "ora-space.fixture",
+                "provider-session",
+            ),
+        ] {
+            let line = HistoryLine::new(
+                "2026-10-22T10:01:00+08:00",
+                seq,
+                HistoryRecord::AgentSwitched(AgentSwitch {
+                    from: AgentRef::parse(from).unwrap(),
+                    to: AgentRef::parse(to).unwrap(),
+                    agent_session_id: id.into(),
+                }),
+            );
+            bytes.extend(serde_json::to_vec(&line).unwrap());
+            bytes.push(b'\n');
+        }
+        std::fs::write(path, bytes).unwrap();
+        segments.push(SessionBindingSegment {
+            key: "live".into(),
+            agent_ref: "ora-space.fixture".into(),
+            agent_session_id: "provider-session".into(),
+            recorded_at: None,
+            current: true,
+        });
+        assert_eq!(
+            fixture
+                .sessions
+                .bindings(GetSessionBindingsRequest {
+                    session_ids: vec!["session-1".into()]
+                })
+                .await
+                .unwrap(),
+            GetSessionBindingsResponse {
+                sessions: vec![SessionBindings::Available {
+                    session_id: "session-1".into(),
+                    history: BindingHistoryState::Incomplete,
+                    segments
+                }]
+            }
+        );
+    });
+}
+
+#[test]
 fn binding_reads_distinguish_uncreated_from_truncated_history() {
     run_test(async {
         let fixture = Fixture::stopped();
