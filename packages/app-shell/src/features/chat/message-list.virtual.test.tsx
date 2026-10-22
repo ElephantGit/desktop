@@ -1,5 +1,6 @@
 import { createElement, type ReactNode } from "react";
 import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { locateSessionChild } from "./session-child-navigation";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChatTurn } from "@ora/chat";
@@ -87,9 +88,45 @@ function renderList(turns: ChatTurn[]) {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("MessageList virtualization", () => {
+  it("keeps a located child in view when deferred layout resizes the transcript", async () => {
+    let resize: ResizeObserverCallback | undefined;
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          resize = callback;
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    const child = completedTurn(1);
+    child.items[0]!.metadata = {
+      "opencode/child-session": { id: "child", parentID: "root", depth: 1 },
+    };
+    renderList([child, completedTurn(2)]);
+    const scroller = screen.getByTestId("message-list");
+    Object.defineProperty(scroller, "scrollHeight", { value: 3000 });
+    scroller.scrollTop = 2500;
+    act(() => {
+      locateSessionChild("session", "turn-1:display:subagent:child");
+    });
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-subagent-group="child"] button'),
+      ).toHaveFocus(),
+    );
+    scroller.scrollTop = 120;
+    act(() => resize?.([], {} as ResizeObserver));
+    expect(scroller.scrollTop).toBe(120);
+    await userEvent.setup().keyboard("{Enter}");
+    expect(screen.getByText("answer 1")).toBeVisible();
+  });
   it("locates an offscreen child in the owning session without duplicating its tree", async () => {
     mockViewportSize(480);
     vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(

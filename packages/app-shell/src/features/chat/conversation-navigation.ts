@@ -44,6 +44,7 @@ export interface ConversationNavigationResult {
   endPointerScroll: () => void;
   navigateToAnchor: (anchorId: string) => void;
   navigateToTail: () => void;
+  pauseFollowing: () => void;
 }
 
 /**
@@ -76,6 +77,11 @@ export function useConversationNavigation({
   const cancelPendingNavigation = useCallback(() => {
     pendingNavigationRef.current = null;
   }, []);
+
+  const pauseFollowing = useCallback(() => {
+    cancelPendingNavigation();
+    followTailRef.current = false;
+  }, [cancelPendingNavigation]);
 
   const handleScroll = useCallback(() => {
     const element = scrollRef.current;
@@ -218,6 +224,7 @@ export function useConversationNavigation({
     endPointerScroll,
     navigateToAnchor,
     navigateToTail,
+    pauseFollowing,
   };
 }
 

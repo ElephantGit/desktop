@@ -181,6 +181,7 @@ export function MessageList({
   });
 
   const [childTarget, setChildTarget] = useState<string>();
+  const { pauseFollowing } = navigation;
   useEffect(() => {
     const transcript = scrollRef.current?.closest("[data-session-transcript]");
     if (!transcript) return;
@@ -192,12 +193,13 @@ export function MessageList({
       )
         return;
       event.preventDefault();
+      pauseFollowing();
       setChildTarget(event.detail);
     };
     transcript.addEventListener(SESSION_CHILD_NAVIGATION, locate);
     return () =>
       transcript.removeEventListener(SESSION_CHILD_NAVIGATION, locate);
-  }, [rows]);
+  }, [rows, pauseFollowing]);
 
   // Wait for a windowed row to mount before focusing its existing expandable tree.
   const virtualRows = virtualizer.getVirtualItems();
@@ -210,8 +212,15 @@ export function MessageList({
     ).find((node) => node.dataset.sessionChildRow === childTarget);
     if (target) {
       target.scrollIntoView?.({ block: "center" });
-      target.querySelector<HTMLElement>("button")?.focus();
-      setChildTarget(undefined);
+      // The dialog releases its modal inert boundary during unmount. Focus only
+      // after that cleanup so the browser can focus the existing transcript.
+      const frame = requestAnimationFrame(() => {
+        target
+          .querySelector<HTMLElement>("button")
+          ?.focus({ preventScroll: true });
+        setChildTarget(undefined);
+      });
+      return () => cancelAnimationFrame(frame);
     } else if (windowed) {
       const index = rows.findIndex((row) => row.key === childTarget);
       if (index >= 0) virtualizer.scrollToIndex(index, { align: "center" });

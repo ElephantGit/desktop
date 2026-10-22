@@ -222,7 +222,7 @@ describe("RunNodeSessionChat", () => {
       document.querySelectorAll('[data-subagent-group="child"]'),
     ).toHaveLength(1);
     expect(document.querySelector('[data-subagent-group="child"]')).toBe(group);
-    expect(group?.querySelector("button")).toHaveFocus();
+    await waitFor(() => expect(group?.querySelector("button")).toHaveFocus());
   });
   it("renders the node session through the ordinary chat surface", () => {
     renderDock("awaiting_input", false);
