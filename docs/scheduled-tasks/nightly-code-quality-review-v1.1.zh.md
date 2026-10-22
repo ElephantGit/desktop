@@ -17,20 +17,10 @@
 
 - **时区**：local 任务不提供时区选择，schedule 按系统当前时区求值；Prompt 会在报告里记录实际时区。
 - **超时**：每次运行固定 60 分钟、不可配，超时记 `failed(timeout)`。
-- **运行终态**：`run.status` / `failure_reason` 由执行层决定，Prompt **不能**改写；业务结论只能写进最终响应。区分「执行成功但质量判定 FAIL」与「执行失败」的能力见 [#439](https://github.com/ora-space/circus/issues/439)（未来能力，未实现）。
-- **产物持久化**：没有产物存储机制；worktree 无改动会被回收、有改动仅作临时副本，最终响应必须自包含、可从运行历史复核。稳定产物见 [#440](https://github.com/ora-space/circus/issues/440)（未来能力，未实现）。
+- **运行终态**：`run.status` / `failure_reason` 由执行层决定，Prompt **不能**改写；业务结论只能写进最终响应。区分「执行成功但质量判定 FAIL」与「执行失败」的能力属未来能力，未实现。
+- **产物持久化**：没有产物存储机制；worktree 无改动会被回收、有改动仅作临时副本，最终响应必须自包含、可从运行历史复核。稳定的产物持久化属未来能力，未实现。
 - **增量范围的近似性**：commit 的提交时间不等于实际合入时间；用 first-parent 时间窗口圈定「上一自然日」是当前近似方案，边缘时刻可能漏记或迟记，Prompt 用 `QA_RANGE_UNRESOLVED` 明确标注无法可信确定范围的情形。
 - **漏跑不自动补偿**：local 未运行期间的到期点记 `missed`，不集中补跑。
-
-## V1 → V1.1 差异
-
-| 项 | V1 | V1.1 |
-|---|---|---|
-| 终态映射 | 要求 FAIL 映射 failed、BLOCKED/RANGE 标记未完成 | 明确 run.status 不可由 prompt 改写；业务结论只进最终响应（缺口已立 #439） |
-| 时区 | 显式 Asia/Kuala_Lumpur | 按系统时区（local 无时区字段），报告记录实际时区 |
-| 增量范围 | 允许 `git log` 语义 | 强制用远程目标分支 first-parent 快照锚定 BASE/TARGET，禁止滚动窗口 |
-| 报告持久化 | 假定 worktree 文件可留 | 最终响应自包含；产物持久化缺口立 #440 |
-| 门禁 | 全量构建+测试+集成 | 60 分钟预算内增量优先、预留报告时间、SKIPPED≠PASS |
 
 ## Prompt（V1.1 原文）
 
@@ -108,10 +98,3 @@
 - `QA_IDLE`：无增量。
 
 输出任一 verdict 后 STOP，不进入修复/发布/合并。
-
-## 未来能力（未实现）
-
-- [ora-space/circus#439](https://github.com/ora-space/circus/issues/439)：Scheduled Run Result Annotation / Custom Verdict——让 QA 结论成为可机器判读、可在运行历史聚合的业务 verdict，而非埋在响应正文里。
-- [ora-space/circus#440](https://github.com/ora-space/circus/issues/440)：Scheduled Run Artifact Persistence——让报告/测试产物脱离 worktree 生命周期、按 Run ID 索引并从运行历史访问。
-
-以上两项当前仅为需求登记，未实现；本 Prompt 已按「不依赖未实现能力」的方式适配。

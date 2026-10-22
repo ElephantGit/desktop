@@ -17,20 +17,10 @@ This page is the reusable prompt baseline (V1.1) for the "nightly code quality r
 
 - **Timezone**: local tasks have no timezone selection; the schedule is evaluated in the system's current timezone. The prompt records the actual timezone in the report.
 - **Timeout**: each run has a fixed 60-minute limit (not configurable); exceeding it ends as `failed(timeout)`.
-- **Run terminal state**: `run.status` / `failure_reason` are decided by the execution layer; the prompt **cannot** rewrite them; the business conclusion only goes into the final response. Distinguishing "execution succeeded but quality verdict FAIL" from "execution failed" is [#439](https://github.com/ora-space/circus/issues/439) (future capability, not implemented).
-- **Artifact persistence**: there is no artifact storage; the worktree is reclaimed when unmodified and is only a temporary copy when modified, so the final response must be self-contained and reviewable from run history. Durable artifacts are [#440](https://github.com/ora-space/circus/issues/440) (future capability, not implemented).
+- **Run terminal state**: `run.status` / `failure_reason` are decided by the execution layer; the prompt **cannot** rewrite them; the business conclusion only goes into the final response. Distinguishing "execution succeeded but quality verdict FAIL" from "execution failed" is a future capability, not implemented.
+- **Artifact persistence**: there is no artifact storage; the worktree is reclaimed when unmodified and is only a temporary copy when modified, so the final response must be self-contained and reviewable from run history. Durable artifact persistence is a future capability, not implemented.
 - **Delta-scope approximation**: a commit's commit time is not its merge time; using a first-parent time window to bound "the previous natural day" is an approximation, and edge moments may be missed or delayed. The prompt uses `QA_RANGE_UNRESOLVED` to mark cases where a trustworthy range cannot be determined.
 - **Missed runs are not compensated**: due points while local is not running are recorded `missed` and are not bulk replayed.
-
-## V1 → V1.1 differences
-
-| Item | V1 | V1.1 |
-|---|---|---|
-| Terminal mapping | Required FAIL→failed, BLOCKED/RANGE marked incomplete | Explicitly states run.status is not writable by the prompt; the business conclusion goes only into the final response (gap filed as #439) |
-| Timezone | Explicit Asia/Kuala_Lumpur | System timezone (local has no timezone field); the report records the actual timezone |
-| Delta scope | Allowed `git log` semantics | Requires anchoring BASE/TARGET on the remote target branch's first-parent history; forbids a rolling window |
-| Report persistence | Assumed worktree files persist | Final response is self-contained; artifact-persistence gap filed as #440 |
-| Gates | Full build + tests + integration | Increment-first within the 60-minute budget, reserve report time, SKIPPED≠PASS |
 
 ## Prompt (V1.1 verbatim)
 
@@ -108,10 +98,3 @@ Do not rely on temporary worktree files persisting — the conclusion must be wr
 - `QA_IDLE`: no delta.
 
 After emitting any verdict, STOP; do not enter fix/release/merge phases.
-
-## Future capabilities (not implemented)
-
-- [ora-space/circus#439](https://github.com/ora-space/circus/issues/439): Scheduled Run Result Annotation / Custom Verdict — make the QA conclusion a machine-readable, aggregatable business verdict rather than text buried in the response.
-- [ora-space/circus#440](https://github.com/ora-space/circus/issues/440): Scheduled Run Artifact Persistence — decouple report/test artifacts from the worktree lifecycle, index them by Run ID, and access them from run history.
-
-Both are currently requirements only, not implemented; this prompt has been adapted to depend on neither.
