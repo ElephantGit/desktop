@@ -12,7 +12,11 @@ use tempfile::TempDir;
 use super::ScheduledArtifactStore;
 
 fn fixture() -> (TempDir, ScheduledArtifactStore, ScheduledRunId) {
-    let temporary = TempDir::new().expect("create temp directory");
+    // macOS exposes its default temporary root through `/var`, which is a symlink. The
+    // artifact store deliberately rejects symlinked ancestors, so keep these fixtures under
+    // the checkout instead of relaxing the production safety boundary.
+    let temporary = tempfile::tempdir_in(std::env::current_dir().expect("current directory"))
+        .expect("create temp directory");
     let store = ScheduledArtifactStore::new(temporary.path().join("store"));
     (temporary, store, ScheduledRunId::new("run-1"))
 }
@@ -138,23 +142,50 @@ fn rejects_symlinks_and_case_only_duplicates() {
     fs::write(source.join("Report.md"), "one").expect("write first case");
     fs::write(source.join("report.md"), "two").expect("write second case");
 
+    // A case-insensitive Unix filesystem folds both spellings onto one file; the duplicate
+    // rejection can only be observed where the two directory entries are actually distinct.
+    let distinct_case_variants = fs::read_dir(&source)
+        .expect("read artifact directory")
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+        .count()
+        == 2;
+
     let collected = store
         .collect(&run_id, &workspace, 9)
         .expect("collect artifacts");
 
     assert_eq!(collected.artifacts.len(), 1);
-    assert_eq!(
-        collected
-            .rejections
-            .iter()
-            .map(|rejection| (rejection.name.as_str(), rejection.reason))
-            .collect::<Vec<_>>(),
-        vec![
-            ("Report.md", ScheduledArtifactRejectionReason::PathUnsafe),
-            ("linked.md", ScheduledArtifactRejectionReason::Symlink),
-            ("report.md", ScheduledArtifactRejectionReason::PathUnsafe),
-        ]
+    let accepted = collected.artifacts[0].relative_path.as_str();
+    assert!(matches!(accepted, "Report.md" | "report.md"));
+    let rejections = collected
+        .rejections
+        .iter()
+        .map(|rejection| (rejection.name.as_str(), rejection.reason))
+        .collect::<Vec<_>>();
+    assert!(
+        rejections.contains(&("linked.md", ScheduledArtifactRejectionReason::Symlink)),
+        "the symlink is always refused: {rejections:?}"
     );
+    assert!(
+        !rejections.iter().any(|(name, _)| *name == accepted),
+        "the accepted artifact must not also be listed as rejected: {rejections:?}"
+    );
+    if distinct_case_variants {
+        assert_eq!(rejections.len(), 2);
+        assert_eq!(
+            rejections
+                .iter()
+                .filter(|(_, reason)| *reason == ScheduledArtifactRejectionReason::PathUnsafe)
+                .count(),
+            1
+        );
+    } else {
+        assert_eq!(
+            rejections,
+            vec![("linked.md", ScheduledArtifactRejectionReason::Symlink)]
+        );
+    }
 }
 
 #[cfg(unix)]
