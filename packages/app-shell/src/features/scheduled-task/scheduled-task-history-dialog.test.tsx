@@ -1,7 +1,11 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ScheduledTask, ScheduledTaskHistoryEntry } from "@ora/contracts";
+import type {
+  ScheduledRunVerdict,
+  ScheduledTask,
+  ScheduledTaskHistoryEntry,
+} from "@ora/contracts";
 import { createChatStore } from "@ora/chat";
 import { TooltipProvider, toast } from "@ora/ui";
 import { AppI18nProvider } from "../../i18n/i18n";
@@ -40,6 +44,7 @@ function historyEntry(overrides: {
   status: "succeeded" | "failed" | "running";
   worktreeTaskId: string | null;
   sessionId?: string | null;
+  verdict?: ScheduledRunVerdict | null;
 }): ScheduledTaskHistoryEntry {
   return {
     kind: "run",
@@ -51,6 +56,9 @@ function historyEntry(overrides: {
     worktreePath: "worktrees/kept",
     worktreeTaskId: overrides.worktreeTaskId,
     failureReason: null,
+    verdict: overrides.verdict ?? null,
+    verdictDetail: null,
+    verdictAt: null,
     createdAt: 10n,
     updatedAt: 15n,
   };
@@ -59,6 +67,7 @@ function historyEntry(overrides: {
 interface Harness {
   deletedTaskIds: string[];
   failDiscards?: boolean;
+  artifactHandlers?: TestHandlers;
 }
 
 function renderDialog(
@@ -76,6 +85,7 @@ function renderDialog(
     },
   ];
   const handlers: TestHandlers = {
+    ...harness.artifactHandlers,
     listScheduledTaskHistory: async () => ({ entries: [...entries] }),
     listTasks: async () => ({ tasks: [...worktreeTasks] }),
     deleteTask: async ({ taskId }) => {
@@ -128,6 +138,67 @@ describe("ScheduledTaskHistoryDialog retained worktrees", () => {
 
     expect(await screen.findByRole("button", { name: "打开" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "丢弃" })).toBeTruthy();
+  });
+
+  it("shows a business fail verdict without turning the run into a failure", async () => {
+    renderDialog([
+      historyEntry({
+        id: "run-1",
+        status: "succeeded",
+        worktreeTaskId: null,
+        verdict: "fail",
+      }),
+    ]);
+
+    expect(await screen.findByText("已成功")).toBeTruthy();
+    expect(screen.getByText("业务结论: 失败")).toBeTruthy();
+    expect(screen.queryByText("失败：执行错误")).toBeNull();
+  });
+
+  it("shows no verdict when the run never reported one", async () => {
+    renderDialog([
+      historyEntry({
+        id: "run-1",
+        status: "succeeded",
+        worktreeTaskId: null,
+      }),
+    ]);
+
+    await screen.findByText("已成功");
+    expect(screen.queryByText(/业务结论/)).toBeNull();
+  });
+
+  it("opens the artifact manifest for a succeeded run", async () => {
+    const user = userEvent.setup();
+    renderDialog(
+      [
+        historyEntry({
+          id: "run-1",
+          status: "succeeded",
+          worktreeTaskId: null,
+        }),
+      ],
+      {
+        deletedTaskIds: [],
+        artifactHandlers: {
+          listScheduledRunArtifacts: async () => ({
+            artifacts: [
+              {
+                relativePath: "report.md",
+                kind: "markdown",
+                sizeBytes: 6n,
+                registeredAt: 10n,
+              },
+            ],
+            rejections: [],
+          }),
+        },
+      },
+    );
+
+    await user.click(await screen.findByRole("button", { name: "运行产物" }));
+
+    expect(await screen.findByText("report.md")).toBeTruthy();
   });
 
   it("hides the worktree actions while the run is not finished", async () => {

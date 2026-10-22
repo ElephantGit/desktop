@@ -212,6 +212,15 @@ pub fn compile_agent_configuration(
     }
     let settings = match raw.settings {
         Some(settings) => {
+            // Version two keeps its published non-secret Settings contract even as the shared
+            // version-one compiler gains metadata for Skill configuration.
+            if settings.as_object().is_some_and(|settings| {
+                settings
+                    .values()
+                    .any(|setting| setting.get("secret").is_some())
+            }) {
+                return Err(CompileAgentConfigurationError::InvalidSettings);
+            }
             let compiled = compile_declaration_from_value(json!({
                 "schemaVersion": 1,
                 "settings": settings,

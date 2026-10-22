@@ -33,6 +33,15 @@ Setting-reference prefix/suffix on args, env, and headers — must not contain c
 The crate does not render UI, expose filesystem paths to frontend callers, or start plugins.
 ACP `mcpServers` mapping and live Session refresh belong to `ora-backend` Session setup.
 
+Settings accept an optional boolean `secret` metadata flag (default false), distinct from the
+unsupported `"type": "secret"`. It participates in declaration fingerprints. Backend editor
+responses hide marked values and defaults; MCP settings retain their existing all-fields redaction.
+`resolve_skill_environment` atomically resolves a complete configuration into readable
+environment names, omitting absent optional values and rejecting the whole package on NUL,
+invalid values or colliding names. Backend owns cross-plugin collision rejection, installed Skill
+selection and startup snapshot lifetime. See
+[Skill configuration](../../docs/agents/skill-configuration.md) for the script-facing contract.
+
 ## Agent declaration compiler
 
 `compile_agent_configuration` is a separate, side-effect-free entry point for a version-two

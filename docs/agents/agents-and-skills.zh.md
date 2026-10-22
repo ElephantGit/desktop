@@ -14,6 +14,8 @@
 
 Skill 是一条目录行加上磁盘上的包 `<数据根目录>/atoms/skills/<name>/`，包的根目录有带 YAML front matter 的 `SKILL.md`。`Skill.source` 是 `local` 或 `plugin { pluginId }`：插件可以附带 Skill，它们会连同来源一起导入目录。名称是不以 `.` 开头的单个 ASCII slug 片段，描述最多 4096 字节。
 
+已安装的 Skill 插件可以为脚本声明公开与敏感字段。声明方式、启动环境快照、重启生效和安全边界见 [Skill 插件配置](skill-configuration.zh.md)。
+
 - `availability` 根据包计算：目录缺失或 `SKILL.md` 无法加载时，Skill 标为不可用，而不是被删除或让请求失败。新建或导入同名 Skill 会恢复那一行的包并保留它的 id。
 - 新建时同时写入行和一个最小的 `SKILL.md`。更新时先暂存一份副本，只改写 manifest（保留未知的 front matter 和正文），名称变化时重命名目录，并保留未修改的包文件。删除时软删除行，并把目录移入事务备份。
 

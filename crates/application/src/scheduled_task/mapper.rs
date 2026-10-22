@@ -1,16 +1,16 @@
 use ora_contracts::{
     ScheduledMissReason as ContractMissReason, ScheduledRunFailureReason as ContractFailureReason,
-    ScheduledRunStatus as ContractRunStatus, ScheduledTask as ContractScheduledTask,
-    ScheduledTaskApproval as ContractApproval,
+    ScheduledRunStatus as ContractRunStatus, ScheduledRunVerdict as ContractRunVerdict,
+    ScheduledTask as ContractScheduledTask, ScheduledTaskApproval as ContractApproval,
     ScheduledTaskApprovalPolicy as ContractApprovalPolicy,
     ScheduledTaskExecutionLocation as ContractExecutionLocation,
     ScheduledTaskHistoryEntry as ContractHistoryEntry, ScheduledTaskSchedule as ContractSchedule,
     ScheduledTaskWeekday as ContractWeekday,
 };
 use ora_domain::{
-    ScheduledMissReason, ScheduledRunFailureReason, ScheduledRunStatus, ScheduledTask,
-    ScheduledTaskApproval, ScheduledTaskExecutionLocation, ScheduledTaskHistoryEntry,
-    ScheduledTaskSchedule, ScheduledTaskWeekday,
+    ScheduledMissReason, ScheduledRunFailureReason, ScheduledRunStatus, ScheduledRunVerdict,
+    ScheduledTask, ScheduledTaskApproval, ScheduledTaskExecutionLocation,
+    ScheduledTaskHistoryEntry, ScheduledTaskSchedule, ScheduledTaskWeekday,
 };
 
 use crate::ApplicationError;
@@ -46,6 +46,9 @@ pub(crate) fn map_history_entry(entry: ScheduledTaskHistoryEntry) -> ContractHis
             worktree_path: run.worktree_path,
             worktree_task_id: run.worktree_task_id.map(|id| id.to_string()),
             failure_reason: run.failure_reason.map(map_failure_reason),
+            verdict: run.verdict.map(map_verdict),
+            verdict_detail: run.verdict_detail,
+            verdict_at: run.verdict_at,
             created_at: run.created_at,
             updated_at: run.updated_at,
         },
@@ -82,6 +85,17 @@ fn map_run_status(status: ScheduledRunStatus) -> ContractRunStatus {
         ScheduledRunStatus::Cancelled => ContractRunStatus::Cancelled,
         ScheduledRunStatus::SkippedBusy => ContractRunStatus::SkippedBusy,
         ScheduledRunStatus::SkippedCapacity => ContractRunStatus::SkippedCapacity,
+    }
+}
+
+fn map_verdict(verdict: ScheduledRunVerdict) -> ContractRunVerdict {
+    match verdict {
+        ScheduledRunVerdict::Pass => ContractRunVerdict::Pass,
+        ScheduledRunVerdict::Warn => ContractRunVerdict::Warn,
+        ScheduledRunVerdict::Fail => ContractRunVerdict::Fail,
+        ScheduledRunVerdict::Blocked => ContractRunVerdict::Blocked,
+        ScheduledRunVerdict::Idle => ContractRunVerdict::Idle,
+        ScheduledRunVerdict::RangeUnresolved => ContractRunVerdict::RangeUnresolved,
     }
 }
 

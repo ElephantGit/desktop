@@ -48,6 +48,8 @@ runtime readiness.
   deserialization can collapse them.
 
 Settings here are author-supplied metadata, not a secret store or a runtime expression language.
+Version-two Agent Settings do not accept the `secret` metadata supported by version-one Skill
+configuration; the published Agent declaration and compiled-output contract remain unchanged.
 The compiler does not infer whether arbitrary text is a credential. Credential delivery and the
 interpretation of supported non-secret options belong to separately authorized consumers.
 

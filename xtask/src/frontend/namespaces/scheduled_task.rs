@@ -38,6 +38,22 @@ pub(super) const ENDPOINTS: &[FrontendEndpoint] = &[
         response_mode: FrontendResponseMode::Unary,
     },
     FrontendEndpoint {
+        operation_name: "listScheduledRunArtifacts",
+        namespace: NAMESPACE,
+        member_name: "listRunArtifacts",
+        request_type: "ListScheduledRunArtifactsRequest",
+        response_type: "ListScheduledRunArtifactsResponse",
+        response_mode: FrontendResponseMode::Unary,
+    },
+    FrontendEndpoint {
+        operation_name: "readScheduledRunArtifact",
+        namespace: NAMESPACE,
+        member_name: "readRunArtifact",
+        request_type: "ReadScheduledRunArtifactRequest",
+        response_type: "ReadScheduledRunArtifactResponse",
+        response_mode: FrontendResponseMode::Unary,
+    },
+    FrontendEndpoint {
         operation_name: "updateScheduledTask",
         namespace: NAMESPACE,
         member_name: "update",

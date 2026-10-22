@@ -1,4 +1,4 @@
-use crate::handoff::{binding_needs_handoff, render_handoff};
+use crate::handoff::{binding_needs_handoff, final_assistant_message, render_handoff};
 use crate::reader::{HistoryIntegrity, SessionHistory};
 use crate::record::{AgentSwitch, HistoryLine, HistoryRecord, SCHEMA_VERSION, SessionMeta};
 use agent_client_protocol_schema::v1::StopReason;
@@ -77,6 +77,21 @@ fn assistant(text: &str) -> HistoryRecord {
         update: Box::new(SessionUpdate::AgentMessageChunk(ContentChunk::new(
             ContentBlock::Text(TextContent::new(text)),
         ))),
+        tool_timing: None,
+    }
+}
+
+/// Builds one message projected from an OpenCode child session.
+fn child_assistant(text: &str) -> HistoryRecord {
+    let mut chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(text)));
+    let mut meta = agent_client_protocol_schema::v1::Meta::new();
+    meta.insert(
+        "opencode/child-session".to_string(),
+        serde_json::json!({"id": "child", "parentID": "root", "depth": 1}),
+    );
+    chunk.meta = Some(meta);
+    HistoryRecord::Update {
+        update: Box::new(SessionUpdate::AgentMessageChunk(chunk)),
         tool_timing: None,
     }
 }
@@ -387,4 +402,78 @@ fn a_delivery_record_is_not_part_of_the_transcript_it_reports_on() {
                 .to_string()
         ),
     );
+}
+
+#[test]
+fn returns_the_final_assistant_turn_text() {
+    let recorded = history(vec![
+        meta(agent_ref("ora-space.claude")),
+        user("first"),
+        assistant("first reply"),
+        turn_ended(StopReason::EndTurn),
+        user("second"),
+        assistant("QA_VERDICT: pass"),
+        turn_ended(StopReason::EndTurn),
+    ]);
+
+    assert_eq!(
+        final_assistant_message(&recorded),
+        Some("QA_VERDICT: pass".to_string())
+    );
+}
+
+#[test]
+fn returns_none_when_no_assistant_message_exists() {
+    let recorded = history(vec![
+        meta(agent_ref("ora-space.claude")),
+        user("first"),
+        thought("still thinking"),
+        turn_ended(StopReason::EndTurn),
+    ]);
+
+    assert_eq!(final_assistant_message(&recorded), None);
+}
+
+#[test]
+fn keeps_an_unterminated_final_turn() {
+    let recorded = history(vec![
+        meta(agent_ref("ora-space.claude")),
+        user("first"),
+        assistant("part one"),
+        assistant("part two"),
+    ]);
+
+    assert_eq!(
+        final_assistant_message(&recorded),
+        Some("part one\npart two".to_string())
+    );
+}
+
+#[test]
+fn ignores_child_session_messages_when_selecting_the_final_turn() {
+    let recorded = history(vec![
+        meta(agent_ref("ora-space.opencode")),
+        user("run the nightly checks"),
+        child_assistant("QA_VERDICT: fail"),
+        turn_ended(StopReason::EndTurn),
+        assistant("QA_VERDICT: pass"),
+        turn_ended(StopReason::EndTurn),
+    ]);
+
+    assert_eq!(
+        final_assistant_message(&recorded),
+        Some("QA_VERDICT: pass".to_string())
+    );
+}
+
+#[test]
+fn returns_none_when_only_child_session_messages_exist() {
+    let recorded = history(vec![
+        meta(agent_ref("ora-space.opencode")),
+        user("run the nightly checks"),
+        child_assistant("QA_VERDICT: fail"),
+        turn_ended(StopReason::EndTurn),
+    ]);
+
+    assert_eq!(final_assistant_message(&recorded), None);
 }

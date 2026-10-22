@@ -7,13 +7,13 @@
 
 ## 从哪里开始
 
-| 我想… | 先读 |
-|---|---|
-| 了解整个系统 | [架构](architecture.zh.md) |
-| 在自己的机器上运行 | [本地开发](development/local-development.zh.md) |
-| 添加或删除一个功能 | [修改代码](development/changing-the-code.zh.md)，再读对应领域的文档 |
-| 运行测试 | [测试](development/testing.zh.md) |
-| 部署 Cloud 运行时 | [容器镜像](operations/container-images.zh.md)、[Controller](controller/controller.zh.md)、[Node](node/node.zh.md) |
+| 我想…              | 先读                                                                                                              |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| 了解整个系统       | [架构](architecture.zh.md)                                                                                        |
+| 在自己的机器上运行 | [本地开发](development/local-development.zh.md)                                                                   |
+| 添加或删除一个功能 | [修改代码](development/changing-the-code.zh.md)，再读对应领域的文档                                               |
+| 运行测试           | [测试](development/testing.zh.md)                                                                                 |
+| 部署 Cloud 运行时  | [容器镜像](operations/container-images.zh.md)、[Controller](controller/controller.zh.md)、[Node](node/node.zh.md) |
 
 ## 全部文档
 
@@ -44,6 +44,7 @@
 - [会话历史](agents/session-history.zh.md)：记录、切换 Agent、降级的历史、删除
 - [Session MCP](agents/session-mcp.zh.md)：选择、投递、实时刷新、Host MCP 健康状态
 - [Agent 定义与 Skill](agents/agents-and-skills.zh.md)：角色、Skill 目录、包与导入
+- [Skill 插件配置](agents/skill-configuration.zh.md)：公开与敏感字段、启动环境快照、重启生效和安全边界
 - [Effect](agents/effects.zh.md)：Workspace Effect 收敛与 Skill 落地
 
 **插件**

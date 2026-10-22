@@ -3,9 +3,11 @@ use super::Migration;
 const UP_STATEMENTS: &[&str] =
     &["ALTER TABLE scheduled_runs ADD COLUMN worktree_base_branch TEXT NULL;"];
 
+const DOWN_STATEMENTS: &[&str] = &["ALTER TABLE scheduled_runs DROP COLUMN worktree_base_branch;"];
+
 /// Persists the branch fact selected at occurrence admission for later safe execution.
 pub fn migration() -> Migration {
-    Migration::new("0017", UP_STATEMENTS, &[])
+    Migration::new("0017", UP_STATEMENTS, DOWN_STATEMENTS)
 }
 
 #[cfg(test)]

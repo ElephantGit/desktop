@@ -58,6 +58,18 @@ export function historyStatusLabel(
   return t(`scheduledTask.historyStatus.${entry.status}`);
 }
 
+export function historyVerdictLabel(
+  entry: Extract<ScheduledTaskHistoryEntry, { kind: "run" }>,
+  t: ReturnType<typeof useTranslation>["t"],
+): string | null {
+  if (entry.verdict === null) return null;
+  const label = t(`scheduledTask.verdict.${entry.verdict}`);
+  if (entry.verdictDetail !== null && entry.verdictDetail !== "") {
+    return `${label}: ${entry.verdictDetail}`;
+  }
+  return label;
+}
+
 export function formatTimestamp(timestamp: bigint): string {
   return new Date(Number(timestamp)).toLocaleString();
 }

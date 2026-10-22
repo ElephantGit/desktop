@@ -307,6 +307,28 @@ async fn spawn_rejects_plugin_supplied_reserved_mcp_environment() {
     );
 }
 
+#[tokio::test]
+async fn spawn_filters_case_insensitive_skill_environment() {
+    let spawner = FakeChildSpawner::new();
+    let host = PluginProcessHost::new("plugin-a", PathBuf::from("package-root"), spawner.clone());
+
+    host.handle(
+        CHILDPROCESS_SPAWN_METHOD,
+        json!({
+            "command": "agent",
+            "cwd": "/work",
+            "env": { "ora_sKiLl_FORGED": "value", "PUBLIC": "kept" },
+        }),
+    )
+    .await
+    .expect("caller skill variables are removed without rejecting spawn");
+
+    assert_eq!(
+        spawner.calls()[0].envs().collect::<Vec<_>>(),
+        vec![(OsStr::new("PUBLIC"), OsStr::new("kept"))]
+    );
+}
+
 /// Builds a package root holding one executable file, returning the root and its handler.
 fn package_with_executable(
     spawner: FakeChildSpawner,

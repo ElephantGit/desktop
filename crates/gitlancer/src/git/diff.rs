@@ -43,6 +43,18 @@ pub struct DiffResponse {
 impl<R: GitRunner> Git<R> {
     /// Computes tracked and untracked changes without staging files or invoking clean filters.
     pub fn diff(&self, request: DiffRequest<'_>) -> Result<DiffResponse, GitlancerError> {
+        self.diff_excluding_paths(request, &[])
+    }
+
+    /// Computes the same diff while ignoring every path under the excluded prefixes.
+    ///
+    /// The Scheduled Run artifact directory is a declared output, not a worktree change, so
+    /// retention must still see the worktree as unmodified even when the agent committed it.
+    pub fn diff_excluding_paths(
+        &self,
+        request: DiffRequest<'_>,
+        excluded_paths: &[&str],
+    ) -> Result<DiffResponse, GitlancerError> {
         let head_output = self.runner().run(&build_head_command(request.worktree))?;
         let head_commit_id = head_output.stdout.trim();
         if head_commit_id.is_empty() {
@@ -52,7 +64,7 @@ impl<R: GitRunner> Git<R> {
         let tracked = self
             .runner()
             .run_bounded(
-                &build_diff_command(&request),
+                &build_diff_command_excluding(&request, excluded_paths),
                 MAX_DIFF_BYTES,
                 MAX_DIFF_STDERR_BYTES,
             )
@@ -62,7 +74,7 @@ impl<R: GitRunner> Git<R> {
         let untracked_output = self
             .runner()
             .run_bounded(
-                &build_untracked_command(request.worktree),
+                &build_untracked_command(request.worktree, excluded_paths),
                 MAX_DIFF_BYTES,
                 MAX_DIFF_STDERR_BYTES,
             )
@@ -231,29 +243,64 @@ fn build_head_command(worktree: &WorktreeHandle) -> GitCommand {
 
 /// Builds the tracked-file comparison without external diff or text-conversion processes.
 pub fn build_diff_command(request: &DiffRequest<'_>) -> GitCommand {
+    build_diff_command_excluding(request, &[])
+}
+
+/// Builds the tracked-file comparison while excluding every path below the given prefixes.
+pub fn build_diff_command_excluding(
+    request: &DiffRequest<'_>,
+    excluded_paths: &[&str],
+) -> GitCommand {
     // Render paths verbatim: with the default `core.quotepath`, Git octal-escapes
     // non-ASCII (e.g. Chinese) names in `diff --git` headers, which the frontend diff
     // parser does not decode back — jump-to-file would break for those paths.
     let mut args = vec![
-        "-c",
-        "core.quotepath=false",
-        "diff",
-        "--no-color",
-        "--no-ext-diff",
-        "--no-textconv",
-        "--find-renames",
-        FULL_FILE_CONTEXT_ARG,
+        "-c".to_string(),
+        "core.quotepath=false".to_string(),
+        "diff".to_string(),
+        "--no-color".to_string(),
+        "--no-ext-diff".to_string(),
+        "--no-textconv".to_string(),
+        "--find-renames".to_string(),
+        FULL_FILE_CONTEXT_ARG.to_string(),
     ];
     match request.scope {
-        DiffScope::Branch => args.push(expect_baseline(request.base_commit_id).as_str()),
+        DiffScope::Branch => {
+            args.push(expect_baseline(request.base_commit_id).as_str().to_string());
+        }
         DiffScope::Unstaged => {}
-        DiffScope::Staged => args.extend(["--cached", "HEAD"]),
+        DiffScope::Staged => {
+            args.push("--cached".to_string());
+            args.push("HEAD".to_string());
+        }
         DiffScope::Committed => {
-            args.extend([expect_baseline(request.base_commit_id).as_str(), "HEAD"])
+            args.push(expect_baseline(request.base_commit_id).as_str().to_string());
+            args.push("HEAD".to_string());
         }
     }
-    args.push("--");
-    command(request.worktree, args)
+    args.push("--".to_string());
+    append_excluded_pathspecs(&mut args, excluded_paths);
+    GitCommand::new(
+        request.worktree.worktree_root().as_path().to_path_buf(),
+        args,
+        GitEnv::default(),
+        GitIntent::ReadOnly,
+    )
+}
+
+/// Adds an include-all pathspec plus one recursive exclusion for every requested prefix.
+///
+/// Git accepts exclude-only pathspecs in some versions, but pairing them with an explicit
+/// `.` keeps the intent unambiguous: include everything below the worktree root, except the
+/// declared output tree.
+fn append_excluded_pathspecs(args: &mut Vec<String>, excluded_paths: &[&str]) {
+    if excluded_paths.is_empty() {
+        return;
+    }
+    args.push(".".to_string());
+    for path in excluded_paths {
+        args.push(format!(":(exclude){path}"));
+    }
 }
 
 /// Reads the baseline required by the `Branch`/`Committed` scopes.
@@ -265,10 +312,22 @@ fn expect_baseline(base_commit_id: Option<&CommitId>) -> &CommitId {
 }
 
 /// Lists ignored-aware untracked paths in a machine-readable representation.
-fn build_untracked_command(worktree: &WorktreeHandle) -> GitCommand {
-    command(
-        worktree,
-        vec!["ls-files", "--others", "--exclude-standard", "-z"],
+fn build_untracked_command(worktree: &WorktreeHandle, excluded_paths: &[&str]) -> GitCommand {
+    let mut args = vec![
+        "ls-files".to_string(),
+        "--others".to_string(),
+        "--exclude-standard".to_string(),
+        "-z".to_string(),
+    ];
+    if !excluded_paths.is_empty() {
+        args.push("--".to_string());
+        append_excluded_pathspecs(&mut args, excluded_paths);
+    }
+    GitCommand::new(
+        worktree.worktree_root().as_path().to_path_buf(),
+        args,
+        GitEnv::default(),
+        GitIntent::ReadOnly,
     )
 }
 
@@ -383,9 +442,9 @@ fn command(worktree: &WorktreeHandle, args: Vec<&str>) -> GitCommand {
 #[cfg(test)]
 mod tests {
     use super::{
-        DiffRequest, DiffScope, build_diff_command, build_empty_untracked_diff_command,
-        build_initialize_temporary_index_command, build_intent_to_add_command,
-        build_untracked_diff_command, is_missing_untracked_file_error,
+        DiffRequest, DiffScope, build_diff_command, build_diff_command_excluding,
+        build_empty_untracked_diff_command, build_initialize_temporary_index_command,
+        build_intent_to_add_command, build_untracked_diff_command, is_missing_untracked_file_error,
     };
     use crate::{CommitId, GitDir, RepoRoot, WorktreeHandle, WorktreeKind, WorktreeRoot};
     use pretty_assertions::assert_eq;
@@ -414,6 +473,41 @@ mod tests {
                 "--unified=1000000",
                 "base-commit",
                 "--",
+            ]
+        );
+    }
+
+    /// Verifies the committed comparison excludes the declared output tree while still
+    /// including everything else below the worktree root.
+    #[test]
+    fn builds_diff_command_with_excluded_artifact_directory() {
+        let worktree = test_worktree();
+        let base_commit_id = CommitId::new("base-commit");
+        let command = build_diff_command_excluding(
+            &DiffRequest {
+                worktree: &worktree,
+                base_commit_id: Some(&base_commit_id),
+                scope: DiffScope::Committed,
+            },
+            &[".ora-scheduled-artifacts"],
+        );
+
+        assert_eq!(
+            command.args,
+            vec![
+                "-c",
+                "core.quotepath=false",
+                "diff",
+                "--no-color",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--find-renames",
+                "--unified=1000000",
+                "base-commit",
+                "HEAD",
+                "--",
+                ".",
+                ":(exclude).ora-scheduled-artifacts",
             ]
         );
     }

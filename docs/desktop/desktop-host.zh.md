@@ -60,6 +60,7 @@
 | SQLite 数据库（包括 `user_config`） | `<数据根目录>/ora.sqlite3` |
 | 日志 | `<数据根目录>/logs/ora.log` |
 | 会话历史 | `<数据根目录>/sessions/` |
+| 定时运行产物 | `<数据根目录>/scheduled-artifacts/<run id>/` |
 | Skill 包 | `<数据根目录>/atoms/skills/` |
 | 实例锁 | `<数据根目录>/instance.lock` |
 | 插件、marketplace 源、插件数据和日志 | `~/.ora/plugins/` |

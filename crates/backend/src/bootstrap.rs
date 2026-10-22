@@ -6,7 +6,7 @@ use crate::effects::Effects;
 use crate::error::BackendError;
 use crate::plugin::{PluginApi, Plugins};
 use crate::project::ProjectApi;
-use crate::scheduled_task::ScheduledTaskApi;
+use crate::scheduled_task::{ScheduledTaskApi, ScheduledTaskSetup};
 use crate::session::Sessions;
 use crate::settings::Settings;
 use crate::skill::SkillApi;
@@ -103,8 +103,10 @@ impl Backend {
         let database_path = paths.app_data_directory.join("ora.sqlite3");
         let skills_root = paths.app_data_directory.join("atoms").join("skills");
         let sessions_root = paths.app_data_directory.join("sessions");
+        let scheduled_artifacts_root = paths.app_data_directory.join("scheduled-artifacts");
         let default_worktree_root = paths.home_directory.join("worktrees");
         ensure_directory(&paths.app_data_directory)?;
+        ensure_directory(&scheduled_artifacts_root)?;
         let catalog = default_migration_catalog().map_err(BackendBootstrapError::Database)?;
         let pool = DatabaseBootstrapper::system()
             .bootstrap_repository_pool(&DatabaseLocation::path(&database_path), &catalog)
@@ -238,15 +240,16 @@ impl Backend {
             effect_reconcile: effect_reconcile.clone(),
             git_cleanup: git_cleanup.clone(),
         }));
-        let scheduled_task = Arc::new(ScheduledTaskApi::new(
-            pool.clone(),
-            AgentRuntime::new(agent_runtime.clone()),
+        let scheduled_task = Arc::new(ScheduledTaskApi::new(ScheduledTaskSetup {
+            pool: pool.clone(),
+            agent_runtime: AgentRuntime::new(agent_runtime.clone()),
             scheduler,
-            task.clone(),
-            session.clone(),
+            tasks_api: task.clone(),
+            sessions: session.clone(),
             clock,
-            app_events.publisher(),
-        ));
+            events: app_events.publisher(),
+            artifacts_root: scheduled_artifacts_root,
+        }));
 
         Ok(Self {
             scheduled_task,

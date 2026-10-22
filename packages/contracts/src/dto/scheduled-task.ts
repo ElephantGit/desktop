@@ -41,6 +41,19 @@ export type GetScheduledTaskRequest = { taskId: string };
 export type GetScheduledTaskResponse = { task: ScheduledTask };
 
 /**
+ * Identifies one run whose artifact manifest should be returned.
+ */
+export type ListScheduledRunArtifactsRequest = { runId: string };
+
+/**
+ * Returns one run's collected artifacts and rejected candidates.
+ */
+export type ListScheduledRunArtifactsResponse = {
+  artifacts: Array<ScheduledRunArtifactInfo>;
+  rejections: Array<ScheduledRunArtifactRejectionInfo>;
+};
+
+/**
  * Identifies the local task whose persisted history should be returned.
  */
 export type ListScheduledTaskHistoryRequest = { taskId: string };
@@ -63,6 +76,22 @@ export type ListScheduledTasksRequest = Record<symbol, never>;
 export type ListScheduledTasksResponse = { tasks: Array<ScheduledTask> };
 
 /**
+ * Identifies one registered artifact for an in-app preview.
+ */
+export type ReadScheduledRunArtifactRequest = {
+  runId: string;
+  relativePath: string;
+};
+
+/**
+ * Returns the text preview of one artifact, truncated when it exceeds the preview bound.
+ */
+export type ReadScheduledRunArtifactResponse = {
+  content: string;
+  truncated: boolean;
+};
+
+/**
  * Revokes unattended consent and disables the task without rewriting history.
  */
 export type RevokeScheduledTaskApprovalRequest = { taskId: string };
@@ -73,9 +102,55 @@ export type RevokeScheduledTaskApprovalRequest = { taskId: string };
 export type RevokeScheduledTaskApprovalResponse = { task: ScheduledTask };
 
 /**
+ * Mirrors the closed artifact type whitelist a run may declare.
+ */
+export type ScheduledArtifactKind =
+  | "markdown"
+  | "json"
+  | "text"
+  | "log"
+  | "xml"
+  | "html";
+
+/**
+ * Explains why a declared candidate was refused by artifact collection.
+ */
+export type ScheduledArtifactRejectionReason =
+  | "unsupported_type"
+  | "path_unsafe"
+  | "symlink"
+  | "hard_link"
+  | "too_large"
+  | "too_many"
+  | "total_too_large"
+  | "read_failed"
+  | "copy_failed";
+
+/**
  * Explains why a planned occurrence did not create a Scheduled Run.
  */
 export type ScheduledMissReason = "app_not_running" | "late_trigger";
+
+/**
+ * One collected artifact registered in a run's manifest.
+ */
+export type ScheduledRunArtifactInfo = {
+  /**
+   * Forward-slash path relative to `.ora-scheduled-artifacts/`.
+   */
+  relativePath: string;
+  kind: ScheduledArtifactKind;
+  sizeBytes: bigint;
+  registeredAt: bigint;
+};
+
+/**
+ * One candidate artifact collection refused, kept for history visibility.
+ */
+export type ScheduledRunArtifactRejectionInfo = {
+  name: string;
+  reason: ScheduledArtifactRejectionReason;
+};
 
 /**
  * Explains why an accepted Scheduled Run ended in the failed state.
@@ -99,6 +174,21 @@ export type ScheduledRunStatus =
   | "cancelled"
   | "skipped_busy"
   | "skipped_capacity";
+
+/**
+ * Independent, machine-readable business conclusion a run's agent reported.
+ *
+ * It is nullable: old histories and runs whose agent never wrote a verdict read as
+ * "not reported". It is independent of `ScheduledRunStatus` and
+ * `ScheduledRunFailureReason`, so a run can be `succeeded` while its verdict is `fail`.
+ */
+export type ScheduledRunVerdict =
+  | "pass"
+  | "warn"
+  | "fail"
+  | "blocked"
+  | "idle"
+  | "range_unresolved";
 
 /**
  * Public scheduled task definition shown in the Desktop list and editor.
@@ -190,6 +280,9 @@ export type ScheduledTaskHistoryEntry = {
    */
   worktreeTaskId: string | null;
   failureReason: ScheduledRunFailureReason | null;
+  verdict: ScheduledRunVerdict | null;
+  verdictDetail: string | null;
+  verdictAt: bigint | null;
   createdAt: bigint;
   updatedAt: bigint;
 } | {

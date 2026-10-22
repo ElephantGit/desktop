@@ -62,6 +62,8 @@ export type ContractError =
     | { "code": "task_not_found"; "params": EmptyErrorParams }
     | { "code": "scheduled_task_not_found"; "params": EmptyErrorParams }
     | { "code": "scheduled_task_conflict"; "params": EmptyErrorParams }
+    | { "code": "scheduled_run_not_found"; "params": EmptyErrorParams }
+    | { "code": "scheduled_run_artifact_not_found"; "params": EmptyErrorParams }
     | { "code": "resource_in_use"; "params": EmptyErrorParams }
     | { "code": "worktree_requires_git_repository"; "params": EmptyErrorParams }
     | { "code": "task_base_branch_required"; "params": EmptyErrorParams }
@@ -295,6 +297,8 @@ export type PublicError =
   | { "code": "task_not_found"; "params": EmptyErrorParams }
   | { "code": "scheduled_task_not_found"; "params": EmptyErrorParams }
   | { "code": "scheduled_task_conflict"; "params": EmptyErrorParams }
+  | { "code": "scheduled_run_not_found"; "params": EmptyErrorParams }
+  | { "code": "scheduled_run_artifact_not_found"; "params": EmptyErrorParams }
   | { "code": "resource_in_use"; "params": EmptyErrorParams }
   | { "code": "worktree_requires_git_repository"; "params": EmptyErrorParams }
   | { "code": "task_base_branch_required"; "params": EmptyErrorParams }

@@ -165,6 +165,12 @@ export const contractErrorSchema = z.object({
         "code": z.literal("scheduled_task_conflict"),
         "params": emptyErrorParamsSchema
     }), z.object({
+        "code": z.literal("scheduled_run_not_found"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("scheduled_run_artifact_not_found"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
         "code": z.literal("resource_in_use"),
         "params": emptyErrorParamsSchema
     }), z.object({
@@ -537,6 +543,12 @@ export const publicErrorSchema = z.union([z.object({
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("scheduled_task_conflict"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("scheduled_run_not_found"),
+        "params": emptyErrorParamsSchema
+    }), z.object({
+        "code": z.literal("scheduled_run_artifact_not_found"),
         "params": emptyErrorParamsSchema
     }), z.object({
         "code": z.literal("resource_in_use"),

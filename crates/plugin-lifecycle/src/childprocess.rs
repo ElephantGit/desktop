@@ -343,6 +343,7 @@ where
         let program = self.resolve_program(request.program)?;
         let mut spec = ProcessSpec::new(program)
             .args(request.args)
+            .remove_env_prefix("ORA_SKILL_")
             .stdin(ProcessStdio::Piped)
             .stdout(ProcessStdio::Piped)
             .stderr(ProcessStdio::Piped);
@@ -365,12 +366,18 @@ where
                 .environment_provider
                 .environment(&self.0.plugin_id, workspace_root)
                 .map_err(|message| ChildProcessError::new(ChildProcessErrorKind::Io, message))?,
-            None => BTreeMap::new(),
+            None => self
+                .0
+                .environment_provider
+                .plugin_environment(&self.0.plugin_id),
         };
         if let Some(cwd) = request.cwd {
             spec = spec.cwd(cwd);
         }
         for (key, value) in request.env {
+            if key.to_ascii_uppercase().starts_with("ORA_SKILL_") {
+                continue;
+            }
             spec = spec.env(key, value);
         }
         for (key, value) in host_environment {
