@@ -26,6 +26,9 @@ guardian 校验继承的打开描述、它的 Scope inode、私有路径和本�
 消息使用有界的 MessagePack（16 KiB，深度 16），guardian 线上协议版本 3，每次交换有五秒的 I/O 截止时间，各通道的 worker 分别有
 界。guardian 每 50 毫秒对账一次生命周期状态，与宿主连接无关。
 
+Scope 的 Closed 和所有已接受 Run 的终态清理事实提交成功后，周期对账进入静止状态，不再重复读写生命周期日志。
+guardian 仍持有原锁、端点和有界输出，继续校验宿主接管、查询及输出请求；未知状态和未提交成功的关闭仍继续对账。
+
 ## Run
 
 `Ready` 并绑定之后，宿主使用 `GuardianRuns::execute`：

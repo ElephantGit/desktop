@@ -92,6 +92,12 @@ in-flight exchange keeps ownership and the close is dispatched after it finishes
 requests do not reset failure backoff. Waking coordination is not closure evidence: callers still
 wait for the original guardian's Closed observation.
 
+After this host reconciles and persists Closed for the Scope and terminal cleanup for every accepted
+Run, the Scope stops occupying periodic exchange slots. Unknown or incomplete Runs continue to be
+reconciled under their original identities. This terminal cache belongs only to the current host:
+recovery first rebinds the original guardian, then derives quiescence again from the original facts.
+Scope and Run journals, close intent, queries and captured output remain available.
+
 Changed Run and Scope observations are persisted before queries expose them. Queries return the durable
 `last_observed` facts and a separate `coordination` status (`Pending` after recovery, `Unavailable` when
 a guardian is lost); a historical `Running` never proves a process is live, and no stored PID or snapshot

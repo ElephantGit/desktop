@@ -1,5 +1,6 @@
 use ora_process_protocol::{
-    RunId, RunSnapshot, ScopeId, ScopeState, decode_guardian_payload, encode_guardian_frame,
+    CleanupState, DirectProcessState, RunId, RunSnapshot, ScopeId, ScopeState,
+    decode_guardian_payload, encode_guardian_frame,
 };
 use rusqlite::{Connection, OptionalExtension};
 
@@ -13,6 +14,35 @@ pub(super) const SCOPE_SCHEMA: &str = "CREATE TABLE scope_observations (
 ) STRICT";
 
 impl HostState {
+    /// A sealed, authoritatively closed Scope needs no repeated coordination once every accepted
+    /// Run has its own terminal cleanup fact. This does not retire identity, history or output.
+    pub(crate) fn scope_settled(&self, scope: ScopeId) -> Result<bool, ProcessStateError> {
+        if !self.scope_close_requested(scope)?
+            || !matches!(self.observed_scope(scope)?, Some(ScopeState::Closed(_)))
+        {
+            return Ok(false);
+        }
+        let mut statement = self.connection.prepare(
+            "SELECT o.snapshot FROM run_intents i LEFT JOIN run_observations o ON o.run=i.run WHERE i.scope=?1",
+        )?;
+        let mut rows = statement.query([scope.to_string()])?;
+        while let Some(row) = rows.next()? {
+            let Some(bytes) = row.get::<_, Option<Vec<u8>>>(/*idx*/ 0)? else {
+                return Ok(false);
+            };
+            let snapshot: RunSnapshot = decode_guardian_payload(&bytes)?;
+            if !matches!(snapshot.cleanup, CleanupState::Complete(_))
+                || !matches!(
+                    snapshot.direct,
+                    DirectProcessState::Exited(_) | DirectProcessState::NotStarted
+                )
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// Returns historical evidence only; recovery never upgrades it into a current live handle.
     pub(crate) fn observed_run(
         &self,
@@ -98,4 +128,61 @@ pub(super) fn inspect(connection: &Connection) -> Result<(), ProcessStateError> 
         return Err(ProcessStateError::Rejected("orphaned host observation"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ora_process_protocol::{
+        CleanupEvidence, DescendantPolicy, ExitOutcome, GuardianHostDisconnect, HostRunIntent,
+        LaunchFact, RunSpec,
+    };
+    use pretty_assertions::assert_eq;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// Scope closure alone cannot stop coordination of a Run whose own cleanup is still unknown.
+    #[test]
+    fn settled_scope_requires_every_accepted_run_and_retains_its_facts()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let home = std::env::var_os("HOME").ok_or("fixture HOME missing")?;
+        let directory = tempfile::Builder::new()
+            .prefix("hs")
+            .permissions(std::fs::Permissions::from_mode(/*mode*/ 0o700))
+            .tempdir_in(home)?;
+        let mut state = HostState::create(&directory.path().join("s"))?;
+        let scope = ScopeId::new();
+        state.record_scope_intent(scope)?;
+        let intent = HostRunIntent {
+            scope,
+            run: RunId::new(),
+            spec: RunSpec::new(
+                "/usr/bin/true",
+                directory.path(),
+                DescendantPolicy::WaitForAll,
+            ),
+            host_disconnect: GuardianHostDisconnect::KeepRunning,
+        };
+        state.record_run_intent(intent.clone())?;
+        state.request_scope_close(scope)?;
+        state.observe_scope(
+            scope,
+            ScopeState::Closed(CleanupEvidence::BestEffortComplete),
+        )?;
+        assert!(!state.scope_settled(scope)?);
+        let mut snapshot = RunSnapshot {
+            id: intent.run,
+            launch: LaunchFact::Started,
+            direct: DirectProcessState::Exited(ExitOutcome::Code(0)),
+            cleanup: CleanupState::Pending,
+        };
+        state.observe_run(&snapshot)?;
+        assert!(!state.scope_settled(scope)?);
+        snapshot.cleanup = CleanupState::Complete(CleanupEvidence::BestEffortComplete);
+        state.observe_run(&snapshot)?;
+        assert!(state.scope_settled(scope)?);
+        assert_eq!(state.run_intent(intent.run)?, Some(intent.clone()));
+        assert_eq!(state.observed_run(intent.run)?, Some(snapshot));
+        assert_eq!(state.run_intents()?, vec![intent]);
+        Ok(())
+    }
 }

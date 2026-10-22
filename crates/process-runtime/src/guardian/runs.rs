@@ -36,6 +36,8 @@ pub(super) fn initialize(transaction: &rusqlite::Transaction<'_>) -> rusqlite::R
 pub(super) struct Runs {
     runtime: ScopeRuntime<LinuxBestEffort>,
     live: Vec<RunId>,
+    // Set only after the terminal Scope and every accepted Run snapshot have been committed.
+    settled: bool,
 }
 
 impl Runs {
@@ -48,6 +50,7 @@ impl Runs {
         Ok(Self {
             runtime,
             live: Vec::new(),
+            settled: false,
         })
     }
 
@@ -216,6 +219,9 @@ impl Runs {
 
     /// Continues cleanup without callers; journal failure never cancels already accepted stop plans.
     pub(super) fn reconcile(&mut self, connection: &mut Connection) -> Result<(), Rejection> {
+        if self.settled {
+            return Ok(());
+        }
         let intents = self.restore_stop_intents(connection);
         self.runtime.reconcile(Instant::now());
         intents?;
@@ -240,14 +246,16 @@ impl Runs {
             })
             .map_err(|_| Rejection::StorageUnavailable)?;
         if unknown == self.live.len() as i64 {
-            let state = encode_guardian_frame(&self.runtime.state())
-                .map_err(|_| Rejection::StorageUnavailable)?;
+            let current = self.runtime.state();
+            let state =
+                encode_guardian_frame(&current).map_err(|_| Rejection::StorageUnavailable)?;
             connection
                 .execute(
                     "UPDATE guardian_run_scope SET state=?1 WHERE singleton=1 AND state!=?1",
                     [&state[4..]],
                 )
                 .map_err(|_| Rejection::StorageUnavailable)?;
+            self.settled = matches!(current, ScopeState::Closed(_));
         }
         Ok(())
     }
@@ -304,4 +312,63 @@ fn scope_state(connection: &Connection) -> Result<ScopeState, Rejection> {
         )
         .map_err(|_| Rejection::StorageUnavailable)?;
     decode_guardian_payload(&bytes).map_err(|_| Rejection::StorageUnavailable)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    /// Terminal cleanup remains available without performing periodic writes to its journal.
+    #[test]
+    fn closed_scope_reconciliation_does_not_require_a_writable_journal()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut connection = Connection::open_in_memory()?;
+        let transaction = connection.transaction()?;
+        initialize(&transaction)?;
+        transaction.commit()?;
+        let mut runs = Runs::new()?;
+        assert_eq!(
+            runs.execute(&mut connection, GuardianRunOperation::Close),
+            Reply::Scope(ScopeState::Closed(
+                ora_process_protocol::CleanupEvidence::BestEffortComplete
+            ))
+        );
+        connection.pragma_update(/*schema_name*/ None, "query_only", true)?;
+        assert_eq!(runs.reconcile(&mut connection), Ok(()));
+        assert_eq!(
+            scope_state(&connection),
+            Ok(ScopeState::Closed(
+                ora_process_protocol::CleanupEvidence::BestEffortComplete
+            ))
+        );
+        Ok(())
+    }
+
+    /// Failed persistence cannot turn requested closure into a cached terminal observation.
+    #[test]
+    fn failed_close_stays_unsettled_until_its_terminal_fact_commits()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut connection = Connection::open_in_memory()?;
+        let transaction = connection.transaction()?;
+        initialize(&transaction)?;
+        transaction.commit()?;
+        let mut runs = Runs::new()?;
+        connection.pragma_update(/*schema_name*/ None, "query_only", true)?;
+        assert_eq!(
+            runs.execute(&mut connection, GuardianRunOperation::Close),
+            Reply::Rejected(Rejection::StorageUnavailable)
+        );
+        assert_eq!(scope_state(&connection), Ok(ScopeState::Open));
+        connection.pragma_update(/*schema_name*/ None, "query_only", false)?;
+        assert_eq!(
+            runs.execute(&mut connection, GuardianRunOperation::Close),
+            Reply::Scope(ScopeState::Closed(
+                ora_process_protocol::CleanupEvidence::BestEffortComplete
+            ))
+        );
+        connection.pragma_update(/*schema_name*/ None, "query_only", true)?;
+        assert_eq!(runs.reconcile(&mut connection), Ok(()));
+        Ok(())
+    }
 }

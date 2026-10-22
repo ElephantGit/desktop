@@ -19,6 +19,9 @@ use tokio::io::AsyncWriteExt;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+#[path = "service/closed.rs"]
+mod closed;
+
 struct Fixture {
     directory: tempfile::TempDir,
     guardian: PathBuf,
