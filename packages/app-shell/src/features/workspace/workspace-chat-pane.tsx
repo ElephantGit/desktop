@@ -169,6 +169,7 @@ export function WorkspaceChatPane({
 
   return (
     <ChatView
+      sessionId={sessionId ?? undefined}
       taskId={taskId}
       projectId={projectId}
       workspaceId={workspaceId}
@@ -181,7 +182,6 @@ export function WorkspaceChatPane({
       isLoading={isLoadingHistory}
       error={chatError}
       pendingPermissions={conversation?.pendingPermissions ?? []}
-      diagnostics={conversation?.diagnostics}
       skills={skills}
       roles={roles}
       availableCommands={conversation?.availableCommands ?? []}

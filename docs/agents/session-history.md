@@ -13,6 +13,28 @@ and the context is not, which is why a switch replays nothing and injects instea
 
 ## Recording
 
+### On-demand binding diagnostics
+
+The conversation's **Session information / diagnostics** action combines the Ora session id,
+provider binding timeline and existing runtime observations. The session menu opens the same
+panel. Workflow run pages additionally expose an execution index, retaining separate node,
+scope, iteration and failed-attempt references even when they share an Ora session.
+
+The session-owned `getSessionBindings` query reads existing `Meta` and `AgentSwitched` records
+in semantic sequence order, preserves repeated bindings and ignores `HandoffDelivered` as a
+binding boundary. The current database row marks only the matching last segment, or supplies a
+separate live segment with unknown recording time. History timestamps are recording times,
+not provider creation times or recent live activity. Missing, incomplete and unsupported histories
+remain visible alongside known current bindings. Reading never starts or loads a provider.
+
+Queries accept at most 32 distinct sessions, read files serially within a batch with an 8 MiB
+per-file limit, and recheck the session row after IO. A changed row permits one retry; persistent
+change returns a retry result. The frontend deduplicates reads without merging execution rows,
+cancels scoped requests on close/switch and keeps failed batches separate from successful ones.
+Provider ids are copied in full and remain outside public `Session` payloads, message bubbles and
+session lists. Existing child details stay in the parent transcript; the panel can locate its
+child tree by turn and group, mounting windowed rows without copying their contents into another view.
+
 Provider attribution is retained inside the existing ACP updates: complete text/thought chunks keep
 their metadata and annotations, and tool metadata replaces only the top-level namespaces present in
 an increment (including explicit null). Text with different metadata cannot merge even when message

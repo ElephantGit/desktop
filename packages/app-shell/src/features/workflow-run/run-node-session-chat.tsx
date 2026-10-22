@@ -170,6 +170,7 @@ export function RunNodeSessionChat({
   return (
     <div className="flex h-full min-h-0 flex-1 overflow-hidden rounded-xl border border-border/70 bg-background">
       <ChatView
+        sessionId={sessionId}
         turns={turns}
         modelChanges={conversation?.modelChanges}
         userName={t("account.unknownIdentity")}
@@ -184,7 +185,6 @@ export function RunNodeSessionChat({
         }
         error={conversation?.error ?? null}
         pendingPermissions={conversation?.pendingPermissions ?? []}
-        diagnostics={conversation?.diagnostics}
         roles={agentsQuery.data ?? []}
         availableCommands={conversation?.availableCommands ?? []}
         conversationNavigation={NODE_SESSION_CONVERSATION_NAVIGATION}

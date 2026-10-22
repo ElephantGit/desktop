@@ -1,4 +1,8 @@
 import {
+  workflowSessionExecutions,
+  type WorkflowSessionExecution,
+} from "./workflow-session-executions";
+import {
   useMutation,
   useQueries,
   useQuery,
@@ -390,6 +394,7 @@ export function useRealWorkflowRun(runId: string | null | undefined) {
       );
       return {
         run,
+        sessionExecutions: workflowSessionExecutions(detail),
         snapshotGraph: snapshot.graph,
         workspaceId: detail.workspaceId,
         projectId: detail.projectId,
@@ -407,6 +412,7 @@ export function useRealWorkflowRun(runId: string | null | undefined) {
 /** Persisted run detail plus its direct Workspace identity. */
 export type RealWorkflowRunDetail = {
   run: GraphWorkflowRun;
+  sessionExecutions?: WorkflowSessionExecution[];
   /** Execution analysis must inspect the frozen source, never the repaired render projection. */
   snapshotGraph: string;
   workspaceId: string;

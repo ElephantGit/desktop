@@ -4,6 +4,10 @@ import type { QueryClient } from "@tanstack/react-query";
 /** Cache identity owned by sessions data; consumers never repeat its tuples. */
 export const sessionKeys = {
   sessions: ["sessions"] as const,
+  allBindings: ["sessionBindings"] as const,
+  bindingBatch: (runId: string, ids: string[]) =>
+    ["sessionBindings", "run", runId, ids] as const,
+  bindings: (sessionId: string) => ["sessionBindings", sessionId] as const,
 };
 
 /**
@@ -35,6 +39,8 @@ export function cacheDeletedSession(
   sessionId: string,
   listSync: WorkspaceListSync,
 ) {
+  queryClient.removeQueries({ queryKey: sessionKeys.bindings(sessionId) });
+  void queryClient.invalidateQueries({ queryKey: sessionKeys.allBindings });
   queryClient.setQueryData<Session[]>(sessionKeys.sessions, (current) =>
     (current ?? []).filter((session) => session.id !== sessionId),
   );
@@ -63,10 +69,15 @@ export function cacheRenamedSession(
 
 /** Refetches authoritative session state after a gap in app-event delivery. */
 export function refetchSessions(queryClient: QueryClient) {
-  return queryClient.refetchQueries({ queryKey: sessionKeys.sessions });
+  return queryClient.refetchQueries({
+    predicate: (query) =>
+      query.queryKey[0] === sessionKeys.sessions[0] ||
+      query.queryKey[0] === sessionKeys.allBindings[0],
+  });
 }
 
 /** Marks session projections stale after a confirmed mutation or title event. */
 export function invalidateSessions(queryClient: QueryClient) {
+  void queryClient.invalidateQueries({ queryKey: sessionKeys.allBindings });
   return queryClient.invalidateQueries({ queryKey: sessionKeys.sessions });
 }

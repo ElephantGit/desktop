@@ -76,17 +76,19 @@ export function DisplayTurnItemView({
   switch (item.kind) {
     case "subagentGroup":
       return (
-        <SubagentGroup
-          group={item}
-          parentItems={parentStreamItems(turn.items)}
-          turnStatus={turn.status}
-          parentEnded={
-            turn.stopReason !== null ||
-            turn.status === "failed" ||
-            turn.status === "cancelled"
-          }
-          userName={userName}
-        />
+        <div data-session-child-row={`${turn.id}:display:${item.id}`}>
+          <SubagentGroup
+            group={item}
+            parentItems={parentStreamItems(turn.items)}
+            turnStatus={turn.status}
+            parentEnded={
+              turn.stopReason !== null ||
+              turn.status === "failed" ||
+              turn.status === "cancelled"
+            }
+            userName={userName}
+          />
+        </div>
       );
     case "activityPhase":
       return (

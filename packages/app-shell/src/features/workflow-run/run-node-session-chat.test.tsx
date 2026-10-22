@@ -52,6 +52,12 @@ type FixtureState = ReturnType<typeof createFixtureState>;
 /** Explicit domain composition for the behaviors exercised by this test file. */
 function createFixtureHandlers(state: FixtureState): TestHandlers {
   return {
+    getSessionBindings: ({ sessionIds }) => ({
+      sessions: sessionIds.map((sessionId) => ({
+        type: "not_found" as const,
+        sessionId,
+      })),
+    }),
     ...workspaceHandlers(state),
     ...sessionHandlers(state),
     ...agentRuntimeHandlers(state),
@@ -154,7 +160,23 @@ describe("RunNodeSessionChat", () => {
         content: "go",
         createdAt: 1,
       },
-      items: [],
+      items: [
+        {
+          kind: "message",
+          id: "child-message",
+          role: "assistant",
+          content: "child output",
+          createdAt: 1,
+          metadata: {
+            "opencode/child-session": {
+              id: "child",
+              parentID: "parent",
+              depth: 1,
+              title: "Worker",
+            },
+          },
+        },
+      ],
       status: "streaming",
       stopReason: null,
       error: null,
@@ -175,12 +197,32 @@ describe("RunNodeSessionChat", () => {
         },
       })),
     );
+    await userEvent.setup().click(
+      screen.getByRole("button", {
+        name: appI18n.t("chat.sessionInformation"),
+      }),
+    );
+    await screen.findByText(appI18n.t("chat.bindingNotFound"));
     expect(screen.getByTestId("run-diagnostics")).toHaveTextContent(
       appI18n.t("chat.diagnosticsRetry", { attempt: 2 }),
     );
     expect(screen.getByTestId("run-diagnostics")).toHaveTextContent(
       appI18n.t("chat.diagnosticsLastActivity"),
     );
+    const group = document.querySelector('[data-subagent-group="child"]');
+    await userEvent
+      .setup()
+      .click(
+        screen.getByRole("button", {
+          name: `${appI18n.t("chat.bindingLocateChildren")} · Worker`,
+        }),
+      );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(
+      document.querySelectorAll('[data-subagent-group="child"]'),
+    ).toHaveLength(1);
+    expect(document.querySelector('[data-subagent-group="child"]')).toBe(group);
+    expect(group?.querySelector("button")).toHaveFocus();
   });
   it("renders the node session through the ordinary chat surface", () => {
     renderDock("awaiting_input", false);
