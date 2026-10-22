@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 /// Separates unusable configuration from valid values whose names collide, without carrying values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SkillEnvironmentError {
-    /// Missing, incomplete or OS-incompatible values do not participate in the snapshot.
+    /// Missing, incomplete or OS-incompatible values cannot be injected; their declarations still own names.
     InvalidConfiguration,
     /// Valid values still participate in global collision detection, but cannot be injected.
     NameCollision,

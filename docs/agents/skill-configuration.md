@@ -44,7 +44,7 @@ if token is None:
 
 Strings are delivered unchanged, numbers use JSON spelling, and booleans are `true`/`false`. Missing optional values are omitted. Incomplete, invalid or unreadable configurations, including any value containing NUL, contribute no variables for that plugin. Its Skill files remain available. An invalid plugin does not stop other Agents or plugins.
 
-Snapshot capture checks all names contributed by complete valid configurations case-insensitively, including within and across plugins. All involved plugins are omitted in full; diagnostics contain plugin and field IDs, never values. The host owns the prefix: matching inherited and caller-supplied spawn variables are removed case-insensitively before snapshot injection; spawn itself is allowed. Custom aliases are unsupported; unknown declaration members such as `env: GITHUB_TOKEN` are rejected.
+Snapshot capture first checks the names of every field in each valid declaration case-insensitively, including within and across plugins. Missing optional values and plugins with missing, corrupt, invalid or NUL-containing values still participate; invalid plugins or declarations do not. Value eligibility is evaluated after name collection. All involved plugins are omitted in full; diagnostics contain plugin and field IDs, never values. The host owns the prefix: matching inherited and caller-supplied spawn variables are removed case-insensitively before snapshot injection; spawn itself is allowed. Custom aliases are unsupported; unknown declaration members such as `env: GITHUB_TOKEN` are rejected.
 
 ## Security boundary
 

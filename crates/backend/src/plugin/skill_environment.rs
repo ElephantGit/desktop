@@ -32,25 +32,21 @@ impl SkillEnvironment {
                     continue;
                 }
             };
-            let values = match resolve_skill_environment(&id, &details) {
-                Ok(values) => Some(values),
-                Err(SkillEnvironmentError::NameCollision) => None,
-                Err(SkillEnvironmentError::InvalidConfiguration) => {
-                    ora_logging::ora_warn!(plugin_id = %id, "Skill environment omitted: configuration is incomplete or incompatible with process environment values");
-                    continue;
-                }
-            };
-            // A locally colliding package must still disqualify every other owner of its names.
-            for setting in details
-                .settings
-                .iter()
-                .filter(|setting| setting.effective_value.is_some())
-            {
+            // Declaration identity must not change when users fill, clear or corrupt values.
+            for setting in &details.settings {
                 names
                     .entry(skill_environment_key(&id, &setting.declaration.id).to_ascii_uppercase())
                     .or_default()
                     .push((id.clone(), setting.declaration.id.clone()));
             }
+            let values = match resolve_skill_environment(&id, &details) {
+                Ok(values) => Some(values),
+                Err(SkillEnvironmentError::NameCollision) => None,
+                Err(SkillEnvironmentError::InvalidConfiguration) => {
+                    ora_logging::ora_warn!(plugin_id = %id, "Skill environment omitted: configuration is incomplete or incompatible with process environment values");
+                    None
+                }
+            };
             if let Some(values) = values {
                 candidates.insert(id, values);
             }
@@ -146,12 +142,9 @@ mod tests {
                             settings.insert(field.into(), serde_json::json!({"type":"string","title":"Value","description":"Value","default":"test-only-sensitive-value"}));
                         }
                     }
-                    // An unusable package has no candidate names and must not poison a valid owner.
-                    let invalid = if reverse {
-                        serde_json::json!({"type":"string","title":"Value","description":"Value","required":true})
-                    } else {
-                        serde_json::json!({"type":"string","title":"Value","description":"Value","default":"test-only-sensitive-value\0"})
-                    };
+                    // An invalid declaration has no valid field set and must not poison another owner.
+                    let invalid =
+                        serde_json::json!({"type":"unknown","title":"Value","description":"Value"});
                     plugins
                         .entry("other-safe/token")
                         .or_default()
@@ -208,6 +201,90 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Value availability never changes collision ownership; invalid declarations are excluded.
+    #[test]
+    fn declaration_names_participate_before_value_eligibility() {
+        ora_logging::initialize_test_clock();
+        ora_logging::with_trace_logging(|| {
+            for state in [
+                "optional",
+                "required",
+                "nul",
+                "corrupt",
+                "invalid-value",
+                "invalid-declaration",
+            ] {
+                let root = tempfile::tempdir().unwrap();
+                for id in ["a/b-c", "a/b.c", "other/safe"] {
+                    let (namespace, identifier) = id.split_once('/').unwrap();
+                    let package = root
+                        .path()
+                        .join("plugins/installed")
+                        .join(namespace)
+                        .join(identifier)
+                        .join("1.0.0");
+                    std::fs::create_dir_all(package.join("assets/demo")).unwrap();
+                    std::fs::write(package.join("orax.toml"), format!("identifier = \"{identifier}\"\nnamespace = \"{namespace}\"\nkind = \"skill\"\nversion = \"1.0.0\"\ndescription = \"Demo\"\n")).unwrap();
+                    std::fs::write(
+                        package.join("assets/demo/SKILL.md"),
+                        "---\nname: demo\ndescription: Demo\n---\n",
+                    )
+                    .unwrap();
+                    let mut token = serde_json::json!({"type":"string","title":"Token","description":"Token","default":"valid"});
+                    if id == "a/b-c" {
+                        match state {
+                            "optional" => {
+                                token.as_object_mut().unwrap().remove("default");
+                            }
+                            "required" => {
+                                token.as_object_mut().unwrap().remove("default");
+                                token["required"] = true.into();
+                            }
+                            "nul" => token["default"] = "invalid\0value".into(),
+                            "invalid-declaration" => token["type"] = "unknown".into(),
+                            _ => {}
+                        }
+                        if matches!(state, "corrupt" | "invalid-value") {
+                            let data = root
+                                .path()
+                                .join("plugins/data")
+                                .join(namespace)
+                                .join(identifier);
+                            std::fs::create_dir_all(&data).unwrap();
+                            std::fs::write(
+                                data.join("store.json"),
+                                if state == "corrupt" {
+                                    "{broken"
+                                } else {
+                                    r#"{"schemaVersion":1,"revision":1,"values":{"token":42}}"#
+                                },
+                            )
+                            .unwrap();
+                        }
+                    }
+                    std::fs::write(package.join("assets/config.json"), serde_json::json!({"schemaVersion":1,"settings":{
+                        "token":token,
+                        (if id == "a/b-c" { "leftover" } else { "unrelated" }):{"type":"string","title":"Other","description":"Other","default":"valid"}
+                    }}).to_string()).unwrap();
+                }
+                let snapshot =
+                    SkillEnvironment::capture(root.path(), &ConfigurationService::new(root.path()));
+                let mut expected = BTreeMap::from([
+                    (skill_environment_key("other/safe", "token"), "valid".into()),
+                    (
+                        skill_environment_key("other/safe", "unrelated"),
+                        "valid".into(),
+                    ),
+                ]);
+                if state == "invalid-declaration" {
+                    expected.insert(skill_environment_key("a/b.c", "token"), "valid".into());
+                    expected.insert(skill_environment_key("a/b.c", "unrelated"), "valid".into());
+                }
+                assert_eq!(snapshot.plugin_environment("agent"), expected, "{state}");
+            }
+        });
     }
 
     /// Real discovery and storage changes do not mutate the already captured process environment.
