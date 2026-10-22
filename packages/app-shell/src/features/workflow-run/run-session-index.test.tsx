@@ -121,8 +121,14 @@ it.each(["run", "round"])(
         sessionId,
       },
     ];
+    const initialExecutions = execution("old");
+    const nextExecutions =
+      scope === "run"
+        ? initialExecutions
+        : [...initialExecutions, ...execution("new")];
+    const nextIds = scope === "run" ? ["old"] : ["new", "old"];
     const view = render(
-      <RunSessionIndex runId="old-run" executions={execution("old")} />,
+      <RunSessionIndex runId="old-run" executions={initialExecutions} />,
       { wrapper },
     );
     const user = userEvent.setup();
@@ -133,7 +139,7 @@ it.each(["run", "round"])(
     view.rerender(
       <RunSessionIndex
         runId={scope === "run" ? "new-run" : "old-run"}
-        executions={execution("new")}
+        executions={nextExecutions}
       />,
     );
     await waitFor(() => expect(requests).toHaveLength(2));
@@ -146,7 +152,10 @@ it.each(["run", "round"])(
     expect(
       screen.queryByText(appI18n.t("chat.bindingNotFound")),
     ).not.toBeInTheDocument();
-    expect(screen.queryByText("node-old")).not.toBeInTheDocument();
+    expect(screen.getByText("node-old")).toBeInTheDocument();
+    expect(screen.getAllByText(appI18n.t("chat.bindingLoading"))).toHaveLength(
+      nextIds.length + 1,
+    );
     await user.keyboard("{Escape}");
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
@@ -158,7 +167,10 @@ it.each(["run", "round"])(
     await waitFor(() => expect(requests).toHaveLength(3));
     await act(async () =>
       requests[1]!.resolve({
-        sessions: [{ type: "not_found", sessionId: "new" }],
+        sessions: nextIds.map((sessionId) => ({
+          type: "not_found",
+          sessionId,
+        })),
       }),
     );
     expect(
@@ -166,13 +178,16 @@ it.each(["run", "round"])(
     ).not.toBeInTheDocument();
     await act(async () =>
       requests[2]!.resolve({
-        sessions: [{ type: "unavailable", sessionId: "new" }],
+        sessions: nextIds.map((sessionId) => ({
+          type: "unavailable",
+          sessionId,
+        })),
       }),
     );
     expect(
-      await screen.findByText(appI18n.t("chat.bindingUnavailable")),
-    ).toBeInTheDocument();
-    expect(requests.map(({ ids }) => ids)).toEqual([["old"], ["new"], ["new"]]);
+      await screen.findAllByText(appI18n.t("chat.bindingUnavailable")),
+    ).toHaveLength(nextIds.length);
+    expect(requests.map(({ ids }) => ids)).toEqual([["old"], nextIds, nextIds]);
   },
 );
 
