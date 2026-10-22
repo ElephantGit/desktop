@@ -8,6 +8,63 @@ import { useSessionBindingBatch } from "./session-bindings";
 
 void appI18n;
 describe("run binding queries", () => {
+  it("keeps only one batch in flight and retains session identities in reversed replies", async () => {
+    const pending: Array<{
+      ids: string[];
+      resolve: (response: GetSessionBindingsResponse) => void;
+    }> = [];
+    let active = 0;
+    let peak = 0;
+    const client = createTestClient({
+      getSessionBindings: ({ sessionIds }) => {
+        active++;
+        peak = Math.max(peak, active);
+        return new Promise((resolve) => {
+          pending.push({
+            ids: sessionIds,
+            resolve: (response) => {
+              active--;
+              resolve(response);
+            },
+          });
+        });
+      },
+    });
+    const ids = Array.from({ length: 65 }, (_, n) => `session-${n}`);
+    const hook = renderHookWithClient(
+      () => useSessionBindingBatch("run", [...ids, ...ids]),
+      client,
+    );
+    for (let index = 0; index < 3; index++) {
+      await waitFor(() => expect(pending).toHaveLength(index + 1));
+      expect(active).toBe(1);
+      await act(async () => {
+        pending[index]!.resolve({
+          sessions: [...pending[index]!.ids].reverse().map((sessionId) => ({
+            type: sessionId === "session-4" ? "unavailable" : "not_found",
+            sessionId,
+          })),
+        });
+      });
+    }
+    await waitFor(() => expect(hook.result.current.isSuccess).toBe(true));
+    expect(pending.map(({ ids }) => ids.length)).toEqual([32, 32, 1]);
+    expect({ active, peak }).toEqual({ active: 0, peak: 1 });
+    expect(
+      [...(hook.result.current.data ?? [])].sort((a, b) =>
+        a.sessionId.localeCompare(b.sessionId),
+      ),
+    ).toEqual(
+      [...ids]
+        .sort((a, b) => a.localeCompare(b))
+        .map((sessionId) => ({
+          type: sessionId === "session-4" ? "unavailable" : "not_found",
+          sessionId,
+        })),
+    );
+    hook.unmount();
+    hook.queryClient.clear();
+  });
   it("deduplicates requests, caps serial batches and preserves other results on failure", async () => {
     const calls: string[][] = [];
     const client = createTestClient({

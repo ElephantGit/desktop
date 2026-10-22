@@ -666,6 +666,14 @@ describe("WorkflowEditor", () => {
     expect(
       screen.queryByRole("button", { name: "测试运行" }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: appI18n.t("chat.bindingRunIndex") }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: appI18n.t("chat.sessionInformation"),
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it("opens and edits an imported Agent with no executor and malformed bindings", async () => {

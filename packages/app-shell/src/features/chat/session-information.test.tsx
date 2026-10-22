@@ -65,6 +65,98 @@ function fixture(handlers: TestHandlers) {
 }
 
 describe("session information", () => {
+  it("discards a closed query even when reopened for the same session", async () => {
+    const user = userEvent.setup();
+    const requests: Array<{
+      signal?: AbortSignal;
+      resolve: (value: GetSessionBindingsResponse) => void;
+    }> = [];
+    const Surface = fixture({
+      getSessionBindings: (_, options) =>
+        new Promise((resolve) => {
+          requests.push({ signal: options?.signal, resolve });
+        }),
+    });
+    render(<Surface id="same-session" />);
+    const open = () =>
+      user.click(
+        screen.getByRole("button", {
+          name: appI18n.t("chat.sessionInformation"),
+        }),
+      );
+    await open();
+    await waitFor(() => expect(requests).toHaveLength(1));
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(requests[0]!.signal?.aborted).toBe(true);
+    await open();
+    await waitFor(() => expect(requests).toHaveLength(2));
+    await act(async () =>
+      requests[0]!.resolve({
+        sessions: [binding("same-session", "stale-provider-id")],
+      }),
+    );
+    expect(screen.queryByText("stale-provider-id")).not.toBeInTheDocument();
+    await act(async () =>
+      requests[1]!.resolve({
+        sessions: [binding("same-session", "fresh-provider-id")],
+      }),
+    );
+    expect(await screen.findAllByText("fresh-provider-id")).toHaveLength(2);
+    expect(screen.queryByText("stale-provider-id")).not.toBeInTheDocument();
+  });
+
+  it.each(["unavailable", "incomplete", "unsupported"] as const)(
+    "labels %s history without offering an empty provider id",
+    (history) => {
+      render(
+        <BindingTimeline
+          result={{ type: "available", sessionId: "s", history, segments: [] }}
+        />,
+      );
+      expect(
+        screen.getByText(appI18n.t(`chat.bindingHistory_${history}`)),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText(appI18n.t("chat.bindingNotCreated")),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: appI18n.t("chat.bindingCopy") }),
+      ).not.toBeInTheDocument();
+    },
+  );
+
+  it.each([
+    ["retry", "chat.bindingRetry"],
+    ["not_found", "chat.bindingNotFound"],
+    ["unavailable", "chat.bindingUnavailable"],
+  ] as const)("distinguishes %s from never-created", (type, message) => {
+    render(<BindingTimeline result={{ type, sessionId: "s" }} />);
+    expect(screen.getByText(appI18n.t(message))).toBeInTheDocument();
+    expect(
+      screen.queryByText(appI18n.t("chat.bindingNotCreated")),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("shows a readable unbound session without an empty copy control", () => {
+    render(
+      <BindingTimeline
+        result={{
+          type: "available",
+          sessionId: "s",
+          history: "readable",
+          segments: [],
+        }}
+      />,
+    );
+    expect(
+      screen.getByText(appI18n.t("chat.bindingNotCreated")),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
   it("only queries on demand, preserves repeated segments and copies complete ids", async () => {
     const user = userEvent.setup();
     const write = vi.spyOn(navigator.clipboard, "writeText");
