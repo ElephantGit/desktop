@@ -493,13 +493,27 @@ async fn http_probe_maps_silent_peer_to_timeout() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr");
     let server = thread::spawn(move || {
-        if let Ok((stream, _)) = listener.accept() {
-            // Read the request but keep the connection open without ever answering, so only the
-            // probe's own deadline can end the exchange.
-            let handled = stream.try_clone().expect("clone stream");
-            let _ = read_request(handled);
-            thread::sleep(Duration::from_secs(2));
-            drop(stream);
+        // The peer only needs to accept and stay silent. Reading the request can wait forever
+        // after the probe cancels, so bound the accept instead of relying on a blocking join.
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking listener");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    thread::sleep(Duration::from_secs(2));
+                    drop(stream);
+                    break;
+                }
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::WouldBlock
+                        && Instant::now() < deadline =>
+                {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("silent peer accept failed or timed out: {error}"),
+            }
         }
     });
     let started = Instant::now();
