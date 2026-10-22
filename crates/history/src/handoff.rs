@@ -1,3 +1,4 @@
+use crate::metadata::child_source_id;
 use crate::reader::{HistoryIntegrity, SessionHistory};
 use crate::record::HistoryRecord;
 use agent_client_protocol_schema::v1::ContentBlock;
@@ -285,6 +286,11 @@ pub fn final_assistant_message(history: &SessionHistory) -> Option<String> {
         let SessionUpdate::AgentMessageChunk(chunk) = update.as_ref() else {
             continue;
         };
+        // Child-session projections belong to a delegated agent. Letting a child's
+        // sentinel win would annotate the whole run with a subagent's conclusion.
+        if child_source_id(chunk.meta.as_ref()).is_some() {
+            continue;
+        }
         let ContentBlock::Text(text) = &chunk.content else {
             continue;
         };

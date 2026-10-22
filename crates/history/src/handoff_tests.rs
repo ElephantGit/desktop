@@ -81,6 +81,21 @@ fn assistant(text: &str) -> HistoryRecord {
     }
 }
 
+/// Builds one message projected from an OpenCode child session.
+fn child_assistant(text: &str) -> HistoryRecord {
+    let mut chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(text)));
+    let mut meta = agent_client_protocol_schema::v1::Meta::new();
+    meta.insert(
+        "opencode/child-session".to_string(),
+        serde_json::json!({"id": "child", "parentID": "root", "depth": 1}),
+    );
+    chunk.meta = Some(meta);
+    HistoryRecord::Update {
+        update: Box::new(SessionUpdate::AgentMessageChunk(chunk)),
+        tool_timing: None,
+    }
+}
+
 fn thought(text: &str) -> HistoryRecord {
     HistoryRecord::Update {
         update: Box::new(SessionUpdate::AgentThoughtChunk(ContentChunk::new(
@@ -432,4 +447,33 @@ fn keeps_an_unterminated_final_turn() {
         final_assistant_message(&recorded),
         Some("part one\npart two".to_string())
     );
+}
+
+#[test]
+fn ignores_child_session_messages_when_selecting_the_final_turn() {
+    let recorded = history(vec![
+        meta(agent_ref("ora-space.opencode")),
+        user("run the nightly checks"),
+        child_assistant("QA_VERDICT: fail"),
+        turn_ended(StopReason::EndTurn),
+        assistant("QA_VERDICT: pass"),
+        turn_ended(StopReason::EndTurn),
+    ]);
+
+    assert_eq!(
+        final_assistant_message(&recorded),
+        Some("QA_VERDICT: pass".to_string())
+    );
+}
+
+#[test]
+fn returns_none_when_only_child_session_messages_exist() {
+    let recorded = history(vec![
+        meta(agent_ref("ora-space.opencode")),
+        user("run the nightly checks"),
+        child_assistant("QA_VERDICT: fail"),
+        turn_ended(StopReason::EndTurn),
+    ]);
+
+    assert_eq!(final_assistant_message(&recorded), None);
 }
