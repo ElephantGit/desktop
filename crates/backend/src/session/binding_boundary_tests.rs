@@ -169,7 +169,27 @@ fn unsafe_persisted_identifiers_never_become_history_paths() {
         let sentinel = b"private-file-must-not-be-returned-or-written\n";
         std::fs::write(&outside, sentinel).unwrap();
         let absolute = outside.to_string_lossy().into_owned();
+        // Without identifier validation, sharding resolves this id outside sessions/.
+        // Keep the intermediate directories for Unix path traversal, and use matching
+        // metadata so a regression produces a readable escaped binding, not another IO error.
+        let escaping_id = "..-x/../../outside";
+        std::fs::create_dir_all(fixture._temporary.path().join("sessions")).unwrap();
+        std::fs::create_dir_all(fixture._temporary.path().join("-x").join("..-x")).unwrap();
+        let escaped_path = fixture._temporary.path().join("outside.jsonl");
+        let mut escaped_meta = meta(&fixture, "escaped-provider");
+        escaped_meta.session_id = escaping_id.into();
+        let escaped_bytes = format!(
+            "{}\n",
+            serde_json::to_string(&HistoryLine::new(
+                "2026-10-22T10:00:00+08:00",
+                0,
+                HistoryRecord::Meta(escaped_meta)
+            ))
+            .unwrap()
+        );
+        std::fs::write(&escaped_path, &escaped_bytes).unwrap();
         let ids = [
+            escaping_id,
             "../private-history",
             "..\\private-history",
             "file:///private-history.jsonl",
@@ -209,6 +229,10 @@ fn unsafe_persisted_identifiers_never_become_history_paths() {
             GetSessionBindingsResponse { sessions: expected }
         );
         assert_eq!(std::fs::read(outside).unwrap(), sentinel);
+        assert_eq!(
+            std::fs::read_to_string(escaped_path).unwrap(),
+            escaped_bytes
+        );
         assert_eq!(fixture.sessions.repository.list_sessions().unwrap(), before);
     });
 }
