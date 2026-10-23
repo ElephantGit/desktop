@@ -61,6 +61,8 @@ fn diagnostic_queries_do_not_start_stopped_plugins_or_call_a_running_generation(
     run_test(async {
         let fixture = Fixture::stopped();
         // Isolate the cold query from discovery's ordinary background agent startup.
+        // Stopped here detects direct lifecycle/gateway starts while ordinary supervision
+        // is suspended; the running phase below observes traffic with supervision enabled.
         fixture
             .sessions
             .agent_runtime
@@ -225,6 +227,8 @@ fn diagnostic_queries_do_not_start_stopped_plugins_or_call_a_running_generation(
             .unwrap();
             observations.push(response);
         }
+        // Allow asynchronously scheduled query side effects to reach the wire observer.
+        tokio::time::sleep(Duration::from_millis(250)).await;
         let after = lease
             .invoke("probe/snapshot", serde_json::json!({}))
             .await
